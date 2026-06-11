@@ -448,15 +448,13 @@
 
 ---
 
-# 5. 待定决策
-
 ## DEC-012：Task 0 采用 Vue 3 + Vite + TypeScript 工具链并引入自测依赖
 
 - 日期：2026-06-11
-- 状态：待定
+- 状态：已拍板
 - 提出者：CC
-- 参与讨论：CC、Codex
-- 拍板者：待用户确认
+- 参与讨论：CC、Codex、用户
+- 拍板者：用户
 - 背景：
   - Task 0 需要初始化 OfferPilot v0.1 的前端工程骨架。
   - v0.1 已确认技术方向为 Vue 3 + Vite + TypeScript。
@@ -475,7 +473,7 @@
   4. 当前只需验证 storage 层，不需要完整测试框架
   5. 避免 Task 0 过度引入依赖
 - 被否决方案：
-  - 无明确讨论记录 / 待用户确认
+  - 无明确讨论记录
 - 影响范围：
   - `package.json`
   - `package-lock.json`
@@ -493,6 +491,49 @@
   - docs/v0.1/dev-plan.md
   - docs/v0.1/task-cards.md
   - docs/v0.1/progress.md
+
+---
+
+## DEC-013：Codex 默认采用“审查 + 低风险小修”模式
+
+- 日期：2026-06-11
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - Task 0 审查中，Codex 发现 progress.md / decision-log.md 文档同步问题。
+  - 如果每个低风险问题都由用户转给 CC，再由 CC 修改，会造成无效传话和多轮返工。
+  - 用户明确希望 Codex 遇到低风险文档同步问题时可以直接修复。
+- 决策：
+  - Codex 默认采用“审查 + 低风险小修”模式。
+  - typo、路径引用、progress.md、decision-log.md、commit message、文档同步问题可以直接修复。
+  - 产品边界、数据模型、状态枚举、新依赖、大重构、删除文件、置信度低于 80% 时必须暂停并询问用户。
+- 理由：
+  1. 减少用户在 CC 与 Codex 之间传话
+  2. 提高审查闭环效率
+  3. 保留关键决策的人类拍板权
+  4. 让 Codex 成为“会拿螺丝刀的验房师”，而不是只报告问题
+- 被否决方案：
+  1. Codex 永远只读审查，不允许修复
+  2. Codex 发现任何问题都转回 CC
+  3. Codex 可以无限制修改所有问题
+- 影响范围：
+  - AGENTS.md
+  - docs/v0.1/roles-and-workflow.md
+  - 后续所有 Codex 审查流程
+- 后续复审条件：
+  - 如果 Codex 小修越界，或误改产品边界，可收紧该模式
+- 相关文档：
+  - AGENTS.md
+  - docs/v0.1/roles-and-workflow.md
+  - docs/v0.1/progress.md
+
+---
+
+# 5. 待定决策
+
+暂无。
 
 ---
 
