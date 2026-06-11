@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> Task 0：初始化仓库 + 导入 Step 0
+> Task 0：初始化仓库 + 导入 Step 0（已完成，待提交）
 
 当前是否允许进入下一步：
 
-> 否。必须等 Task 0 完成、通过自测、通过审查、用户确认后，才能进入 Task 1。
+> Task 0 提交后允许进入 Task 1；提交完成前不得开始 Task 1。
 
 ---
 
@@ -70,7 +70,7 @@ v0.1 不做：
 
 | Step | 任务 | 状态 | 执行者 | 审查者 | 用户确认 | 备注 |
 |---|---|---|---|---|---|---|
-| Step 0 | 数据与本地存储底座 | 进行中 | CC | Codex | 未确认 | Claude.ai 已产出候选实现，需导入正式仓库验证 |
+| Step 0 | 数据与本地存储底座 | 已完成 | CC | Codex | 已确认 | 用户已确认 DEC-012 与 Task 0；Task 0 提交后允许进入 Task 1 |
 | Step 1 | 简历 / 偏好配置页 | 未开始 | 待定 | 待定 | 未确认 | Task 0 通过后才能开始 |
 | Step 2 | 岗位台账列表空壳 | 未开始 | 待定 | 待定 | 未确认 | 不做筛选、不做统计 |
 | Step 3 | 岗位主战场基础信息 + 保存 | 未开始 | 待定 | 待定 | 未确认 | 只做岗位基础信息保存 |
@@ -216,3 +216,42 @@ v0.1 不做：
 - 用户确认：已确认需要该文档
 - 内容：新增开发进度记录文档，作为后续 AI 协作的进度事实来源
 - 下一步：由 CC 执行 Task 0，完成后更新本文档
+
+---
+
+### 2026-06-11 · Step 0 · 初始化仓库 + 导入 Step 0
+
+- 状态：已完成（CC 已完成执行，Codex 已审查通过，用户已确认）
+- 执行者：CC
+- 审查者：Codex（已审查通过）
+- 用户确认：已确认 DEC-012 与 Task 0
+- 改动文件：
+  - 新增 package.json、package-lock.json、tsconfig.json、vite.config.ts、index.html、.gitignore
+  - 新增 src/main.ts、src/App.vue、src/vite-env.d.ts（Task 0 占位骨架，不含任何 v0.1 业务页面）
+  - 导入 src/storage/：types.ts、driver.ts、keys.ts、id.ts、configStore.ts、jobStore.ts、index.ts
+  - 导入 scripts/storage.selftest.ts（由 Claude.ai 候选 selftest.ts 改放，仅调整相对导入路径）
+- 自测命令：
+  - npm run typecheck
+  - npm run selftest
+  - npm run build（附加验证 Vue 3 + Vite + TypeScript 骨架可构建）
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - selftest：30 passed, 0 failed
+  - build：成功，10 modules transformed
+- 类型检查：通过（strict 模式，0 error）
+- 候选代码合规审查：
+  - 全局配置一份（JobSeekerProfile，覆盖式保存）✓
+  - 岗位分条存（JobRecord，一条一个 storage key）✓
+  - AI 原文独立字段 aiRawResult ✓；report 默认 null ✓；parseStatus 默认 none ✓
+  - ContactStatus 6 态与 DEC-003 一致 ✓
+  - 未引入 PromptRecord / AIAnalysisResult / JobStatusLog 独立实体（符合 DEC-004）✓
+  - 读坏数据行为明确：profile/getJob 抛清晰错误，listJobs 跳过坏行并 warn ✓
+- 对候选代码的调整：仅将 selftest 的导入路径由 `./src/storage` 改为 `../src/storage`（因从仓库根移动到 scripts/），无任何逻辑改动
+- 遗留风险：
+  1. localStorage 容量上限（约 5MB），岗位数量极大时可能受限，v0.1 不处理
+  2. BrowserStorageDriver 未捕获 setItem 配额溢出异常，后续承接长文本时需关注
+  3. 坏数据在 getProfile / getJob 路径采用抛错策略，页面层接入时需做兜底
+- 是否涉及 decision-log 更新：是。已根据 Codex 审查意见补充 docs/v0.1/decision-log.md DEC-012，记录 Task 0 工具链与依赖选择；用户已确认 DEC-012 与 Task 0。候选 storage 代码本身与既有决策（DEC-003 / DEC-004 / DEC-005）一致，未改产品边界、数据核心字段或状态枚举
+- 决策日志：DEC-012 已记录 Vue 3 + Vite + TypeScript、vue-tsc、tsx、@vitejs/plugin-vue、@types/node 等工具链与依赖选择；用户已确认该决策
+- 是否允许进入下一步：Task 0 提交后允许进入 Task 1；提交完成前不得开始 Task 1
+- 建议 commit message：chore: 初始化 OfferPilot v0.1 项目骨架并导入 Step 0 storage 与 selftest

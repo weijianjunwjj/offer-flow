@@ -448,19 +448,67 @@
 
 ---
 
-# 5. 待复审决策
+# 5. 待定决策
+
+## DEC-012：Task 0 采用 Vue 3 + Vite + TypeScript 工具链并引入自测依赖
+
+- 日期：2026-06-11
+- 状态：待定
+- 提出者：CC
+- 参与讨论：CC、Codex
+- 拍板者：待用户确认
+- 背景：
+  - Task 0 需要初始化 OfferPilot v0.1 的前端工程骨架。
+  - v0.1 已确认技术方向为 Vue 3 + Vite + TypeScript。
+  - Step 0 storage 需要在本地运行 typecheck 和 selftest。
+  - Codex 审查指出：首次引入 Vue、Vite、TypeScript、tsx、vue-tsc 等依赖，按 AGENTS.md / CLAUDE.md 规则，属于需要记录的依赖引入决策。
+- 决策：
+  - Task 0 采用 Vue 3 + Vite + TypeScript 作为前端工程基础。
+  - 引入 `vue` 作为运行时依赖。
+  - 引入 `vite`、`typescript`、`vue-tsc`、`@vitejs/plugin-vue` 作为开发与类型检查依赖。
+  - 引入 `tsx`、`@types/node` 用于运行并类型校验 `scripts/storage.selftest.ts`。
+  - 暂不引入路由、状态管理库、UI 组件库、测试框架、后端依赖、AI API SDK。
+- 理由：
+  1. Vue 3 + Vite + TypeScript 与既定技术方向一致
+  2. `vue-tsc` 可以校验 Vue + TypeScript 类型
+  3. `tsx` 能以较低成本运行 TypeScript selftest
+  4. 当前只需验证 storage 层，不需要完整测试框架
+  5. 避免 Task 0 过度引入依赖
+- 被否决方案：
+  - 无明确讨论记录 / 待用户确认
+- 影响范围：
+  - `package.json`
+  - `package-lock.json`
+  - `tsconfig.json`
+  - `vite.config.ts`
+  - `scripts/storage.selftest.ts`
+  - 后续 Task 1 可以基于 Vue 3 + Vite + TypeScript 开发页面
+- 后续复审条件：
+  - 进入组件化页面开发后，可复审是否引入 UI 组件库
+  - 进入复杂页面状态管理后，可复审是否引入 Pinia
+  - 进入正式测试体系后，可复审是否引入 Vitest
+- 相关文档：
+  - README.md
+  - docs/v0.1/product.md
+  - docs/v0.1/dev-plan.md
+  - docs/v0.1/task-cards.md
+  - docs/v0.1/progress.md
+
+---
+
+# 6. 待复审决策
 
 暂无。
 
 ---
 
-# 6. 已废弃决策
+# 7. 已废弃决策
 
 暂无。
 
 ---
 
-# 7. 决策更新规则
+# 8. 决策更新规则
 
 任何以下情况都必须更新本文档：
 
@@ -491,7 +539,7 @@
 
 ---
 
-# 8. 决策原则
+# 9. 决策原则
 
 优先选择：
 
