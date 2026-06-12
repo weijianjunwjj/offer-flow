@@ -26,3 +26,6 @@ pnpm-debug.log*
 
 # Task 0 临时候选代码解压目录（不入库）
 .step0-candidate/
+
+# Claude Code 本机权限配置（不入库）
+.claude/settings.local.json

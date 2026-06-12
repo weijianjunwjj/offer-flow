@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> Task 0 已提交完成；当前仅更新项目治理文档，尚未执行 Task 1。
+> Task 1：简历 / 偏好配置页。CC 已完成实现，Codex 已审查通过，用户已确认。
 
 当前是否允许进入下一步：
 
-> Task 1 尚未开始，必须由用户另行明确启动。
+> 否。Task 1 提交完成后，才能进入 Task 2。
 
 ---
 
@@ -71,7 +71,7 @@ v0.1 不做：
 | Step | 任务 | 状态 | 执行者 | 审查者 | 用户确认 | 备注 |
 |---|---|---|---|---|---|---|
 | Step 0 | 数据与本地存储底座 | 已完成 | CC | Codex | 已确认 | 已于 commit 47ed246 提交；DEC-012 已由用户确认并归档为已拍板 |
-| Step 1 | 简历 / 偏好配置页 | 未开始 | 待定 | 待定 | 未确认 | Task 0 通过后才能开始 |
+| Step 1 | 简历 / 偏好配置页 | 已完成 | CC | Codex | 已确认 | Codex 已审查通过，用户已确认；待提交 |
 | Step 2 | 岗位台账列表空壳 | 未开始 | 待定 | 待定 | 未确认 | 不做筛选、不做统计 |
 | Step 3 | 岗位主战场基础信息 + 保存 | 未开始 | 待定 | 待定 | 未确认 | 只做岗位基础信息保存 |
 | Step 4 | Prompt 生成 + 复制 | 未开始 | 待定 | 待定 | 未确认 | 不接 API，只生成 Prompt |
@@ -280,3 +280,50 @@ v0.1 不做：
 - typecheck / selftest：仅修改治理文档，无需重跑
 - 是否进入 Task 1：否
 - 建议 commit message：docs: 补充 Codex 审查与低风险小修规则
+
+---
+
+### 2026-06-12 · Step 1 · 简历 / 偏好配置页
+
+- 状态：已完成（CC 已完成实现，Codex 已审查通过，用户已确认）
+- 执行者：CC
+- 审查者：Codex（已审查通过）
+- 用户确认：已确认
+- 改动文件：
+  - 新增 src/pages/ProfileConfigPage.vue（简历 / 偏好配置页，9 字段表单 + 保存 + 反馈 + 刷新回显）
+  - 新增 src/app/stores.ts（浏览器端 stores 单例，延迟创建，复用 Step 0 ConfigStore）
+  - 修改 src/App.vue（由占位骨架改为承载配置页）
+  - 新增 .claude/launch.json（本地预览 dev server 配置，仅自测用）
+  - 修改 .gitignore（忽略 .claude/settings.local.json 本机权限配置）
+  - 修改 src/main.ts（修正 Task 0 过时注释，不改业务逻辑）
+- 实现内容：
+  - 复用 Step 0 的 JobSeekerProfile 与 ConfigStore，未新增数据实体、未改字段、未改状态枚举
+  - 9 个字段全部可输入：简历正文、项目经历、目标城市、目标岗位方向、期望薪资、当前求职重点（求稳/涨薪/履历/技术成长）、是否接受外包、是否接受加班、个人短板说明
+  - 保存采用覆盖式（全局配置只存一份）；保存后展示「已保存 ✓ + 时间」反馈
+  - onMounted 读取已存配置并回显；用默认值兜底缺失字段
+  - 读到坏数据时展示错误横幅且不崩溃（getProfile 抛错被捕获）
+- 自测命令：
+  - npm run typecheck
+  - npm run build
+  - npm run selftest（回归，确认未影响 Step 0）
+  - 浏览器自测（Vite dev + 真实交互）：填入全部 9 字段 → 保存 → 刷新 → 校验回显
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - build：成功，22 modules transformed
+  - selftest：30 passed, 0 failed（无回归）
+  - 浏览器自测：保存后 localStorage 仅 1 个 key `offerpilot:profile`，9 字段与类型（含 boolean、growth 枚举）全部正确；刷新后 9 字段完整回显，保存反馈正确不持久化；坏数据时显示错误横幅、表单仍正常渲染
+  - Codex 复核：typecheck、build、selftest 均通过；浏览器安全策略阻止独立访问本地地址，未重复执行交互自测
+- 验收对照（task-cards Task 1）：
+  - 所有字段可输入 ✓
+  - 点击保存后数据持久化 ✓
+  - 刷新页面后字段完整回显 ✓
+  - 不丢字段 ✓
+- 范围合规：未做岗位主战场、未做 Prompt、未做 AI 结果、未做报告，符合 Task 1 禁止项
+- 是否涉及 decision-log 更新：否。未改产品边界、数据核心字段、状态枚举，未引入新依赖（仅使用 DEC-012 已批准的 Vue/Vite/TS 栈）
+- 遗留风险：
+  1. 当前仅单页直接挂载，未引入路由；进入 Task 2 多页面时需补路由方案
+  2. 保存未捕获 localStorage 配额溢出异常（与 Step 0 同源风险），长文本极端情况下需关注
+  3. .claude/launch.json 为本地自测预览配置，不影响 Task 1 业务验收
+- 用户确认记录：2026-06-12，用户确认 Task 1 通过，无重大问题
+- 是否允许进入下一步：否。需完成 Task 1 提交后，方可进入 Task 2
+- 建议 commit message：feat: 实现简历 / 偏好配置页并接入 Step 0 storage
