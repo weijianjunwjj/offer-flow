@@ -2,8 +2,11 @@
 // Task 3：岗位主战场基础信息 + 保存。
 // 仅负责岗位基础信息（公司 / 岗位 / 城市 / 薪资 / JD）的录入与保存，打通创建/更新闭环。
 // 不做 Prompt、不做 AI 结果、不做报告、不做话术（留待后续 Task）。
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import type { JobSeekerProfile } from '../storage';
 import { useStores } from '../app/stores';
+import { buildAnalysisPrompt } from '../app/prompt';
+import { copyText } from '../app/clipboard';
 
 const props = defineProps<{
   jobId: string | null;
@@ -39,7 +42,28 @@ const canSave = computed(() =>
   ),
 );
 
+const profile = ref<JobSeekerProfile | null>(null);
+const generatedPrompt = computed(() => buildAnalysisPrompt(profile.value, form));
+const copyState = ref<'idle' | 'done' | 'fail'>('idle');
+
+// Prompt 内容变化（编辑表单等）后，复制反馈失效，重置为初始态。
+watch(generatedPrompt, () => {
+  copyState.value = 'idle';
+});
+
+async function copyPrompt(): Promise<void> {
+  const ok = await copyText(generatedPrompt.value);
+  copyState.value = ok ? 'done' : 'fail';
+}
+
 onMounted(() => {
+  try {
+    profile.value = useStores().config.getProfile();
+  } catch {
+    // 配置读取失败不阻断主战场；Prompt 中对应字段以「（未填写）」兜底。
+    profile.value = null;
+  }
+
   if (props.jobId === null) {
     return;
   }
@@ -141,6 +165,35 @@ function handleSave(): void {
         <span v-if="!canSave" class="save-hint">至少填写一个字段后才能保存</span>
       </div>
     </form>
+
+    <section class="prompt-block">
+      <div class="prompt-head">
+        <h2>分析 Prompt</h2>
+        <button type="button" class="copy-btn" @click="copyPrompt">
+          一键复制
+        </button>
+        <span v-if="copyState === 'done'" class="copy-feedback ok" role="status">
+          已复制 ✓
+        </span>
+        <span
+          v-else-if="copyState === 'fail'"
+          class="copy-feedback fail"
+          role="alert"
+        >
+          复制失败，请手动选择文本复制
+        </span>
+      </div>
+      <p class="prompt-hint">
+        本工具不接入任何 AI API。请复制下方 Prompt，粘贴到 ChatGPT / Claude /
+        Gemini 等外部 AI，再把返回结果贴回工具（AI 结果承接在后续 Task 实现）。
+      </p>
+      <textarea
+        class="prompt-text"
+        :value="generatedPrompt"
+        readonly
+        rows="16"
+      ></textarea>
+    </section>
   </main>
 </template>
 
@@ -254,6 +307,60 @@ textarea {
 .save-hint {
   color: #647084;
   font-size: 12px;
+}
+.prompt-block {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid #eceff3;
+}
+.prompt-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.prompt-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.copy-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.copy-btn:hover {
+  background: #15803d;
+}
+.copy-feedback {
+  font-size: 13px;
+}
+.copy-feedback.ok {
+  color: #1a7f37;
+}
+.copy-feedback.fail {
+  color: #a4262c;
+}
+.prompt-hint {
+  margin: 0 0 10px;
+  color: #647084;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.prompt-text {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: #f7f9fc;
+  color: #1f2933;
+  resize: vertical;
 }
 @media (max-width: 560px) {
   .grid {
