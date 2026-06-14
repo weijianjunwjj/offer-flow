@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> Task 4：Prompt 生成 + 复制。CC 已完成实现并本地验证，待 Codex 审查与用户确认。
+> Task 4：Prompt 生成 + 复制。CC 已完成实现，Codex 已审查通过，用户已确认。
 
 当前是否允许进入下一步：
 
-> 否。需 Task 4 通过 Codex 审查并经用户确认后，才能进入 Task 5。
+> 否。需提交并合并 Task 4 审查小修后，Task 5 仍需用户另行明确启动。
 
 ---
 
@@ -73,8 +73,8 @@ v0.1 不做：
 | Step 0 | 数据与本地存储底座 | 已完成 | CC | Codex | 已确认 | 已于 commit 47ed246 提交；DEC-012 已由用户确认并归档为已拍板 |
 | Step 1 | 简历 / 偏好配置页 | 已完成 | CC | Codex | 已确认 | 已于 commit 55bb18d 提交 |
 | Step 2 | 岗位台账列表空壳 | 已完成 | CC | Codex | 已确认 | 已于 commit 90d3f48 提交 |
-| Step 3 | 岗位主战场基础信息 + 保存 | 待用户确认 | CC | Codex | 未确认 | Codex 已审查通过；5 字段录入、新建、编辑、刷新持久化符合 Task 3 验收 |
-| Step 4 | Prompt 生成 + 复制 | 待审查 | CC | Codex | 未确认 | 由全局配置+岗位生成结构化 Prompt，一键复制；typecheck/build/浏览器自测通过（剪贴板写入受预览沙箱权限限制，需真实浏览器确认） |
+| Step 3 | 岗位主战场基础信息 + 保存 | 已完成 | CC | Codex | 已确认 | 已于 commit c5e8b1c 提交；用户已确认 |
+| Step 4 | Prompt 生成 + 复制 | 已完成 | CC | Codex | 已确认 | Codex 已审查通过，用户已确认；审查小修待提交与合并 |
 | Step 5 | AI 结果兜底承接 | 未开始 | 待定 | 待定 | 未确认 | 原文必存，结构化尽力 |
 | Step 6 | 报告展示 + Boss 话术编辑 | 未开始 | 待定 | 待定 | 未确认 | 话术可编辑、可复制 |
 | Step 7 | 沟通状态流转 | 未开始 | 待定 | 待定 | 未确认 | 手动状态，不做日志系统 |
@@ -379,10 +379,10 @@ v0.1 不做：
 
 ### 2026-06-12 · Step 3 · 岗位主战场基础信息 + 保存
 
-- 状态：待用户确认（CC 已完成实现，Codex 已审查通过）
+- 状态：已完成（CC 已完成实现，Codex 已审查通过，用户已确认）
 - 执行者：CC
 - 审查者：Codex（已审查通过）
-- 用户确认：未确认
+- 用户确认：已确认
 - 改动文件：
   - 修改 src/pages/BattlefieldPage.vue（由占位空壳改为 5 字段表单 + 保存，打通创建/更新闭环）
   - 修改 src/App.vue（为 BattlefieldPage 增加 @saved 事件，保存后返回台账列表）
@@ -418,17 +418,18 @@ v0.1 不做：
 - 遗留风险：
   1. 编辑模式下若多个标签页并发编辑同一岗位，后保存者覆盖前者（v0.1 单人本地场景可接受）
   2. localStorage 配额溢出时无法完成保存，但页面会保留表单并展示错误提示
-- 是否允许进入下一步：否。需用户确认后，方可进入 Task 4
+- 用户确认记录：2026-06-14，用户确认 Task 3 通过
+- 是否允许进入下一步：Task 3 已提交并确认；Task 4 已执行
 - 建议 commit message：feat: 实现岗位主战场基础信息录入与保存闭环
 
 ---
 
 ### 2026-06-12 · Step 4 · Prompt 生成 + 复制
 
-- 状态：待审查（CC 已完成实现并本地验证，待 Codex 审查与用户确认）
+- 状态：已完成（CC 已完成实现，Codex 已审查通过，用户已确认）
 - 执行者：CC
-- 审查者：Codex（待审查）
-- 用户确认：未确认
+- 审查者：Codex（已审查通过）
+- 用户确认：已确认
 - 改动文件：
   - 新增 src/app/prompt.ts（纯函数 buildAnalysisPrompt：由全局配置 + 岗位信息拼接结构化 Prompt，无副作用、不接 API）
   - 新增 src/app/clipboard.ts（copyText：优先 Clipboard API，失败回退 execCommand）
@@ -450,15 +451,17 @@ v0.1 不做：
   - build：成功，构建产物正常
   - selftest：30 passed, 0 failed（无回归）
   - 浏览器自测：seed 全局配置 + 录入岗位后，生成的 Prompt 完整包含全部配置与岗位字段值、含 10 项分析结构、布尔映射正确（接受加班=是 / 接受外包=否）、无 {{ 或 }} 残留；一键复制按钮已接线、复制反馈路径正确
+  - Codex 复核（2026-06-14）：typecheck 0 error、selftest 30/30、build 成功；Prompt 包含全局配置与岗位信息、无模板残留、表单修改后实时更新；剪贴板内容与 Prompt 完全一致
 - 验收对照（task-cards Task 4）：
   - Prompt 包含全局配置和岗位信息 ✓
   - Prompt 无 `{{}}` 残留 ✓
-  - 一键复制成功 ⚠（代码路径正确：secure context + Clipboard API + execCommand 回退；但预览沙箱将 clipboard-write 权限置为 denied，自动化环境无法完成实际写入，需在真实浏览器以真实点击确认）
+  - 一键复制成功 ✓
   - 复制内容可直接粘贴到外部 AI ✓（复制源即只读文本框内容，已校验完整正确）
 - 范围合规：未接 API、未做 AI 自动分析、未做 BYOK，符合 Task 4 禁止项
 - 是否涉及 decision-log 更新：否。未改产品边界、数据核心字段、状态枚举，未引入新依赖
 - 遗留风险：
-  1. 一键复制的实际剪贴板写入未能在预览沙箱中验证（clipboard-write 权限 denied）；真实 localhost 浏览器为安全上下文，正常用户点击下应可写入，建议用户/Codex 在真实浏览器复核一次
-  2. Prompt 由当前表单值实时生成，未持久化到 JobRecord.promptText（v0.1 可按需重生成，符合 DEC-004）
-- 是否允许进入下一步：否。需 Codex 审查通过且用户确认后，方可进入 Task 5
+  1. Prompt 由当前表单值实时生成，未持久化到 JobRecord.promptText（v0.1 可按需重生成，符合 DEC-004）
+  2. Task 4 审查小修尚未提交并合并
+- 用户确认记录：2026-06-14，用户确认 Task 3 和 Task 4 通过
+- 是否允许进入下一步：否。需提交并合并 Task 4 审查小修；Task 5 仍需用户另行明确启动
 - 建议 commit message：feat: 实现岗位分析 Prompt 生成与一键复制

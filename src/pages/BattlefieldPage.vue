@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// Task 3：岗位主战场基础信息 + 保存。
-// 仅负责岗位基础信息（公司 / 岗位 / 城市 / 薪资 / JD）的录入与保存，打通创建/更新闭环。
-// 不做 Prompt、不做 AI 结果、不做报告、不做话术（留待后续 Task）。
+// Task 3 + Task 4：岗位基础信息保存，以及基于全局配置和岗位信息生成 Prompt。
+// 不接 AI API，不承接 AI 结果，不展示报告或话术（留待后续 Task）。
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { JobSeekerProfile } from '../storage';
 import { useStores } from '../app/stores';
