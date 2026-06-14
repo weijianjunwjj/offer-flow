@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// Task 3 + Task 4：岗位基础信息保存，以及基于全局配置和岗位信息生成 Prompt。
-// 不接 AI API，不承接 AI 结果，不展示报告或话术（留待后续 Task）。
+// Task 3 - Task 5：保存岗位、生成 Prompt，并承接外部 AI 返回的完整原文。
+// 不接 AI API，不做复杂解析，不展示报告或话术（留待后续 Task）。
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import type { JobSeekerProfile } from '../storage';
+import type { JobSeekerProfile, ParseStatus } from '../storage';
 import { useStores } from '../app/stores';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
@@ -44,15 +44,32 @@ const canSave = computed(() =>
 const profile = ref<JobSeekerProfile | null>(null);
 const generatedPrompt = computed(() => buildAnalysisPrompt(profile.value, form));
 const copyState = ref<'idle' | 'done' | 'fail'>('idle');
+const aiRawResult = ref('');
+const aiPastedAt = ref<number | null>(null);
+const parseStatus = ref<ParseStatus>('none');
+const aiSaveState = ref<'idle' | 'done' | 'fail'>('idle');
+const aiSaveError = ref('');
+const canSaveAiResult = computed(
+  () => props.jobId !== null && aiRawResult.value.trim() !== '',
+);
 
 // Prompt 内容变化（编辑表单等）后，复制反馈失效，重置为初始态。
 watch(generatedPrompt, () => {
   copyState.value = 'idle';
 });
 
+watch(aiRawResult, () => {
+  aiSaveState.value = 'idle';
+  aiSaveError.value = '';
+});
+
 async function copyPrompt(): Promise<void> {
   const ok = await copyText(generatedPrompt.value);
   copyState.value = ok ? 'done' : 'fail';
+}
+
+function formatTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
 }
 
 onMounted(() => {
@@ -77,6 +94,9 @@ onMounted(() => {
     form.city = job.city;
     form.salaryRange = job.salaryRange;
     form.jdText = job.jdText;
+    aiRawResult.value = job.aiRawResult;
+    aiPastedAt.value = job.aiPastedAt;
+    parseStatus.value = job.parseStatus;
   } catch (error) {
     loadError.value = (error as Error).message;
   }
@@ -104,6 +124,29 @@ function handleSave(): void {
     emit('saved');
   } catch (error) {
     loadError.value = `保存岗位失败：${(error as Error).message}`;
+  }
+}
+
+function saveAiResult(): void {
+  if (props.jobId === null || !canSaveAiResult.value) {
+    return;
+  }
+
+  aiSaveState.value = 'idle';
+  aiSaveError.value = '';
+  try {
+    const pastedAt = Date.now();
+    useStores().jobs.updateJob(props.jobId, {
+      aiRawResult: aiRawResult.value,
+      aiPastedAt: pastedAt,
+      parseStatus: 'unparsed',
+    });
+    aiPastedAt.value = pastedAt;
+    parseStatus.value = 'unparsed';
+    aiSaveState.value = 'done';
+  } catch (error) {
+    aiSaveState.value = 'fail';
+    aiSaveError.value = `保存 AI 原文失败：${(error as Error).message}`;
   }
 }
 </script>
@@ -184,7 +227,7 @@ function handleSave(): void {
       </div>
       <p class="prompt-hint">
         本工具不接入任何 AI API。请复制下方 Prompt，粘贴到 ChatGPT / Claude /
-        Gemini 等外部 AI，再把返回结果贴回工具（AI 结果承接在后续 Task 实现）。
+        Gemini 等外部 AI，再把返回结果完整贴回下方文本框。
       </p>
       <textarea
         class="prompt-text"
@@ -192,6 +235,57 @@ function handleSave(): void {
         readonly
         rows="16"
       ></textarea>
+    </section>
+
+    <section class="ai-result-block">
+      <h2>外部 AI 结果原文</h2>
+      <p class="ai-result-hint">
+        粘贴 ChatGPT、Claude、Gemini
+        等外部 AI 返回的完整内容。本步骤只保存原文并标记为未解析，不会因格式不同而阻断保存。
+      </p>
+      <textarea
+        v-model="aiRawResult"
+        class="ai-result-text"
+        rows="16"
+        :disabled="jobId === null"
+        placeholder="在这里粘贴外部 AI 返回的完整原文"
+      ></textarea>
+      <div class="ai-result-actions">
+        <button
+          type="button"
+          class="save-btn"
+          :disabled="!canSaveAiResult"
+          @click="saveAiResult"
+        >
+          保存 AI 原文
+        </button>
+        <span v-if="jobId === null" class="save-hint">
+          请先保存岗位，再录入 AI 结果
+        </span>
+        <span
+          v-else-if="aiSaveState === 'done' && aiPastedAt !== null"
+          class="save-feedback ok"
+          role="status"
+        >
+          已保存 ✓（{{ formatTime(aiPastedAt) }}）
+        </span>
+        <span
+          v-else-if="aiSaveState === 'fail'"
+          class="save-feedback fail"
+          role="alert"
+        >
+          {{ aiSaveError }}
+        </span>
+        <span
+          v-else-if="aiPastedAt !== null"
+          class="save-feedback saved-at"
+        >
+          上次保存：{{ formatTime(aiPastedAt) }}
+        </span>
+      </div>
+      <p v-if="parseStatus !== 'none'" class="parse-status">
+        解析状态：{{ parseStatus === 'parsed' ? '已解析' : '未解析（原文已保存）' }}
+      </p>
     </section>
   </main>
 </template>
@@ -307,7 +401,8 @@ textarea {
   color: #647084;
   font-size: 12px;
 }
-.prompt-block {
+.prompt-block,
+.ai-result-block {
   margin-top: 32px;
   padding-top: 24px;
   border-top: 1px solid #eceff3;
@@ -361,9 +456,51 @@ textarea {
   color: #1f2933;
   resize: vertical;
 }
+.ai-result-block h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.ai-result-hint {
+  margin: 0 0 10px;
+  color: #647084;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ai-result-text:disabled {
+  background: #f3f4f6;
+  color: #8a94a6;
+  cursor: not-allowed;
+}
+.ai-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+.save-feedback,
+.parse-status {
+  font-size: 13px;
+}
+.save-feedback.ok {
+  color: #1a7f37;
+}
+.save-feedback.fail {
+  color: #a4262c;
+}
+.save-feedback.saved-at,
+.parse-status {
+  color: #647084;
+}
+.parse-status {
+  margin: 10px 0 0;
+}
 @media (max-width: 560px) {
   .grid {
     grid-template-columns: 1fr;
+  }
+  .ai-result-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

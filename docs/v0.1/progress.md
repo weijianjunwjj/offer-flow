@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> Task 4：Prompt 生成 + 复制。CC 已完成实现，Codex 已审查通过，用户已确认。
+> Task 5：AI 结果兜底承接。CC 已审查工作区候选实现，Codex 已复核通过，待用户确认。
 
 当前是否允许进入下一步：
 
-> 否。需提交并合并 Task 4 审查小修后，Task 5 仍需用户另行明确启动。
+> 否。Task 5 待用户确认；确认并提交前不得进入 Task 6。
 
 ---
 
@@ -74,8 +74,8 @@ v0.1 不做：
 | Step 1 | 简历 / 偏好配置页 | 已完成 | CC | Codex | 已确认 | 已于 commit 55bb18d 提交 |
 | Step 2 | 岗位台账列表空壳 | 已完成 | CC | Codex | 已确认 | 已于 commit 90d3f48 提交 |
 | Step 3 | 岗位主战场基础信息 + 保存 | 已完成 | CC | Codex | 已确认 | 已于 commit c5e8b1c 提交；用户已确认 |
-| Step 4 | Prompt 生成 + 复制 | 已完成 | CC | Codex | 已确认 | Codex 已审查通过，用户已确认；审查小修待提交与合并 |
-| Step 5 | AI 结果兜底承接 | 未开始 | 待定 | 待定 | 未确认 | 原文必存，结构化尽力 |
+| Step 4 | Prompt 生成 + 复制 | 已完成 | CC | Codex | 已确认 | 已于 commit 2034966 合并到 main 并推送 |
+| Step 5 | AI 结果兜底承接 | 待用户确认 | CC / Codex | Codex | 未确认 | 原文必存 + 粘贴时间 + parseStatus=unparsed + 保存反馈；typecheck、selftest、build 和浏览器验收通过 |
 | Step 6 | 报告展示 + Boss 话术编辑 | 未开始 | 待定 | 待定 | 未确认 | 话术可编辑、可复制 |
 | Step 7 | 沟通状态流转 | 未开始 | 待定 | 待定 | 未确认 | 手动状态，不做日志系统 |
 | Step 8 | 回看闭环 + 文案收口 | 未开始 | 待定 | 待定 | 未确认 | 避免“自动 AI”误解 |
@@ -461,7 +461,52 @@ v0.1 不做：
 - 是否涉及 decision-log 更新：否。未改产品边界、数据核心字段、状态枚举，未引入新依赖
 - 遗留风险：
   1. Prompt 由当前表单值实时生成，未持久化到 JobRecord.promptText（v0.1 可按需重生成，符合 DEC-004）
-  2. Task 4 审查小修尚未提交并合并
+  2. 远程临时分支 `origin/feat/task-4-prompt-generation` 尚未删除，不影响 main 功能
 - 用户确认记录：2026-06-14，用户确认 Task 3 和 Task 4 通过
-- 是否允许进入下一步：否。需提交并合并 Task 4 审查小修；Task 5 仍需用户另行明确启动
+- 是否允许进入下一步：否。Task 4 已提交并合并；Task 5 仍需用户另行明确启动
 - 建议 commit message：feat: 实现岗位分析 Prompt 生成与一键复制
+
+---
+
+### 2026-06-14 · Step 5 · AI 结果兜底承接
+
+- 状态：待用户确认（CC 已审查候选实现，Codex 已复核通过）
+- 执行者：CC / Codex（审查、低风险小修与验证工作区候选实现）
+- 审查者：Codex（已审查通过）
+- 用户确认：未确认
+- 来源说明：进入 Task 5 时，src/pages/BattlefieldPage.vue 工作区（未提交）已包含一份 AI 结果承接候选实现（HEAD 不含）。按 Step 0 候选代码同样的纪律，CC 未盲用、未重写，而是审查 + 本地验证后采纳。
+- 改动文件：
+  - 修改 src/pages/BattlefieldPage.vue（新增「外部 AI 结果原文」承接区：粘贴框、原文保存、粘贴时间、parseStatus 标记、保存反馈）
+- 实现内容（已逐条核对）：
+  - 复用 Step 0 JobRecord 字段 aiRawResult / aiPastedAt / parseStatus，未新增实体、未改字段、未改状态枚举（符合 DEC-004）
+  - 粘贴框：textarea 绑定 aiRawResult；仅编辑模式可录入，新建模式禁用并提示「请先保存岗位，再录入 AI 结果」
+  - 保存：updateJob 写入 aiRawResult，aiPastedAt=Date.now()，parseStatus='unparsed'（原文已存、未结构化）
+  - 保存反馈：「已保存 ✓（时间）」；再次进入显示「上次保存：时间」；解析状态显示「未解析（原文已保存）」
+  - AI 区位于岗位基础信息 <form> 之外，保存按钮 type=button，不会触发岗位表单提交
+  - 守卫 canSaveAiResult：jobId 非空且原文非空才可保存
+- 合规审查（task-cards Task 5 禁止项）：
+  - 不做复杂结构化解析 ✓（仅标记 unparsed，不拆字段）
+  - 不因解析失败阻断 ✓（无解析步骤，任意文本直接保存）
+  - 不丢原文 ✓（完整保存 aiRawResult）
+  - 未做报告展示 / Boss 话术（属 Task 6）✓
+- 自测命令：
+  - npm run typecheck
+  - npm run build
+  - npm run selftest（回归，确认未影响 Step 0）
+  - 浏览器自测（Vite dev + 真实交互）
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - build：成功，31 modules transformed
+  - selftest：30 passed, 0 failed（无回归）
+  - Codex 浏览器复核：Markdown、JSON 代码块和中文混合原文保存成功；刷新并重新进入岗位后 94 个字符逐字一致；保存反馈、粘贴时间与“未解析（原文已保存）”状态正确
+- 验收对照（task-cards Task 5）：
+  - 任意格式文本都能保存 ✓
+  - 刷新后原文仍在 ✓
+  - 解析失败不报错 ✓
+  - 有已保存反馈 ✓
+- 是否涉及 decision-log 更新：否。未改产品边界、数据核心字段、状态枚举，未引入新依赖
+- 遗留风险：
+  1. canSaveAiResult 要求原文非空，故无法保存「空原文」以清除已承接结果；v0.1 场景可接受
+  2. localStorage 配额耗尽时保存会失败；页面会保留输入并显示错误，v0.1 不扩展存储策略
+- 是否允许进入下一步：否。Task 5 待用户确认并提交，禁止进入 Task 6
+- 建议 commit message：feat: 实现外部 AI 结果原文兜底承接
