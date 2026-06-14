@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> Task 5：AI 结果兜底承接。CC 已审查工作区候选实现，Codex 已复核通过，待用户确认。
+> Task 6：报告展示 + Boss 话术编辑。CC 已完成实现，Codex 已审查通过，用户已确认。
 
 当前是否允许进入下一步：
 
-> 否。Task 5 待用户确认；确认并提交前不得进入 Task 6。
+> 否。Task 6 提交后允许进入 Task 7；提交前不得启动下一张任务卡。
 
 ---
 
@@ -75,8 +75,8 @@ v0.1 不做：
 | Step 2 | 岗位台账列表空壳 | 已完成 | CC | Codex | 已确认 | 已于 commit 90d3f48 提交 |
 | Step 3 | 岗位主战场基础信息 + 保存 | 已完成 | CC | Codex | 已确认 | 已于 commit c5e8b1c 提交；用户已确认 |
 | Step 4 | Prompt 生成 + 复制 | 已完成 | CC | Codex | 已确认 | 已于 commit 2034966 合并到 main 并推送 |
-| Step 5 | AI 结果兜底承接 | 待用户确认 | CC / Codex | Codex | 未确认 | 原文必存 + 粘贴时间 + parseStatus=unparsed + 保存反馈；typecheck、selftest、build 和浏览器验收通过 |
-| Step 6 | 报告展示 + Boss 话术编辑 | 未开始 | 待定 | 待定 | 未确认 | 话术可编辑、可复制 |
+| Step 5 | AI 结果兜底承接 | 已完成 | CC / Codex | Codex | 已确认 | 已于 commit 0da6ee0 提交；原文保存、刷新回显、时间、解析状态和反馈均已验证 |
+| Step 6 | 报告展示 + Boss 话术编辑 | 已完成 | CC | Codex | 已确认 | 报告原文展示与复制、话术编辑/保存/复制均已验证；待提交 |
 | Step 7 | 沟通状态流转 | 未开始 | 待定 | 待定 | 未确认 | 手动状态，不做日志系统 |
 | Step 8 | 回看闭环 + 文案收口 | 未开始 | 待定 | 待定 | 未确认 | 避免“自动 AI”误解 |
 
@@ -470,10 +470,10 @@ v0.1 不做：
 
 ### 2026-06-14 · Step 5 · AI 结果兜底承接
 
-- 状态：待用户确认（CC 已审查候选实现，Codex 已复核通过）
+- 状态：已完成（CC 已审查候选实现，Codex 已复核通过，用户已确认并提交）
 - 执行者：CC / Codex（审查、低风险小修与验证工作区候选实现）
 - 审查者：Codex（已审查通过）
-- 用户确认：未确认
+- 用户确认：已确认（2026-06-15）
 - 来源说明：进入 Task 5 时，src/pages/BattlefieldPage.vue 工作区（未提交）已包含一份 AI 结果承接候选实现（HEAD 不含）。按 Step 0 候选代码同样的纪律，CC 未盲用、未重写，而是审查 + 本地验证后采纳。
 - 改动文件：
   - 修改 src/pages/BattlefieldPage.vue（新增「外部 AI 结果原文」承接区：粘贴框、原文保存、粘贴时间、parseStatus 标记、保存反馈）
@@ -508,5 +508,54 @@ v0.1 不做：
 - 遗留风险：
   1. canSaveAiResult 要求原文非空，故无法保存「空原文」以清除已承接结果；v0.1 场景可接受
   2. localStorage 配额耗尽时保存会失败；页面会保留输入并显示错误，v0.1 不扩展存储策略
-- 是否允许进入下一步：否。Task 5 待用户确认并提交，禁止进入 Task 6
+- 用户确认记录：2026-06-15，用户确认 Task 5 通过
+- 提交记录：已于 commit 0da6ee0 提交
+- 是否允许进入下一步：Task 5 已确认并提交；Task 6 已执行
 - 建议 commit message：feat: 实现外部 AI 结果原文兜底承接
+
+---
+
+### 2026-06-14 · Step 6 · 报告展示 + Boss 话术编辑
+
+- 状态：已完成（CC 已完成实现，Codex 已审查通过，用户已确认）
+- 执行者：CC
+- 审查者：Codex（已审查通过）
+- 用户确认：已确认（2026-06-15）
+- 改动文件：
+  - 修改 src/pages/BattlefieldPage.vue（新增「分析报告」区：报告原文兜底展示 + 复制报告；「Boss 打招呼话术」区：可编辑 + 保存 + 复制）
+- 实现内容：
+  - 复用 Step 0 JobRecord.report（JobReport）与 aiRawResult，未新增实体、未改字段、未改状态枚举（符合 DEC-004）
+  - 报告展示：v0.1 不自动结构化解析，直接以只读文本框展示 AI 原文（aiRawResult）；无原文时显示空状态提示，区域不空白
+  - 复制报告：复制 AI 原文；无原文时按钮禁用
+  - Boss 话术编辑：textarea 绑定 greeting，初值取 report.greetingMessage；保存写入 report（缺失字段以 emptyReport 兜底，仅更新 greetingMessage，不动其他报告字段与 parseStatus）
+  - 复制话术：复制当前话术文本
+  - 报告 / 话术区仅编辑模式（已保存岗位）显示
+- 合规审查（task-cards Task 6 禁止项）：
+  - 不做完整评分系统 ✓（不渲染 / 不编辑 applyAdvice、techStackMatch 等结构化评分字段）
+  - 不做多版本话术 UI ✓（单一话术 textarea）
+  - 不做风险标签系统 ✓
+- 自测命令：
+  - npm run typecheck
+  - npm run build
+  - npm run selftest（回归，确认未影响 Step 0）
+  - 浏览器自测（Vite dev + 真实交互）
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - build：成功，31 modules transformed
+  - selftest：30 passed, 0 failed（无回归）
+  - 浏览器自测：有原文岗位 → 报告区只读展示原文、可读；编辑话术（含 emoji）保存 → report.greetingMessage 持久化、其余报告字段保持空、parseStatus 不变；刷新后话术回显；无原文岗位 → 报告区显示空状态提示（不空白）、复制报告按钮禁用
+- 验收对照（task-cards Task 6）：
+  - 报告区域不空白 ✓
+  - 原文可读 ✓
+  - 话术可编辑 ✓
+  - 话术可复制 ✓
+  - 报告可复制 ✓
+  - 编辑后话术可保存 ✓
+  - 话术保存后刷新仍在 ✓
+- 是否涉及 decision-log 更新：否。未改产品边界、数据核心字段、状态枚举，未引入新依赖
+- Codex 复核：2026-06-15，报告与话术剪贴板内容均已在浏览器验证；话术保存后刷新完整回显，AI 原文与 parseStatus 未受影响
+- 遗留风险：
+  1. v0.1 不自动结构化解析，报告其余字段（jobType / keywords / applyAdvice 等）暂不在 UI 编辑，仅保留话术编辑，符合「结构化尽力、话术可手改」
+- 用户确认记录：2026-06-15，用户确认 Task 6 通过
+- 是否允许进入下一步：Task 6 提交后允许进入 Task 7；提交前不得启动下一张任务卡
+- 建议 commit message：feat: 实现分析报告原文展示与 Boss 话术编辑复制
