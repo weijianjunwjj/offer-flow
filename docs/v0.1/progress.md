@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> Task 2：岗位台账列表空壳。CC 已完成实现，Codex 已审查通过，用户已确认。
+> Task 3：岗位主战场基础信息 + 保存。CC 已完成实现，Codex 已审查通过，待用户确认。
 
 当前是否允许进入下一步：
 
-> 否。Task 2 随本次提交完成；Task 3 仍需用户另行明确启动。
+> 否。需用户确认 Task 3 通过后，才能进入 Task 4。
 
 ---
 
@@ -72,8 +72,8 @@ v0.1 不做：
 |---|---|---|---|---|---|---|
 | Step 0 | 数据与本地存储底座 | 已完成 | CC | Codex | 已确认 | 已于 commit 47ed246 提交；DEC-012 已由用户确认并归档为已拍板 |
 | Step 1 | 简历 / 偏好配置页 | 已完成 | CC | Codex | 已确认 | 已于 commit 55bb18d 提交 |
-| Step 2 | 岗位台账列表空壳 | 已完成 | CC | Codex | 已确认 | Codex 已审查通过，用户已确认；随本次提交完成 |
-| Step 3 | 岗位主战场基础信息 + 保存 | 未开始 | 待定 | 待定 | 未确认 | 只做岗位基础信息保存 |
+| Step 2 | 岗位台账列表空壳 | 已完成 | CC | Codex | 已确认 | 已于 commit 90d3f48 提交 |
+| Step 3 | 岗位主战场基础信息 + 保存 | 待用户确认 | CC | Codex | 未确认 | Codex 已审查通过；5 字段录入、新建、编辑、刷新持久化符合 Task 3 验收 |
 | Step 4 | Prompt 生成 + 复制 | 未开始 | 待定 | 待定 | 未确认 | 不接 API，只生成 Prompt |
 | Step 5 | AI 结果兜底承接 | 未开始 | 待定 | 待定 | 未确认 | 原文必存，结构化尽力 |
 | Step 6 | 报告展示 + Boss 话术编辑 | 未开始 | 待定 | 待定 | 未确认 | 话术可编辑、可复制 |
@@ -374,3 +374,49 @@ v0.1 不做：
 - 用户确认记录：2026-06-12，用户确认 Task 2 通过
 - 是否允许进入下一步：否。Task 2 随本次提交完成；Task 3 仍需用户另行明确启动
 - 建议 commit message：feat: 实现岗位台账列表空壳与主战场导航壳
+
+---
+
+### 2026-06-12 · Step 3 · 岗位主战场基础信息 + 保存
+
+- 状态：待用户确认（CC 已完成实现，Codex 已审查通过）
+- 执行者：CC
+- 审查者：Codex（已审查通过）
+- 用户确认：未确认
+- 改动文件：
+  - 修改 src/pages/BattlefieldPage.vue（由占位空壳改为 5 字段表单 + 保存，打通创建/更新闭环）
+  - 修改 src/App.vue（为 BattlefieldPage 增加 @saved 事件，保存后返回台账列表）
+- 实现内容：
+  - 复用 Step 0 的 JobStore.createJob / getJob / updateJob，未新增数据实体、未改字段、未改状态枚举
+  - 5 个基础字段可录入：公司名、岗位名、城市、薪资范围、岗位 JD
+  - 新建模式（jobId 为 null）：保存调用 createJob 落库；编辑模式（带 jobId）：onMounted 用 getJob 回显，保存调用 updateJob 原地更新
+  - 保存后通过 @saved 返回台账列表，列表重新挂载并读取最新数据（保存后即可见）
+  - 至少填写一个字段才允许保存（canSave 守卫），避免创建完全空白记录；另提供取消按钮返回
+  - 编辑模式下岗位不存在时显示错误提示且不崩溃
+  - 保存失败时在页面展示错误提示，不抛出未处理异常、不错误返回列表
+- 自测命令：
+  - npm run typecheck
+  - npm run build
+  - npm run selftest（回归，确认未影响 Step 0）
+  - 浏览器自测（Vite dev + 真实交互）
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - build：成功，构建产物正常
+  - selftest：30 passed, 0 failed（无回归）
+  - 浏览器自测：
+    - 新建模式空表单时保存按钮禁用；填入 5 字段后保存 → 返回列表新增 1 行，localStorage 仅 1 个 job key（无重复），字段与 Step 0 默认值（report=null、parseStatus=none、contactStatus=not_contacted）正确
+    - 刷新后记录仍在
+    - 点击列表行进入编辑模式，5 字段正确回显（带真实 UUID）；改薪资后保存 → 仍为 1 个 job key（未重复创建），salaryRange 更新、updatedAt 大于 createdAt，列表对应行同步更新
+  - Codex 复核（2026-06-14）：typecheck 0 error、selftest 30/30、build 成功；独立浏览器验证新建、列表回显、刷新持久化、编辑回显与原记录更新均通过
+- 验收对照（task-cards Task 3）：
+  - 能录入岗位信息 ✓
+  - 保存后列表新增一条 ✓
+  - 列表字段正确 ✓
+  - 刷新后记录仍在 ✓
+- 范围合规：未做 Prompt、未做 AI 结果、未做报告、未做 Boss 话术，符合 Task 3 禁止项
+- 是否涉及 decision-log 更新：否。未改产品边界、数据核心字段、状态枚举，未引入新依赖
+- 遗留风险：
+  1. 编辑模式下若多个标签页并发编辑同一岗位，后保存者覆盖前者（v0.1 单人本地场景可接受）
+  2. localStorage 配额溢出时无法完成保存，但页面会保留表单并展示错误提示
+- 是否允许进入下一步：否。需用户确认后，方可进入 Task 4
+- 建议 commit message：feat: 实现岗位主战场基础信息录入与保存闭环

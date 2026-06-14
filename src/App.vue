@@ -57,7 +57,12 @@ function backToList(): void {
         @create="openBattlefield(null)"
         @open="openBattlefield"
       />
-      <BattlefieldPage v-else :job-id="activeJobId" @back="backToList" />
+      <BattlefieldPage
+        v-else
+        :job-id="activeJobId"
+        @back="backToList"
+        @saved="backToList"
+      />
     </template>
   </div>
 </template>
