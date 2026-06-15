@@ -35,7 +35,12 @@ function backToList(): void {
 <template>
   <div class="app">
     <header class="app-nav">
-      <strong class="brand">OfferPilot</strong>
+      <div class="brand-area">
+        <strong class="brand">OfferPilot</strong>
+        <span class="tagline">
+          Manual Mode（手动模式）· 本地求职手账 · 不接入 AI API，分析交给你选的外部 AI
+        </span>
+      </div>
       <nav class="nav-links">
         <button
           :class="{ active: section === 'profile' }"
@@ -79,9 +84,19 @@ function backToList(): void {
   top: 0;
   z-index: 10;
 }
+.brand-area {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-right: auto;
+}
 .brand {
   font-size: 16px;
   color: #2563eb;
+}
+.tagline {
+  font-size: 12px;
+  color: #647084;
 }
 .nav-links {
   display: flex;

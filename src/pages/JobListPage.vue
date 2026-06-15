@@ -50,7 +50,16 @@ function formatTime(ts: number): string {
 
     <section v-if="jobs.length === 0" class="empty" role="status">
       <p class="empty-title">还没有岗位记录</p>
-      <p class="empty-sub">点击「新建岗位」开始第一条岗位分析。</p>
+      <p class="empty-sub">
+        OfferPilot 是一个本地求职整理工具，不接入 AI、不自动分析。它帮你把找工作的动作理顺：
+      </p>
+      <ol class="empty-flow">
+        <li>录入 Boss 岗位信息与 JD</li>
+        <li>一键生成结构化分析 Prompt</li>
+        <li>复制到 ChatGPT / Claude / Gemini 等外部 AI</li>
+        <li>把 AI 返回结果贴回岗位，沉淀报告与打招呼话术</li>
+        <li>维护沟通状态，面试前随时回看</li>
+      </ol>
       <button class="new-btn" @click="emit('create')">+ 新建岗位</button>
     </section>
 
@@ -153,6 +162,16 @@ function formatTime(ts: number): string {
 .empty-sub {
   margin: 0 0 8px;
   font-size: 13px;
+  max-width: 460px;
+}
+.empty-flow {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  max-width: 460px;
+  text-align: left;
+  color: #647084;
+  font-size: 13px;
+  line-height: 1.9;
 }
 .table {
   width: 100%;
