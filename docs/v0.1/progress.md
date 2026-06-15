@@ -652,3 +652,28 @@ v0.1 不做：
 - 用户确认记录：2026-06-15，用户确认 Task 8 通过
 - 是否允许进入下一步：v0.1 P0（Step 0 - Step 8）已全部完成；不自动进入 P1，需用户另行决定
 - 建议 commit message：feat: 补齐回看闭环验证与产品认知文案收口
+
+---
+
+### 2026-06-16 · 封版 · v0.1.0
+
+- 状态：已完成（v0.1.0 封版收尾，未进入 P1）
+- 执行者：CC
+- 用户确认：用户已确认 Task 8；本次为封版收尾，按用户指令执行
+- 改动文件：
+  - 修改 README.md（项目定位 / Manual Mode 不接 API / 核心闭环 / 本地运行 / v0.1.0 功能清单 / 能力边界 / Release Notes 指引）
+  - 新增 docs/release/v0.1.0.md（核心能力、质量基线、已知限制、P1 方向）
+- 封版动作：
+  - 提交 README + release note（commit b7e23d9）
+  - 创建并推送附注 tag v0.1.0（信息：P0 manual-mode closed loop completed），指向 b7e23d9
+  - 推送 main 到 origin（a56092a..b7e23d9）
+  - 清理远程临时分支：origin/feat/task-4-prompt-generation 已不存在（远端早前已删），本地以 git remote prune 清理陈旧跟踪引用；当前远端仅 main
+- 质量基线（封版复核）：
+  - typecheck：vue-tsc --noEmit，0 error
+  - build：成功
+  - selftest：30 passed, 0 failed
+  - working tree clean
+- 剪贴板复核：真实代码路径正确（secure context + Clipboard API + execCommand 回退）；预览沙箱 clipboard-write 权限为 denied、且无已连接的真实 Chrome，故实际写入未能在自动化环境验证，建议用户在真实 localhost 浏览器点一次「复制 Prompt / 复制话术」确认
+- 是否涉及 decision-log 更新：否。封版收尾，未改产品边界、数据核心字段、状态枚举，未引入新依赖
+- 是否允许进入下一步：否。是否进入 P1（数据导入导出 / Prompt 模板配置 / 简单统计）由用户另行决定
+- 建议 commit message：docs: 记录 v0.1.0 封版收尾
