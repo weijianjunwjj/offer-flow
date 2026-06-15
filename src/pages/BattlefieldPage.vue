@@ -2,10 +2,16 @@
 // Task 3 - Task 6：保存岗位、生成 Prompt、承接外部 AI 原文，并展示报告原文 + 编辑/复制 Boss 话术。
 // 不接 AI API，不做复杂解析，不做完整评分系统 / 多版本话术 / 风险标签系统。
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import type { JobSeekerProfile, JobReport, ParseStatus } from '../storage';
+import type {
+  ContactStatus,
+  JobSeekerProfile,
+  JobReport,
+  ParseStatus,
+} from '../storage';
 import { useStores } from '../app/stores';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
+import { CONTACT_STATUS_OPTIONS } from '../app/labels';
 
 const props = defineProps<{
   jobId: string | null;
@@ -129,6 +135,41 @@ function saveGreeting(): void {
   }
 }
 
+// Task 7：沟通状态流转。手动切换，立即持久化，不做自动推进 / 提醒 / 流程校验。
+const contactStatus = ref<ContactStatus>('not_contacted');
+const contactStatusUpdatedAt = ref<number | null>(null);
+const statusSaveState = ref<'idle' | 'done' | 'fail'>('idle');
+const statusSaveError = ref('');
+const currentStatusLabel = computed(
+  () =>
+    CONTACT_STATUS_OPTIONS.find((option) => option.value === contactStatus.value)
+      ?.label ?? '',
+);
+
+function changeContactStatus(next: ContactStatus): void {
+  if (props.jobId === null) {
+    return;
+  }
+  const previous = contactStatus.value;
+  contactStatus.value = next;
+  statusSaveState.value = 'idle';
+  statusSaveError.value = '';
+  try {
+    const updatedAt = Date.now();
+    useStores().jobs.updateJob(props.jobId, {
+      contactStatus: next,
+      contactStatusUpdatedAt: updatedAt,
+    });
+    contactStatusUpdatedAt.value = updatedAt;
+    statusSaveState.value = 'done';
+  } catch (error) {
+    // 持久化失败则回滚选择，并提示。
+    contactStatus.value = previous;
+    statusSaveState.value = 'fail';
+    statusSaveError.value = `更新状态失败：${(error as Error).message}`;
+  }
+}
+
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
 }
@@ -160,6 +201,8 @@ onMounted(() => {
     parseStatus.value = job.parseStatus;
     report.value = job.report;
     greeting.value = job.report?.greetingMessage ?? '';
+    contactStatus.value = job.contactStatus;
+    contactStatusUpdatedAt.value = job.contactStatusUpdatedAt;
   } catch (error) {
     loadError.value = (error as Error).message;
   }
@@ -226,6 +269,34 @@ function saveAiResult(): void {
     <p v-if="loadError" class="banner banner-error" role="alert">
       {{ loadError }}
     </p>
+
+    <section v-if="isEdit" class="status-block">
+      <h2>沟通状态</h2>
+      <div class="status-options" role="group" aria-label="沟通状态">
+        <button
+          v-for="opt in CONTACT_STATUS_OPTIONS"
+          :key="opt.value"
+          type="button"
+          class="status-chip"
+          :class="{ active: contactStatus === opt.value }"
+          @click="changeContactStatus(opt.value)"
+        >
+          {{ opt.label }}
+        </button>
+      </div>
+      <p class="status-meta">
+        <span v-if="statusSaveState === 'fail'" class="status-fail" role="alert">
+          {{ statusSaveError }}
+        </span>
+        <span
+          v-else-if="contactStatusUpdatedAt !== null"
+          class="status-saved"
+        >
+          当前：{{ currentStatusLabel }}（更新于
+          {{ formatTime(contactStatusUpdatedAt) }}）
+        </span>
+      </p>
+    </section>
 
     <form class="form" @submit.prevent="handleSave">
       <div class="grid">
@@ -478,6 +549,49 @@ h1 {
 }
 .banner-error {
   background: #fdecec;
+  color: #a4262c;
+}
+.status-block {
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid #eceff3;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.status-block h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.status-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.status-chip {
+  padding: 6px 14px;
+  border: 1px solid #cbd2d9;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 13px;
+  color: #1f2933;
+  cursor: pointer;
+}
+.status-chip:hover {
+  background: #f2f6ff;
+}
+.status-chip.active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+}
+.status-meta {
+  margin: 10px 0 0;
+  min-height: 18px;
+  font-size: 12px;
+  color: #647084;
+}
+.status-fail {
   color: #a4262c;
 }
 .form {

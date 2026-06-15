@@ -3,8 +3,9 @@
 // 仅负责：空状态、列表展示、新建入口、点击进入主战场。
 // 不做筛选、不做统计、不做看板。岗位的录入与保存在 Task 3 实现。
 import { onMounted, ref } from 'vue';
-import type { JobRecord, ContactStatus } from '../storage';
+import type { JobRecord } from '../storage';
 import { useStores } from '../app/stores';
+import { CONTACT_STATUS_LABELS } from '../app/labels';
 
 const emit = defineEmits<{
   create: [];
@@ -13,15 +14,6 @@ const emit = defineEmits<{
 
 const jobs = ref<JobRecord[]>([]);
 const loadError = ref('');
-
-const statusLabels: Record<ContactStatus, string> = {
-  not_contacted: '未沟通',
-  greeted: '已打招呼',
-  replied: '已回复',
-  interview_scheduled: '已约面',
-  rejected: '已拒绝',
-  closed: '已结束',
-};
 
 function load(): void {
   try {
@@ -87,7 +79,7 @@ function formatTime(ts: number): string {
           <td>{{ dash(job.salaryRange) }}</td>
           <td>{{ dash(job.matchScore) }}</td>
           <td>
-            <span class="status">{{ statusLabels[job.contactStatus] }}</span>
+            <span class="status">{{ CONTACT_STATUS_LABELS[job.contactStatus] }}</span>
           </td>
           <td>{{ formatTime(job.updatedAt) }}</td>
         </tr>

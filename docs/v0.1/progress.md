@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> Task 6：报告展示 + Boss 话术编辑。CC 已完成实现，Codex 已审查通过，用户已确认。
+> Task 7：沟通状态流转。CC 已完成实现，Codex 已审查通过，用户已确认。
 
 当前是否允许进入下一步：
 
-> 否。Task 6 提交后允许进入 Task 7；提交前不得启动下一张任务卡。
+> 否。Task 7 提交后允许进入 Task 8；提交前不得启动下一张任务卡。
 
 ---
 
@@ -76,8 +76,8 @@ v0.1 不做：
 | Step 3 | 岗位主战场基础信息 + 保存 | 已完成 | CC | Codex | 已确认 | 已于 commit c5e8b1c 提交；用户已确认 |
 | Step 4 | Prompt 生成 + 复制 | 已完成 | CC | Codex | 已确认 | 已于 commit 2034966 合并到 main 并推送 |
 | Step 5 | AI 结果兜底承接 | 已完成 | CC / Codex | Codex | 已确认 | 已于 commit 0da6ee0 提交；原文保存、刷新回显、时间、解析状态和反馈均已验证 |
-| Step 6 | 报告展示 + Boss 话术编辑 | 已完成 | CC | Codex | 已确认 | 报告原文展示与复制、话术编辑/保存/复制均已验证；待提交 |
-| Step 7 | 沟通状态流转 | 未开始 | 待定 | 待定 | 未确认 | 手动状态，不做日志系统 |
+| Step 6 | 报告展示 + Boss 话术编辑 | 已完成 | CC | Codex | 已确认 | 已于 commit 04890cc 提交；报告原文展示与复制、话术编辑/保存/复制均已验证 |
+| Step 7 | 沟通状态流转 | 已完成 | CC | Codex | 已确认 | 主战场 6 态任意切换、即时持久化、列表同步和刷新回显均已验证；待提交 |
 | Step 8 | 回看闭环 + 文案收口 | 未开始 | 待定 | 待定 | 未确认 | 避免“自动 AI”误解 |
 
 状态枚举：
@@ -557,5 +557,50 @@ v0.1 不做：
 - 遗留风险：
   1. v0.1 不自动结构化解析，报告其余字段（jobType / keywords / applyAdvice 等）暂不在 UI 编辑，仅保留话术编辑，符合「结构化尽力、话术可手改」
 - 用户确认记录：2026-06-15，用户确认 Task 6 通过
-- 是否允许进入下一步：Task 6 提交后允许进入 Task 7；提交前不得启动下一张任务卡
+- 提交记录：已于 commit 04890cc 提交
+- 是否允许进入下一步：Task 6 已确认并提交；Task 7 已执行
 - 建议 commit message：feat: 实现分析报告原文展示与 Boss 话术编辑复制
+
+---
+
+### 2026-06-15 · Step 7 · 沟通状态流转
+
+- 状态：已完成（CC 已完成实现，Codex 已审查通过，用户已确认）
+- 执行者：CC
+- 审查者：Codex（已审查通过）
+- 用户确认：已确认（2026-06-15）
+- 改动文件：
+  - 新增 src/app/labels.ts（沟通状态标签 / 选项的单一信源，顺序对应 DEC-003）
+  - 修改 src/pages/JobListPage.vue（改用共享 CONTACT_STATUS_LABELS，移除本地重复标签表）
+  - 修改 src/pages/BattlefieldPage.vue（新增「沟通状态」区：6 态 chip 切换、即时持久化、当前状态 + 更新时间显示）
+- 实现内容：
+  - 复用 Step 0 JobRecord.contactStatus / contactStatusUpdatedAt，未新增实体、未改字段、未改状态枚举（DEC-003 / DEC-004）
+  - 6 态来自共享 CONTACT_STATUS_OPTIONS：未沟通 / 已打招呼 / 已回复 / 已约面 / 已拒绝 / 已结束
+  - 点击任一状态 chip 即调用 updateJob 写入 contactStatus + contactStatusUpdatedAt=Date.now()，立即持久化；失败则回滚选择并提示
+  - 显示「当前：状态（更新于 时间）」；状态区仅编辑模式显示
+  - 列表页沟通状态标签改用同一信源，保证列表与主战场显示一致
+- 合规审查（task-cards Task 7 禁止项）：
+  - 不做自动状态推进 ✓（仅手动点击切换）
+  - 不做提醒 ✓
+  - 不做强制流程校验 ✓（任意状态间可自由切换，无顺序约束）
+- 自测命令：
+  - npm run typecheck
+  - npm run build
+  - npm run selftest（回归，确认未影响 Step 0）
+  - 浏览器自测（Vite dev + 真实交互）
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - build：成功，32 modules transformed
+  - selftest：30 passed, 0 failed（无回归）
+  - 浏览器自测：列表沟通状态标签正常（共享信源重构无回归）；主战场 6 chip 渲染、当前态高亮；切换 未沟通→已约面→已拒绝 均即时写入 contactStatus 与 contactStatusUpdatedAt；返回列表即同步显示新状态；刷新后列表与主战场均正确回显「已拒绝」(rejected)
+- 验收对照（task-cards Task 7）：
+  - 可任意切换状态 ✓
+  - 状态持久化 ✓
+  - 刷新后仍正确 ✓
+- 是否涉及 decision-log 更新：否。未改产品边界、数据核心字段、状态枚举，未引入新依赖；新增 labels.ts 仅为既有 6 态标签的单一信源收敛
+- Codex 复核：2026-06-15，六态完整渲染；可从「未沟通」直接切到「已结束」，再逆向切到「已打招呼」；列表即时同步，刷新后列表与详情均正确回显；状态切换同时更新 contactStatusUpdatedAt 与 updatedAt
+- 遗留风险：
+  1. 状态切换即时写入、无撤销；v0.1 单人本地场景可接受
+- 用户确认记录：2026-06-15，用户确认 Task 7 通过
+- 是否允许进入下一步：Task 7 提交后允许进入 Task 8；提交前不得启动下一张任务卡
+- 建议 commit message：feat: 实现岗位沟通状态切换与持久化
