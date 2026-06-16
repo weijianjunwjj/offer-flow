@@ -4,6 +4,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type {
   ContactStatus,
+  JobRecord,
   JobSeekerProfile,
   JobReport,
   ParseStatus,
@@ -12,6 +13,7 @@ import { useStores } from '../app/stores';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
 import { CONTACT_STATUS_OPTIONS } from '../app/labels';
+import { extractMatchScore, normalizeMatchScore } from '../app/matchScore';
 
 const props = defineProps<{
   jobId: string | null;
@@ -55,6 +57,7 @@ const aiPastedAt = ref<number | null>(null);
 const parseStatus = ref<ParseStatus>('none');
 const aiSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const aiSaveError = ref('');
+const aiExtractedMatch = ref('');
 const canSaveAiResult = computed(
   () => props.jobId !== null && aiRawResult.value.trim() !== '',
 );
@@ -170,6 +173,36 @@ function changeContactStatus(next: ContactStatus): void {
   }
 }
 
+// v0.1.1：匹配度手动录入。匹配度为单值，区间自动取中位（见 normalizeMatchScore）。
+const matchScore = ref('');
+const matchSaveState = ref<'idle' | 'done' | 'fail'>('idle');
+const matchSaveError = ref('');
+const matchScorePreview = computed(() => normalizeMatchScore(matchScore.value));
+
+// 用 @input 重置反馈，而非 watch：保存时会把输入归一化（如 70%-80% → 75%）改写
+// matchScore，watch 会把刚置的「已保存」反馈清掉；@input 只在用户真实输入时触发。
+function onMatchInput(): void {
+  matchSaveState.value = 'idle';
+  matchSaveError.value = '';
+}
+
+function saveMatchScore(): void {
+  if (props.jobId === null) {
+    return;
+  }
+  matchSaveState.value = 'idle';
+  matchSaveError.value = '';
+  try {
+    const normalized = normalizeMatchScore(matchScore.value);
+    useStores().jobs.updateJob(props.jobId, { matchScore: normalized });
+    matchScore.value = normalized;
+    matchSaveState.value = 'done';
+  } catch (error) {
+    matchSaveState.value = 'fail';
+    matchSaveError.value = `保存匹配度失败：${(error as Error).message}`;
+  }
+}
+
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
 }
@@ -201,6 +234,7 @@ onMounted(() => {
     parseStatus.value = job.parseStatus;
     report.value = job.report;
     greeting.value = job.report?.greetingMessage ?? '';
+    matchScore.value = job.matchScore;
     contactStatus.value = job.contactStatus;
     contactStatusUpdatedAt.value = job.contactStatusUpdatedAt;
   } catch (error) {
@@ -242,13 +276,27 @@ function saveAiResult(): void {
   aiSaveError.value = '';
   try {
     const pastedAt = Date.now();
-    useStores().jobs.updateJob(props.jobId, {
+    // 原文承接时“尽力”自动提取综合匹配度（提取不到则不动用户已填值）。
+    const extracted = extractMatchScore(aiRawResult.value);
+    const patch: Partial<
+      Pick<JobRecord, 'aiRawResult' | 'aiPastedAt' | 'parseStatus' | 'matchScore'>
+    > = {
       aiRawResult: aiRawResult.value,
       aiPastedAt: pastedAt,
       parseStatus: 'unparsed',
-    });
+    };
+    if (extracted !== null) {
+      patch.matchScore = extracted;
+    }
+    useStores().jobs.updateJob(props.jobId, patch);
     aiPastedAt.value = pastedAt;
     parseStatus.value = 'unparsed';
+    if (extracted !== null) {
+      matchScore.value = extracted;
+      aiExtractedMatch.value = extracted;
+    } else {
+      aiExtractedMatch.value = '';
+    }
     aiSaveState.value = 'done';
   } catch (error) {
     aiSaveState.value = 'fail';
@@ -295,6 +343,41 @@ function saveAiResult(): void {
           当前：{{ currentStatusLabel }}（更新于
           {{ formatTime(contactStatusUpdatedAt) }}）
         </span>
+      </p>
+    </section>
+
+    <section v-if="isEdit" class="match-block">
+      <h2>匹配度</h2>
+      <div class="match-row">
+        <input
+          v-model="matchScore"
+          type="text"
+          class="match-input"
+          placeholder="如 85%；AI 给区间（如 70%-80%）会自动取中位"
+          @input="onMatchInput"
+        />
+        <button type="button" class="save-btn" @click="saveMatchScore">
+          保存匹配度
+        </button>
+        <span
+          v-if="matchSaveState === 'done'"
+          class="save-feedback ok"
+          role="status"
+        >
+          已保存 ✓
+        </span>
+        <span
+          v-else-if="matchSaveState === 'fail'"
+          class="save-feedback fail"
+          role="alert"
+        >
+          {{ matchSaveError }}
+        </span>
+      </div>
+      <p class="match-hint">
+        保存 AI 原文时会自动提取「综合匹配度」并填入此处；也可手动覆盖。匹配度为单值（区间自动取中位）。当前将保存为：<strong>{{
+          matchScorePreview === '' ? '（空）' : matchScorePreview
+        }}</strong>
       </p>
     </section>
 
@@ -419,6 +502,14 @@ function saveAiResult(): void {
       </div>
       <p v-if="parseStatus !== 'none'" class="parse-status">
         解析状态：{{ parseStatus === 'parsed' ? '已解析' : '未解析（原文已保存）' }}
+      </p>
+      <p
+        v-if="aiSaveState === 'done' && aiExtractedMatch !== ''"
+        class="ai-extracted"
+        role="status"
+      >
+        已自动提取综合匹配度：<strong>{{ aiExtractedMatch }}</strong
+        >（已填入下方「匹配度」，可手动调整）
       </p>
     </section>
 
@@ -594,6 +685,41 @@ h1 {
 .status-fail {
   color: #a4262c;
 }
+.match-block {
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid #eceff3;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.match-block h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.match-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.match-input {
+  flex: 1 1 220px;
+  min-width: 180px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  font: inherit;
+  background: #fff;
+}
+.match-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #647084;
+}
+.match-hint strong {
+  color: #1f2933;
+}
 .form {
   display: flex;
   flex-direction: column;
@@ -757,6 +883,14 @@ textarea {
 }
 .parse-status {
   margin: 10px 0 0;
+}
+.ai-extracted {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #1a7f37;
+}
+.ai-extracted strong {
+  color: #14532d;
 }
 .report-head,
 .greeting-head {
