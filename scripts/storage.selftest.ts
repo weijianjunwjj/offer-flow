@@ -3,7 +3,12 @@
 
 import { createStores, MemoryStorageDriver } from '../src/storage';
 import type { JobSeekerProfile } from '../src/storage';
-import { PROFILE_KEY, isJobKey } from '../src/storage';
+import {
+  LEGACY_JOB_PREFIX,
+  LEGACY_PROFILE_KEY,
+  PROFILE_KEY,
+  isJobKey,
+} from '../src/storage';
 
 let passed = 0;
 let failed = 0;
@@ -32,6 +37,61 @@ function jobKeyCount(): number {
 function profileKeyCount(): number {
   return driver.keys().filter((k) => k === PROFILE_KEY).length;
 }
+
+// --------------------------------------------------------------------------
+section('Legacy namespace migration');
+
+const legacyDriver = new MemoryStorageDriver();
+const legacyProfile: JobSeekerProfile = {
+  resumeText: 'legacy resume',
+  projectExperience: 'legacy project',
+  targetCity: 'Shanghai',
+  targetRole: 'FE',
+  expectedSalary: '20K',
+  acceptOutsourcing: false,
+  acceptOvertime: false,
+  jobSearchFocus: 'stability',
+  weaknessNote: '',
+};
+const legacyJobId = 'legacy-job';
+
+legacyDriver.setItem(LEGACY_PROFILE_KEY, JSON.stringify(legacyProfile));
+legacyDriver.setItem(
+  `${LEGACY_JOB_PREFIX}${legacyJobId}`,
+  JSON.stringify({
+    id: legacyJobId,
+    createdAt: 1,
+    updatedAt: 1,
+    company: 'Legacy Company',
+    role: 'FE',
+    city: 'Shanghai',
+    salaryRange: '20K',
+    jdText: 'legacy jd',
+    promptText: '',
+    aiRawResult: '',
+    aiPastedAt: null,
+    parseStatus: 'none',
+    report: null,
+    matchScore: '',
+    contactStatus: 'not_contacted',
+    contactStatusUpdatedAt: 1,
+  }),
+);
+
+const legacyStores = createStores(legacyDriver);
+check(
+  'legacy profile migrates to current key',
+  legacyStores.config.getProfile()?.targetCity === 'Shanghai',
+);
+check(
+  'legacy job migrates to current key',
+  legacyStores.jobs.getJob(legacyJobId)?.company === 'Legacy Company',
+);
+check('legacy profile key is retained', legacyDriver.getItem(LEGACY_PROFILE_KEY) !== null);
+check(
+  'legacy job key is retained',
+  legacyDriver.getItem(`${LEGACY_JOB_PREFIX}${legacyJobId}`) !== null,
+);
 
 // --------------------------------------------------------------------------
 section('Global profile CRUD');

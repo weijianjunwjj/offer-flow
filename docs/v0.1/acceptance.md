@@ -1,4 +1,4 @@
-# OfferPilot / 求职作战台 v0.1 验收标准
+# OfferFlow / Offer来了 v0.1 验收标准
 
 ## Step 0 验收
 

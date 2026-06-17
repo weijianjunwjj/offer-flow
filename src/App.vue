@@ -36,7 +36,7 @@ function backToList(): void {
   <div class="app">
     <header class="app-nav">
       <div class="brand-area">
-        <strong class="brand">OfferPilot</strong>
+        <strong class="brand">OfferFlow · Offer来了</strong>
         <span class="tagline">
           Manual Mode（手动模式）· 本地求职手账 · 不接入 AI API，分析交给你选的外部 AI
         </span>

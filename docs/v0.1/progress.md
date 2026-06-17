@@ -1,8 +1,8 @@
-# OfferPilot / 求职作战台 v0.1 开发进度记录
+# OfferFlow / Offer来了 v0.1 开发进度记录
 
 ## 1. 文档用途
 
-本文档用于记录 OfferPilot v0.1 的真实开发进度。
+本文档用于记录 OfferFlow v0.1 的真实开发进度。
 
 任何 AI 或开发者进入本项目时，必须先阅读本文档，确认：
 
@@ -23,11 +23,11 @@
 
 项目名称：
 
-> OfferPilot / 求职作战台
+> OfferFlow / Offer来了
 
 仓库名称：
 
-> offerpilot
+> offer-flow
 
 当前版本：
 
@@ -39,7 +39,7 @@
 
 当前阶段：
 
-> Task 8：回看闭环 + 文案收口（P0 最后一张任务卡）。CC 已完成实现，Codex 已审查通过，用户已确认。
+> v0.1 品牌重命名为 OfferFlow / Offer来了已完成；P0（Step 0 - Step 8）仍已全部完成，不自动进入 P1。
 
 当前是否允许进入下一步：
 
@@ -254,7 +254,7 @@ v0.1 不做：
 - 是否涉及 decision-log 更新：是。已根据 Codex 审查意见补充 docs/v0.1/decision-log.md DEC-012，记录 Task 0 工具链与依赖选择；用户已确认 DEC-012 与 Task 0。候选 storage 代码本身与既有决策（DEC-003 / DEC-004 / DEC-005）一致，未改产品边界、数据核心字段或状态枚举
 - 决策日志：DEC-012 已记录 Vue 3 + Vite + TypeScript、vue-tsc、tsx、@vitejs/plugin-vue、@types/node 等工具链与依赖选择；用户已确认该决策
 - 是否允许进入下一步：Task 0 已提交完成；Task 1 尚未启动，需用户另行明确开始
-- 建议 commit message：chore: 初始化 OfferPilot v0.1 项目骨架并导入 Step 0 storage 与 selftest
+- 建议 commit message：chore: 初始化 OfferFlow v0.1 项目骨架并导入 Step 0 storage 与 selftest
 
 ---
 
@@ -311,7 +311,7 @@ v0.1 不做：
   - typecheck：vue-tsc --noEmit，0 error
   - build：成功，22 modules transformed
   - selftest：30 passed, 0 failed（无回归）
-  - 浏览器自测：保存后 localStorage 仅 1 个 key `offerpilot:profile`，9 字段与类型（含 boolean、growth 枚举）全部正确；刷新后 9 字段完整回显，保存反馈正确不持久化；坏数据时显示错误横幅、表单仍正常渲染
+  - 浏览器自测：保存后 localStorage 仅 1 个 key `offerflow:profile`，9 字段与类型（含 boolean、growth 枚举）全部正确；刷新后 9 字段完整回显，保存反馈正确不持久化；坏数据时显示错误横幅、表单仍正常渲染
   - Codex 复核：typecheck、build、selftest 均通过；浏览器安全策略阻止独立访问本地地址，未重复执行交互自测
 - 验收对照（task-cards Task 1）：
   - 所有字段可输入 ✓
@@ -716,3 +716,50 @@ v0.1 不做：
   3. v0.1.0 release note 仍记「matchScore 无编辑入口」为已知限制；该限制已在 v0.1.1 解决，若打 v0.1.1 tag 需同步 release note
 - 是否允许进入下一步：否。待用户确认；是否打 v0.1.1 tag 由用户决定
 - 建议 commit message：feat: AI 原文自动提取综合匹配度并支持手填兜底，修复列表匹配度恒空
+
+---
+
+### 2026-06-17 · 品牌重命名 · OfferFlow / Offer来了
+
+- 状态：已完成（Codex 按用户明确指令执行，已本地验证）
+- 执行者：Codex
+- 用户确认：待确认
+- 背景 / 目标：
+  - 用户明确要求将项目品牌统一改为 OfferFlow / Offer来了。
+  - 同步检查 package、README、docs、页面文案、构建配置、scripts 与 storage namespace。
+  - localStorage namespace 改名时必须兼容历史本地数据，不得让旧数据直接不可见。
+- 改动文件：
+  - 修改 package.json、package-lock.json、index.html、vite.config.ts、.claude/launch.json
+  - 修改 README.md、CLAUDE.md、AGENTS.md、docs/**
+  - 修改 src/App.vue、src/pages/JobListPage.vue、src/app/stores.ts
+  - 修改 src/storage/configStore.ts、driver.ts、index.ts、jobStore.ts、keys.ts、types.ts
+  - 新增 src/storage/migration.ts
+  - 修改 scripts/storage.selftest.ts
+- 实现内容：
+  - 英文品牌统一为 OfferFlow，中文品牌统一为 Offer来了。
+  - package name 统一为 offerflow；仓库建议名记录为 offer-flow。
+  - storage 当前 namespace 改为 `offerflow:`，并新增初始化迁移逻辑。
+  - 迁移逻辑：初始化 stores 时扫描旧 namespace key；若对应新 key 不存在则复制；旧 key 保留不删除。
+  - selftest 新增 legacy namespace 迁移覆盖：profile / job 复制到新 key，且旧 key 保留。
+- 自测命令：
+  - npm.cmd run typecheck
+  - npm.cmd run selftest
+  - npm.cmd run build
+  - 旧品牌名正则搜索
+- 自测结果：
+  - typecheck：通过，vue-tsc --noEmit 0 error
+  - selftest：34 passed, 0 failed
+  - build：通过，34 modules transformed
+  - 旧名称搜索：仅 `src/storage/keys.ts` 的 legacy namespace 常量保留，用于兼容迁移
+- 是否涉及 decision-log 更新：是。新增 DEC-015，记录品牌重命名与 storage namespace 兼容迁移策略。
+- 是否越界：
+  - 未接 API / BYOK / 后端
+  - 未引入 router / Pinia / UI 库 / 测试框架
+  - 未改数据模型字段
+  - 未改业务流程
+  - 未改沟通状态枚举
+- 遗留风险：
+  1. 旧 key 仅复制不删除，浏览器 localStorage 会短期同时存在新旧 key；这是为避免破坏性操作而刻意保留。
+  2. 真实远端仓库名、tag、GitHub 页面若需要同步为 offer-flow，需在仓库托管平台另行执行。
+- 是否允许进入下一步：否。品牌重命名完成后停下，等待用户确认。
+- 建议 commit message：chore: 统一品牌命名为 OfferFlow 并兼容迁移 storage namespace

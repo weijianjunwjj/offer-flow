@@ -45,7 +45,7 @@ export class JobStore {
       return JSON.parse(raw) as JobRecord;
     } catch (error) {
       throw new Error(
-        `[OfferPilot] Job "${id}" is corrupted and cannot be parsed: ${(error as Error).message}`,
+        `[OfferFlow] Job "${id}" is corrupted and cannot be parsed: ${(error as Error).message}`,
       );
     }
   }
@@ -65,7 +65,7 @@ export class JobStore {
       } catch (error) {
         // One bad row shouldn't sink the whole list — warn, don't crash, don't hide.
         console.warn(
-          `[OfferPilot] Skipped a corrupted job at "${key}": ${(error as Error).message}`,
+          `[OfferFlow] Skipped a corrupted job at "${key}": ${(error as Error).message}`,
         );
       }
     }
@@ -75,7 +75,7 @@ export class JobStore {
   updateJob(id: string, patch: Partial<Omit<JobRecord, 'id' | 'createdAt'>>): JobRecord {
     const current = this.getJob(id);
     if (current === null) {
-      throw new Error(`[OfferPilot] Cannot update — job "${id}" does not exist.`);
+      throw new Error(`[OfferFlow] Cannot update — job "${id}" does not exist.`);
     }
     const next: JobRecord = {
       ...current,

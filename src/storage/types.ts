@@ -1,4 +1,4 @@
-// OfferPilot v0.1 — Step 0 data shapes.
+// OfferFlow v0.1 — Step 0 data shapes.
 // This file describes ONLY what we persist. No logic lives here.
 
 /** 当前求职重点:求稳 / 涨薪 / 履历 / 技术成长 */

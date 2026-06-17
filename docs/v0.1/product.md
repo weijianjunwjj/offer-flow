@@ -1,22 +1,22 @@
-# OfferPilot / 求职作战台 v0.1 产品文档
+# OfferFlow / Offer来了 v0.1 产品文档
 
 ## 1. 一句话定位
 
-OfferPilot v0.1 是一个本地优先的 AI 求职手账，把 Boss 直聘的“乱投、乱聊、乱记”收束成一条有准备的求职流水线。
+OfferFlow v0.1 是一个本地优先的 AI 求职手账，把 Boss 直聘的“乱投、乱聊、乱记”收束成一条有准备的求职流水线。
 
 ## 2. 它是什么
 
-OfferPilot v0.1 是：
+OfferFlow v0.1 是：
 
 - 求职流程容器
-- Boss 求职作战台
+- Boss 求职流程工作台
 - Prompt 工作台
 - 岗位分析台账
 - 外部 AI 结果承接器
 
 ## 3. 它不是什么
 
-OfferPilot v0.1 不是：
+OfferFlow v0.1 不是：
 
 - AI 大脑
 - 自动分析器

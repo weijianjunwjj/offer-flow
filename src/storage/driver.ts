@@ -38,7 +38,7 @@ export class BrowserStorageDriver implements StorageDriver {
     const candidate =
       store ?? (typeof localStorage !== 'undefined' ? localStorage : undefined);
     if (!candidate) {
-      throw new Error('[OfferPilot] localStorage is not available in this environment.');
+      throw new Error('[OfferFlow] localStorage is not available in this environment.');
     }
     this.store = candidate;
   }

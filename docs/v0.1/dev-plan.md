@@ -1,4 +1,4 @@
-# OfferPilot / 求职作战台 v0.1 开发计划
+# OfferFlow / Offer来了 v0.1 开发计划
 
 ## 总原则
 

@@ -1,8 +1,8 @@
-# OfferPilot / 求职作战台 v0.1 决策日志
+# OfferFlow / Offer来了 v0.1 决策日志
 
 ## 1. 文档用途
 
-本文档用于记录 OfferPilot v0.1 开发前与开发中的重要决策。
+本文档用于记录 OfferFlow v0.1 开发前与开发中的重要决策。
 
 任何 AI 或开发者进入本项目时，必须阅读本文档，了解：
 
@@ -290,7 +290,7 @@
 - 拍板者：用户
 - 背景：
   - 用户参考 activity-config-miniapp 的 AI 协作经验，提出要吸收“唯一信源、handoff、决策日志、provenance、决策阈值”等治理思想。
-  - OfferPilot 已经有多份 v0.1 文档，不适合再强行合并成一个 SPEC.md。
+  - OfferFlow 已经有多份 v0.1 文档，不适合再强行合并成一个 SPEC.md。
 - 决策：
   - 不新增 SPEC.md。
   - 采用“分域唯一信源”：
@@ -456,7 +456,7 @@
 - 参与讨论：CC、Codex、用户
 - 拍板者：用户
 - 背景：
-  - Task 0 需要初始化 OfferPilot v0.1 的前端工程骨架。
+  - Task 0 需要初始化 OfferFlow v0.1 的前端工程骨架。
   - v0.1 已确认技术方向为 Vue 3 + Vite + TypeScript。
   - Step 0 storage 需要在本地运行 typecheck 和 selftest。
   - Codex 审查指出：首次引入 Vue、Vite、TypeScript、tsx、vue-tsc 等依赖，按 AGENTS.md / CLAUDE.md 规则，属于需要记录的依赖引入决策。
@@ -563,6 +563,47 @@
   - docs/v0.1/product.md（§9 结构化尽力）
   - docs/v0.1/task-cards.md（Task 4 / Task 5）
   - docs/v0.1/progress.md
+
+---
+
+## DEC-015：项目品牌重命名为 OfferFlow / Offer来了，并迁移 storage namespace
+
+- 日期：2026-06-17
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、Codex
+- 拍板者：用户
+- 背景：
+  - 用户明确要求执行一次全仓库项目品牌重命名任务。
+  - 新中文名统一为「Offer来了」，新英文名统一为「OfferFlow」。
+  - localStorage 已有历史 namespace，直接改 key 会导致用户本地数据不可见。
+- 决策：
+  - 项目英文品牌统一为 OfferFlow。
+  - 项目中文品牌统一为 Offer来了。
+  - 仓库名建议统一为 offer-flow。
+  - package name 按现有无连字符格式统一为 offerflow。
+  - storage 当前 namespace 改为 `offerflow:`、`offerflow:profile`、`offerflow:job:<id>`。
+  - storage 初始化时执行一次兼容迁移：发现旧 namespace key 且对应新 key 不存在时，复制到新 key；不默认删除旧 key。
+- 理由：
+  1. 品牌名、页面文案、文档、package 信息和 storage key 需要保持一致。
+  2. localStorage 属于本地优先产品的数据资产，迁移必须避免旧数据不可见。
+  3. 保留旧 key 比自动删除更低风险，符合本地数据不做破坏性操作的原则。
+- 被否决方案：
+  1. 只改页面文案，不改 package / docs / storage。
+  2. 直接切换 namespace 但不迁移历史 key。
+  3. 迁移后自动删除旧 key。
+- 影响范围：
+  - package.json / package-lock.json
+  - README.md / docs/**
+  - index.html / vite.config.ts
+  - src/** / scripts/**
+  - localStorage namespace 与 storage selftest
+- 后续复审条件：
+  - 若未来确认为正式仓库迁移，需要在远端仓库、发布标签和外部文档中同步 offer-flow 命名。
+- 相关文档：
+  - docs/v0.1/progress.md
+  - src/storage/keys.ts
+  - src/storage/migration.ts
 
 ---
 

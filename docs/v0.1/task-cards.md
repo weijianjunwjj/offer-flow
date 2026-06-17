@@ -1,4 +1,4 @@
-# OfferPilot / 求职作战台 v0.1 任务卡
+# OfferFlow / Offer来了 v0.1 任务卡
 
 ## 任务纪律
 

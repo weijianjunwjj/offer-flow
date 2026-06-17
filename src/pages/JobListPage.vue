@@ -51,7 +51,7 @@ function formatTime(ts: number): string {
     <section v-if="jobs.length === 0" class="empty" role="status">
       <p class="empty-title">还没有岗位记录</p>
       <p class="empty-sub">
-        OfferPilot 是一个本地求职整理工具，不接入 AI、不自动分析。它帮你把找工作的动作理顺：
+        OfferFlow 是一个本地求职整理工具，不接入 AI、不自动分析。它帮你把找工作的动作理顺：
       </p>
       <ol class="empty-flow">
         <li>录入 Boss 岗位信息与 JD</li>

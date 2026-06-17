@@ -1,12 +1,12 @@
-# OfferPilot / 求职作战台
+# OfferFlow / Offer来了
 
-本地优先的求职作战台。面向 Boss 直聘求职场景的本地 AI 求职手账。
+Offer来了（OfferFlow）是面向 Boss 直聘求职场景的本地优先 AI 求职手账。
 
 它不接 API，不做自动投递，不做爬虫，不做后端。它帮助求职者把“看岗位、生成分析 Prompt、承接外部 AI 结果、提取 Boss 打招呼话术、保存岗位台账、跟踪沟通状态”整理成一条稳定流程。
 
 ## 项目定位
 
-OfferPilot v0.1 不是 AI 自动分析器，而是：
+OfferFlow v0.1 不是 AI 自动分析器，而是：
 
 > 本地优先的 AI 求职工作流容器。
 

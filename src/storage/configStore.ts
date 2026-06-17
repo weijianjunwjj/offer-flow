@@ -16,7 +16,7 @@ export class ConfigStore {
     } catch (error) {
       // Don't swallow silently — surface a clear, actionable error.
       throw new Error(
-        `[OfferPilot] Stored profile is corrupted and cannot be parsed: ${(error as Error).message}`,
+        `[OfferFlow] Stored profile is corrupted and cannot be parsed: ${(error as Error).message}`,
       );
     }
   }
