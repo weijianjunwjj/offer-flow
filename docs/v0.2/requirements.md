@@ -41,7 +41,7 @@ v0.2.0 不接 API，但要消灭反复复制粘贴。
 - 自研 SVG 雷达图
 - 岗位列表新增机会分 / 公司规模
 - 列表筛选排序
-- 引入 Naive UI 做视觉升级（深色科技感机会驾驶舱）
+- 引入 Naive UI 做视觉升级（浅色高级科技感机会决策工作台）
 - 更新 docs / decision-log / progress / release note
 
 ### 2.2 本版明确不做
@@ -262,7 +262,7 @@ opportunityScore =
 
 ### 7.1 UI 风格（DEC-017）
 
-深色科技感、卡片式布局、决策驾驶舱；信息密度高但不乱；机会分大数字突出；公司规模 / 风险 / 状态用标签展示；雷达图作为视觉核心。不做成普通灰白后台。
+浅色高级科技感、卡片式布局、机会决策工作台；干净、高级，类 Linear / Vercel / 飞书多维表格的清爽感；信息密度高但不乱；机会分大数字突出；公司规模 / 风险 / 状态用标签展示；雷达图作为视觉核心。不做暗黑驾驶舱，也不做普通灰白后台。
 
 Naive UI 允许使用范围：`n-config-provider`、`n-message-provider`、`n-layout`、`n-card`、`n-space`、`n-grid`、`n-form`、`n-form-item`、`n-input`、`n-select`、`n-input-number`、`n-button`、`n-tag`、`n-alert`、`n-result`、`n-data-table`（或普通表格二选一）、`n-popconfirm` / `n-modal`。不引入额外图标库。
 
@@ -311,7 +311,7 @@ interface ParsedOfferFlowResult {
 
 v0.2.0 完成时，必须满足：
 
-> 用户可以创建一个 Boss 前端岗位，填写岗位信息、公司规模、通勤和备注，生成一次性 Prompt，复制给外部 AI，将 AI 返回的完整内容粘贴回 OfferFlow，系统自动解析出：综合匹配度、公司规模、公司画像、机会分、6 维机会雷达、风险等级、投递建议、面试关注点、Boss 打招呼话术。列表页可以按机会分、公司规模、城市、沟通状态筛选排序。整个流程不接 API、不需要后端、不丢 AI 原文。UI 使用 Naive UI 完成基础视觉升级，整体呈现为深色科技感的求职机会驾驶舱。
+> 用户可以创建一个 Boss 前端岗位，填写岗位信息、公司规模、通勤和备注，生成一次性 Prompt，复制给外部 AI，将 AI 返回的完整内容粘贴回 OfferFlow，系统自动解析出：综合匹配度、公司规模、公司画像、机会分、6 维机会雷达、风险等级、投递建议、面试关注点、Boss 打招呼话术。列表页可以按机会分、公司规模、城市、沟通状态筛选排序。整个流程不接 API、不需要后端、不丢 AI 原文。UI 使用 Naive UI 完成基础视觉升级，整体呈现为浅色高级科技感的求职机会决策工作台。
 
 文档层面验收（Task 1）：
 
@@ -340,7 +340,7 @@ v0.2.0 完成时，必须满足：
 |---|---|---|
 | Task 0 | 确认并收口 v0.1.1 / 同步 origin | 质量门槛通过、工作区干净（已完成） |
 | Task 1 | 新增 DEC-016 / DEC-017 + v0.2.0 需求文档 | 本文档、decision-log、progress（仅文档） |
-| Task 2 | 引入 Naive UI 基础壳 | naive-ui、n-config-provider、n-message-provider、深色基础布局 |
+| Task 2 | 引入 Naive UI 基础壳 | naive-ui、n-config-provider、n-message-provider、浅色高级科技感基础布局 |
 | Task 3 | 扩展数据类型与默认值 | types.ts 新增 4 结构 + JobRecord 字段、旧数据兼容 |
 | Task 4 | 公司与机会补充表单 | BattlefieldPage 公司 / 通勤 / 备注字段 |
 | Task 5 | One-Shot Prompt 升级 | buildAnalysisPrompt 输出 Markdown + OFFER_FLOW_JSON |

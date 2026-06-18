@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0（收口 v0.1.1 / 同步 origin）已完成，Task 1（DEC-016 / DEC-017 + v0.2.0 需求文档）已完成。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0、Task 1 已完成；Task 2（Naive UI 浅色基础壳）已提交入库。Task 2.5 视觉样板 Spike 已完成，用户选定方案 B 为视觉基线；spike 临时代码不入 main，已移出工作区保留作参照。当前进入 Task 3（扩展数据类型与默认值）。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 1。确认后方可进入 Task 2（引入 Naive UI 基础壳）。
+> Task 3 进行中。完成后停下等用户确认，再决定是否进入 Task 4。
 
 ---
 
@@ -815,3 +815,79 @@ v0.1 不做：
   2. 决策日志仍位于 docs/v0.1/ 路径（作为跨版本连续日志），v0.2.0 文档新建于 docs/v0.2/；如需统一可后续评估，本版不动。
 - 是否允许进入下一步：否。等待用户确认 Task 1 后，方可进入 Task 2（引入 Naive UI 基础壳）。
 - 建议 commit message：docs: 新增 v0.2.0 机会雷达需求与 DEC-016 / DEC-017 决策
+- 提交记录：已于 commit 5d66866 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 2 引入 Naive UI 基础壳（视觉方向：浅色高级科技感）
+
+- 状态：待用户确认（CC 已完成实现并浏览器验证；本次改动尚未提交，按用户指令暂不提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 进入 v0.2.0，先引入 Naive UI 作为唯一 UI 组件库（DEC-017），搭好 provider 与基础外壳，不动业务逻辑。
+- 视觉方向调整（重要）：
+  - 初版基础壳采用「深色科技感驾驶舱」方向；用户审阅后明确否决，确认 v0.2 UI 改为**浅色高级科技感**（干净、高级，类 Linear / Vercel / 飞书多维表格的清爽感），**放弃深色主题 / 暗黑驾驶舱**。
+  - 据此修正：App.vue 不再使用 darkTheme，改用 Naive UI 默认浅色主题 + 少量 themeOverrides；全局底色 #f6f8fc、顶栏半透明白、内容区浅灰蓝、主色蓝/青蓝、文字深灰黑；保留克制的渐变品牌字（不荧光）。
+  - 同步修正 docs/v0.2/requirements.md 中「深色科技感 / 决策驾驶舱」表述为「浅色高级科技感 / 机会决策工作台」。
+- 改动文件：
+  - 修改 src/App.vue（接入 n-config-provider 默认浅色主题 + themeOverrides、n-message-provider；n-layout / n-layout-header / n-layout-content 浅色外壳；导航按钮改 n-button）
+  - 修改 package.json / package-lock.json（新增 naive-ui ^2.44.1）
+  - 修改 docs/v0.2/requirements.md（视觉方向表述修正为浅色高级科技感）
+- 合规审查（Task 2 约束）：
+  - 仅安装 naive-ui，未引入图标库 / vue-router / 状态管理 / 图表库（符合 DEC-017）✓
+  - 未改 storage / prompt / parser / 页面业务逻辑 ✓（仅 App 外壳与 provider）
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器自测（Vite dev + DOM 断言）
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - selftest：34 passed, 0 failed（storage 无回归）
+  - build：成功，2805 modules transformed（含 naive-ui）
+  - 浏览器自测：body 背景为浅色（rgb(246,248,252) / #f6f8fc），文字深灰黑；顶栏半透明白；列表页与简历配置页可正常切换；console 无 error / warning
+- 视觉 / 布局风险：
+  1. 页面内部（ProfileConfigPage / JobListPage / BattlefieldPage）仍为 v0.1 各自 scoped 浅色样式，尚未统一到 Naive UI 浅色科技感；当前为浅色外壳 + 浅色旧页面，整体已无深浅冲突，但风格尚未完全统一，留待 Task 4 / 8 / 9 收敛。
+  2. naive-ui 使 JS 产物从 ~90KB 增至 ~286KB（gzip ~91KB），属引入组件库的正常代价。
+- 是否涉及 decision-log 更新：DEC-017 已涵盖「引入 Naive UI」；其背景描述仍含「深色科技感驾驶舱」字样，本次按用户指令仅修正 requirements.md 与 progress，未改 DEC-017 正文，待用户决定是否同步订正。
+- 是否允许进入下一步：是。用户确认 Task 2 浅色方向；Task 2 正式成果已提交入库。
+- 提交记录：commit message「feat: 引入 Naive UI 浅色基础壳」（仅含 Naive UI 依赖、浅色基础壳、requirements/decision-log/progress 视觉方向修正；不含 Task 2.5 spike 临时代码）
+- 建议 commit message：feat: 引入 Naive UI 浅色基础壳
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 2.5 v0.2 视觉样板 Spike（A/B 两套浅色高级科技感）
+
+- 状态：待用户查看效果并拍板（CC 已完成实现并浏览器验证；按用户指令本次不提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 用户对 Task 2 浅色外壳「变浅了但还不够好看」不满意，暂停数据模型开发，插入视觉样板 Spike：先做出一张高质量「浅色高级科技感 / 机会决策工作台」样板，再决定是否继续使用 Naive UI。
+- 实现内容（纯视觉 mock，不接业务）：
+  - 新增 src/pages/spike/SpikeDashboard.vue（临时样板，mock 数据）。在 App 外壳新增临时入口「v0.2 样板」，并临时把默认 section 设为 spike，便于直接查看。
+  - 样板含 6 个区：①顶部品牌区（OfferFlow · Offer来了 / One-Shot Opportunity Radar / 版本感 chips）②总览指标（机会分 82 环形 + 综合匹配度 78% + 公司规模 中厂 + 风险 中）③6 维机会雷达（自研 SVG 静态 mock）④公司画像（中厂 / 自研业务 / 苏州 / 通勤 45min + 稳定性/成长性/置信度标签 + 摘要）⑤岗位机会工作台（3 条 mock，卡片式行非普通 table，机会分主视觉 + 状态标签 + hover 上浮）⑥AI 承接卡（One-Shot Prompt 只读预览 + 复制；粘贴 AI 结果入口 + 保存并解析 + 已解析标签）。
+  - 同页提供 A/B 切换：方案 A 保守版（规整克制、平面卡片、细边框）；方案 B 强视觉版（bento 布局 + 弱渐变 + 轻阴影 + 大数字主视觉，类 Linear / Vercel / 飞书多维表格 SaaS Dashboard）。默认展示 B。
+- 合规：未改 storage / prompt / parser / 数据模型；未引入新依赖（继续用 naive-ui，仅多用 n-input / n-tag）；未引入 router / 状态管理 / 图表库 / 后端。
+- 改动文件：
+  - 新增 src/pages/spike/SpikeDashboard.vue（临时）
+  - 修改 src/App.vue（临时入口 + 默认 section=spike，均带 TEMP 注释，定稿后移除）
+  - 修改 docs/v0.1/progress.md（本条）
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器自测（DOM + 计算样式断言）
+- 自测结果：
+  - typecheck：0 error；selftest：34 passed, 0 failed；build：成功，2808 modules（CSS 17.6KB / JS 287KB，无新依赖）
+  - 浏览器自测：样板 6 区全部渲染（机会分 82、匹配度 78%、雷达 SVG、公司画像、3 条岗位、AI 双卡）；A/B 切换生效（B 卡片含 18px 柔和阴影、A 为 flat 无阴影）；body 浅色 #f6f8fc；console 当前渲染无 error / warning（darkTheme 警告为历史 HMR 残留，最新 reload 后不再出现）
+  - 注：preview_screenshot 在本沙箱失败 / 超时（与既往任务一致），以 DOM snapshot + getComputedStyle 断言完成验证
+- 结论建议（详见汇报）：当前 Naive UI 可继续使用，不建议换框架；样板主体走自写 CSS + 少量 naive 组件即可达到浅色高级科技感。
+- 是否允许进入下一步：是（视觉方向已拍板为方案 B）。
+- 最终处置：按用户指令，spike 临时代码不提交进 main。src/App.vue 的 spike 临时接线（import / 默认 section / 临时入口 / 渲染分支）已回退为纯 Task 2；src/pages/spike/SpikeDashboard.vue 已移出工作区（git stash 保留）作为方案 B 视觉参照，待 Task 4 / 8 / 9 折入真实页面时取回。
+- 建议 commit message：（不提交进 main）chore: 新增 v0.2 视觉样板 Spike（临时，A/B 浅色高级科技感）
+
+---
+
+### 2026-06-18 · v0.2.0 · 视觉基线拍板：方案 B
+
+- 状态：已拍板（用户确认）
+- 用户确认：2026-06-18，用户明确「我要方案 B」
+- 决定：v0.2 视觉基线采用 Task 2.5 的**方案 B**（强视觉 / bento 布局 + 弱渐变 + 轻阴影 + 大数字主视觉，浅色高级科技感，类 Linear / Vercel / 飞书多维表格）；继续使用 Naive UI（自写 CSS 主导视觉 + Naive UI 提供交互组件），不换 UI 框架。
+- 后续待办（待用户排序后执行）：
+  1. 是否将 Task 2 + Task 2.5 改动提交；
+  2. 是否把方案 B 的视觉语言（卡片 / 阴影 / 渐变 / 雷达 / 列表行）折入真实页面（与 Task 4 / 8 / 9 合流），并移除临时 spike 入口与默认跳转；
+  3. 是否先回到 Task 3（扩展数据类型与默认值）再做视觉折入；
+  4. 是否同步把 decision-log DEC-017 背景中「深色科技感驾驶舱」措辞订正为「浅色高级科技感 / 机会决策工作台」。
