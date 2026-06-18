@@ -2,17 +2,21 @@
 // Task 3 - Task 6：保存岗位、生成 Prompt、承接外部 AI 原文，并展示报告原文 + 编辑/复制 Boss 话术。
 // 不接 AI API，不做复杂解析，不做完整评分系统 / 多版本话术 / 风险标签系统。
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { NSelect, NInput } from 'naive-ui';
 import type {
   ContactStatus,
+  CompanyInput,
   JobRecord,
   JobSeekerProfile,
   JobReport,
   ParseStatus,
 } from '../storage';
+import { emptyCompanyInput } from '../storage';
 import { useStores } from '../app/stores';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
 import { CONTACT_STATUS_OPTIONS } from '../app/labels';
+import { COMPANY_SIZE_OPTIONS } from '../app/companyLabels';
 import { extractMatchScore, normalizeMatchScore } from '../app/matchScore';
 
 const props = defineProps<{
@@ -37,16 +41,30 @@ function emptyForm(): JobBasicForm {
 }
 
 const form = reactive<JobBasicForm>(emptyForm());
+// Task 4：公司与机会补充（v0.2）。与基础信息一起由「保存岗位」持久化，新建 / 编辑 / 旧岗位均适用。
+const companyForm = reactive<CompanyInput>(emptyCompanyInput());
 const loadError = ref('');
 
 const isEdit = computed(() => props.jobId !== null);
 const modeLabel = computed(() => (isEdit.value ? '查看 / 编辑岗位' : '新建岗位'));
 
 // 至少填写一个字段才允许保存，避免创建完全空白的岗位记录。
+// 公司补充的文本字段也算「有内容」（sizeTier 有默认值 unknown，不计入）。
 const canSave = computed(() =>
-  [form.company, form.role, form.city, form.salaryRange, form.jdText].some(
-    (value) => value.trim() !== '',
-  ),
+  [
+    form.company,
+    form.role,
+    form.city,
+    form.salaryRange,
+    form.jdText,
+    companyForm.staffRange,
+    companyForm.companyType,
+    companyForm.financingStage,
+    companyForm.commuteTime,
+    companyForm.commuteWay,
+    companyForm.companyNote,
+    companyForm.opportunityNote,
+  ].some((value) => value.trim() !== ''),
 );
 
 const profile = ref<JobSeekerProfile | null>(null);
@@ -229,6 +247,8 @@ onMounted(() => {
     form.city = job.city;
     form.salaryRange = job.salaryRange;
     form.jdText = job.jdText;
+    // 旧岗位经 storage 读取已补默认值，这里直接回显即可。
+    Object.assign(companyForm, job.companyInput);
     aiRawResult.value = job.aiRawResult;
     aiPastedAt.value = job.aiPastedAt;
     parseStatus.value = job.parseStatus;
@@ -255,11 +275,14 @@ function handleSave(): void {
       salaryRange: form.salaryRange,
       jdText: form.jdText,
     };
+    const companyInput: CompanyInput = { ...companyForm };
     const stores = useStores();
     if (props.jobId === null) {
-      stores.jobs.createJob(payload);
+      // createJob 只收基础信息；公司补充随后用 updateJob 写入（不改数据层接口）。
+      const created = stores.jobs.createJob(payload);
+      stores.jobs.updateJob(created.id, { companyInput });
     } else {
-      stores.jobs.updateJob(props.jobId, payload);
+      stores.jobs.updateJob(props.jobId, { ...payload, companyInput });
     }
     emit('saved');
   } catch (error) {
@@ -413,6 +436,57 @@ function saveAiResult(): void {
           placeholder="粘贴 Boss 岗位 JD 原文"
         ></textarea>
       </label>
+
+      <div class="company-extra">
+        <h2>公司与机会补充</h2>
+        <p class="company-extra-hint">
+          这些信息会随岗位一起保存，并作为 One-Shot Prompt 的输入。AI 不确定时请如实留空，不要乱猜。
+        </p>
+        <div class="grid">
+          <div class="field">
+            <span class="label">公司规模</span>
+            <n-select v-model:value="companyForm.sizeTier" :options="COMPANY_SIZE_OPTIONS" />
+          </div>
+          <div class="field">
+            <span class="label">人员规模原文</span>
+            <n-input v-model:value="companyForm.staffRange" placeholder="如：100-499 人" />
+          </div>
+          <div class="field">
+            <span class="label">公司类型</span>
+            <n-input v-model:value="companyForm.companyType" placeholder="如：自研业务 / 外包 / 国企" />
+          </div>
+          <div class="field">
+            <span class="label">融资阶段</span>
+            <n-input v-model:value="companyForm.financingStage" placeholder="如：A 轮 / 已上市 / 未明确" />
+          </div>
+          <div class="field">
+            <span class="label">通勤时间</span>
+            <n-input v-model:value="companyForm.commuteTime" placeholder="如：45min" />
+          </div>
+          <div class="field">
+            <span class="label">通勤方式</span>
+            <n-input v-model:value="companyForm.commuteWay" placeholder="如：地铁 / 自驾 / 步行" />
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">公司备注</span>
+          <n-input
+            v-model:value="companyForm.companyNote"
+            type="textarea"
+            :rows="3"
+            placeholder="对公司的额外了解，如口碑、业务方向、团队情况"
+          />
+        </div>
+        <div class="field">
+          <span class="label">机会备注</span>
+          <n-input
+            v-model:value="companyForm.opportunityNote"
+            type="textarea"
+            :rows="3"
+            placeholder="你对这个机会的判断、顾虑或期待"
+          />
+        </div>
+      </div>
 
       <div class="actions">
         <button type="submit" class="save-btn" :disabled="!canSave">
@@ -751,6 +825,25 @@ textarea {
 }
 textarea {
   resize: vertical;
+}
+.company-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid #eceff3;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.company-extra h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.company-extra-hint {
+  margin: -8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #647084;
 }
 .actions {
   display: flex;

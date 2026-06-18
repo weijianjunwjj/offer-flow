@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0、Task 1、Task 2（已入库）、Task 2.5（视觉基线方案 B，spike 不入 main）已完成。Task 3（扩展数据类型与默认值）实现完成并通过质量门槛，待用户确认。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2（已入库）/ 2.5（视觉基线方案 B）/ 3（已入库）完成。Task 4（公司与机会补充表单）实现完成并通过质量门槛 + 浏览器验证，待用户确认。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 3。确认后方可进入 Task 4（公司与机会补充表单）。
+> 待用户确认 Task 4。确认后方可进入 Task 5（One-Shot Prompt 升级）。
 
 ---
 
@@ -909,6 +909,43 @@ v0.1 不做：
   2. 数据层已就绪但暂无 UI 写入 companyInput（Task 4）与解析回填 assessment/analysis（Task 6/7）；在那之前新字段对用户不可见，属预期。
 - 是否允许进入下一步：否。待用户确认 Task 3 后方可进入 Task 4。
 - 建议 commit message：feat: 扩展 v0.2 机会雷达数据类型与旧数据默认值兼容
+- 提交记录：已于 commit e6bd407 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 4 公司与机会补充表单
+
+- 状态：待用户确认（CC 已完成实现，通过质量门槛 + 浏览器验证；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 在 BattlefieldPage 新增「公司与机会补充」区域，落地 Task 3 的 companyInput 字段录入；支持新建保存、编辑回显、旧岗位补默认值后保存。仅动该表单区，不改 prompt / parser，不做机会雷达展示，不引入新依赖，不折入 spike。
+- 改动文件：
+  - 新增 src/app/companyLabels.ts（公司规模档位中文标签 COMPANY_SIZE_LABELS + 下拉选项 COMPANY_SIZE_OPTIONS；稳定性/成长性/风险标签待 Task 8 按需补充）
+  - 修改 src/pages/BattlefieldPage.vue（新增「公司与机会补充」表单区：sizeTier 用 n-select，其余 7 字段用 n-input/textarea；companyForm 状态、onMounted 回显、handleSave 持久化；canSave 纳入公司补充文本字段）
+- 实现要点：
+  - 8 字段：公司规模 sizeTier / 人员规模原文 staffRange / 公司类型 companyType / 融资阶段 financingStage / 通勤时间 commuteTime / 通勤方式 commuteWay / 公司备注 companyNote / 机会备注 opportunityNote
+  - 新建保存：createJob 只收基础信息，公司补充随后 updateJob 写入（不改数据层接口，避免再动 storage）
+  - 编辑 / 旧岗位：onMounted 用 Object.assign(companyForm, job.companyInput) 回显；旧岗位经 storage 读取已补默认值，sizeTier 兜底 unknown，打开不报错
+  - 轻量 Naive UI 化：仅新增表单区使用 n-select / n-input，未重写 BattlefieldPage 其余部分；未折入 Task 2.5 spike（方案 B 仍仅作参考，留 stash）
+- 合规审查（Task 4 约束）：
+  - 未改 prompt / 未做 JSON parser / 未做机会雷达展示 ✓
+  - 未折入 spike / 未引入新依赖 / 未做大规模页面视觉重构 ✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器验证（Vite dev）
+- 自测结果：
+  - typecheck：0 error；selftest：46 passed, 0 failed（数据层未动，无回归）；build：成功，2807 modules
+  - 浏览器验证（dev 实跑，因 5173/5174 被占用改用 strictPort 5180 验证，验证后已还原 launch.json）：
+    1. 新建岗位填公司 + 公司规模(中厂) + 人员规模 + 通勤时间 + 公司/机会备注 → 保存 → 返回列表出现新行 ✓
+    2. 重新打开岗位，6 项字段全部正确回显（含 sizeTier=中厂（100-999））✓
+    3. 刷新页面后再打开，字段仍完整存在 ✓
+    4. 打开 seed 的旧岗位（无 v0.2 字段）不报错，公司补充区正常渲染、sizeTier 显示「未知 / 未填」✓
+    5. 全流程 console 无 error / warning ✓
+- 是否涉及 decision-log 更新：否。实现 DEC-016 已批准的字段录入，未新增 / 推翻决策。
+- 遗留风险：
+  1. 新建保存为 create + update 两次写入（为不改数据层接口刻意为之），单人本地场景可接受。
+  2. companyInput 已可录入，但尚未进入 One-Shot Prompt（Task 5）与机会雷达展示（Task 8）。
+- 是否允许进入下一步：否。待用户确认 Task 4 后方可进入 Task 5。
+- 建议 commit message：feat: 主战场新增公司与机会补充表单
 
 ---
 
