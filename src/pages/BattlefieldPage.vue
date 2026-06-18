@@ -6,6 +6,8 @@ import { NSelect, NInput } from 'naive-ui';
 import type {
   ContactStatus,
   CompanyInput,
+  CompanyAssessment,
+  OpportunityAnalysis,
   JobRecord,
   JobSeekerProfile,
   JobReport,
@@ -18,6 +20,11 @@ import { copyText } from '../app/clipboard';
 import { CONTACT_STATUS_OPTIONS } from '../app/labels';
 import { COMPANY_SIZE_OPTIONS } from '../app/companyLabels';
 import { extractMatchScore, normalizeMatchScore } from '../app/matchScore';
+import {
+  extractOfferFlowJson,
+  parseOfferFlowJson,
+  type OfferFlowJsonParseStatus,
+} from '../app/offerFlowJson';
 
 const props = defineProps<{
   jobId: string | null;
@@ -82,6 +89,21 @@ const canSaveAiResult = computed(
   () => props.jobId !== null && aiRawResult.value.trim() !== '',
 );
 
+// Task 7：OFFER_FLOW_JSON 自动解析结果（仅状态/反馈用，雷达展示在 Task 8）。
+const companyAssessment = ref<CompanyAssessment | null>(null);
+const opportunityAnalysis = ref<OpportunityAnalysis | null>(null);
+const jsonStatus = ref<OfferFlowJsonParseStatus | ''>('');
+const jsonWarnings = ref<string[]>([]);
+const JSON_STATUS_LABELS: Record<OfferFlowJsonParseStatus, string> = {
+  success: '已解析机会雷达',
+  not_found: 'JSON 未找到，已保存原文',
+  invalid_json: 'JSON 解析失败，已保存原文',
+  partial: '字段不完整，已部分解析',
+};
+const jsonStatusLabel = computed(() =>
+  jsonStatus.value === '' ? '' : JSON_STATUS_LABELS[jsonStatus.value],
+);
+
 // Task 6：报告原文兜底展示 + Boss 话术编辑。
 const report = ref<JobReport | null>(null);
 const greeting = ref('');
@@ -115,6 +137,8 @@ watch(aiRawResult, () => {
   aiSaveState.value = 'idle';
   aiSaveError.value = '';
   reportCopyState.value = 'idle';
+  jsonStatus.value = '';
+  jsonWarnings.value = [];
 });
 
 watch(greeting, () => {
@@ -257,6 +281,8 @@ onMounted(() => {
     report.value = job.report;
     greeting.value = job.report?.greetingMessage ?? '';
     matchScore.value = job.matchScore;
+    companyAssessment.value = job.companyAssessment;
+    opportunityAnalysis.value = job.opportunityAnalysis;
     contactStatus.value = job.contactStatus;
     contactStatusUpdatedAt.value = job.contactStatusUpdatedAt;
   } catch (error) {
@@ -299,29 +325,74 @@ function saveAiResult(): void {
 
   aiSaveState.value = 'idle';
   aiSaveError.value = '';
+  jsonStatus.value = '';
+  jsonWarnings.value = [];
   try {
     const pastedAt = Date.now();
-    // 原文承接时“尽力”自动提取综合匹配度（提取不到则不动用户已填值）。
-    const extracted = extractMatchScore(aiRawResult.value);
-    const patch: Partial<
-      Pick<JobRecord, 'aiRawResult' | 'aiPastedAt' | 'parseStatus' | 'matchScore'>
-    > = {
-      aiRawResult: aiRawResult.value,
+    const raw = aiRawResult.value;
+
+    // Task 7：尽力解析 OFFER_FLOW_JSON。解析失败 / 未找到不得阻断保存、不得清空已有结构化字段。
+    const parsed = parseOfferFlowJson(extractOfferFlowJson(raw) ?? '');
+
+    // 原文必存（最高优先）。
+    const patch: Partial<Omit<JobRecord, 'id' | 'createdAt'>> = {
+      aiRawResult: raw,
       aiPastedAt: pastedAt,
-      parseStatus: 'unparsed',
     };
-    if (extracted !== null) {
-      patch.matchScore = extracted;
-    }
-    useStores().jobs.updateJob(props.jobId, patch);
-    aiPastedAt.value = pastedAt;
-    parseStatus.value = 'unparsed';
-    if (extracted !== null) {
-      matchScore.value = extracted;
-      aiExtractedMatch.value = extracted;
+
+    // 匹配度：优先 JSON；其次 v0.1.1 文本提取；都没有则不动已有值（no-clobber）。
+    let appliedMatch = '';
+    if (parsed.matchScore !== '') {
+      patch.matchScore = parsed.matchScore;
+      appliedMatch = parsed.matchScore;
     } else {
-      aiExtractedMatch.value = '';
+      const extracted = extractMatchScore(raw);
+      if (extracted !== null) {
+        patch.matchScore = extracted;
+        appliedMatch = extracted;
+      }
     }
+
+    // 结构化字段：仅解析出来时才写，未解析则省略 → updateJob 合并保留旧值（no-clobber）。
+    let wroteStructured = false;
+    if (parsed.companyAssessment !== null) {
+      patch.companyAssessment = parsed.companyAssessment;
+      wroteStructured = true;
+    }
+    if (parsed.opportunityAnalysis !== null) {
+      patch.opportunityAnalysis = parsed.opportunityAnalysis;
+      wroteStructured = true;
+      // bossGreeting 为空时不覆盖已有话术。
+      const g = parsed.opportunityAnalysis.bossGreeting.trim();
+      if (g !== '') {
+        patch.report = { ...(report.value ?? emptyReport()), greetingMessage: g };
+      }
+    }
+
+    // 写了结构化数据视为已解析；否则保持「未解析（原文已保存）」。
+    patch.parseStatus = wroteStructured ? 'parsed' : 'unparsed';
+
+    useStores().jobs.updateJob(props.jobId, patch);
+
+    // 同步本地状态（仅同步实际写入的字段）。
+    aiPastedAt.value = pastedAt;
+    parseStatus.value = patch.parseStatus;
+    if (patch.matchScore !== undefined) {
+      matchScore.value = patch.matchScore;
+    }
+    if (patch.companyAssessment !== undefined) {
+      companyAssessment.value = patch.companyAssessment;
+    }
+    if (patch.opportunityAnalysis !== undefined) {
+      opportunityAnalysis.value = patch.opportunityAnalysis;
+    }
+    if (patch.report) {
+      report.value = patch.report;
+      greeting.value = patch.report.greetingMessage;
+    }
+    aiExtractedMatch.value = appliedMatch;
+    jsonStatus.value = parsed.status;
+    jsonWarnings.value = parsed.warnings;
     aiSaveState.value = 'done';
   } catch (error) {
     aiSaveState.value = 'fail';
@@ -533,8 +604,7 @@ function saveAiResult(): void {
     <section class="ai-result-block">
       <h2>外部 AI 结果原文</h2>
       <p class="ai-result-hint">
-        粘贴 ChatGPT、Claude、Gemini
-        等外部 AI 返回的完整内容。本步骤只保存原文并标记为未解析，不会因格式不同而阻断保存。
+        粘贴 ChatGPT、Claude、Gemini 等外部 AI 返回的完整内容（含 OFFER_FLOW_JSON）。保存时会尽力解析机会雷达；解析失败或未找到 JSON 也会照常保存原文，不会清空已有结构化数据。
       </p>
       <textarea
         v-model="aiRawResult"
@@ -576,9 +646,27 @@ function saveAiResult(): void {
           上次保存：{{ formatTime(aiPastedAt) }}
         </span>
       </div>
-      <p v-if="parseStatus !== 'none'" class="parse-status">
-        解析状态：{{ parseStatus === 'parsed' ? '已解析' : '未解析（原文已保存）' }}
+      <p
+        v-if="jsonStatus !== ''"
+        class="parse-status"
+        :class="{
+          ok: jsonStatus === 'success',
+          warn: jsonStatus === 'partial',
+          fail: jsonStatus === 'invalid_json',
+        }"
+        role="status"
+      >
+        {{ jsonStatusLabel }}
       </p>
+      <p v-else-if="parseStatus !== 'none'" class="parse-status">
+        解析状态：{{ parseStatus === 'parsed' ? '已解析机会雷达' : '未解析（原文已保存）' }}
+      </p>
+      <ul v-if="jsonWarnings.length > 0" class="json-warnings">
+        <li v-for="(w, i) in jsonWarnings.slice(0, 5)" :key="i">{{ w }}</li>
+        <li v-if="jsonWarnings.length > 5" class="more">
+          …等共 {{ jsonWarnings.length }} 条提示
+        </li>
+      </ul>
       <p
         v-if="aiSaveState === 'done' && aiExtractedMatch !== ''"
         class="ai-extracted"
@@ -978,6 +1066,27 @@ textarea {
 }
 .parse-status {
   margin: 10px 0 0;
+}
+.parse-status.ok {
+  color: #1a7f37;
+}
+.parse-status.warn {
+  color: #b45309;
+}
+.parse-status.fail {
+  color: #a4262c;
+}
+.json-warnings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #647084;
+  line-height: 1.6;
+}
+.json-warnings .more {
+  list-style: none;
+  margin-left: -18px;
+  color: #8a94a6;
 }
 .ai-extracted {
   margin: 8px 0 0;

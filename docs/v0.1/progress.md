@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5（均已入库，2.5 除外）完成。Task 6（OFFER_FLOW_JSON 解析器）实现完成并通过质量门槛（含新增 parser selftest），待用户确认。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5 / 6（均已入库，2.5 除外）完成。Task 7（AI 原文保存时自动解析）实现完成并通过质量门槛 + 浏览器 7 项验证，待用户确认。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 6。确认后方可进入 Task 7（AI 原文保存时自动解析）。
+> 待用户确认 Task 7。确认后方可进入 Task 8（机会雷达卡 + SVG 组件）。
 
 ---
 
@@ -1020,6 +1020,47 @@ v0.1 不做：
   1. 解析器已就绪但尚未接入保存流程（Task 7 接 BattlefieldPage：保存 AI 原文时自动解析并回填 companyAssessment / opportunityAnalysis / matchScore / greeting，失败不清空）。
 - 是否允许进入下一步：否。待用户确认 Task 6 后方可进入 Task 7。
 - 建议 commit message：feat: 新增 OFFER_FLOW_JSON 解析器与机会分计算工具及自测
+- 提交记录：已于 commit 14eba56 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 7 AI 原文保存时自动解析
+
+- 状态：待用户确认（CC 已完成实现并通过质量门槛 + 浏览器 7 项验证；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 在 BattlefieldPage 保存 AI 原文时接入 extractOfferFlowJson / parseOfferFlowJson，解析成功回填 companyAssessment / opportunityAnalysis / matchScore / report.greetingMessage；原文必存、解析失败不阻断、各结构化字段 no-clobber、bossGreeting 空不覆盖。仅接入保存流程，不做雷达图 / 列表机会分展示，不折入 spike，不引入新依赖。
+- 改动文件：
+  - 修改 src/pages/BattlefieldPage.vue（导入 parser；新增 companyAssessment / opportunityAnalysis / jsonStatus / jsonWarnings 状态与 jsonStatusLabel；onMounted 回显结构化字段；重写 saveAiResult 接入解析与回填；模板新增 4 态解析反馈 + warnings 简短列表 + 文案更新；新增反馈样式）
+- 实现要点：
+  - 解析：parseOfferFlowJson(extractOfferFlowJson(raw) ?? '')；patch 始终含 aiRawResult + aiPastedAt（原文必存）
+  - matchScore：优先 JSON.matchScore，其次 v0.1.1 extractMatchScore 文本兜底，都没有则不写（no-clobber）
+  - 结构化：parsed.companyAssessment / opportunityAnalysis 非 null 才写入 patch，否则省略 → updateJob 合并保留旧值（no-clobber）
+  - greeting：仅 bossGreeting 非空时写 report.greetingMessage，空则不覆盖已有话术
+  - parseStatus：写入结构化 → 'parsed'，否则 'unparsed'
+  - 反馈：success=已解析机会雷达 / not_found=JSON 未找到，已保存原文 / invalid_json=JSON 解析失败，已保存原文 / partial=字段不完整，已部分解析；warnings 取前 5 条简短展示
+- 合规审查（Task 7 约束）：
+  - 原文优先成功、解析失败不阻断 ✓；CA/OA/matchScore/greeting 均 no-clobber ✓；bossGreeting 空不覆盖 ✓
+  - 不做雷达图 / 列表机会分展示 / 不折入 spike / 不引入新依赖 ✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器 7 项验证
+- 自测结果：
+  - typecheck：0 error（修一处 patch.report 可能为 null 的守卫）
+  - selftest：storage 46 + parser 43，全 0 failed
+  - build：成功，2807 modules（JS 407KB，parser 已进入 app bundle）
+  - 浏览器验证（dev strictPort 5180，验证后已还原 launch.json）：
+    1. 标准 OFFER_FLOW_JSON 保存 → matchScore 82% / companyAssessment medium / opportunityAnalysis 78 / 话术写入 / 状态「已解析机会雷达」✓
+    2. 刷新后重开 → 结构化字段仍在，匹配度与话术回显 ✓
+    3. 普通无 JSON 原文 → 状态「JSON 未找到，已保存原文」，原文已存，CA/OA/match/话术均未清空 ✓
+    4. 非法 JSON（标记内坏 JSON）→ 状态「JSON 解析失败，已保存原文」，原文已存、不阻断，结构化字段保留 ✓
+    5. bossGreeting 为空的 JSON → CA/OA 写入，已有话术「原有话术保留」未被覆盖 ✓
+    6. partial（缺 companyAssessment）→ 状态「字段不完整，已部分解析」，opportunityAnalysis 更新、companyAssessment 保留、warnings 显示 ✓
+    7. 全流程 console 无 error / warning ✓
+- 是否涉及 decision-log 更新：否。实现 DEC-016 已批准的解析回填闭环。
+- 遗留风险：
+  1. 结构化字段已写入 storage，但主战场尚未展示机会雷达 / 公司画像（Task 8），列表也未展示机会分（Task 9）；当前仅通过解析状态文案与 localStorage 可见。
+- 是否允许进入下一步：否。待用户确认 Task 7 后方可进入 Task 8。
+- 建议 commit message：feat: 保存 AI 原文时自动解析 OFFER_FLOW_JSON 并回填（失败不清空）
 
 ---
 
