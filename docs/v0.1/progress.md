@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5 / 6 / 7（均已入库，2.5 除外）完成。Task 8（机会雷达卡 + SVG 组件）实现完成并通过质量门槛 + 浏览器 6 项验证，待用户确认。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5 / 6 / 7 / 8（均已入库，2.5 除外）完成。Task 9（列表页升级与筛选排序）实现完成并通过质量门槛 + 浏览器 10 项验证，待用户确认。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 8。确认后方可进入 Task 9（列表页升级与筛选排序）。
+> 待用户确认 Task 9。确认后方可进入 Task 10（文档与 release note）。
 
 ---
 
@@ -1100,6 +1100,47 @@ v0.1 不做：
   2. 机会雷达卡为浅色基础卡片，整体页面其余部分仍为 v0.1 样式，视觉统一收口可在后续按需进行。
 - 是否允许进入下一步：否。待用户确认 Task 8 后方可进入 Task 9。
 - 建议 commit message：feat: 新增机会雷达 SVG 组件与主战场结构化结果展示
+- 提交记录：已于 commit 515cc6b 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 9 列表页升级与筛选排序
+
+- 状态：待用户确认（CC 已完成实现并通过质量门槛 + 浏览器 10 项验证；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 升级 JobListPage：新增公司规模 / 机会分列；新增城市 / 公司规模 / 沟通状态 / 机会分下限筛选；新增更新时间 / 机会分 / 匹配度排序。筛选排序仅影响前端展示，不改持久化数据。不改 parser / prompt / storage，不折入 spike，不引入新依赖。
+- 改动文件：
+  - 修改 src/pages/JobListPage.vue（filteredJobs 计算 + 5 个 n-select 筛选/排序 + 重置 + 结果计数 + 公司规模/机会分列 + 空筛选结果提示）
+- 实现要点：
+  - 机会分：opportunityAnalysis?.opportunityScore ?? null，null 显示 '-'
+  - 公司规模：优先 companyAssessment.sizeTier，其次 companyInput.sizeTier，标签经 COMPANY_SIZE_LABELS（仍为 unknown 时显示「未知 / 未填」）
+  - 筛选：城市（由现有岗位去重生成选项）、公司规模、沟通状态、机会分下限（不限/50/65/70/75/85+，无机会分的岗位在有下限时被排除）
+  - 排序：更新时间 desc（默认）/ 机会分 desc / 匹配度 desc（无值排末尾，按 -1 处理）
+  - 全部 filteredJobs 为 computed，基于已加载 jobs ref，未触碰 localStorage（不改持久化）
+  - 轻量 Naive UI 化：仅筛选区用 n-select；表格沿用原生 table，未大重写
+- 合规审查（Task 9 约束）：
+  - 不改 parser / prompt / storage / 不折入 spike / 不引入新依赖 ✓；筛选排序不改持久化 ✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器 10 项验证
+- 自测结果：
+  - typecheck：0 error；selftest：storage 46 + parser 43 全 0 failed；build：成功，2808 modules（JS 415KB）
+  - 浏览器验证（dev strictPort 5180，验证后已还原 launch.json；seed A/B/C/D 四岗：苏州中厂82 / 上海大中厂66 / 苏州小厂无分析 / 杭州大厂90）：
+    1. 有 opportunityAnalysis 的岗位显示机会分（82/66/90）✓
+    2. 无 opportunityAnalysis 的 C 岗机会分显示 '-' ✓
+    3. 公司规模正常显示（中厂/大中厂/小厂/大厂；C 用 companyInput 兜底）✓
+    4. 城市筛选 苏州 → A、C ✓
+    5. 公司规模筛选 大中厂 → B ✓
+    6. 沟通状态筛选 已约面 → D ✓
+    7. 机会分 70+ → A、D（排除 66 与 无分析）✓
+    8. 排序 机会分 / 匹配度 → D,A,B,C ✓；默认更新时间 → A,B,C,D ✓
+    9. 点击岗位仍进入主战场 ✓
+    10. console 无 error / warning ✓
+- 是否涉及 decision-log 更新：否。
+- 遗留风险：
+  1. 列表与主战场视觉已部分浅色科技感化（n-select + 雷达卡），但整页视觉统一收口尚未做（非 v0.2 阻塞）。
+- 是否允许进入下一步：否。待用户确认 Task 9 后方可进入 Task 10（文档与 release note）。
+- 建议 commit message：feat: 列表页新增机会分与公司规模列及筛选排序
 
 ---
 
