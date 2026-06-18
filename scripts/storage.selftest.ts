@@ -2,12 +2,13 @@
 // Verifies: save / read / update / delete for both global config and job records.
 
 import { createStores, MemoryStorageDriver } from '../src/storage';
-import type { JobSeekerProfile } from '../src/storage';
+import type { JobSeekerProfile, JobRecord } from '../src/storage';
 import {
   LEGACY_JOB_PREFIX,
   LEGACY_PROFILE_KEY,
   PROFILE_KEY,
   isJobKey,
+  jobKey,
 } from '../src/storage';
 
 let passed = 0;
@@ -175,6 +176,83 @@ check('deleteJob reports success', deleted === true);
 check('deleted job no longer readable', jobs.getJob(jobB.id) === null);
 check('listJobs reflects deletion', jobs.listJobs().length === 1);
 check('deleting a missing job reports false', jobs.deleteJob('does-not-exist') === false);
+
+// --------------------------------------------------------------------------
+section('v0.2 defaults & backward compatibility');
+
+// 用独立 driver / stores，避免影响上面的键计数断言。
+const v2Driver = new MemoryStorageDriver();
+const v2Stores = createStores(v2Driver);
+
+// 新建岗位带 v0.2 默认值
+const freshJob = v2Stores.jobs.createJob({ company: 'C', role: 'FE' });
+check('new job companyInput size defaults unknown', freshJob.companyInput.sizeTier === 'unknown');
+check(
+  'new job companyInput strings empty',
+  freshJob.companyInput.staffRange === '' && freshJob.companyInput.commuteTime === '',
+);
+check('new job companyAssessment is null', freshJob.companyAssessment === null);
+check('new job opportunityAnalysis is null', freshJob.opportunityAnalysis === null);
+
+const v01JobBase = {
+  createdAt: 2,
+  updatedAt: 2,
+  company: 'Old Co',
+  role: 'FE',
+  city: 'Suzhou',
+  salaryRange: '20K',
+  jdText: 'jd',
+  promptText: '',
+  aiRawResult: '',
+  aiPastedAt: null,
+  parseStatus: 'none',
+  report: null,
+  matchScore: '',
+  contactStatus: 'not_contacted',
+  contactStatusUpdatedAt: 2,
+};
+
+// 旧岗位（完全缺 v0.2 字段）：读取自动补默认值、不丢 v0.1 字段、不报错
+const oldId = 'old-v01-job';
+v2Driver.setItem(jobKey(oldId), JSON.stringify({ ...v01JobBase, id: oldId }));
+let oldRead: JobRecord | null = null;
+check(
+  'reading a legacy job does not throw',
+  (() => {
+    try {
+      oldRead = v2Stores.jobs.getJob(oldId);
+      return true;
+    } catch {
+      return false;
+    }
+  })(),
+);
+check('legacy job keeps v0.1 fields', oldRead?.company === 'Old Co');
+check('legacy job backfills companyInput', oldRead?.companyInput.sizeTier === 'unknown');
+check('legacy job backfills companyAssessment null', oldRead?.companyAssessment === null);
+check('legacy job backfills opportunityAnalysis null', oldRead?.opportunityAnalysis === null);
+check('legacy job appears in listJobs', v2Stores.jobs.listJobs().some((j) => j.id === oldId));
+
+// 旧岗位携带「部分」companyInput：保留已有值，仅补缺失字段
+const partialId = 'partial-companyinput-job';
+v2Driver.setItem(
+  jobKey(partialId),
+  JSON.stringify({
+    ...v01JobBase,
+    id: partialId,
+    companyInput: { sizeTier: 'medium', staffRange: '100-499人' },
+  }),
+);
+const partialRead = v2Stores.jobs.getJob(partialId);
+check(
+  'partial companyInput keeps provided values',
+  partialRead?.companyInput.sizeTier === 'medium' &&
+    partialRead?.companyInput.staffRange === '100-499人',
+);
+check(
+  'partial companyInput fills missing values',
+  partialRead?.companyInput.companyType === '' && partialRead?.companyInput.commuteWay === '',
+);
 
 // --------------------------------------------------------------------------
 section('Summary');

@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0、Task 1 已完成；Task 2（Naive UI 浅色基础壳）已提交入库。Task 2.5 视觉样板 Spike 已完成，用户选定方案 B 为视觉基线；spike 临时代码不入 main，已移出工作区保留作参照。当前进入 Task 3（扩展数据类型与默认值）。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0、Task 1、Task 2（已入库）、Task 2.5（视觉基线方案 B，spike 不入 main）已完成。Task 3（扩展数据类型与默认值）实现完成并通过质量门槛，待用户确认。
 
 当前是否允许进入下一步：
 
-> Task 3 进行中。完成后停下等用户确认，再决定是否进入 Task 4。
+> 待用户确认 Task 3。确认后方可进入 Task 4（公司与机会补充表单）。
 
 ---
 
@@ -878,6 +878,37 @@ v0.1 不做：
 - 是否允许进入下一步：是（视觉方向已拍板为方案 B）。
 - 最终处置：按用户指令，spike 临时代码不提交进 main。src/App.vue 的 spike 临时接线（import / 默认 section / 临时入口 / 渲染分支）已回退为纯 Task 2；src/pages/spike/SpikeDashboard.vue 已移出工作区（git stash 保留）作为方案 B 视觉参照，待 Task 4 / 8 / 9 折入真实页面时取回。
 - 建议 commit message：（不提交进 main）chore: 新增 v0.2 视觉样板 Spike（临时，A/B 浅色高级科技感）
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 3 扩展数据类型与默认值
+
+- 状态：待用户确认（CC 已完成实现并通过质量门槛；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 按 DEC-016 落地 v0.2 机会雷达数据模型：新增类型、扩展 JobRecord、补旧数据兼容默认值。仅动数据层，不动页面 UI / prompt / parser，不引入新依赖。
+- 改动文件：
+  - 修改 src/storage/types.ts（新增枚举 CompanySizeTier / StabilityLevel / GrowthPotential / RiskLevel；新增接口 CompanyInput / CompanyAssessment / OpportunityRadar / OpportunityAnalysis；JobRecord 新增 companyInput / companyAssessment / opportunityAnalysis 三字段。仅类型，无逻辑）
+  - 新增 src/storage/defaults.ts（StoredJobRecord 旧形状类型；emptyCompanyInput() 工厂；withJobRecordDefaults() 读取时补齐 v0.2 字段，只补缺失、不覆盖、不抛错）
+  - 修改 src/storage/jobStore.ts（createJob 写入 v0.2 默认值；getJob / listJobs 读取后经 withJobRecordDefaults 补齐）
+  - 修改 src/storage/index.ts（导出 emptyCompanyInput / withJobRecordDefaults / StoredJobRecord）
+  - 修改 scripts/storage.selftest.ts（新增「v0.2 defaults & backward compatibility」段，覆盖新建默认值、旧岗位读取补默认值不报错、部分 companyInput 合并）
+- 合规审查（Task 3 约束）：
+  - 不新增独立 CompanyRecord / OpportunityRecord / AnalysisHistory 实体（符合 DEC-004 / DEC-016，全部挂 JobRecord）✓
+  - 未改页面 UI、未改 prompt / parser、未引入新依赖 ✓
+  - 旧数据兼容：缺字段补默认值、不报错、不丢 v0.1 字段 ✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build
+- 自测结果：
+  - typecheck：vue-tsc --noEmit，0 error
+  - selftest：46 passed, 0 failed（较上轮 34 增加 12 项 v0.2 用例：新建默认值 4、旧数据兼容 6、部分合并 2）
+  - build：成功，2806 modules transformed
+- 是否涉及 decision-log 更新：否。本任务实现 DEC-016 已批准的数据模型，未新增 / 推翻决策。
+- 遗留风险：
+  1. withJobRecordDefaults 仅做浅层字段补齐（companyInput 浅合并、assessment/analysis 整体兜底）；若未来 companyAssessment / opportunityAnalysis 内部结构再演进，需要更深的迁移策略，当前 v0.2 不需要。
+  2. 数据层已就绪但暂无 UI 写入 companyInput（Task 4）与解析回填 assessment/analysis（Task 6/7）；在那之前新字段对用户不可见，属预期。
+- 是否允许进入下一步：否。待用户确认 Task 3 后方可进入 Task 4。
+- 建议 commit message：feat: 扩展 v0.2 机会雷达数据类型与旧数据默认值兼容
 
 ---
 

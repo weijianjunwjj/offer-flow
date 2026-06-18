@@ -1,5 +1,7 @@
 import type { JobRecord, JobCreateInput } from './types';
 import type { StorageDriver } from './driver';
+import type { StoredJobRecord } from './defaults';
+import { emptyCompanyInput, withJobRecordDefaults } from './defaults';
 import { jobKey, isJobKey } from './keys';
 import { newId } from './id';
 
@@ -29,6 +31,10 @@ export class JobStore {
       report: null,
       matchScore: '',
 
+      companyInput: emptyCompanyInput(),
+      companyAssessment: null,
+      opportunityAnalysis: null,
+
       contactStatus: 'not_contacted',
       contactStatusUpdatedAt: now,
     };
@@ -42,7 +48,8 @@ export class JobStore {
       return null;
     }
     try {
-      return JSON.parse(raw) as JobRecord;
+      // 旧岗位可能缺 v0.2 字段：读取后统一补默认值，保证返回完整 JobRecord。
+      return withJobRecordDefaults(JSON.parse(raw) as StoredJobRecord);
     } catch (error) {
       throw new Error(
         `[OfferFlow] Job "${id}" is corrupted and cannot be parsed: ${(error as Error).message}`,
@@ -61,7 +68,7 @@ export class JobStore {
         continue;
       }
       try {
-        jobs.push(JSON.parse(raw) as JobRecord);
+        jobs.push(withJobRecordDefaults(JSON.parse(raw) as StoredJobRecord));
       } catch (error) {
         // One bad row shouldn't sink the whole list — warn, don't crash, don't hide.
         console.warn(

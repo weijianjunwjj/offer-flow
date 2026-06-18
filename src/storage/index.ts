@@ -3,6 +3,9 @@
 export * from './types';
 export * from './keys';
 
+export { emptyCompanyInput, withJobRecordDefaults } from './defaults';
+export type { StoredJobRecord } from './defaults';
+
 export { MemoryStorageDriver, BrowserStorageDriver } from './driver';
 export type { StorageDriver } from './driver';
 

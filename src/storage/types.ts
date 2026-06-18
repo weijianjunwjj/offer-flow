@@ -49,6 +49,73 @@ export type ContactStatus =
 /** AI 结果解析状态。Step 0 只存这个标记位,不依据它做分支逻辑 */
 export type ParseStatus = 'none' | 'parsed' | 'unparsed';
 
+// ===========================================================================
+// v0.2 机会雷达数据结构（DEC-016）。
+// 仍只描述「持久化形状」，不含任何解析 / 计算逻辑（解析见 Task 6 offerFlowJson.ts，
+// 计算见 Task 6 opportunityScore.ts）。不新增独立实体，全部挂在 JobRecord 上。
+// ===========================================================================
+
+/** 公司规模档位 */
+export type CompanySizeTier =
+  | 'giant' // 大厂：10000+
+  | 'large' // 大中厂：1000-9999
+  | 'medium' // 中厂：100-999
+  | 'small' // 小厂：20-99
+  | 'micro' // 微厂：0-20
+  | 'unknown';
+
+/** 稳定性 */
+export type StabilityLevel = 'high' | 'medium' | 'low' | 'unknown';
+/** 成长性 */
+export type GrowthPotential = 'high' | 'medium' | 'low' | 'unknown';
+/** 风险等级 */
+export type RiskLevel = 'low' | 'medium' | 'high' | 'unknown';
+
+/** 公司与机会补充信息（用户填写） */
+export interface CompanyInput {
+  sizeTier: CompanySizeTier;
+  staffRange: string;
+  companyType: string;
+  financingStage: string;
+  commuteTime: string;
+  commuteWay: string;
+  companyNote: string;
+  opportunityNote: string;
+}
+
+/** 公司画像（外部 AI 解析结果） */
+export interface CompanyAssessment {
+  sizeTier: CompanySizeTier;
+  staffRange: string;
+  companyType: string;
+  financingStage: string;
+  stabilityLevel: StabilityLevel;
+  growthPotential: GrowthPotential;
+  summary: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+/** 6 维机会雷达（每维 0-100） */
+export interface OpportunityRadar {
+  salaryScore: number; // 薪资
+  stabilityScore: number; // 稳定
+  growthScore: number; // 成长
+  matchScore: number; // 匹配
+  commuteScore: number; // 通勤
+  riskControlScore: number; // 风险可控
+}
+
+/** 机会分析（外部 AI 解析结果） */
+export interface OpportunityAnalysis {
+  opportunityScore: number;
+  opportunityRadar: OpportunityRadar;
+  applyAdvice: ApplyAdvice | '';
+  riskLevel: RiskLevel;
+  decisionSummary: string;
+  interviewFocus: string[];
+  bossGreeting: string;
+}
+
 /** 岗位记录(多条,一条一个存储项,不做大对象整存整取) */
 export interface JobRecord {
   id: string;
@@ -73,6 +140,11 @@ export interface JobRecord {
   // 报告内容(承接或手填,Step 0 不计算)
   report: JobReport | null;
   matchScore: string;
+
+  // v0.2 机会雷达(DEC-016)：companyInput 用户填写；后两者由 AI 结果解析回填,未解析为 null
+  companyInput: CompanyInput;
+  companyAssessment: CompanyAssessment | null;
+  opportunityAnalysis: OpportunityAnalysis | null;
 
   // 沟通台账
   contactStatus: ContactStatus;
