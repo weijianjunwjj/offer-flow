@@ -68,7 +68,9 @@ const canSave = computed(() =>
 );
 
 const profile = ref<JobSeekerProfile | null>(null);
-const generatedPrompt = computed(() => buildAnalysisPrompt(profile.value, form));
+const generatedPrompt = computed(() =>
+  buildAnalysisPrompt(profile.value, form, companyForm),
+);
 const copyState = ref<'idle' | 'done' | 'fail'>('idle');
 const aiRawResult = ref('');
 const aiPastedAt = ref<number | null>(null);

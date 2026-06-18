@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2（已入库）/ 2.5（视觉基线方案 B）/ 3（已入库）完成。Task 4（公司与机会补充表单）实现完成并通过质量门槛 + 浏览器验证，待用户确认。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4（均已入库，2.5 除外）完成。Task 5（One-Shot Prompt 升级）实现完成并通过质量门槛 + 浏览器验证，待用户确认。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 4。确认后方可进入 Task 5（One-Shot Prompt 升级）。
+> 待用户确认 Task 5。确认后方可进入 Task 6（OFFER_FLOW_JSON 解析器）。
 
 ---
 
@@ -946,6 +946,41 @@ v0.1 不做：
   2. companyInput 已可录入，但尚未进入 One-Shot Prompt（Task 5）与机会雷达展示（Task 8）。
 - 是否允许进入下一步：否。待用户确认 Task 4 后方可进入 Task 5。
 - 建议 commit message：feat: 主战场新增公司与机会补充表单
+- 提交记录：已于 commit fc539d9 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 5 One-Shot Prompt 升级
+
+- 状态：待用户确认（CC 已完成实现，通过质量门槛 + 浏览器验证；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 升级 buildAnalysisPrompt 为 One-Shot Prompt：输入纳入公司与机会补充 companyInput，要求外部 AI 一次性输出「Markdown 报告 + OFFER_FLOW_JSON 数据块」（DEC-016）。仅生成 Prompt 文本，不做 parser、不写结构化字段、不做雷达展示、不改 storage、不引入新依赖、不折入 spike。
+- 改动文件：
+  - 修改 src/app/prompt.ts（buildAnalysisPrompt 新增第三参 company: CompanyInput；新增【公司与机会补充】输入段；新增第二部分 OFFER_FLOW_JSON 输出要求 + 固定标记 + schema 示例 + 枚举允许值 + 7 条硬性要求；保留「综合匹配度：XX%」行以兼容 v0.1.1 文本提取）
+  - 修改 src/pages/BattlefieldPage.vue（generatedPrompt 计算改为 buildAnalysisPrompt(profile, form, companyForm)）
+- 实现要点：
+  - JSON 固定标记 ---OFFER_FLOW_JSON_START--- / ---OFFER_FLOW_JSON_END---；schema 按 docs/v0.2/requirements.md（version/matchScore/companyAssessment/opportunityAnalysis）
+  - 明确要求：未知信息标低置信度不乱猜；分数 0-100 整数；JSON 不含注释；枚举只用英文代码（sizeTier/stabilityLevel/growthPotential/confidence/applyAdvice/riskLevel）；字段结构稳定不增删键；version 固定 0.2.0
+  - 示例 JSON 本身无注释；枚举允许值在 JSON 外用文字说明，避免在 JSON 里写注释
+- 合规审查（Task 5 约束）：
+  - 不做 parser / 不写结构化字段 / 不做雷达展示 / 不改 storage / 不折入 spike / 不引入新依赖 ✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器验证（Vite dev）
+- 自测结果：
+  - typecheck：0 error；selftest：46 passed, 0 failed（数据层未动）；build：成功，2807 modules
+  - 浏览器验证（dev 实跑，端口 5180）：打开带 companyInput 的岗位（公司规模=中厂、通勤 45min、公司/机会备注）→ 生成 Prompt：
+    1. Prompt 含「公司规模：中厂」「人员规模 100-499 人」「通勤时间：45min」「通勤方式」「公司备注」「机会备注」✓
+    2. Prompt 含 ---OFFER_FLOW_JSON_START--- 与 ---OFFER_FLOW_JSON_END--- ✓
+    3. 复制 Prompt：handler 正常执行（沙箱 clipboard 被拒显示「复制失败」，与 v0.1.0 封版记录一致，属环境限制非回归）
+    4. 整页刷新 + 重新打开岗位：捕获 console.error / onerror / unhandledrejection 共 0 条，Prompt 正常渲染 ✓
+  - 说明：编辑期 HMR 曾出现「Unhandled error during setup function」告警，经整页刷新复现确认为热更新瞬态（prompt.ts 与 BattlefieldPage 热更新错位导致 setup 瞬时重跑），全新加载下为 0 错误。
+- 是否涉及 decision-log 更新：否。实现 DEC-016 已批准的 One-Shot Prompt 方向。
+- 遗留风险：
+  1. Prompt 已要求 JSON，但工具尚未解析（Task 6 写 parser，Task 7 接保存回填）；当前保存 AI 原文仍走 v0.1.1 文本提取「综合匹配度」。
+  2. 复制功能需用户在真实 localhost 浏览器点一次确认（沙箱 clipboard 受限，非代码问题）。
+- 是否允许进入下一步：否。待用户确认 Task 5 后方可进入 Task 6。
+- 建议 commit message：feat: One-Shot Prompt 纳入公司补充并要求输出 OFFER_FLOW_JSON
 
 ---
 
