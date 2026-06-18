@@ -18,13 +18,22 @@ import { useStores } from '../app/stores';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
 import { CONTACT_STATUS_OPTIONS } from '../app/labels';
-import { COMPANY_SIZE_OPTIONS } from '../app/companyLabels';
+import {
+  COMPANY_SIZE_OPTIONS,
+  COMPANY_SIZE_LABELS,
+  LEVEL_LABELS,
+  RISK_LABELS,
+  CONFIDENCE_LABELS,
+  APPLY_ADVICE_LABELS,
+} from '../app/companyLabels';
 import { extractMatchScore, normalizeMatchScore } from '../app/matchScore';
 import {
   extractOfferFlowJson,
   parseOfferFlowJson,
   type OfferFlowJsonParseStatus,
 } from '../app/offerFlowJson';
+import { getOpportunityScoreLevel } from '../app/opportunityScore';
+import OpportunityRadarChart from '../components/OpportunityRadarChart.vue';
 
 const props = defineProps<{
   jobId: string | null;
@@ -102,6 +111,16 @@ const JSON_STATUS_LABELS: Record<OfferFlowJsonParseStatus, string> = {
 };
 const jsonStatusLabel = computed(() =>
   jsonStatus.value === '' ? '' : JSON_STATUS_LABELS[jsonStatus.value],
+);
+
+// Task 8：机会雷达卡展示。无任何结构化数据时显示空状态。
+const hasOpportunity = computed(
+  () => opportunityAnalysis.value !== null || companyAssessment.value !== null,
+);
+const scoreLevel = computed(() =>
+  opportunityAnalysis.value
+    ? getOpportunityScoreLevel(opportunityAnalysis.value.opportunityScore)
+    : '',
 );
 
 // Task 6：报告原文兜底展示 + Boss 话术编辑。
@@ -677,6 +696,71 @@ function saveAiResult(): void {
       </p>
     </section>
 
+    <section v-if="isEdit" class="radar-block">
+      <h2>机会雷达</h2>
+
+      <p v-if="!hasOpportunity" class="radar-empty">
+        还没有机会雷达。粘贴 AI 分析结果后，这里会亮起来。
+      </p>
+
+      <div v-else class="radar-grid">
+        <!-- 左：机会分 + 综合匹配度 + 雷达图 -->
+        <div class="radar-left">
+          <div v-if="opportunityAnalysis" class="score-row">
+            <div class="score-cell">
+              <span class="score-num">{{ opportunityAnalysis.opportunityScore }}</span>
+              <span class="score-unit">/ 100</span>
+              <span class="score-cap">机会分 · {{ scoreLevel }}</span>
+            </div>
+            <div class="score-cell">
+              <span class="score-num alt">{{ matchScore === '' ? '—' : matchScore }}</span>
+              <span class="score-cap">综合匹配度</span>
+            </div>
+          </div>
+          <OpportunityRadarChart
+            v-if="opportunityAnalysis"
+            :radar="opportunityAnalysis.opportunityRadar"
+          />
+        </div>
+
+        <!-- 右：公司画像 + 风险 / 投递建议 -->
+        <div class="radar-right">
+          <div v-if="companyAssessment" class="profile-tags">
+            <span class="tag">规模 · {{ COMPANY_SIZE_LABELS[companyAssessment.sizeTier] }}</span>
+            <span v-if="companyAssessment.companyType" class="tag">
+              类型 · {{ companyAssessment.companyType }}
+            </span>
+            <span class="tag">稳定性 · {{ LEVEL_LABELS[companyAssessment.stabilityLevel] }}</span>
+            <span class="tag">成长性 · {{ LEVEL_LABELS[companyAssessment.growthPotential] }}</span>
+            <span class="tag">置信度 · {{ CONFIDENCE_LABELS[companyAssessment.confidence] }}</span>
+          </div>
+          <div v-if="opportunityAnalysis" class="profile-tags">
+            <span class="tag risk">风险 · {{ RISK_LABELS[opportunityAnalysis.riskLevel] }}</span>
+            <span class="tag advice">
+              投递建议 · {{ APPLY_ADVICE_LABELS[opportunityAnalysis.applyAdvice] }}
+            </span>
+          </div>
+          <p v-if="companyAssessment && companyAssessment.summary" class="profile-summary">
+            {{ companyAssessment.summary }}
+          </p>
+        </div>
+      </div>
+
+      <template v-if="hasOpportunity && opportunityAnalysis">
+        <div v-if="opportunityAnalysis.decisionSummary" class="radar-section">
+          <h3>决策摘要</h3>
+          <p class="radar-text">{{ opportunityAnalysis.decisionSummary }}</p>
+        </div>
+        <div v-if="opportunityAnalysis.interviewFocus.length > 0" class="radar-section">
+          <h3>面试关注点</h3>
+          <ul class="focus-list">
+            <li v-for="(f, i) in opportunityAnalysis.interviewFocus" :key="i">{{ f }}</li>
+          </ul>
+        </div>
+        <p class="radar-note">Boss 打招呼话术见下方「Boss 打招呼话术」区，可编辑与复制。</p>
+      </template>
+    </section>
+
     <section v-if="isEdit" class="report-block">
       <div class="report-head">
         <h2>分析报告</h2>
@@ -975,10 +1059,131 @@ textarea {
 }
 .prompt-block,
 .ai-result-block,
+.radar-block,
 .report-block {
   margin-top: 32px;
   padding-top: 24px;
   border-top: 1px solid #eceff3;
+}
+.radar-block h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+.radar-empty {
+  margin: 0;
+  padding: 24px 16px;
+  border: 1px dashed #cbd2d9;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #647084;
+  font-size: 13px;
+  text-align: center;
+}
+.radar-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.radar-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #eceff3;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 18px 40px -28px rgba(16, 24, 40, 0.25);
+}
+.score-row {
+  display: flex;
+  gap: 24px;
+  width: 100%;
+  justify-content: center;
+}
+.score-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.score-num {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  background: linear-gradient(90deg, #2563eb, #0ea5e9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.score-num.alt {
+  font-size: 28px;
+}
+.score-unit {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.score-cap {
+  font-size: 12px;
+  color: #647084;
+  margin-top: 4px;
+}
+.radar-right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.profile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tag {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  background: #eef2f8;
+  color: #1f2933;
+}
+.tag.risk {
+  background: #fef3c7;
+  color: #92400e;
+}
+.tag.advice {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.profile-summary {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #475569;
+}
+.radar-section {
+  margin-top: 18px;
+}
+.radar-section h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.radar-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #475569;
+}
+.focus-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #475569;
+}
+.radar-note {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
 }
 .prompt-head {
   display: flex;
@@ -1154,6 +1359,9 @@ textarea {
   .ai-result-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .radar-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

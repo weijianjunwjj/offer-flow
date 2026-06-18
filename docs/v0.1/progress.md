@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5 / 6（均已入库，2.5 除外）完成。Task 7（AI 原文保存时自动解析）实现完成并通过质量门槛 + 浏览器 7 项验证，待用户确认。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5 / 6 / 7（均已入库，2.5 除外）完成。Task 8（机会雷达卡 + SVG 组件）实现完成并通过质量门槛 + 浏览器 6 项验证，待用户确认。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 7。确认后方可进入 Task 8（机会雷达卡 + SVG 组件）。
+> 待用户确认 Task 8。确认后方可进入 Task 9（列表页升级与筛选排序）。
 
 ---
 
@@ -1061,6 +1061,45 @@ v0.1 不做：
   1. 结构化字段已写入 storage，但主战场尚未展示机会雷达 / 公司画像（Task 8），列表也未展示机会分（Task 9）；当前仅通过解析状态文案与 localStorage 可见。
 - 是否允许进入下一步：否。待用户确认 Task 7 后方可进入 Task 8。
 - 建议 commit message：feat: 保存 AI 原文时自动解析 OFFER_FLOW_JSON 并回填（失败不清空）
+- 提交记录：已于 commit e708749 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 8 机会雷达卡 + SVG 组件
+
+- 状态：待用户确认（CC 已完成实现并通过质量门槛 + 浏览器 6 项验证；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 新增自研 SVG 雷达组件，在 BattlefieldPage 展示结构化结果（机会分 / 综合匹配度 / 公司画像 / 风险 / 投递建议 / 决策摘要 / 面试关注点 / 6 维雷达）。无结构化数据显示空状态。参考 stash 方案 B 视觉片段重建，不恢复整份 spike；不改 parser / prompt / storage，不做列表机会分展示，不引入新依赖。
+- 改动文件：
+  - 新增 src/components/OpportunityRadarChart.vue（原生 SVG，6 维 0-100，值域钳制，空/异常不报错）
+  - 修改 src/app/companyLabels.ts（新增 LEVEL_LABELS 稳定性/成长性、RISK_LABELS、CONFIDENCE_LABELS、APPLY_ADVICE_LABELS）
+  - 修改 src/pages/BattlefieldPage.vue（新增「机会雷达」section：机会分大数字 + 等级、综合匹配度、公司画像标签、风险/投递建议标签、决策摘要、面试关注点、SVG 雷达图；空状态文案；hasOpportunity / scoreLevel 计算；轻量卡片视觉）
+- 实现要点：
+  - 雷达图自研 SVG，6 轴（薪资/成长/匹配/风险可控/通勤/稳定），不引入 ECharts / Chart.js
+  - 空状态：opportunityAnalysis 与 companyAssessment 均为 null 时显示「还没有机会雷达。粘贴 AI 分析结果后，这里会亮起来。」
+  - 机会分等级用 getOpportunityScoreLevel；公司规模/稳定/成长/风险/置信度/投递建议用 companyLabels 标签
+  - Boss 话术沿用既有「Boss 打招呼话术」可编辑/复制区（解析已回填），雷达卡内加文字指引，不重复编辑器
+  - 视觉参考方案 B 片段（白卡 + 柔和阴影 + 渐变大数字 + 标签），未恢复 spike
+- 合规审查（Task 8 约束）：
+  - 雷达原生 SVG / 空状态 / 不改 parser·prompt·storage / 不做列表机会分 / 不折入 spike / 不引入新依赖 ✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器 6 项验证
+- 自测结果：
+  - typecheck：0 error；selftest：storage 46 + parser 43 全 0 failed；build：成功，2808 modules（JS 412KB）
+  - 浏览器验证（dev strictPort 5180，验证后已还原 launch.json）：
+    1. 打开有 opportunityAnalysis 的岗位 → 机会雷达卡正常展示（机会分 60 + 等级、公司画像标签、风险/投递建议）✓
+    2. 6 维 SVG 雷达图正常（6 顶点 + 6 轴标签，分数 0-100）✓
+    3. 决策摘要、面试关注点正常展示；Boss 话术在下方既有可编辑区展示 ✓
+    4. 无 opportunityAnalysis 的旧岗位 → 空状态文案正常、不报错 ✓
+    5. 刷新后重开 → 雷达卡仍正常 ✓
+    6. console 无 error / warning ✓
+- 是否涉及 decision-log 更新：否。雷达图自研 SVG，符合 DEC-016 / DEC-017 约束（不引图表库）。
+- 遗留风险：
+  1. 列表页尚未展示机会分 / 公司规模（Task 9）。
+  2. 机会雷达卡为浅色基础卡片，整体页面其余部分仍为 v0.1 样式，视觉统一收口可在后续按需进行。
+- 是否允许进入下一步：否。待用户确认 Task 8 后方可进入 Task 9。
+- 建议 commit message：feat: 新增机会雷达 SVG 组件与主战场结构化结果展示
 
 ---
 
