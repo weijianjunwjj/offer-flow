@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4（均已入库，2.5 除外）完成。Task 5（One-Shot Prompt 升级）实现完成并通过质量门槛 + 浏览器验证，待用户确认。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5（均已入库，2.5 除外）完成。Task 6（OFFER_FLOW_JSON 解析器）实现完成并通过质量门槛（含新增 parser selftest），待用户确认。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 5。确认后方可进入 Task 6（OFFER_FLOW_JSON 解析器）。
+> 待用户确认 Task 6。确认后方可进入 Task 7（AI 原文保存时自动解析）。
 
 ---
 
@@ -981,6 +981,45 @@ v0.1 不做：
   2. 复制功能需用户在真实 localhost 浏览器点一次确认（沙箱 clipboard 受限，非代码问题）。
 - 是否允许进入下一步：否。待用户确认 Task 5 后方可进入 Task 6。
 - 建议 commit message：feat: One-Shot Prompt 纳入公司补充并要求输出 OFFER_FLOW_JSON
+- 提交记录：已于 commit 1a7c8d2 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 6 OFFER_FLOW_JSON 解析器
+
+- 状态：待用户确认（CC 已完成实现并通过质量门槛 + 新增 parser selftest；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 实现纯解析工具：从 AI 原文「尽力」提取并解析固定 OFFER_FLOW_JSON 数据块（DEC-016）。只做工具，不接 BattlefieldPage、不写 JobRecord、不展示雷达、不改 AI 原文保存逻辑、不引入新依赖。
+- 改动文件：
+  - 新增 src/app/opportunityScore.ts（normalizeScore 归一 0-100 整数；calculateOpportunityScore 6 维加权；getOpportunityScoreLevel 等级文案）
+  - 新增 src/app/offerFlowJson.ts（extractOfferFlowJson + parseOfferFlowJson + ParsedOfferFlowResult / OfferFlowJsonParseStatus）
+  - 新增 scripts/offerFlowJson.selftest.ts（轻量自测，无测试框架）
+  - 修改 package.json（selftest 串联运行 storage 与 parser 两个自测，质量门槛可覆盖；未引入新依赖）
+- 实现要点：
+  - extract：优先取 ---OFFER_FLOW_JSON_START--- / ---END--- 之间内容；找不到兜底取「最后一个」```json 代码块；都没有返回 null
+  - parse：空/空白 → not_found；JSON.parse 失败 / 顶层非对象 → invalid_json；缺字段/非法枚举/缺分数 → partial；完整合法 → success；全程 try/catch，永不抛未捕获异常
+  - 归一：所有分数经 normalizeScore 钳制到 0-100 整数；越界记软提示
+  - 枚举非法/缺失 → sizeTier/stability/growth/risk 归 unknown，confidence 归 low，applyAdvice 置空，并记 warning（降级 partial）
+  - opportunityScore：AI 未给/非法 → 按 6 维加权 calculateOpportunityScore 计算（软提示，不降级）
+  - matchScore：顶层优先，缺失回退 opportunityRadar.matchScore，格式化为 "XX%"
+  - bossGreeting 为空不伪造（保持空串，供 Task 7 no-clobber）
+  - warnings：逐条说明缺字段 / 非法字段 / 归一化 / 回退 / 自动计算
+- 合规审查（Task 6 约束）：
+  - 纯工具，未接 BattlefieldPage、未写 JobRecord、未展示雷达、未改 AI 原文保存逻辑 ✓
+  - 未引入新依赖；build 产物体积未变（401KB），印证 parser 尚未进入 app bundle ✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build
+- 自测结果：
+  - typecheck：0 error
+  - selftest（storage）：46 passed, 0 failed
+  - selftest（parser，新增 scripts/offerFlowJson.selftest.ts）：43 passed, 0 failed，覆盖标准解析成功 / json 代码块兜底 / not_found / invalid_json / partial / 分数越界归一 / 枚举非法归 unknown / 未给 opportunityScore 自动计算 / bossGreeting 空不伪造 / 顶层 matchScore 缺失回退
+  - build：成功，2807 modules
+- 是否涉及 decision-log 更新：否。实现 DEC-016 已批准的解析能力。
+- 遗留风险：
+  1. 解析器已就绪但尚未接入保存流程（Task 7 接 BattlefieldPage：保存 AI 原文时自动解析并回填 companyAssessment / opportunityAnalysis / matchScore / greeting，失败不清空）。
+- 是否允许进入下一步：否。待用户确认 Task 6 后方可进入 Task 7。
+- 建议 commit message：feat: 新增 OFFER_FLOW_JSON 解析器与机会分计算工具及自测
 
 ---
 
