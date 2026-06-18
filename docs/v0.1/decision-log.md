@@ -607,6 +607,91 @@
 
 ---
 
+## DEC-016：v0.2.0 允许解析固定 OFFER_FLOW_JSON 数据块（仍不接 API / 不做 BYOK / 不做后端）
+
+- 日期：2026-06-18
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、CC
+- 拍板者：用户
+- 背景：
+  - v0.1.1 已通过 DEC-014 允许从 AI 原文「尽力」提取单个综合匹配度字段（单字段、可失败、手填兜底）。
+  - v0.2.0 目标为 One-Shot Opportunity Radar / 一次分析 · 机会雷达版：用户只复制一次 One-Shot Prompt，把外部 AI 返回的完整内容粘贴回工具，系统自动生成综合匹配度、公司画像、机会分、6 维机会雷达、风险等级、投递建议、面试关注点与 Boss 话术。
+  - 单字段「尽力提取」已不足以支撑机会雷达，需要把提取升级为固定 JSON 结构化解析。这是对 DEC-014「单字段、不做复杂结构化解析」口径的进一步放开。
+- 决策：
+  - v0.2.0 仍不接 OpenAI / Claude / Gemini API、不做 BYOK、不做后端、不联网。
+  - 允许 One-Shot Prompt 要求外部 AI 在返回内容中输出固定 `---OFFER_FLOW_JSON_START---` / `---OFFER_FLOW_JSON_END---` 数据块（JSON，不含注释）。
+  - 工具从 AI 原文中「尽力」解析该 JSON，填充 companyAssessment（公司画像）、opportunityAnalysis（机会分 / 机会雷达 / 风险 / 投递建议 / 面试关注点 / Boss 话术），并同步写入旧字段 matchScore 与 report.greetingMessage。
+  - 解析鲁棒性硬约束：
+    1. 找不到标记时，尝试解析最后一个 ```json 代码块；
+    2. 解析失败仍完整保存 AI 原文，不得阻断保存；
+    3. 解析失败 / 未找到 JSON 不得清空已有结构化字段（no-clobber）；
+    4. 数字字段归一到 0-100，枚举不合法时写 unknown 或空值；
+    5. bossGreeting 为空时不得覆盖用户已有话术。
+  - 解析状态对用户可见：未解析 / 已解析机会雷达 / JSON 未找到（已保存原文）/ JSON 解析失败（已保存原文）/ 字段不完整（已部分解析）。
+- 理由：
+  1. 直接服务 v0.2.0「一次复制粘贴即得机会雷达」的核心诉求，消灭反复复制粘贴。
+  2. 固定 JSON 协议比自由文本正则更可靠、更可维护，且不引入任何 API / 后端。
+  3. no-clobber、原文必存、解析失败不阻断等约束延续 v0.1 本地数据不做破坏性操作的原则。
+- 被否决方案：
+  1. 接入 AI API / BYOK 实现自动分析（违反 DEC-001，v0.2.0 仍不做）。
+  2. 继续仅靠单字段正则提取（无法支撑公司画像与 6 维雷达）。
+  3. 引入后端做解析 / 公司数据库（违反 v0.2.0 边界）。
+- 影响范围：
+  - 新增 src/app/offerFlowJson.ts（extractOfferFlowJson / parseOfferFlowJson）。
+  - 新增 src/app/opportunityScore.ts（normalizeScore / calculateOpportunityScore / getOpportunityScoreLevel）。
+  - 修改 src/app/prompt.ts（One-Shot Prompt 输出固定 JSON schema 要求）。
+  - 扩展 src/storage/types.ts（CompanyInput / CompanyAssessment / OpportunityRadar / OpportunityAnalysis 及 JobRecord 新字段）。
+  - 修改 src/pages/BattlefieldPage.vue（保存 AI 原文时自动解析并回填）。
+- 后续复审条件：
+  - 若未来需要多次分析历史或正式 AI Adapter，应单独评估是否进入更高版本，避免在 v0.2.x 堆叠复杂解析与历史实体。
+- 相关文档：
+  - docs/v0.2/requirements.md
+  - docs/v0.1/decision-log.md DEC-001 / DEC-014
+  - docs/v0.1/progress.md
+
+---
+
+## DEC-017：v0.2.0 允许引入 Naive UI 作为唯一 UI 组件库
+
+- 日期：2026-06-18
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、CC
+- 拍板者：用户
+- 背景：
+  - v0.1 全程未引入 UI 组件库（DEC-012 将「是否引入 UI 组件库」列为进入组件化页面后的复审项）。
+  - v0.2.0 新增公司画像、机会雷达、结构化报告、列表筛选排序等高信息密度界面，原生 UI 的维护成本和视觉表现不再匹配「深色科技感求职机会驾驶舱」的版本目标。
+- 决策：
+  - v0.2.0 允许引入 `naive-ui` 作为唯一 UI 组件库，用于提升表单、卡片、标签、反馈、列表筛选等交互质量。
+  - 约束：
+    1. 只引入 naive-ui，不引入额外图标库；
+    2. 不引入 ECharts / Chart.js（雷达图继续使用自研 SVG 组件 OpportunityRadarChart.vue）；
+    3. 不引入状态管理库（Pinia / Vuex）；
+    4. 不引入 vue-router（沿用现有 App 级视图切换）；
+    5. 不改变 storage / prompt / parser 等核心逻辑；
+    6. UI 改造不得破坏 v0.1 已有闭环。
+- 理由：
+  1. 高信息密度的机会驾驶舱界面，用成熟组件库比手写更快更稳。
+  2. 限定单一组件库、禁止图表库 / 状态库 / 路由，控制依赖膨胀。
+  3. 雷达图保持自研 SVG，避免为单一图表引入重型图表库。
+- 被否决方案：
+  1. 继续纯原生 UI（视觉与维护成本不达标）。
+  2. 引入 Naive UI + ECharts/Chart.js + 图标库（依赖膨胀，违反 v0.2.0 边界）。
+  3. 同时引入状态管理 / 路由做大重构（超出 v0.2.0 范围）。
+- 影响范围：
+  - package.json / package-lock.json（新增 naive-ui 依赖）。
+  - src/App.vue（接入 n-config-provider / n-message-provider 与深色科技感基础布局）。
+  - src/pages/**、src/components/**（按需替换为 Naive UI 组件）。
+- 后续复审条件：
+  - 若后续确需图表能力或全局状态管理，需另行评估并新增决策，不在 v0.2.0 顺手引入。
+- 相关文档：
+  - docs/v0.2/requirements.md
+  - docs/v0.1/decision-log.md DEC-012
+  - docs/v0.1/progress.md
+
+---
+
 # 5. 待定决策
 
 暂无。

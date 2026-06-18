@@ -31,19 +31,19 @@
 
 当前版本：
 
-> v0.1
+> v0.2.0 开发中（One-Shot Opportunity Radar / 一次分析 · 机会雷达版）；v0.1 P0 已封版
 
 当前模式：
 
-> Manual Mode
+> Manual Mode（v0.2.0 仍不接 API，仅升级为固定 JSON 结构化解析）
 
 当前阶段：
 
-> v0.1 品牌重命名为 OfferFlow / Offer来了已完成；P0（Step 0 - Step 8）仍已全部完成，不自动进入 P1。
+> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0（收口 v0.1.1 / 同步 origin）已完成，Task 1（DEC-016 / DEC-017 + v0.2.0 需求文档）已完成。
 
 当前是否允许进入下一步：
 
-> 否。v0.1 P0（Step 0 - Step 8）已全部完成；是否进入 P1 由用户另行决定。
+> 待用户确认 Task 1。确认后方可进入 Task 2（引入 Naive UI 基础壳）。
 
 ---
 
@@ -763,3 +763,55 @@ v0.1 不做：
   2. 真实远端仓库名、tag、GitHub 页面若需要同步为 offer-flow，需在仓库托管平台另行执行。
 - 是否允许进入下一步：否。品牌重命名完成后停下，等待用户确认。
 - 建议 commit message：chore: 统一品牌命名为 OfferFlow 并兼容迁移 storage namespace
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 0 收口 v0.1.1 / 同步 origin
+
+- 状态：已完成
+- 执行者：CC
+- 用户确认：已确认（用户授权硬同步到 origin/main 并亲自执行 reset）
+- 背景 / 问题：
+  - 进入 v0.2.0 时，本地 HEAD 停在 da68e4f（v0.1.1 匹配度自动提取），落后 origin/main 一个提交 c00a6c4（品牌重命名）。
+  - 工作区有大量未提交改动，经严格核验（git diff origin/main + git hash-object 比对）确认其内容与 origin/main（c00a6c4）逐字节一致，无任何本地独占信息；migration.ts blob 哈希两边均为 50c62e3。
+  - 成因推断：c00a6c4 已提交并推送，本地随后 reset 使 HEAD 退回，改名内容以未提交形态留在工作区。
+- 处理：
+  - 用户确认采用「硬同步到 origin/main」；环境拦截了 git reset --hard，由用户在本地终端亲自执行 `git reset --hard origin/main`。
+  - 同步后 HEAD = c00a6c4，与 origin/main 对齐，工作区干净。
+- 质量门槛（同步前在等价工作区验证）：
+  - typecheck：vue-tsc --noEmit，0 error
+  - selftest：34 passed, 0 failed
+  - build：成功，34 modules transformed
+- v0.1.1 状态确认：da68e4f「AI 原文自动提取综合匹配度」已提交且已在 origin/main，v0.1.1 实现已落库，无需再次提交。
+- 是否涉及 decision-log 更新：否（本任务仅同步 git 状态，未改决策）。
+- 是否允许进入下一步：是，Task 1 已随后执行。
+- 建议 commit message：无（仅 git 状态同步，无文件改动）
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 1 新增 DEC-016 / DEC-017 + v0.2.0 需求文档
+
+- 状态：待用户确认（CC 已完成文档，未写任何业务代码）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 进入 v0.2.0 One-Shot Opportunity Radar；需先办「施工许可证」：补齐决策与需求文档，再开工写代码。
+  - v0.2.0 会突破两个旧边界：单字段提取 → 固定 JSON 结构化解析；原生 UI → 引入 Naive UI。
+- 改动文件：
+  - 修改 docs/v0.1/decision-log.md（新增 DEC-016 固定 JSON 解析、DEC-017 引入 Naive UI）
+  - 新增 docs/v0.2/requirements.md（v0.2.0 需求与边界唯一信源）
+  - 修改 docs/v0.1/progress.md（更新当前项目状态 + 本条记录）
+- 关键决策与编号修正：
+  - 原始开工指令把两项新决策标注为 DEC-015 / DEC-016，但 DEC-015 已被「品牌重命名」占用（c00a6c4），故顺延为 DEC-016（JSON 解析）/ DEC-017（Naive UI）。该编号修正已在 requirements.md §11 与本条记录中标注。
+- 文档验收对照（task 设定）：
+  - 文档明确 v0.2.0 不接 API ✓（requirements §2.2、DEC-016）
+  - 文档明确允许固定 JSON 解析 ✓（DEC-016、requirements §5）
+  - 文档明确允许 Naive UI ✓（DEC-017、requirements §7.1）
+  - 文档明确不引入后端 / router / 状态管理 / 图表库 ✓（requirements §2.2、DEC-017 约束）
+- 范围合规：本任务仅写文档，未写业务代码、未改 storage / prompt / parser、未引入依赖。
+- 是否涉及 decision-log 更新：是。新增 DEC-016、DEC-017，均标记已拍板（用户在本轮明确拍板 v0.2.0 两项边界放开）。
+- 遗留风险：
+  1. DEC-016 / DEC-017 内的「相关文档」「影响范围」引用的代码文件（offerFlowJson.ts、opportunityScore.ts、companyLabels.ts、OpportunityRadarChart.vue 等）尚未创建，将在 Task 2 - Task 10 落地。
+  2. 决策日志仍位于 docs/v0.1/ 路径（作为跨版本连续日志），v0.2.0 文档新建于 docs/v0.2/；如需统一可后续评估，本版不动。
+- 是否允许进入下一步：否。等待用户确认 Task 1 后，方可进入 Task 2（引入 Naive UI 基础壳）。
+- 建议 commit message：docs: 新增 v0.2.0 机会雷达需求与 DEC-016 / DEC-017 决策
