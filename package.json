@@ -8,7 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts"
+    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts"
   },
   "dependencies": {
     "naive-ui": "^2.44.1",

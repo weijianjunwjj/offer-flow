@@ -67,10 +67,16 @@ const contentStyle = 'padding: 24px; max-width: 1080px; margin: 0 auto;';
       <n-layout class="app-shell" position="absolute">
         <n-layout-header class="app-nav" bordered>
           <div class="brand-area">
-            <strong class="brand">OfferFlow · Offer来了</strong>
-            <span class="tagline">
-              One-Shot Opportunity Radar · Manual Mode（手动模式）· 不接入 AI API，分析交给你选的外部 AI
-            </span>
+            <span class="brand-mark" aria-hidden="true" />
+            <div class="brand-text">
+              <div class="brand-line">
+                <strong class="brand">OfferFlow · Offer来了</strong>
+                <span class="brand-ver">v0.2.0</span>
+              </div>
+              <span class="tagline">
+                One-Shot Opportunity Radar · 手动模式 · 不接入 AI API，分析交给你选的外部 AI
+              </span>
+            </div>
           </div>
           <n-space :size="8">
             <n-button
@@ -115,17 +121,31 @@ const contentStyle = 'padding: 24px; max-width: 1080px; margin: 0 auto;';
 </template>
 
 <style>
-/* 浅色高级科技感全局底色：保证 n-layout 之外的可视区域同样为浅色。 */
+/* 浅色高级科技感设计令牌（全局，供各页面 scoped 样式复用）。 */
 :root {
   color-scheme: light;
+  --of-bg: #f6f8fc;
+  --of-ink: #0f172a;
+  --of-ink-2: #475569;
+  --of-muted: #94a3b8;
+  --of-line: rgba(15, 23, 42, 0.08);
+  --of-brand: #2563eb;
+  --of-brand-2: #0ea5e9;
+  --of-card: #ffffff;
+  --of-radius: 16px;
+  --of-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 18px 40px -28px rgba(16, 24, 40, 0.22);
 }
 html,
 body,
 #app {
   margin: 0;
   height: 100%;
-  background: #f6f8fc;
-  color: #1f2937;
+  background: var(--of-bg);
+  color: var(--of-ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 </style>
 
@@ -151,18 +171,44 @@ body,
 }
 .brand-area {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 12px;
   margin-right: auto;
+}
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  flex: none;
+  background: linear-gradient(135deg, var(--of-brand), var(--of-brand-2));
+  box-shadow: 0 4px 12px -4px rgba(37, 99, 235, 0.5);
+}
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .brand {
   font-size: 16px;
   letter-spacing: 0.3px;
   /* 保留渐变品牌字，但克制不荧光：蓝 → 青蓝。 */
-  background: linear-gradient(90deg, #2563eb, #0ea5e9);
+  background: linear-gradient(90deg, var(--of-brand), var(--of-brand-2));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+}
+.brand-ver {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--of-brand);
+  background: rgba(37, 99, 235, 0.1);
+  padding: 1px 7px;
+  border-radius: 999px;
 }
 .tagline {
   font-size: 12px;

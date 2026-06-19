@@ -8,6 +8,7 @@ import type { JobRecord, CompanySizeTier, ContactStatus } from '../storage';
 import { useStores } from '../app/stores';
 import { CONTACT_STATUS_LABELS, CONTACT_STATUS_OPTIONS } from '../app/labels';
 import { COMPANY_SIZE_LABELS, COMPANY_SIZE_OPTIONS } from '../app/companyLabels';
+import { calculateTargetProfileScore } from '../app/targetProfileScore';
 
 const emit = defineEmits<{
   create: [];
@@ -22,7 +23,7 @@ const cityFilter = ref<string>('');
 const sizeFilter = ref<CompanySizeTier | ''>('');
 const statusFilter = ref<ContactStatus | ''>('');
 const minScore = ref<number>(0);
-const sortKey = ref<'updated' | 'opportunity' | 'match'>('updated');
+const sortKey = ref<'updated' | 'opportunity' | 'match' | 'profile'>('updated');
 
 function load(): void {
   try {
@@ -34,9 +35,13 @@ function load(): void {
 
 onMounted(load);
 
-// 公司规模：优先公司画像，其次用户填写的 companyInput，最后 unknown。
+// 公司规模：以用户在表单手填的 companyInput.sizeTier 为准（用户的明确意图最优先）；
+// 仅当用户未填（unknown）时，才回退用 AI 画像 companyAssessment.sizeTier；都没有才 unknown。
 function effectiveSizeTier(job: JobRecord): CompanySizeTier {
-  return job.companyAssessment?.sizeTier ?? job.companyInput.sizeTier;
+  if (job.companyInput.sizeTier !== 'unknown') {
+    return job.companyInput.sizeTier;
+  }
+  return job.companyAssessment?.sizeTier ?? 'unknown';
 }
 function opportunityScoreOf(job: JobRecord): number | null {
   return job.opportunityAnalysis?.opportunityScore ?? null;
@@ -52,6 +57,22 @@ function sizeLabel(job: JobRecord): string {
 function scoreDisplay(job: JobRecord): string {
   const s = opportunityScoreOf(job);
   return s === null ? '-' : String(s);
+}
+// 第三项指标：目标公司画像匹配度（本地现算，旧岗位完全空白时返回 null → 显示「待评估」）。
+function profileScoreOf(job: JobRecord): number | null {
+  const r = calculateTargetProfileScore({
+    city: job.city,
+    role: job.role,
+    salaryRange: job.salaryRange,
+    jdText: job.jdText,
+    companyInput: job.companyInput,
+    companyAssessment: job.companyAssessment,
+  });
+  return r?.score ?? null;
+}
+function profileScoreDisplay(job: JobRecord): string {
+  const s = profileScoreOf(job);
+  return s === null ? '待评估' : String(s);
 }
 
 // 下拉选项
@@ -78,6 +99,7 @@ const sortOptions = [
   { label: '按更新时间', value: 'updated' },
   { label: '按机会分', value: 'opportunity' },
   { label: '按匹配度', value: 'match' },
+  { label: '按画像匹配', value: 'profile' },
 ];
 
 const filteredJobs = computed(() => {
@@ -96,6 +118,8 @@ const filteredJobs = computed(() => {
     sorted.sort((a, b) => (opportunityScoreOf(b) ?? -1) - (opportunityScoreOf(a) ?? -1));
   } else if (sortKey.value === 'match') {
     sorted.sort((a, b) => (matchNumberOf(b) ?? -1) - (matchNumberOf(a) ?? -1));
+  } else if (sortKey.value === 'profile') {
+    sorted.sort((a, b) => (profileScoreOf(b) ?? -1) - (profileScoreOf(a) ?? -1));
   } else {
     sorted.sort((a, b) => b.updatedAt - a.updatedAt);
   }
@@ -174,45 +198,38 @@ function formatTime(ts: number): string {
 
       <p class="result-count">共 {{ filteredJobs.length }} / {{ jobs.length }} 个岗位</p>
 
-      <table class="table">
-        <thead>
-          <tr>
-            <th>公司</th>
-            <th>岗位</th>
-            <th>城市</th>
-            <th>薪资</th>
-            <th>公司规模</th>
-            <th>匹配度</th>
-            <th>机会分</th>
-            <th>沟通状态</th>
-            <th>更新时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="job in filteredJobs"
-            :key="job.id"
-            class="row"
-            @click="emit('open', job.id)"
-          >
-            <td>{{ dash(job.company) }}</td>
-            <td>{{ dash(job.role) }}</td>
-            <td>{{ dash(job.city) }}</td>
-            <td>{{ dash(job.salaryRange) }}</td>
-            <td>{{ sizeLabel(job) }}</td>
-            <td>{{ dash(job.matchScore) }}</td>
-            <td>
-              <span class="score" :class="{ none: scoreDisplay(job) === '-' }">
-                {{ scoreDisplay(job) }}
-              </span>
-            </td>
-            <td>
-              <span class="status">{{ CONTACT_STATUS_LABELS[job.contactStatus] }}</span>
-            </td>
-            <td>{{ formatTime(job.updatedAt) }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="asset-list">
+        <article
+          v-for="job in filteredJobs"
+          :key="job.id"
+          class="asset-card"
+          @click="emit('open', job.id)"
+        >
+          <div class="ac-score" :class="{ none: scoreDisplay(job) === '-' }">
+            <span class="ac-score-num">{{ scoreDisplay(job) }}</span>
+            <span class="ac-score-cap">机会分</span>
+          </div>
+          <div class="ac-main">
+            <div class="ac-title-row">
+              <span class="ac-company">{{ dash(job.company) }}</span>
+              <span class="ac-role">{{ dash(job.role) }}</span>
+            </div>
+            <div class="ac-meta">
+              <span class="ac-chip">{{ dash(job.city) }}</span>
+              <span class="ac-chip strong">{{ dash(job.salaryRange) }}</span>
+              <span class="ac-chip">{{ sizeLabel(job) }}</span>
+              <span class="ac-chip">匹配 {{ dash(job.matchScore) }}</span>
+              <span class="ac-chip" title="基于目标公司画像">画像 {{ profileScoreDisplay(job) }}</span>
+            </div>
+          </div>
+          <div class="ac-side">
+            <span class="ac-status" :data-status="job.contactStatus">
+              {{ CONTACT_STATUS_LABELS[job.contactStatus] }}
+            </span>
+            <span class="ac-time">{{ formatTime(job.updatedAt) }}</span>
+          </div>
+        </article>
+      </div>
 
       <p v-if="filteredJobs.length === 0" class="no-match" role="status">
         没有符合当前筛选条件的岗位。<button class="link-btn" @click="resetFilters">清除筛选</button>
@@ -331,47 +348,122 @@ function formatTime(ts: number): string {
   background: #f2f6ff;
 }
 .result-count {
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--of-muted);
 }
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
+.asset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.table th,
-.table td {
-  text-align: left;
-  padding: 10px 12px;
-  border-bottom: 1px solid #eceff3;
+.asset-card {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--of-line);
+  border-radius: 14px;
+  background: var(--of-card);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  cursor: pointer;
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
 }
-.table th {
-  color: #647084;
+.asset-card:hover {
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 14px 30px -18px rgba(16, 24, 40, 0.45);
+  transform: translateY(-1px);
+}
+.ac-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(14, 165, 233, 0.07));
+}
+.ac-score-num {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--of-brand);
+}
+.ac-score.none .ac-score-num {
+  color: var(--of-muted);
+  font-weight: 500;
+}
+.ac-score-cap {
+  font-size: 11px;
+  color: var(--of-ink-2);
+}
+.ac-main {
+  min-width: 0;
+}
+.ac-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ac-company {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--of-ink);
+}
+.ac-role {
+  font-size: 13px;
+  color: var(--of-ink-2);
+}
+.ac-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ac-chip {
+  font-size: 12px;
+  color: var(--of-ink-2);
+  background: #eef2f8;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.ac-chip.strong {
+  color: var(--of-ink);
+  font-weight: 600;
+}
+.ac-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: none;
+}
+.ac-status {
   font-size: 12px;
   font-weight: 600;
-  background: #f7f9fc;
-}
-.row {
-  cursor: pointer;
-}
-.row:hover {
-  background: #f2f6ff;
-}
-.status {
-  display: inline-block;
-  padding: 2px 8px;
+  padding: 3px 12px;
   border-radius: 999px;
   background: #eef1f5;
-  font-size: 12px;
+  color: #475569;
 }
-.score {
-  font-weight: 600;
-  color: #2563eb;
+.ac-status[data-status='greeted'],
+.ac-status[data-status='replied'] {
+  background: #dbeafe;
+  color: #1e40af;
 }
-.score.none {
-  font-weight: 400;
-  color: #94a3b8;
+.ac-status[data-status='interview_scheduled'] {
+  background: #dcfce7;
+  color: #166534;
+}
+.ac-status[data-status='rejected'] {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.ac-time {
+  font-size: 11px;
+  color: var(--of-muted);
 }
 .no-match {
   margin: 24px 0 0;

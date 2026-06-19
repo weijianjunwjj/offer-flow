@@ -33,6 +33,10 @@ import {
   type OfferFlowJsonParseStatus,
 } from '../app/offerFlowJson';
 import { getOpportunityScoreLevel } from '../app/opportunityScore';
+import {
+  calculateTargetProfileScore,
+  type TargetProfileScore,
+} from '../app/targetProfileScore';
 import OpportunityRadarChart from '../components/OpportunityRadarChart.vue';
 
 const props = defineProps<{
@@ -122,6 +126,20 @@ const scoreLevel = computed(() =>
     ? getOpportunityScoreLevel(opportunityAnalysis.value.opportunityScore)
     : '',
 );
+
+// 第三项指标：目标公司画像匹配度。本地现算（不持久化、不依赖 AI），跟随表单实时变化。
+// 完全空白岗位 → null → 显示「待评估」；不影响上面两项指标。
+const profileScore = computed<TargetProfileScore | null>(() =>
+  calculateTargetProfileScore({
+    city: form.city,
+    role: form.role,
+    salaryRange: form.salaryRange,
+    jdText: form.jdText,
+    companyInput: companyForm,
+    companyAssessment: companyAssessment.value,
+  }),
+);
+const profileLevelText = computed(() => profileScore.value?.level ?? '待评估');
 
 // Task 6：报告原文兜底展示 + Boss 话术编辑。
 const report = ref<JobReport | null>(null);
@@ -716,6 +734,11 @@ function saveAiResult(): void {
               <span class="score-num alt">{{ matchScore === '' ? '—' : matchScore }}</span>
               <span class="score-cap">综合匹配度</span>
             </div>
+            <div class="score-cell" :title="profileScore?.reason ?? '基于目标公司画像'">
+              <span class="score-num alt">{{ profileScore === null ? '—' : profileScore.score }}</span>
+              <span class="score-cap">画像匹配度 · {{ profileLevelText }}</span>
+              <span class="score-sub">基于目标公司画像</span>
+            </div>
           </div>
           <OpportunityRadarChart
             v-if="opportunityAnalysis"
@@ -747,6 +770,10 @@ function saveAiResult(): void {
       </div>
 
       <template v-if="hasOpportunity && opportunityAnalysis">
+        <div v-if="profileScore" class="radar-section">
+          <h3>画像匹配度说明</h3>
+          <p class="radar-text">{{ profileScore.reason }}</p>
+        </div>
         <div v-if="opportunityAnalysis.decisionSummary" class="radar-section">
           <h3>决策摘要</h3>
           <p class="radar-text">{{ opportunityAnalysis.decisionSummary }}</p>
@@ -851,7 +878,7 @@ function saveAiResult(): void {
 
 <style scoped>
 .battlefield {
-  max-width: 760px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 24px 16px 64px;
   color: #1f2933;
@@ -892,10 +919,11 @@ h1 {
 }
 .status-block {
   margin-bottom: 20px;
-  padding: 16px;
-  border: 1px solid #eceff3;
-  border-radius: 10px;
-  background: #fbfcfe;
+  padding: 20px;
+  border: 1px solid var(--of-line);
+  border-radius: var(--of-radius);
+  background: var(--of-card);
+  box-shadow: var(--of-shadow);
 }
 .status-block h2 {
   margin: 0 0 10px;
@@ -935,10 +963,11 @@ h1 {
 }
 .match-block {
   margin-bottom: 20px;
-  padding: 16px;
-  border: 1px solid #eceff3;
-  border-radius: 10px;
-  background: #fbfcfe;
+  padding: 20px;
+  border: 1px solid var(--of-line);
+  border-radius: var(--of-radius);
+  background: var(--of-card);
+  box-shadow: var(--of-shadow);
 }
 .match-block h2 {
   margin: 0 0 10px;
@@ -972,6 +1001,11 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--of-line);
+  border-radius: var(--of-radius);
+  background: var(--of-card);
+  box-shadow: var(--of-shadow);
 }
 .grid {
   display: grid;
@@ -991,11 +1025,18 @@ input[type='text'],
 textarea {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 10px;
-  border: 1px solid #cbd2d9;
-  border-radius: 8px;
+  padding: 9px 12px;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
   font: inherit;
   background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input[type='text']:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--of-brand);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 textarea {
   resize: vertical;
@@ -1004,10 +1045,9 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 16px;
-  border: 1px solid #eceff3;
-  border-radius: 10px;
-  background: #fbfcfe;
+  padding-top: 16px;
+  margin-top: 4px;
+  border-top: 1px dashed var(--of-line);
 }
 .company-extra h2 {
   margin: 0;
@@ -1061,9 +1101,33 @@ textarea {
 .ai-result-block,
 .radar-block,
 .report-block {
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid #eceff3;
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid var(--of-line);
+  border-radius: var(--of-radius);
+  background: var(--of-card);
+  box-shadow: var(--of-shadow);
+}
+/* 统一的区块标题渐变小竖条，营造浅色高级科技感。 */
+.battlefield h2 {
+  position: relative;
+  padding-left: 12px;
+}
+.battlefield h2::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 15px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--of-brand), var(--of-brand-2));
+}
+.radar-block {
+  background:
+    radial-gradient(640px 220px at 92% -30%, rgba(14, 165, 233, 0.08), transparent 60%),
+    linear-gradient(180deg, #ffffff, #fbfdff);
 }
 .radar-block h2 {
   margin: 0 0 14px;
@@ -1128,6 +1192,11 @@ textarea {
   font-size: 12px;
   color: #647084;
   margin-top: 4px;
+}
+.score-sub {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
 }
 .radar-right {
   display: flex;

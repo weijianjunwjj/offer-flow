@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> v0.1 P0（Step 0 - Step 8）已全部完成并封版；v0.2.0 已启动。Task 0 / 1 / 2 / 2.5 / 3 / 4 / 5 / 6 / 7 / 8（均已入库，2.5 除外）完成。Task 9（列表页升级与筛选排序）实现完成并通过质量门槛 + 浏览器 10 项验证，待用户确认。
+> v0.1 P0 已封版；v0.2.0 已启动。Task 0 - Task 9 已入库（2.5 除外）。用户在封版前插入 Task 9.5（按方案 B 折入真实页面视觉），已完成并通过质量门槛 + 浏览器验证。Task 10（文档 + release note）已完成但**按用户指令暂未提交**，并已随 Task 9.5 同步更新（视觉收口）；Task 9.5 + Task 10 文档均在工作区待提交。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 9。确认后方可进入 Task 10（文档与 release note）。
+> 待用户确认 Task 9.5。确认后再统一提交 Task 9.5 视觉收口 + Task 10 文档；是否打 tag v0.2.0 / 推送由用户决定，CC 不自行打 tag、不 push。
 
 ---
 
@@ -1141,6 +1141,82 @@ v0.1 不做：
   1. 列表与主战场视觉已部分浅色科技感化（n-select + 雷达卡），但整页视觉统一收口尚未做（非 v0.2 阻塞）。
 - 是否允许进入下一步：否。待用户确认 Task 9 后方可进入 Task 10（文档与 release note）。
 - 建议 commit message：feat: 列表页新增机会分与公司规模列及筛选排序
+- 提交记录：已于 commit 1ff4654 提交
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 10 文档与 release note
+
+- 状态：待用户确认（CC 已完成文档，通过质量门槛；本次改动尚未提交。不写业务代码、不引入依赖）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 收口 v0.2.0 文档：更新 README、新增 v0.2.0 release note、更新 progress、核对 requirements 与 decision-log 口径，明确仍不接 API、Manual One-Shot Mode。
+- 改动文件：
+  - 修改 README.md（改写为 v0.2.0：One-Shot Opportunity Radar 定位、Manual One-Shot Mode 说明、新增能力、核心闭环、功能清单、能力边界、版本路线、Release Notes 链接；更新 selftest 说明为存储层 + 解析器）
+  - 新增 docs/release/v0.2.0.md（概述、核心能力、数据模型增量、DEC-016/017、技术栈、质量基线、已知限制、升级兼容、下一步）
+  - 修改 docs/v0.1/progress.md（当前状态 + 本条）
+- 口径核对结果：
+  - docs/v0.2/requirements.md：与最终实现一致（机会分等级、浅色 UI 风格、主战场卡片、列表字段/筛选/排序、文件清单 companyLabels/opportunityScore/offerFlowJson/OpportunityRadarChart 均匹配）。
+  - decision-log DEC-016 / DEC-017：表述一致（DEC-016 固定 JSON 解析、仍不接 API；DEC-017 Naive UI 唯一组件库、浅色高级科技感、不引图标库/路由/状态管理/图表库）。
+  - 历史文档（docs/release/v0.1.0.md、progress 早期条目）中的「30/30」「不自动结构化解析」「深色科技感」属 v0.1 / 决策演进的历史记录，刻意保留，不回改。
+  - 两处 requirements 描述 vs 实现的轻微文案差异（非功能冲突，均为前序已确认）：
+    1. requirements §7.2.4 写「保存并解析 AI 结果」按钮，实现沿用既有「保存 AI 原文」按钮（功能已含自动解析）。
+    2. requirements §7.2.5 把 Boss 话术列在机会雷达卡内，实现保留在下方既有可编辑/复制区并在卡内加指引（Task 8 已与用户确认）。
+- v0.2.0 不接 API 等边界已在 README「能力边界」「Manual One-Shot Mode」与 release note 概述中明确标注。
+- 自测命令：npm run typecheck / npm run selftest / npm run build
+- 自测结果：
+  - typecheck：0 error；selftest：storage 46 + parser 43 全 0 failed；build：成功
+- 是否涉及 decision-log 更新：否。文档收口，未改决策。
+- 遗留风险：
+  1. 整页视觉统一收口未做（已在 release note 已知限制标注）。
+  2. 两处 requirements 文案差异如需完全对齐，可在后续小修中处理（功能无影响）。
+- 是否允许进入下一步：用户在封版前插入 Task 9.5（视觉收口），故 Task 10 文档暂不单独提交，待 9.5 完成后统一提交。CC 不自行打 tag、不 push。
+- 建议 commit message：docs: 更新 README 与新增 v0.2.0 release note
+- 提交记录：暂未提交（按用户指令与 Task 9.5 一起收口后再提交）
+
+---
+
+### 2026-06-18 · v0.2.0 · Task 9.5 按方案 B 折入真实页面视觉
+
+- 状态：待用户确认（CC 已完成实现，通过质量门槛 + 浏览器验证；本次改动尚未提交）
+- 执行者：CC
+- 用户确认：待确认
+- 背景 / 目标：
+  - 用户在 v0.2.0 封版前指出：Task 2.5 方案 B 仍停留在 spike，真实 UI 未按方案 B 收敛，不能封版。插入 Task 9.5：把 stash 中方案 B 的视觉语言折入真实页面（不恢复整份 spike、不提交 mock）。
+- 改动文件：
+  - 修改 src/App.vue（全局设计令牌 :root --of-* + 字体；品牌区精致化：渐变 logo 方块 + 版本 chip）
+  - 修改 src/pages/JobListPage.vue（列表由原生 table 改为「机会资产池」卡片行：左机会分徽标 + 公司/岗位 + meta chips + 状态色标签 + hover 上浮；筛选区保留）
+  - 修改 src/pages/BattlefieldPage.vue（各分区统一为白卡 + 轻阴影 + 圆角；区块标题加渐变小竖条；机会雷达卡加 hero 渐变背景；公司补充改为表单卡内子区；原生输入聚焦态/圆角清爽化）
+  - 修改 src/pages/ProfileConfigPage.vue（表单卡片化 + 输入聚焦态统一）
+  - 修改 README.md / docs/release/v0.2.0.md（同步把「视觉基础壳」收口表述更新为「真实页面浅色高级科技感收口」，移除「视觉收口未做」已知限制）
+- 实现要点：
+  - 只提取方案 B 的视觉语言（白卡 / 轻阴影 / 弱渐变 / 渐变大数字 / 标签 / hover 上浮 / 渐变竖条标题），未恢复 spike 文件、未提交 mock；spike 仍留在 stash@{0}
+  - 以 CSS / 局部模板为主；列表表格→卡片为唯一结构性改动；BattlefieldPage 仅 CSS 改动，未动任何脚本逻辑
+  - 复用现有 Naive UI 组件，未引入新 UI 框架 / 图标库 / 图表库 / router / 状态管理
+  - 未改 storage / parser / prompt 核心逻辑，未改变 v0.2 已完成功能行为
+- 合规审查（Task 9.5 约束）：全部满足（不恢复 spike、不提交 mock、不引入新依赖、不改核心逻辑、不大重构）✓
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器验证
+- 自测结果：
+  - typecheck：0 error；selftest：storage 46 + parser 43 全 0 failed；build：成功（仅 CSS 体积变化，JS 持平 ~416KB）
+  - 浏览器验证（dev strictPort 5180，验证后已还原 launch.json；复用 A/B/C/D seed 数据）：
+    1. 列表页为卡片式「机会资产池」（4 张 asset-card，原生 table 已移除，卡片圆角 14 + 阴影 + hover）✓
+    2. 顶部品牌区精致化（渐变 logo + v0.2.0 chip）✓
+    3. 主战场分区卡片化（form 卡片圆角 16 + 阴影），机会雷达卡有 hero 渐变背景 + 渐变大数字（score 82/88）+ SVG 主视觉 ✓
+    4. 点击列表卡片仍进入主战场 ✓
+    5. 机会分 70+ 筛选在卡片布局下仍正确（A、D）✓
+    6. 保存 AI 原文 + 解析机会雷达不回归（粘贴标准 JSON → 状态「已解析机会雷达」、雷达卡 score 更新为 88、localStorage 持久化）✓
+    7. console 无 error / warning ✓
+- 是否涉及 decision-log 更新：否。DEC-017 已涵盖 Naive UI 与浅色高级科技感方向，本任务为其落地。
+- 随 Task 9.5 修复（用户验收时两轮发现）：列表「公司规模」取值优先级错误。
+  - 初版 Task 9：companyAssessment 优先 → AI 的 unknown 盖掉用户手填，显示「未知/未填」。
+  - 第一次修复（错误）：改成「AI 确切值优先」→ 反向场景下 AI 旧值（如 small）盖掉用户新选（如 medium），仍不符预期。该次仅验了单向场景，是疏漏。
+  - 最终修复（正确）：effectiveSizeTier 改为「用户手填 companyInput.sizeTier 最优先；仅当用户未填(unknown)时回退 AI 画像 companyAssessment.sizeTier；都没有才 unknown」。语义即「列表公司规模 = 表单里用户选的那个字段」。同一 helper 亦用于公司规模筛选。
+  - 已浏览器验证 4 组场景全部正确：S1(手填小厂/AI未知→小厂)、S2(手填中厂/AI小厂→中厂)、S3(未填/AI大中厂→大中厂回退)、S4(未填/无AI→未知)。
+- 遗留风险：
+  1. 视觉为方案 B 的工程化落地，细节打磨（动效 / 暗色模式等）可后续按需进行，不在 v0.2.0 范围。
+- 是否允许进入下一步：否。待用户确认 Task 9.5 后，统一提交 Task 9.5 + Task 10 文档；是否打 tag v0.2.0 由用户决定。
+- 建议 commit message：feat: 将方案 B 浅色高级科技感视觉折入真实页面
 
 ---
 
@@ -1154,3 +1230,32 @@ v0.1 不做：
   2. 是否把方案 B 的视觉语言（卡片 / 阴影 / 渐变 / 雷达 / 列表行）折入真实页面（与 Task 4 / 8 / 9 合流），并移除临时 spike 入口与默认跳转；
   3. 是否先回到 Task 3（扩展数据类型与默认值）再做视觉折入；
   4. 是否同步把 decision-log DEC-017 背景中「深色科技感驾驶舱」措辞订正为「浅色高级科技感 / 机会决策工作台」。
+
+---
+
+### 2026-06-19 · v0.2.x · 新增第三项指标「画像匹配度」（目标公司画像匹配度）
+
+- 状态：已实现，待用户确认（DEC-018）
+- 来源：用户 2026-06-19 明确需求 —— 保留「综合匹配度」「机会分」两项不动，新增第三项「目标公司画像匹配度」，判断当前 JD 是否符合「我的下一家公司目标画像」；不做时间预测、不扩大需求边界。
+- 实现要点：
+  - 新增 src/app/targetProfileScore.ts：纯函数 calculateTargetProfileScore（地理 25 / 规模 15 / 行业 20 / 岗位 20 / 薪资 10，风险最多扣 20，钳制 0-100）+ getTargetProfileLevel（命中靶心 / 高度匹配 / 可以重点聊 / 谨慎观察 / 偏离画像）。
+  - **本地现算、不持久化**：输入全部为 JobRecord 已有字段，不新增持久化字段、不改数据模型、无迁移；旧数据天然兼容（有内容即算分，完全空白显示「待评估」）。
+  - 主战场 BattlefieldPage：在既有「机会分 / 综合匹配度」score-row 旁新增第三项评分卡（主标题「画像匹配度」+ 等级，副标题「基于目标公司画像」），并新增「画像匹配度说明」原因区。既有两项的字段 / 计算 / 展示位置 / 样式 / 文案 / 解析逻辑均未改动。
+  - 列表 JobListPage：卡片新增「画像 XX」chip（空白岗位显示「待评估」）；排序新增「按画像匹配」选项（与既有「按机会分 / 按匹配度」同构），未改既有列与其他筛选。
+  - 未改动 prompt.ts / offerFlowJson.ts / storage/types.ts（不接 AI、不改 JSON 契约、不动数据模型）。
+- 随同增强（用户选 A，2026-06-19）：机会雷达图 OpportunityRadarChart.vue 在自研 SVG 基础上增强四项 —— 入场动画（多边形从中心生长，含 prefers-reduced-motion 降级）、Hover 高亮 + tooltip（悬停维度高亮轴/顶点并显示「维度 数值」）、低分维度预警（<60 的顶点/标签标红）、刻度 25/50/75/100 + 80 分达标虚线参考环。
+  - 明确未引入 ECharts / 任何图表库，**仍遵守 DEC-017「雷达图继续用自研 SVG」**；曾评估改用 ECharts，用户决定不引入（见对话），故无需新开 DEC-019。
+  - 体积仅 SVG/CSS 增量（JS 423→424.8KB，CSS 17.56→18.67KB），无新依赖。
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器验证（dev 5173）
+- 自测结果：
+  - typecheck：0 error；selftest：storage 46 + parser 43 + 画像 23，全 0 failed；build：成功（CSS 17.56KB / JS 423.15KB）。
+  - 浏览器验证（seed 两条 + 1 条历史旧岗位）：
+    1. 列表三岗位画像 chip 分别为 90（苏州独墅湖/数据平台/800-1500人/17k）、17（外包驻场/切页面/小作坊/低薪）、52（仅城市+岗位+薪资的旧数据）——旧数据无 v0.2 字段不白屏 ✓
+    2. 主战场三项指标并列：机会分 84·优质机会 / 综合匹配度 88% / 画像匹配度 90·命中靶心（副标题「基于目标公司画像」）✓
+    3. 「画像匹配度说明」原因区文案命中点与区间正确 ✓
+    4. console 无 error ✓
+- 是否涉及 decision-log 更新：是，新增 DEC-018（本指标本地现算 / 不接 API / 不持久化 / 不做时间预测）。
+- 遗留风险：
+  1. 画像参数（区域 / 规模 / 行业 / 岗位 / 薪资关键词与阈值）当前为硬编码常量，若需用户自定义画像，另起任务，不在本次范围。
+- 是否允许进入下一步：否，待用户确认。
+- 建议 commit message：feat: 新增第三项指标「画像匹配度」（目标公司画像本地评分，不接 API / 不持久化）

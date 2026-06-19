@@ -184,6 +184,11 @@ function formatTime(ts: number): string {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 22px;
+  border: 1px solid var(--of-line);
+  border-radius: var(--of-radius);
+  background: var(--of-card);
+  box-shadow: var(--of-shadow);
 }
 .field {
   display: flex;
@@ -199,11 +204,19 @@ textarea,
 select {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 10px;
-  border: 1px solid #cbd2d9;
-  border-radius: 8px;
+  padding: 9px 12px;
+  border: 1px solid #d7deea;
+  border-radius: 10px;
   font: inherit;
   background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input[type='text']:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--of-brand);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 textarea {
   resize: vertical;
