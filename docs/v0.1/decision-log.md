@@ -892,6 +892,55 @@
 
 ---
 
+## DEC-022：v0.3 T3 决策结果由纯函数实时派生，不持久化到 JobRecord
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过《OfferFlow v0.3 PRD / Codex 执行版》与 T3 明确指令）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - v0.3 要从手动台账升级为半自动跟进决策台，但红线仍是本地优先、半自动，不自动操作 Boss，不接 API，不做 CRM。
+  - T1 已将沟通状态迁移为 `communicationStatus`，T2 已新增用户手动维护的跟进事实字段。
+  - T3 需要基于这些事实字段实时回答“是否打招呼、是否跟进、是否放弃、用什么话术场景”等问题。
+- 决策：
+  - 新增 `deriveDecision(record, allJobs?)` 纯函数，作为 v0.3 跟进决策派生入口。
+  - `deriveDecision` 返回 `{ strategy, nextAction, stopLoss, scenario, companyWarning? }`。
+  - `FOLLOWUP_COOLDOWN_DAYS = 3`，`MAX_FOLLOWUPS = 2`。
+  - 匹配度判定以 `record.report?.applyAdvice` 为输入：`strongly` / `ok` 为高匹配，`cautious` / `skip` 为低匹配或一般，`report === null` 或 `applyAdvice === ''` 走空报告兜底。
+  - `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning` 都是派生结果，不写入 `JobRecord`。
+  - `StrategyType` 保持 4 个策略值：`main_attack` / `low_cost_probe` / `cautious_watch` / `cut_loss`。
+  - `follow_up_once` / `follow_up_with_new_angle` 只能作为 `NextActionType` 的下一步动作返回，不能作为 `StrategyType`。
+  - `deriveDecision` 不读写 localStorage，不读写 store，不访问 `window`，不发网络请求，不依赖 UI。
+  - T3 不新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体，不新增依赖，不修改 UI 页面。
+- 理由：
+  1. 决策结果会随规则、时间和用户维护事实变化而变化，落库存储会造成历史数据与当前规则不一致。
+  2. 纯函数让后续 T4/T5 UI 只负责展示和触发用户确认，不把策略判断散落到页面或 store。
+  3. 不接 store / storage / network 可以确保 T3 是可测试、可审查、可替换的规则内核。
+  4. 策略只表达战略层，跟进一次 / 换角度跟进属于战术动作，应放在 `nextAction`，避免污染 `strategyOverride?: StrategyType` 的四类策略边界。
+- 被否决方案：
+  1. 将 `currentStrategy` / `nextAction` / `stopLoss` / `messageScenario` / `companyWarning` 写入 `JobRecord`（违反“只存事实，不存决策”）。
+  2. 在页面组件或 store 中直接写规则判断（会让后续 UI 与规则耦合，难以自测）。
+  3. 为跟进行为新增 FollowupLog / Reminder / Message 等实体（超出 v0.3 T3 范围，也违反轻量本地工具边界）。
+  4. 缺失 `lastGreetedAt` / `lastFollowupAt` 时推断已经过冷却期（会在旧数据缺事实时制造错误跟进事实）。
+- 影响范围：
+  - `src/storage/types.ts`
+  - `src/decision/deriveDecision.ts`
+  - `src/decision/index.ts`
+  - `scripts/decision.selftest.ts`
+  - `package.json`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若后续 T4/T5 需要让用户手动覆盖策略，必须明确 `strategyOverride` 的消费优先级，并继续保证派生决策结果不落库。
+  - 若需要公司维度冷启动预警或重复公司预警，可在后续任务中使用 `allJobs`，但不得新增 Company / Contact 等实体，且必须补 selftest。
+  - 若 `FOLLOWUP_COOLDOWN_DAYS` 或 `MAX_FOLLOWUPS` 需要可配置化，需另开决策，不在 T3 顺手扩展。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-004 / DEC-009 / DEC-020 / DEC-021
+
+---
+
 # 5. 待定决策
 
 暂无。

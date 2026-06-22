@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T2（新增跟进事实字段）。T2 已实现并通过 typecheck / selftest，待用户确认；未进入 T3。
+> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）和 T2（新增跟进事实字段）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T3（决策纯函数）。T3 已实现并通过 typecheck / selftest，待用户确认；未进入 T4。
 
 当前是否允许进入下一步：
 
-> 否。必须等待用户确认 v0.3 T2 后，才能进入 T3（决策纯函数）。Codex 不自行连续推进下一张任务卡。
+> 否。必须等待用户确认 v0.3 T3 后，才能进入 T4。Codex 不自行连续推进下一张任务卡。
 
 ---
 
@@ -1408,3 +1408,73 @@ v0.1 不做：
   2. `strategyOverride` 当前只是用户事实字段，未参与任何派生逻辑；T3 决策纯函数落地后再消费。
 - 是否允许进入下一步：否。等待用户确认 T2 后，才能进入 T3。
 - 建议 commit message：feat: v0.3 T2 新增跟进事实字段
+
+---
+
+### 2026-06-22 · v0.3 · T3 决策纯函数
+
+- 状态：已实现，待用户确认（DEC-022）
+- 来源：用户确认 T2 通过后，明确要求进入 T3：实现 `deriveDecision(record, allJobs?)` 纯函数，且 T3 只做纯函数和自测，不进入 T4。
+- 执行者：Codex
+- 当前任务目标：
+  - 新增 `deriveDecision(record, allJobs?)` 纯函数。
+  - 落地 `NextActionType` / `MessageScenario` / `FOLLOWUP_COOLDOWN_DAYS = 3` / `MAX_FOLLOWUPS = 2`。
+  - 按 T3 规则从 `JobRecord` 事实字段实时派生 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`。
+  - 保持 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning` 不写入 `JobRecord`。
+- 改动文件：
+  - `src/storage/types.ts`
+  - `src/decision/deriveDecision.ts`
+  - `src/decision/index.ts`
+  - `scripts/decision.selftest.ts`
+  - `package.json`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 实现要点：
+  - `deriveDecision` 只接收 `JobRecord` 与可选 `allJobs`，不读取 store，不访问浏览器运行时，不发网络请求，不写 storage。
+  - 返回类型固定为 `{ strategy, nextAction, stopLoss, scenario, companyWarning? }`。
+  - 匹配度判定只按 `record.report?.applyAdvice`：`strongly` / `ok` 为高匹配，`cautious` / `skip` 为低匹配或一般；`report === null` 或 `applyAdvice === ''` 走空报告兜底。
+  - `not_contacted + 高匹配` 派生 `main_attack + send_greeting + first_greeting`。
+  - `not_contacted + 低匹配 + highValueSignal=true` 派生 `low_cost_probe + send_greeting + high_salary_low_match_probe`。
+  - `greeted_unread` / `greeted_read_no_reply` 按 `followupCount`、`lastGreetedAt`、`lastFollowupAt`、冷却期和 `MAX_FOLLOWUPS` 派生等待、一次跟进、换角度跟进、最终跟进或止损关闭。
+  - `replied` 派生 `continue_conversation`，`interviewing` 派生 `prepare_interview`，`paused` 派生 `pause_watch`。
+  - `closed` / `rejected` 返回 `nextAction: null` 且 `stopLoss: false`。
+  - 缺少跟进时间戳的已打招呼记录保守判为未过冷却期，避免旧数据缺事实时制造跟进事实。
+  - T3 保持 `StrategyType` 仅有 `main_attack` / `low_cost_probe` / `cautious_watch` / `cut_loss` 四类；`follow_up_once` / `follow_up_with_new_angle` 只作为 `nextAction` 返回，不属于策略。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "localStorage|window\.storage|fetch\(|axios|XMLHttpRequest" src/decision`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：40 passed, 0 failed
+  - `src/decision` 纯度 grep：无命中
+  - 禁止实体 grep：无命中
+- T3 验收对照：
+  - 覆盖 `followupCount` 0 / 1 / >=2 三档：已覆盖
+  - 覆盖 `highValueSignal` 触发 `low_cost_probe`：已覆盖
+  - 覆盖 `followupCount=1` 触发 `final_unread_followup`：已覆盖
+  - 覆盖 `closed` / `rejected` 返回 `nextAction=null`：已覆盖
+  - 覆盖 `replied` 返回 `continue_conversation`：已覆盖
+  - 覆盖 `report=null` 兜底：已覆盖
+  - 覆盖 `deriveDecision` 不读写存储、不发网络：已覆盖动态桩测试与源码 token 检查
+- 红线自检：
+  - 未读写 localStorage / store
+  - 未访问 `window`
+  - 未发网络请求
+  - 未依赖 UI
+  - 未把 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning` 写入 `JobRecord`
+  - 未新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体
+  - 未新增依赖
+  - 未修改 UI 页面
+- 是否涉及 decision-log 更新：是，新增 DEC-022，记录 T3 纯函数派生决策、不落库存储派生结果、不接 UI / store / 网络的口径。
+- 遗留风险：
+  1. `companyWarning` 暂未派生，返回类型预留；按当前 T3 要求未实现跨公司预警逻辑，避免提前进入后续任务。
+  2. `strategyOverride` 在 T3 暂未消费；T3 只落地规则派生函数，后续是否在 UI 或决策面板中接入覆盖逻辑，应由 T4/T5 任务确认。
+  3. 缺失 `lastGreetedAt` / `lastFollowupAt` 时保守等待，可能少提示一次跟进，但不会制造错误跟进事实。
+- 是否允许进入下一步：否。等待用户确认 T3 后，才能进入 T4。
+- 建议 commit message：feat: v0.3 T3 新增跟进决策纯函数
