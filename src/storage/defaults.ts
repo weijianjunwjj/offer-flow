@@ -2,17 +2,63 @@
 // 仅负责「补齐默认值」这一件事：新建岗位的初值，以及读取旧岗位时回填新增字段。
 // 不做解析 / 计算 / 校验业务逻辑（那些在 src/app/ 下）。
 
-import type { JobRecord, CompanyInput } from './types';
+import type {
+  JobRecord,
+  CompanyInput,
+  CommunicationStatus,
+  LegacyContactStatus,
+} from './types';
 
-/** v0.2 新增、旧数据可能缺失的 JobRecord 字段名 */
-type JobRecordV2Keys = 'companyInput' | 'companyAssessment' | 'opportunityAnalysis';
+/** 读取旧数据时需要补齐 / 迁移的 JobRecord 字段名 */
+type JobRecordDefaultKeys =
+  | 'companyInput'
+  | 'companyAssessment'
+  | 'opportunityAnalysis'
+  | 'communicationStatus';
 
 /**
- * 旧版（v0.1）持久化形状：保证含 v0.1 全部字段，v0.2 新增字段视为可选。
+ * 旧版持久化形状：保证含基础字段，后续新增字段视为可选。
  * 用于读取时把任意历史岗位安全地补齐为完整 JobRecord。
  */
-export type StoredJobRecord = Omit<JobRecord, JobRecordV2Keys> &
-  Partial<Pick<JobRecord, JobRecordV2Keys>>;
+export type StoredJobRecord = Omit<JobRecord, JobRecordDefaultKeys> &
+  Partial<Pick<JobRecord, JobRecordDefaultKeys>> & {
+    contactStatus?: LegacyContactStatus;
+    contactStatusUpdatedAt?: number;
+  };
+
+const COMMUNICATION_STATUSES: ReadonlySet<string> = new Set([
+  'not_contacted',
+  'greeted_unread',
+  'greeted_read_no_reply',
+  'replied',
+  'interviewing',
+  'paused',
+  'closed',
+  'rejected',
+]);
+
+function isCommunicationStatus(value: unknown): value is CommunicationStatus {
+  return typeof value === 'string' && COMMUNICATION_STATUSES.has(value);
+}
+
+function mapLegacyContactStatus(value: unknown): CommunicationStatus {
+  switch (value) {
+    case 'not_contacted':
+      return 'not_contacted';
+    case 'greeted':
+      return 'greeted_unread';
+    case 'replied':
+      return 'replied';
+    case 'interview_scheduled':
+      return 'interviewing';
+    case 'rejected':
+      return 'rejected';
+    case 'closed':
+      return 'closed';
+    default:
+      return 'not_contacted';
+  }
+}
 
 /** 空的公司与机会补充信息（新建岗位 / 旧数据兜底用） */
 export function emptyCompanyInput(): CompanyInput {
@@ -33,10 +79,16 @@ export function emptyCompanyInput(): CompanyInput {
  * 只补缺失字段，不覆盖已有值；不抛错。旧岗位读取后即可当作完整 JobRecord 使用。
  */
 export function withJobRecordDefaults(parsed: StoredJobRecord): JobRecord {
+  const rest = { ...parsed };
+  delete rest.contactStatus;
+  delete rest.contactStatusUpdatedAt;
   return {
-    ...parsed,
+    ...rest,
     companyInput: { ...emptyCompanyInput(), ...(parsed.companyInput ?? {}) },
     companyAssessment: parsed.companyAssessment ?? null,
     opportunityAnalysis: parsed.opportunityAnalysis ?? null,
+    communicationStatus: isCommunicationStatus(parsed.communicationStatus)
+      ? parsed.communicationStatus
+      : mapLegacyContactStatus(parsed.contactStatus),
   };
 }

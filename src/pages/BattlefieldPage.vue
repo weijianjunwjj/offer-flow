@@ -4,7 +4,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { NSelect, NInput } from 'naive-ui';
 import type {
-  ContactStatus,
+  CommunicationStatus,
   CompanyInput,
   CompanyAssessment,
   CompanySizeTier,
@@ -18,7 +18,7 @@ import { emptyCompanyInput } from '../storage';
 import { useStores } from '../app/stores';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
-import { CONTACT_STATUS_OPTIONS } from '../app/labels';
+import { COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
   COMPANY_SIZE_OPTIONS,
   COMPANY_SIZE_LABELS,
@@ -240,36 +240,32 @@ function saveGreeting(): void {
   }
 }
 
-// Task 7：沟通状态流转。手动切换，立即持久化，不做自动推进 / 提醒 / 流程校验。
-const contactStatus = ref<ContactStatus>('not_contacted');
-const contactStatusUpdatedAt = ref<number | null>(null);
+// Task 7 / v0.3 T1：沟通状态流转。手动切换，立即持久化，不做自动推进 / 提醒 / 流程校验。
+const communicationStatus = ref<CommunicationStatus>('not_contacted');
 const statusSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const statusSaveError = ref('');
 const currentStatusLabel = computed(
   () =>
-    CONTACT_STATUS_OPTIONS.find((option) => option.value === contactStatus.value)
+    COMMUNICATION_STATUS_OPTIONS.find((option) => option.value === communicationStatus.value)
       ?.label ?? '',
 );
 
-function changeContactStatus(next: ContactStatus): void {
+function changeCommunicationStatus(next: CommunicationStatus): void {
   if (props.jobId === null) {
     return;
   }
-  const previous = contactStatus.value;
-  contactStatus.value = next;
+  const previous = communicationStatus.value;
+  communicationStatus.value = next;
   statusSaveState.value = 'idle';
   statusSaveError.value = '';
   try {
-    const updatedAt = Date.now();
     useStores().jobs.updateJob(props.jobId, {
-      contactStatus: next,
-      contactStatusUpdatedAt: updatedAt,
+      communicationStatus: next,
     });
-    contactStatusUpdatedAt.value = updatedAt;
     statusSaveState.value = 'done';
   } catch (error) {
     // 持久化失败则回滚选择，并提示。
-    contactStatus.value = previous;
+    communicationStatus.value = previous;
     statusSaveState.value = 'fail';
     statusSaveError.value = `更新状态失败：${(error as Error).message}`;
   }
@@ -341,8 +337,7 @@ onMounted(() => {
     matchScore.value = job.matchScore;
     companyAssessment.value = job.companyAssessment;
     opportunityAnalysis.value = job.opportunityAnalysis;
-    contactStatus.value = job.contactStatus;
-    contactStatusUpdatedAt.value = job.contactStatusUpdatedAt;
+    communicationStatus.value = job.communicationStatus;
   } catch (error) {
     loadError.value = (error as Error).message;
   }
@@ -476,12 +471,12 @@ function saveAiResult(): void {
       <h2>沟通状态</h2>
       <div class="status-options" role="group" aria-label="沟通状态">
         <button
-          v-for="opt in CONTACT_STATUS_OPTIONS"
+          v-for="opt in COMMUNICATION_STATUS_OPTIONS"
           :key="opt.value"
           type="button"
           class="status-chip"
-          :class="{ active: contactStatus === opt.value }"
-          @click="changeContactStatus(opt.value)"
+          :class="{ active: communicationStatus === opt.value }"
+          @click="changeCommunicationStatus(opt.value)"
         >
           {{ opt.label }}
         </button>
@@ -490,12 +485,8 @@ function saveAiResult(): void {
         <span v-if="statusSaveState === 'fail'" class="status-fail" role="alert">
           {{ statusSaveError }}
         </span>
-        <span
-          v-else-if="contactStatusUpdatedAt !== null"
-          class="status-saved"
-        >
-          当前：{{ currentStatusLabel }}（更新于
-          {{ formatTime(contactStatusUpdatedAt) }}）
+        <span v-else class="status-saved">
+          当前：{{ currentStatusLabel }}
         </span>
       </p>
     </section>

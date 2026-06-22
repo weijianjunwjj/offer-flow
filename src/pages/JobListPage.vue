@@ -9,12 +9,12 @@ import { NSelect } from 'naive-ui';
 import type {
   JobRecord,
   CompanySizeTier,
-  ContactStatus,
+  CommunicationStatus,
   ApplyAdvice,
   OpportunityRadar,
 } from '../storage';
 import { useStores } from '../app/stores';
-import { CONTACT_STATUS_LABELS, CONTACT_STATUS_OPTIONS } from '../app/labels';
+import { COMMUNICATION_STATUS_LABELS, COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
   COMPANY_SIZE_LABELS,
   COMPANY_SIZE_OPTIONS,
@@ -36,7 +36,7 @@ const loadError = ref('');
 // 筛选 / 排序状态（仅前端展示，空串 / 0 表示不筛选）。
 const cityFilter = ref<string>('');
 const sizeFilter = ref<CompanySizeTier | ''>('');
-const statusFilter = ref<ContactStatus | ''>('');
+const statusFilter = ref<CommunicationStatus | ''>('');
 const minScore = ref<number>(0);
 const sortKey = ref<'updated' | 'opportunity' | 'profile'>('opportunity');
 
@@ -123,7 +123,7 @@ const cityOptions = computed(() => {
 const sizeOptions = [{ label: '全部规模', value: '' }, ...COMPANY_SIZE_OPTIONS];
 const statusOptions = [
   { label: '全部状态', value: '' },
-  ...CONTACT_STATUS_OPTIONS.map((o) => ({ label: o.label, value: o.value })),
+  ...COMMUNICATION_STATUS_OPTIONS.map((o) => ({ label: o.label, value: o.value })),
 ];
 const scoreOptions = [
   { label: '机会分 不限', value: 0 },
@@ -143,7 +143,7 @@ const filteredJobs = computed(() => {
   const list = jobs.value.filter((j) => {
     if (cityFilter.value !== '' && j.city.trim() !== cityFilter.value) return false;
     if (sizeFilter.value !== '' && effectiveSizeTier(j) !== sizeFilter.value) return false;
-    if (statusFilter.value !== '' && j.contactStatus !== statusFilter.value) return false;
+    if (statusFilter.value !== '' && j.communicationStatus !== statusFilter.value) return false;
     if (minScore.value > 0) {
       const s = opportunityScoreOf(j);
       if (s === null || s < minScore.value) return false;
@@ -279,8 +279,8 @@ function formatTime(ts: number): string {
             <div class="ac-context">{{ contextLine(job) }}</div>
           </div>
           <div class="ac-side">
-            <span class="ac-status" :data-status="job.contactStatus">
-              {{ CONTACT_STATUS_LABELS[job.contactStatus] }}
+            <span class="ac-status" :data-status="job.communicationStatus">
+              {{ COMMUNICATION_STATUS_LABELS[job.communicationStatus] }}
             </span>
             <span class="ac-time">{{ formatTime(job.updatedAt) }}</span>
           </div>
@@ -581,14 +581,19 @@ function formatTime(ts: number): string {
   background: #eef1f5;
   color: #475569;
 }
-.ac-status[data-status='greeted'],
+.ac-status[data-status='greeted_unread'],
+.ac-status[data-status='greeted_read_no_reply'],
 .ac-status[data-status='replied'] {
   background: #dbeafe;
   color: #1e40af;
 }
-.ac-status[data-status='interview_scheduled'] {
+.ac-status[data-status='interviewing'] {
   background: #dcfce7;
   color: #166534;
+}
+.ac-status[data-status='paused'] {
+  background: #fef3c7;
+  color: #92400e;
 }
 .ac-status[data-status='rejected'] {
   background: #fee2e2;

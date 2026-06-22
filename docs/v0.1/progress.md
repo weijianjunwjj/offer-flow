@@ -31,19 +31,19 @@
 
 当前版本：
 
-> v0.2.0 开发中（One-Shot Opportunity Radar / 一次分析 · 机会雷达版）；v0.1 P0 已封版
+> v0.3 开发中（半自动求职跟进决策台）；v0.2.x 已完成机会雷达与指标分层实现，部分历史条目仍待用户统一确认 / 提交
 
 当前模式：
 
-> Manual Mode（v0.2.0 仍不接 API，仅升级为固定 JSON 结构化解析）
+> Manual / Semi-manual Mode（v0.3 仍不接 API、不做 BYOK、不做后端、不自动操作 Boss；仅基于用户手动维护的岗位事实派生跟进决策）
 
 当前阶段：
 
-> v0.1 P0 已封版；v0.2.0 已启动。Task 0 - Task 9 已入库（2.5 除外）。用户在封版前插入 Task 9.5（按方案 B 折入真实页面视觉），已完成并通过质量门槛 + 浏览器验证。Task 10（文档 + release note）已完成但**按用户指令暂未提交**，并已随 Task 9.5 同步更新（视觉收口）；Task 9.5 + Task 10 文档均在工作区待提交。
+> 用户于 2026-06-22 明确启动 v0.3。当前只执行 v0.3 PRD / Codex 执行版的 T1（数据模型与状态迁移）：contactStatus → communicationStatus、8 态枚举、旧数据读取迁移、状态 labels 单一信源。T1 已实现并通过 typecheck / selftest，待用户确认；未进入 T2。
 
 当前是否允许进入下一步：
 
-> 待用户确认 Task 9.5。确认后再统一提交 Task 9.5 视觉收口 + Task 10 文档；是否打 tag v0.2.0 / 推送由用户决定，CC 不自行打 tag、不 push。
+> 否。必须等待用户确认 v0.3 T1 后，才能进入 T2（新增跟进事实字段）。Codex 不自行连续推进下一张任务卡。
 
 ---
 
@@ -1289,3 +1289,61 @@ v0.1 不做：
   2. src/app/scoreVisuals.ts 暂无独立 selftest（逻辑为阈值映射，已镜像既有等级函数并经浏览器验证）；如需补，另加 scripts/scoreVisuals.selftest.ts 并接入 selftest 串联。
 - 是否允许进入下一步：否，待用户确认。
 - 建议 commit message：feat: 指标视觉分层（机会分判决英雄区 + 目标画像彩色判读 + 投递建议行动指令 + 迷你 6 维条，DEC-019）
+
+---
+
+### 2026-06-22 · v0.3 · T1 数据模型与状态迁移
+
+- 状态：已实现，待用户确认（DEC-020）
+- 来源：用户明确「开始吧」，并提供《OfferFlow v0.3 PRD / Codex 执行版》。按 PRD 要求，每次只执行一张任务卡，本次仅执行 T1。
+- 执行者：Codex
+- 当前任务目标：
+  - `contactStatus` → `communicationStatus`
+  - 新增 v0.3 8 态沟通状态枚举
+  - 读取旧数据时做状态迁移映射
+  - 更新状态 labels 单一信源
+  - 新记录不再写入旧字段 `contactStatus`
+- 改动文件：
+  - `src/storage/types.ts`
+  - `src/storage/defaults.ts`
+  - `src/storage/jobStore.ts`
+  - `src/app/labels.ts`
+  - `src/pages/JobListPage.vue`
+  - `src/pages/BattlefieldPage.vue`
+  - `scripts/storage.selftest.ts`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 实现要点：
+  - `JobRecord` 改为持久化 `communicationStatus: CommunicationStatus`。
+  - 新增 `CommunicationStatus` 8 态：`not_contacted` / `greeted_unread` / `greeted_read_no_reply` / `replied` / `interviewing` / `paused` / `closed` / `rejected`。
+  - 保留 `LegacyContactStatus` 仅用于读取旧记录迁移；新建与更新岗位不再写旧 `contactStatus`。
+  - `withJobRecordDefaults` 读取旧记录时把旧六态映射到新八态：`greeted -> greeted_unread`、`interview_scheduled -> interviewing`，未知 / 缺失回退 `not_contacted`。
+  - 列表页与详情页改为读写 `communicationStatus`，状态选项和中文标签改为 `COMMUNICATION_STATUS_OPTIONS` / `COMMUNICATION_STATUS_LABELS`。
+  - 未执行 T2：未新增 `lastGreetedAt`、`followupCount`、`highValueSignal` 等跟进事实字段。
+  - 未执行 T3：未新增 `deriveDecision`、策略枚举、下一步动作、止损判断。
+- 自测命令：
+  - `npm run typecheck`：PowerShell 拒绝加载 `npm.ps1`，改用 `npm.cmd run typecheck`
+  - `npm run selftest`：PowerShell 拒绝加载 `npm.ps1`，改用 `npm.cmd run selftest`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：54 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+- T1 验收对照：
+  - 旧记录能正确迁移：已覆盖 `not_contacted` / `greeted` / `replied` / `interview_scheduled` / `rejected` / `closed` / 缺失状态断言
+  - 新记录不再写 `contactStatus`：已用 JSON 断言验证
+  - typecheck 0 error：通过
+  - selftest 增加迁移断言：已增加并通过
+- 红线自检：
+  - 未接 API / BYOK / 后端
+  - 未爬 Boss / 未自动检测已读未读 / 未自动发送消息
+  - 未新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体
+  - 未新增前端框架 / 状态库 / 网络库 / 运行时依赖
+  - 未持久化 `currentStrategy` / `nextAction` / `stopLoss` / `messageScenario` / `companyWarning`
+- 是否涉及 decision-log 更新：是，新增 DEC-020，记录 `communicationStatus` 替换 `contactStatus` 与旧数据迁移口径。
+- 遗留风险：
+  1. 旧数据里的 `contactStatusUpdatedAt` 不再作为 v0.3 新模型字段暴露；T1 只保留当前沟通事实状态，符合 PRD「只存事实，不存决策」和 T1 范围。
+  2. 列表 / 详情 UI 只是状态字段适配，尚未进入 v0.3 的跟进决策面板、话术模板和决策台筛选。
+- 是否允许进入下一步：否。等待用户确认 T1 后，才能进入 T2。
+- 建议 commit message：feat: v0.3 T1 将沟通状态迁移为 communicationStatus

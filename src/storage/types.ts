@@ -37,8 +37,19 @@ export interface JobReport {
   greetingMessage: string;
 }
 
-/** 沟通状态:未沟通 / 已打招呼 / 已回复 / 已约面 / 已拒绝 / 已结束 */
-export type ContactStatus =
+/** v0.3 沟通状态：Boss 聊天语境下的当前事实状态（DEC-020）。 */
+export type CommunicationStatus =
+  | 'not_contacted'
+  | 'greeted_unread'
+  | 'greeted_read_no_reply'
+  | 'replied'
+  | 'interviewing'
+  | 'paused'
+  | 'closed'
+  | 'rejected';
+
+/** v0.1/v0.2 旧沟通状态，仅用于读取历史数据迁移，不再写入新记录。 */
+export type LegacyContactStatus =
   | 'not_contacted'
   | 'greeted'
   | 'replied'
@@ -146,9 +157,8 @@ export interface JobRecord {
   companyAssessment: CompanyAssessment | null;
   opportunityAnalysis: OpportunityAnalysis | null;
 
-  // 沟通台账
-  contactStatus: ContactStatus;
-  contactStatusUpdatedAt: number;
+  // 沟通台账（v0.3：只写 communicationStatus，不再写 contactStatus）
+  communicationStatus: CommunicationStatus;
 }
 
 /** 新建岗位时只收基础信息,其余字段由 store 填默认值 */

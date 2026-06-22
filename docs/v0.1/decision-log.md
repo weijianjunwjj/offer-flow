@@ -779,6 +779,66 @@
 
 ---
 
+## DEC-020：v0.3 使用 `communicationStatus` 替换 `contactStatus`，并通过读取迁移兼容旧数据
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过《OfferFlow v0.3 PRD / Codex 执行版》）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - v0.3 目标从「单岗位机会分析 / 机会雷达」升级为「半自动求职跟进决策台」。
+  - 旧字段 `contactStatus` 只有 v0.1/v0.2 六态：未沟通 / 已打招呼 / 已回复 / 已约面 / 已拒绝 / 已结束。
+  - v0.3 需要区分「已打招呼但未读」「已读未回」「暂停观察」「面试推进中」等更贴近 Boss 跟进场景的事实状态。
+  - PRD 明确要求：`communicationStatus` 替换旧的 `contactStatus`，不要两个字段并存；旧数据读取时迁移映射。
+- 决策：
+  - `JobRecord` 持久化字段改为 `communicationStatus: CommunicationStatus`。
+  - 新沟通状态枚举为：
+    1. `not_contacted`
+    2. `greeted_unread`
+    3. `greeted_read_no_reply`
+    4. `replied`
+    5. `interviewing`
+    6. `paused`
+    7. `closed`
+    8. `rejected`
+  - `contactStatus` 和 `contactStatusUpdatedAt` 只作为旧数据读取兼容输入，不再作为新 `JobRecord` 字段写入。
+  - 旧数据读取映射：
+    - `not_contacted -> not_contacted`
+    - `greeted -> greeted_unread`
+    - `replied -> replied`
+    - `interview_scheduled -> interviewing`
+    - `rejected -> rejected`
+    - `closed -> closed`
+    - 未知 / 缺失 -> `not_contacted`
+  - 状态 labels 以 `src/app/labels.ts` 为单一信源，页面只消费 `COMMUNICATION_STATUS_OPTIONS` / `COMMUNICATION_STATUS_LABELS`。
+- 理由：
+  1. v0.3 的跟进决策需要更精确地区分「未读」「已读未回」「暂停观察」等事实状态，旧六态不足以支撑后续 T3 决策纯函数。
+  2. 不并存两个状态字段，避免同一岗位出现两个来源不一致的沟通事实。
+  3. 通过读取时迁移旧数据，不做破坏性删除，符合本地优先和旧数据兼容原则。
+  4. T1 仅存事实状态，不持久化策略、下一步动作、止损、话术场景或公司预警，延续 v0.3「只存事实，不存决策」红线。
+- 被否决方案：
+  1. 保留 `contactStatus` 并新增 `communicationStatus`（两个状态字段并存会产生冲突，PRD 明确禁止）。
+  2. 继续使用旧六态（无法表达 v0.3 跟进决策所需的未读 / 已读未回 / 暂停观察）。
+  3. 新增状态日志实体或 append-only 沟通日志（违反 v0.3 不做完整沟通日志 / 不新增 JobStatusLog / FollowupLog 实体的边界）。
+- 影响范围：
+  - `src/storage/types.ts`
+  - `src/storage/defaults.ts`
+  - `src/storage/jobStore.ts`
+  - `src/app/labels.ts`
+  - `src/pages/JobListPage.vue`
+  - `src/pages/BattlefieldPage.vue`
+  - `scripts/storage.selftest.ts`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若 T3 决策纯函数落地后发现 8 态不足以表达真实 Boss 跟进场景，需另开决策评估；不得在实现中顺手扩展状态枚举。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-003 / DEC-004 / DEC-009
+
+---
+
 # 5. 待定决策
 
 暂无。

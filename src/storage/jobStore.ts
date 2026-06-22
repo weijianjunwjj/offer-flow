@@ -35,8 +35,7 @@ export class JobStore {
       companyAssessment: null,
       opportunityAnalysis: null,
 
-      contactStatus: 'not_contacted',
-      contactStatusUpdatedAt: now,
+      communicationStatus: 'not_contacted',
     };
     this.write(job);
     return job;

@@ -146,7 +146,11 @@ const jobB = jobs.createJob({
 
 check('createJob assigns an id', jobA.id.length > 0);
 check('two jobs get different ids', jobA.id !== jobB.id);
-check('new job defaults contactStatus', jobA.contactStatus === 'not_contacted');
+check('new job defaults communicationStatus', jobA.communicationStatus === 'not_contacted');
+check(
+  'new job does not persist legacy contactStatus',
+  !JSON.parse(driver.getItem(jobKey(jobA.id)) ?? '{}').hasOwnProperty('contactStatus'),
+);
 check('new job defaults parseStatus', jobA.parseStatus === 'none');
 check('new job has empty aiRawResult', jobA.aiRawResult === '');
 check('new job has null report', jobA.report === null);
@@ -159,11 +163,11 @@ check('getJob on missing id returns null', jobs.getJob('no-such-id') === null);
 check('listJobs returns both', jobs.listJobs().length === 2);
 
 const updatedA = jobs.updateJob(jobA.id, {
-  contactStatus: 'greeted',
+  communicationStatus: 'greeted_unread',
   aiRawResult: 'external AI raw text...',
   parseStatus: 'unparsed',
 });
-check('update changes contactStatus', updatedA.contactStatus === 'greeted');
+check('update changes communicationStatus', updatedA.communicationStatus === 'greeted_unread');
 check('update preserves id', updatedA.id === jobA.id);
 check('update preserves createdAt', updatedA.createdAt === jobA.createdAt);
 check('update sets updatedAt (>= created)', updatedA.updatedAt >= jobA.createdAt);
@@ -212,7 +216,7 @@ const v01JobBase = {
   contactStatusUpdatedAt: 2,
 };
 
-// 旧岗位（完全缺 v0.2 字段）：读取自动补默认值、不丢 v0.1 字段、不报错
+// 旧岗位（完全缺 v0.2/v0.3 字段）：读取自动补默认值、不丢历史字段、不报错
 const oldId = 'old-v01-job';
 v2Driver.setItem(jobKey(oldId), JSON.stringify({ ...v01JobBase, id: oldId }));
 let oldRead: JobRecord | null = null;
@@ -231,7 +235,32 @@ check('legacy job keeps v0.1 fields', oldRead?.company === 'Old Co');
 check('legacy job backfills companyInput', oldRead?.companyInput.sizeTier === 'unknown');
 check('legacy job backfills companyAssessment null', oldRead?.companyAssessment === null);
 check('legacy job backfills opportunityAnalysis null', oldRead?.opportunityAnalysis === null);
+check('legacy not_contacted migrates to communicationStatus', oldRead?.communicationStatus === 'not_contacted');
 check('legacy job appears in listJobs', v2Stores.jobs.listJobs().some((j) => j.id === oldId));
+
+const legacyStatusCases = [
+  ['legacy-greeted', 'greeted', 'greeted_unread'],
+  ['legacy-replied', 'replied', 'replied'],
+  ['legacy-interview', 'interview_scheduled', 'interviewing'],
+  ['legacy-rejected', 'rejected', 'rejected'],
+  ['legacy-closed', 'closed', 'closed'],
+] as const;
+for (const [id, contactStatus, communicationStatus] of legacyStatusCases) {
+  v2Driver.setItem(jobKey(id), JSON.stringify({ ...v01JobBase, id, contactStatus }));
+  check(
+    `${contactStatus} migrates to ${communicationStatus}`,
+    v2Stores.jobs.getJob(id)?.communicationStatus === communicationStatus,
+  );
+}
+
+const missingStatusId = 'legacy-missing-status';
+const missingStatusJob = { ...v01JobBase, id: missingStatusId };
+delete (missingStatusJob as { contactStatus?: unknown }).contactStatus;
+v2Driver.setItem(jobKey(missingStatusId), JSON.stringify(missingStatusJob));
+check(
+  'missing legacy status defaults not_contacted',
+  v2Stores.jobs.getJob(missingStatusId)?.communicationStatus === 'not_contacted',
+);
 
 // 旧岗位携带「部分」companyInput：保留已有值，仅补缺失字段
 const partialId = 'partial-companyinput-job';
