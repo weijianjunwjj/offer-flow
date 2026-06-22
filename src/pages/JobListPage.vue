@@ -1,14 +1,29 @@
 <script setup lang="ts">
 // Task 9：岗位台账列表升级。
 // 新增列：公司规模 / 机会分；新增筛选：城市 / 公司规模 / 沟通状态 / 机会分下限；
-// 新增排序：更新时间 / 机会分 / 匹配度。筛选排序仅影响前端展示，不改持久化数据。
+// 排序：更新时间 / 机会分 / 目标画像。筛选排序仅影响前端展示，不改持久化数据。
+// 指标分层（DEC-019）：机会分为唯一主指标（大数字 + 默认排序）；目标画像为「是否我的菜」辅助徽章；
+// 人岗匹配（综合匹配度）不在列表常驻，收进主战场雷达卡。
 import { computed, onMounted, ref } from 'vue';
 import { NSelect } from 'naive-ui';
-import type { JobRecord, CompanySizeTier, ContactStatus } from '../storage';
+import type {
+  JobRecord,
+  CompanySizeTier,
+  ContactStatus,
+  ApplyAdvice,
+  OpportunityRadar,
+} from '../storage';
 import { useStores } from '../app/stores';
 import { CONTACT_STATUS_LABELS, CONTACT_STATUS_OPTIONS } from '../app/labels';
-import { COMPANY_SIZE_LABELS, COMPANY_SIZE_OPTIONS } from '../app/companyLabels';
-import { calculateTargetProfileScore } from '../app/targetProfileScore';
+import {
+  COMPANY_SIZE_LABELS,
+  COMPANY_SIZE_OPTIONS,
+  APPLY_ADVICE_LABELS,
+} from '../app/companyLabels';
+import { calculateTargetProfileScore, getTargetProfileLevel } from '../app/targetProfileScore';
+import { getOpportunityScoreLevel } from '../app/opportunityScore';
+import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
+import OpportunityMiniBars from '../components/OpportunityMiniBars.vue';
 
 const emit = defineEmits<{
   create: [];
@@ -23,7 +38,7 @@ const cityFilter = ref<string>('');
 const sizeFilter = ref<CompanySizeTier | ''>('');
 const statusFilter = ref<ContactStatus | ''>('');
 const minScore = ref<number>(0);
-const sortKey = ref<'updated' | 'opportunity' | 'match' | 'profile'>('updated');
+const sortKey = ref<'updated' | 'opportunity' | 'profile'>('opportunity');
 
 function load(): void {
   try {
@@ -46,10 +61,6 @@ function effectiveSizeTier(job: JobRecord): CompanySizeTier {
 function opportunityScoreOf(job: JobRecord): number | null {
   return job.opportunityAnalysis?.opportunityScore ?? null;
 }
-function matchNumberOf(job: JobRecord): number | null {
-  const n = Number.parseInt(job.matchScore, 10);
-  return Number.isNaN(n) ? null : n;
-}
 
 function sizeLabel(job: JobRecord): string {
   return COMPANY_SIZE_LABELS[effectiveSizeTier(job)];
@@ -70,9 +81,36 @@ function profileScoreOf(job: JobRecord): number | null {
   });
   return r?.score ?? null;
 }
-function profileScoreDisplay(job: JobRecord): string {
+// DEC-019 视觉分层：机会分（主判决）/ 目标画像（是否我的菜）/ 投递建议（行动指令）各自的等级 + 色调。
+function oppLevelOf(job: JobRecord): string {
+  const s = opportunityScoreOf(job);
+  return s === null ? '未分析' : getOpportunityScoreLevel(s);
+}
+function oppToneOf(job: JobRecord): string {
+  return opportunityTone(opportunityScoreOf(job));
+}
+function profileToneOf(job: JobRecord): string {
+  return profileTone(profileScoreOf(job));
+}
+function profileBadgeText(job: JobRecord): string {
   const s = profileScoreOf(job);
-  return s === null ? '待评估' : String(s);
+  return s === null ? '目标画像 待评估' : `${getTargetProfileLevel(s)} · 目标画像 ${s}`;
+}
+function radarOf(job: JobRecord): OpportunityRadar | null {
+  return job.opportunityAnalysis?.opportunityRadar ?? null;
+}
+function adviceOf(job: JobRecord): ApplyAdvice | '' {
+  return job.opportunityAnalysis?.applyAdvice ?? '';
+}
+function adviceToneOf(job: JobRecord): string {
+  return applyAdviceTone(adviceOf(job));
+}
+function adviceLabelOf(job: JobRecord): string {
+  return APPLY_ADVICE_LABELS[adviceOf(job)];
+}
+// 上下文行：城市 / 薪资 / 规模，压成弱信息（非指标，不与判决抢注意力）。
+function contextLine(job: JobRecord): string {
+  return [dash(job.city), dash(job.salaryRange), sizeLabel(job)].join(' · ');
 }
 
 // 下拉选项
@@ -98,8 +136,7 @@ const scoreOptions = [
 const sortOptions = [
   { label: '按更新时间', value: 'updated' },
   { label: '按机会分', value: 'opportunity' },
-  { label: '按匹配度', value: 'match' },
-  { label: '按画像匹配', value: 'profile' },
+  { label: '按目标画像', value: 'profile' },
 ];
 
 const filteredJobs = computed(() => {
@@ -116,8 +153,6 @@ const filteredJobs = computed(() => {
   const sorted = [...list];
   if (sortKey.value === 'opportunity') {
     sorted.sort((a, b) => (opportunityScoreOf(b) ?? -1) - (opportunityScoreOf(a) ?? -1));
-  } else if (sortKey.value === 'match') {
-    sorted.sort((a, b) => (matchNumberOf(b) ?? -1) - (matchNumberOf(a) ?? -1));
   } else if (sortKey.value === 'profile') {
     sorted.sort((a, b) => (profileScoreOf(b) ?? -1) - (profileScoreOf(a) ?? -1));
   } else {
@@ -205,22 +240,43 @@ function formatTime(ts: number): string {
           class="asset-card"
           @click="emit('open', job.id)"
         >
-          <div class="ac-score" :class="{ none: scoreDisplay(job) === '-' }">
+          <div
+            class="ac-score"
+            :class="['tone-' + oppToneOf(job), { none: scoreDisplay(job) === '-' }]"
+            title="综合判断这条机会值不值得优先追。"
+          >
             <span class="ac-score-num">{{ scoreDisplay(job) }}</span>
             <span class="ac-score-cap">机会分</span>
+            <span class="ac-score-level">{{ oppLevelOf(job) }}</span>
+            <OpportunityMiniBars
+              v-if="radarOf(job)"
+              :radar="radarOf(job)!"
+              class="ac-mini"
+            />
           </div>
           <div class="ac-main">
             <div class="ac-title-row">
               <span class="ac-company">{{ dash(job.company) }}</span>
               <span class="ac-role">{{ dash(job.role) }}</span>
             </div>
-            <div class="ac-meta">
-              <span class="ac-chip">{{ dash(job.city) }}</span>
-              <span class="ac-chip strong">{{ dash(job.salaryRange) }}</span>
-              <span class="ac-chip">{{ sizeLabel(job) }}</span>
-              <span class="ac-chip">匹配 {{ dash(job.matchScore) }}</span>
-              <span class="ac-chip" title="基于目标公司画像">画像 {{ profileScoreDisplay(job) }}</span>
+            <div class="ac-signals">
+              <span
+                class="ac-badge"
+                :class="'tone-' + profileToneOf(job)"
+                title="这家公司与我的目标公司画像有多接近。"
+              >
+                <i class="ac-dot" aria-hidden="true"></i>{{ profileBadgeText(job) }}
+              </span>
+              <span
+                v-if="adviceToneOf(job) !== 'none'"
+                class="ac-badge soft"
+                :class="'tone-' + adviceToneOf(job)"
+                title="外部 AI 给出的投递建议"
+              >
+                {{ adviceLabelOf(job) }}
+              </span>
             </div>
+            <div class="ac-context">{{ contextLine(job) }}</div>
           </div>
           <div class="ac-side">
             <span class="ac-status" :data-status="job.contactStatus">
@@ -359,7 +415,7 @@ function formatTime(ts: number): string {
 }
 .asset-card {
   display: grid;
-  grid-template-columns: 84px minmax(0, 1fr) auto;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
   align-items: center;
   gap: 18px;
   padding: 16px 18px;
@@ -379,24 +435,64 @@ function formatTime(ts: number): string {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 10px 0;
+  gap: 1px;
+  padding: 9px 6px 8px;
   border-radius: 12px;
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(14, 165, 233, 0.07));
+  background: #f1f3f6;
 }
 .ac-score-num {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
   line-height: 1;
-  color: var(--of-brand);
-}
-.ac-score.none .ac-score-num {
-  color: var(--of-muted);
-  font-weight: 500;
+  color: #64748b;
 }
 .ac-score-cap {
   font-size: 11px;
   color: var(--of-ink-2);
+}
+.ac-score-level {
+  margin-top: 1px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64748b;
+  text-align: center;
+  line-height: 1.2;
+}
+.ac-mini {
+  margin-top: 6px;
+  opacity: 0.9;
+}
+.ac-score.none .ac-mini {
+  display: none;
+}
+/* 机会分按等级上色：高价值=绿 / 优质=蓝 / 可观察=青 / 谨慎=琥珀 / 低价值·未分析=灰 */
+.ac-score.tone-strong {
+  background: rgba(22, 101, 52, 0.1);
+}
+.ac-score.tone-strong .ac-score-num,
+.ac-score.tone-strong .ac-score-level {
+  color: #166534;
+}
+.ac-score.tone-good {
+  background: rgba(37, 99, 235, 0.1);
+}
+.ac-score.tone-good .ac-score-num,
+.ac-score.tone-good .ac-score-level {
+  color: #1d4ed8;
+}
+.ac-score.tone-watch {
+  background: rgba(14, 116, 144, 0.1);
+}
+.ac-score.tone-watch .ac-score-num,
+.ac-score.tone-watch .ac-score-level {
+  color: #0e7490;
+}
+.ac-score.tone-caution {
+  background: rgba(180, 83, 9, 0.1);
+}
+.ac-score.tone-caution .ac-score-num,
+.ac-score.tone-caution .ac-score-level {
+  color: #b45309;
 }
 .ac-main {
   min-width: 0;
@@ -416,22 +512,59 @@ function formatTime(ts: number): string {
   font-size: 13px;
   color: var(--of-ink-2);
 }
-.ac-meta {
+.ac-signals {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-top: 8px;
 }
-.ac-chip {
+.ac-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  color: var(--of-ink-2);
-  background: #eef2f8;
-  padding: 3px 10px;
-  border-radius: 999px;
-}
-.ac-chip.strong {
-  color: var(--of-ink);
   font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #475569;
+}
+.ac-badge.soft {
+  font-weight: 500;
+}
+.ac-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+/* 目标画像 / 投递建议徽章按等级上色，与机会分色调同一套语义 */
+.ac-badge.tone-strong {
+  background: #dcfce7;
+  color: #166534;
+}
+.ac-badge.tone-good {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.ac-badge.tone-watch {
+  background: #cffafe;
+  color: #0e7490;
+}
+.ac-badge.tone-caution {
+  background: #fef3c7;
+  color: #92400e;
+}
+.ac-badge.tone-weak {
+  background: #eef1f5;
+  color: #475569;
+}
+.ac-context {
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--of-muted);
 }
 .ac-side {
   display: flex;

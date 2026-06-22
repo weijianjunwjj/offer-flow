@@ -1259,3 +1259,33 @@ v0.1 不做：
   1. 画像参数（区域 / 规模 / 行业 / 岗位 / 薪资关键词与阈值）当前为硬编码常量，若需用户自定义画像，另起任务，不在本次范围。
 - 是否允许进入下一步：否，待用户确认。
 - 建议 commit message：feat: 新增第三项指标「画像匹配度」（目标公司画像本地评分，不接 API / 不持久化）
+
+### 2026-06-22 · v0.2.x · 三项指标信息分层（DEC-019：机会分主 / 人岗匹配入详情 / 目标画像作徽章）
+
+- 状态：已实现，待用户确认（DEC-019）
+- 来源：用户反馈「又是机会分又是匹配度又是画像度，不知道以谁为主，很乱」，经与 GPT 二次评审后拍板（详见 DEC-019）。诊断根因：① 综合匹配度本是机会分 6 维之一，却与机会分并排平铺；② 通用「机会分」与个人「画像匹配度」被当成同级。
+- 范围分两批：先做命名 + 撤指标（第一批），用户反馈「视觉上感觉只少了个 chip、没达到预期」，遂在 GPT 二评后追加「视觉分层」（第二批：让层级看得见，仍零算法 / 零数据模型 / 零迁移 / 不动 AI 契约）。
+- 第一批 · 命名与撤指标：
+  - 列表 JobListPage：移除「匹配 XX」chip（人岗匹配撤出列表）；「画像」→「目标画像」+ tooltip；机会分加 tooltip；排序去「按匹配度」、「按画像匹配」→「按目标画像」；清理 matchNumberOf 死代码与 sortKey 的 'match' 分支。
+  - 主战场 BattlefieldPage：「综合匹配度」→「人岗匹配」、「画像匹配度」→「目标画像」、说明区标题同步；匹配度录入区标题 / 按钮 / 提示 / 错误文案统一「人岗匹配」（提示保留「即 AI 给出的综合匹配度」说明来源）。
+  - src/app/targetProfileScore.ts：reason 文案「故画像匹配度X」→「故目标画像X」。
+- 第二批 · 视觉分层（让层级看得见）：
+  - 新增 src/app/scoreVisuals.ts：纯函数 opportunityTone / profileTone / applyAdviceTone → 六档色调（strong/good/watch/caution/weak/none），阈值镜像各等级函数，列表与详情共用一套配色语义。
+  - 新增 src/components/OpportunityMiniBars.vue：机会分迷你 6 维条（原生 SVG，不引库，延续 DEC-017），暗示「为什么是这个机会分」。
+  - 列表 JobListPage 卡片重排：机会分块按等级上色 + 结论词（优质机会 / 可观察…）+ 迷你 6 维条；目标画像变「等级 · 目标画像 XX」彩色判读徽章；新增「投递建议」彩色行动指令徽章（用已有 applyAdvice）；城市 / 薪资 / 规模压成一行灰色 context（不再与判决抢注意力）。
+  - 主战场 BattlefieldPage 重排：原三项扁平并列 → 机会分「英雄区」（大数字 + 等级 + 投递建议色丸）+ 人岗匹配 / 目标画像两张「判读卡」（目标画像按等级上色）+ 雷达图为视觉核心。
+  - 顺带修 bug：机会雷达「规模」标签原先直接读 AI 的 companyAssessment.sizeTier，会出现「用户手填中厂、却显示 AI 小厂」的矛盾；改为 effectiveSizeTier（用户手填优先、AI 兜底），与 JobListPage / targetProfileScore 同口径。其余 AI 派生标签（类型/稳定性/成长性/置信度）仍取自 companyAssessment。
+  - 未改：matchScore 字段名 / OFFER_FLOW_JSON 协议 / prompt.ts「综合匹配度」术语 / 机会分加权 / targetProfileScore 评分模型与不持久化策略 / storage 数据模型。
+- 自测命令：npm run typecheck / npm run selftest / npm run build / 浏览器验证（dev 5174）
+- 自测结果：
+  - typecheck：0 error；selftest：storage 46 + parser 43 + 画像 23，全 0 failed；build：成功（CSS 22.49KB / JS 427.65KB，仅样式 + 两个小 SVG 增量，无新依赖）。
+  - 浏览器验证（seed 三条：苏州中厂全分析 / 杭州小厂 / 旧岗位无分析）：
+    1. 列表：机会分块 82 优质机会(蓝) / 72 可观察(青) / -(灰·未分析)，前两条带迷你 6 维条；目标画像徽章「命中靶心·88」(绿) / 「可以重点聊·61」(青) / 「谨慎观察·52」(琥珀)；行动指令「可以沟通」(蓝)，旧岗位无 applyAdvice 则不显示；context 灰行正确；旧数据不白屏 ✓
+    2. 主战场：英雄区 82·优质机会·可以沟通(蓝)；判读卡 人岗匹配 88% / 目标画像·命中靶心 88(绿)；雷达图正常 ✓
+    3. console 无 error ✓
+- 是否涉及 decision-log 更新：是，新增 DEC-019（含视觉分层影响范围）。
+- 遗留风险：
+  1. docs/v0.2/requirements.md §1 / §7.2 仍保留「综合匹配度」措辞（v0.2.0 冻结信源）；以 DEC-019 为准，未回改正文，后续如出 v0.2.1 需求文档可一并对齐。
+  2. src/app/scoreVisuals.ts 暂无独立 selftest（逻辑为阈值映射，已镜像既有等级函数并经浏览器验证）；如需补，另加 scripts/scoreVisuals.selftest.ts 并接入 selftest 串联。
+- 是否允许进入下一步：否，待用户确认。
+- 建议 commit message：feat: 指标视觉分层（机会分判决英雄区 + 目标画像彩色判读 + 投递建议行动指令 + 迷你 6 维条，DEC-019）

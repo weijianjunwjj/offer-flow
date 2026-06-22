@@ -358,7 +358,7 @@ export function calculateTargetProfileScore(
 
   const notes = [geo.note, size.note, industry.note, role.note, salary.note];
   if (risk.note !== '') notes.push(risk.note);
-  const reason = `${notes.join('，')}，故画像匹配度${level}。`;
+  const reason = `${notes.join('，')}，故目标画像${level}。`;
 
   return { score, level, reason };
 }

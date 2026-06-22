@@ -7,6 +7,7 @@ import type {
   ContactStatus,
   CompanyInput,
   CompanyAssessment,
+  CompanySizeTier,
   OpportunityAnalysis,
   JobRecord,
   JobSeekerProfile,
@@ -37,6 +38,7 @@ import {
   calculateTargetProfileScore,
   type TargetProfileScore,
 } from '../app/targetProfileScore';
+import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
 import OpportunityRadarChart from '../components/OpportunityRadarChart.vue';
 
 const props = defineProps<{
@@ -126,6 +128,16 @@ const scoreLevel = computed(() =>
     ? getOpportunityScoreLevel(opportunityAnalysis.value.opportunityScore)
     : '',
 );
+// DEC-019 视觉分层：机会分英雄区 + 投递建议行动指令的色调与文案。
+const oppTone = computed(() =>
+  opportunityTone(opportunityAnalysis.value?.opportunityScore ?? null),
+);
+const adviceTone = computed(() =>
+  applyAdviceTone(opportunityAnalysis.value?.applyAdvice ?? ''),
+);
+const adviceLabel = computed(
+  () => APPLY_ADVICE_LABELS[opportunityAnalysis.value?.applyAdvice ?? ''],
+);
 
 // 第三项指标：目标公司画像匹配度。本地现算（不持久化、不依赖 AI），跟随表单实时变化。
 // 完全空白岗位 → null → 显示「待评估」；不影响上面两项指标。
@@ -140,6 +152,15 @@ const profileScore = computed<TargetProfileScore | null>(() =>
   }),
 );
 const profileLevelText = computed(() => profileScore.value?.level ?? '待评估');
+const profileToneText = computed(() => profileTone(profileScore.value?.score ?? null));
+
+// 机会雷达「规模」标签：以用户手填的 companyForm.sizeTier 为准，仅当未填（unknown）才回退 AI 画像。
+// 与 JobListPage / targetProfileScore 的 effectiveSizeTier 同口径，避免手填中厂却显示 AI 小厂的矛盾。
+const effectiveSizeTier = computed<CompanySizeTier>(() =>
+  companyForm.sizeTier !== 'unknown'
+    ? companyForm.sizeTier
+    : (companyAssessment.value?.sizeTier ?? 'unknown'),
+);
 
 // Task 6：报告原文兜底展示 + Boss 话术编辑。
 const report = ref<JobReport | null>(null);
@@ -280,7 +301,7 @@ function saveMatchScore(): void {
     matchSaveState.value = 'done';
   } catch (error) {
     matchSaveState.value = 'fail';
-    matchSaveError.value = `保存匹配度失败：${(error as Error).message}`;
+    matchSaveError.value = `保存人岗匹配失败：${(error as Error).message}`;
   }
 }
 
@@ -480,7 +501,7 @@ function saveAiResult(): void {
     </section>
 
     <section v-if="isEdit" class="match-block">
-      <h2>匹配度</h2>
+      <h2>人岗匹配</h2>
       <div class="match-row">
         <input
           v-model="matchScore"
@@ -490,7 +511,7 @@ function saveAiResult(): void {
           @input="onMatchInput"
         />
         <button type="button" class="save-btn" @click="saveMatchScore">
-          保存匹配度
+          保存人岗匹配
         </button>
         <span
           v-if="matchSaveState === 'done'"
@@ -508,7 +529,7 @@ function saveAiResult(): void {
         </span>
       </div>
       <p class="match-hint">
-        保存 AI 原文时会自动提取「综合匹配度」并填入此处；也可手动覆盖。匹配度为单值（区间自动取中位）。当前将保存为：<strong>{{
+        即 AI 给出的「综合匹配度」——保存 AI 原文时会自动提取并填入此处；也可手动覆盖。人岗匹配为单值（区间自动取中位）。当前将保存为：<strong>{{
           matchScorePreview === '' ? '（空）' : matchScorePreview
         }}</strong>
       </p>
@@ -722,24 +743,51 @@ function saveAiResult(): void {
       </p>
 
       <div v-else class="radar-grid">
-        <!-- 左：机会分 + 综合匹配度 + 雷达图 -->
+        <!-- 左：机会分英雄区（主判决） + 人岗匹配 / 目标画像两张判读卡 + 雷达图 -->
         <div class="radar-left">
-          <div v-if="opportunityAnalysis" class="score-row">
-            <div class="score-cell">
-              <span class="score-num">{{ opportunityAnalysis.opportunityScore }}</span>
-              <span class="score-unit">/ 100</span>
-              <span class="score-cap">机会分 · {{ scoreLevel }}</span>
+          <div
+            v-if="opportunityAnalysis"
+            class="hero"
+            :class="'tone-' + oppTone"
+            title="综合判断这条机会值不值得优先追。"
+          >
+            <div class="hero-score">
+              <span class="hero-num">{{ opportunityAnalysis.opportunityScore }}</span>
+              <span class="hero-unit">/ 100</span>
             </div>
-            <div class="score-cell">
-              <span class="score-num alt">{{ matchScore === '' ? '—' : matchScore }}</span>
-              <span class="score-cap">综合匹配度</span>
-            </div>
-            <div class="score-cell" :title="profileScore?.reason ?? '基于目标公司画像'">
-              <span class="score-num alt">{{ profileScore === null ? '—' : profileScore.score }}</span>
-              <span class="score-cap">画像匹配度 · {{ profileLevelText }}</span>
-              <span class="score-sub">基于目标公司画像</span>
+            <div class="hero-meta">
+              <span class="hero-cap">机会分</span>
+              <span class="hero-level">{{ scoreLevel }}</span>
+              <span
+                v-if="adviceTone !== 'none'"
+                class="hero-advice"
+                :class="'tone-' + adviceTone"
+              >
+                {{ adviceLabel }}
+              </span>
             </div>
           </div>
+
+          <div v-if="opportunityAnalysis" class="judge-row">
+            <div
+              class="judge-card"
+              title="以我的能力，我拿不拿得下这个岗位（来自 AI 的综合匹配度）。"
+            >
+              <span class="judge-num">{{ matchScore === '' ? '—' : matchScore }}</span>
+              <span class="judge-cap">人岗匹配</span>
+              <span class="judge-sub">我拿不拿得下</span>
+            </div>
+            <div
+              class="judge-card"
+              :class="'tone-' + profileToneText"
+              :title="profileScore?.reason ?? '这家公司与我的目标公司画像有多接近。'"
+            >
+              <span class="judge-num">{{ profileScore === null ? '—' : profileScore.score }}</span>
+              <span class="judge-cap">目标画像 · {{ profileLevelText }}</span>
+              <span class="judge-sub">是不是我的菜</span>
+            </div>
+          </div>
+
           <OpportunityRadarChart
             v-if="opportunityAnalysis"
             :radar="opportunityAnalysis.opportunityRadar"
@@ -749,7 +797,7 @@ function saveAiResult(): void {
         <!-- 右：公司画像 + 风险 / 投递建议 -->
         <div class="radar-right">
           <div v-if="companyAssessment" class="profile-tags">
-            <span class="tag">规模 · {{ COMPANY_SIZE_LABELS[companyAssessment.sizeTier] }}</span>
+            <span class="tag">规模 · {{ COMPANY_SIZE_LABELS[effectiveSizeTier] }}</span>
             <span v-if="companyAssessment.companyType" class="tag">
               类型 · {{ companyAssessment.companyType }}
             </span>
@@ -771,7 +819,7 @@ function saveAiResult(): void {
 
       <template v-if="hasOpportunity && opportunityAnalysis">
         <div v-if="profileScore" class="radar-section">
-          <h3>画像匹配度说明</h3>
+          <h3>目标画像说明</h3>
           <p class="radar-text">{{ profileScore.reason }}</p>
         </div>
         <div v-if="opportunityAnalysis.decisionSummary" class="radar-section">
@@ -1160,43 +1208,164 @@ textarea {
   background: #fff;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 18px 40px -28px rgba(16, 24, 40, 0.25);
 }
-.score-row {
-  display: flex;
-  gap: 24px;
+/* 机会分英雄区（主判决） */
+.hero {
   width: 100%;
-  justify-content: center;
-}
-.score-cell {
+  box-sizing: border-box;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 18px;
+  padding: 16px 20px;
+  border-radius: 14px;
+  background: #f1f3f6;
 }
-.score-num {
-  font-size: 34px;
+.hero-score {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.hero-num {
+  font-size: 44px;
   font-weight: 700;
   line-height: 1;
-  background: linear-gradient(90deg, #2563eb, #0ea5e9);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #64748b;
 }
-.score-num.alt {
-  font-size: 28px;
-}
-.score-unit {
-  font-size: 11px;
+.hero-unit {
+  font-size: 13px;
   color: #94a3b8;
 }
-.score-cap {
+.hero-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.hero-cap {
   font-size: 12px;
   color: #647084;
-  margin-top: 4px;
 }
-.score-sub {
+.hero-level {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: #64748b;
+}
+.hero-advice {
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #475569;
+}
+.hero.tone-strong {
+  background: rgba(22, 101, 52, 0.1);
+}
+.hero.tone-strong .hero-num,
+.hero.tone-strong .hero-level {
+  color: #166534;
+}
+.hero.tone-good {
+  background: rgba(37, 99, 235, 0.1);
+}
+.hero.tone-good .hero-num,
+.hero.tone-good .hero-level {
+  color: #1d4ed8;
+}
+.hero.tone-watch {
+  background: rgba(14, 116, 144, 0.1);
+}
+.hero.tone-watch .hero-num,
+.hero.tone-watch .hero-level {
+  color: #0e7490;
+}
+.hero.tone-caution {
+  background: rgba(180, 83, 9, 0.1);
+}
+.hero.tone-caution .hero-num,
+.hero.tone-caution .hero-level {
+  color: #b45309;
+}
+.hero-advice.tone-strong {
+  background: #dcfce7;
+  color: #166534;
+}
+.hero-advice.tone-good {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.hero-advice.tone-caution {
+  background: #fef3c7;
+  color: #92400e;
+}
+.hero-advice.tone-weak {
+  background: #eef1f5;
+  color: #475569;
+}
+/* 人岗匹配 / 目标画像两张判读卡（次级） */
+.judge-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+.judge-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 0.5px solid #eceff3;
+  background: #fff;
+}
+.judge-num {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: #1f2933;
+}
+.judge-cap {
+  font-size: 12px;
+  color: #647084;
+  margin-top: 5px;
+}
+.judge-sub {
   font-size: 11px;
   color: #94a3b8;
-  margin-top: 2px;
+}
+.judge-card.tone-strong {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+.judge-card.tone-strong .judge-num {
+  color: #166534;
+}
+.judge-card.tone-good {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.judge-card.tone-good .judge-num {
+  color: #1e40af;
+}
+.judge-card.tone-watch {
+  background: #ecfeff;
+  border-color: #a5f3fc;
+}
+.judge-card.tone-watch .judge-num {
+  color: #0e7490;
+}
+.judge-card.tone-caution {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+.judge-card.tone-caution .judge-num {
+  color: #92400e;
+}
+.judge-card.tone-weak {
+  background: #f8fafc;
+  border-color: #e2e8f0;
 }
 .radar-right {
   display: flex;
