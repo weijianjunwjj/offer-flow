@@ -147,6 +147,9 @@ const jobB = jobs.createJob({
 check('createJob assigns an id', jobA.id.length > 0);
 check('two jobs get different ids', jobA.id !== jobB.id);
 check('new job defaults communicationStatus', jobA.communicationStatus === 'not_contacted');
+check('new job defaults followupCount', jobA.followupCount === 0);
+check('new job defaults highValueSignal false', jobA.highValueSignal === false);
+check('new job leaves lastGreetedAt empty', jobA.lastGreetedAt === undefined);
 check(
   'new job does not persist legacy contactStatus',
   !JSON.parse(driver.getItem(jobKey(jobA.id)) ?? '{}').hasOwnProperty('contactStatus'),
@@ -164,10 +167,24 @@ check('listJobs returns both', jobs.listJobs().length === 2);
 
 const updatedA = jobs.updateJob(jobA.id, {
   communicationStatus: 'greeted_unread',
+  lastGreetedAt: 1_700_000_000_000,
+  followupCount: 1,
+  lastFollowupAt: 1_700_086_400_000,
+  lastCommunicationNote: 'HR has not read the greeting yet.',
+  highValueSignal: true,
+  strategyOverride: 'low_cost_probe',
+  draftMessageText: '你好，我看这个岗位和我的前端经历比较匹配，想进一步了解。',
   aiRawResult: 'external AI raw text...',
   parseStatus: 'unparsed',
 });
 check('update changes communicationStatus', updatedA.communicationStatus === 'greeted_unread');
+check('update saves lastGreetedAt', updatedA.lastGreetedAt === 1_700_000_000_000);
+check('update saves followupCount', updatedA.followupCount === 1);
+check('update saves lastFollowupAt', updatedA.lastFollowupAt === 1_700_086_400_000);
+check('update saves lastCommunicationNote', updatedA.lastCommunicationNote === 'HR has not read the greeting yet.');
+check('update saves highValueSignal', updatedA.highValueSignal === true);
+check('update saves strategyOverride', updatedA.strategyOverride === 'low_cost_probe');
+check('update saves draftMessageText', updatedA.draftMessageText?.includes('前端经历') === true);
 check('update preserves id', updatedA.id === jobA.id);
 check('update preserves createdAt', updatedA.createdAt === jobA.createdAt);
 check('update sets updatedAt (>= created)', updatedA.updatedAt >= jobA.createdAt);
@@ -236,6 +253,9 @@ check('legacy job backfills companyInput', oldRead?.companyInput.sizeTier === 'u
 check('legacy job backfills companyAssessment null', oldRead?.companyAssessment === null);
 check('legacy job backfills opportunityAnalysis null', oldRead?.opportunityAnalysis === null);
 check('legacy not_contacted migrates to communicationStatus', oldRead?.communicationStatus === 'not_contacted');
+check('legacy job backfills followupCount 0', oldRead?.followupCount === 0);
+check('legacy job treats highValueSignal as false', oldRead?.highValueSignal === false);
+check('legacy contactStatusUpdatedAt does not become lastGreetedAt', oldRead?.lastGreetedAt === undefined);
 check('legacy job appears in listJobs', v2Stores.jobs.listJobs().some((j) => j.id === oldId));
 
 const legacyStatusCases = [

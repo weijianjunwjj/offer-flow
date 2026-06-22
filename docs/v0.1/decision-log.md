@@ -839,6 +839,59 @@
 
 ---
 
+## DEC-021：v0.3 T2 只持久化跟进事实字段，不持久化派生决策
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过《OfferFlow v0.3 PRD / Codex 执行版》与后续确认）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - v0.3 目标是半自动求职跟进决策台，但红线是不自动操作 Boss、不做 CRM、不新增沟通日志实体。
+  - PRD 明确要求架构红线为“只存事实，不存决策”：用户手动维护的事实字段可以进入 `JobRecord`，策略、下一步动作、止损、话术场景、公司预警必须由后续纯函数实时派生。
+  - T1 已将旧 `contactStatus` 迁移为 `communicationStatus`；T2 需要补充后续决策函数所需的轻量事实字段。
+  - 用户进一步确认：旧字段 `contactStatusUpdatedAt` 是旧模型里的“任意沟通状态更新时间”，不能可靠表达“最近一次打招呼时间”。
+- 决策：
+  - T2 允许在 `JobRecord` 上新增以下用户手动维护的事实字段：
+    1. `lastGreetedAt?: number`
+    2. `followupCount: number`
+    3. `lastFollowupAt?: number`
+    4. `lastCommunicationNote?: string`
+    5. `highValueSignal?: boolean`
+    6. `strategyOverride?: StrategyType`
+    7. `draftMessageText?: string`
+  - `followupCount` 新建与旧记录缺省为 `0`。
+  - `highValueSignal` 是用户输入的事实信号，新建与旧记录缺省按 `false` 处理。
+  - 其余字段保持 optional，缺失时不补伪值。
+  - `StrategyType` 仅用于保存用户手动覆盖事实，枚举值为 `main_attack` / `low_cost_probe` / `cautious_watch` / `cut_loss`；T2 不实现策略推导。
+  - 禁止持久化以下派生决策结果：`currentStrategy`、`nextAction`、`nextActionHint`、`stopLoss`、`messageScenario`、`companyWarning`。
+  - 不重新引入 `contactStatusUpdatedAt` 作为 v0.3 新模型字段。
+  - 不做 `contactStatusUpdatedAt -> lastGreetedAt` 时间迁移；只迁移 `communicationStatus` 状态，不迁移旧时间字段。
+- 理由：
+  1. `lastGreetedAt`、`followupCount`、`lastFollowupAt`、备注、草稿等是用户手动维护的事实，能为后续 T3 纯函数提供输入。
+  2. 策略、下一步动作和止损判断会随规则迭代变化，持久化会造成历史数据与算法不一致，因此必须实时派生。
+  3. `contactStatusUpdatedAt` 记录的是旧模型任意状态切换时间，可能是已约面、已拒绝、已结束或逆向切换时间，不等于最近一次打招呼时间；迁移会制造错误事实。
+  4. 不新增日志实体、不做 append-only message log，保持 v0.3 仍是轻量本地优先工具，而不是 CRM。
+- 被否决方案：
+  1. 把 `contactStatusUpdatedAt` 迁移为 `lastGreetedAt`（语义不可靠，会制造错误事实）。
+  2. 持久化 `currentStrategy` / `nextAction` / `stopLoss` 等派生结果（违反“只存事实，不存决策”）。
+  3. 新增 FollowupLog / Message / Reminder 等实体（违反 v0.3 红线）。
+- 影响范围：
+  - `src/storage/types.ts`
+  - `src/storage/defaults.ts`
+  - `src/storage/jobStore.ts`
+  - `scripts/storage.selftest.ts`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若 T3 纯函数落地后发现事实字段不足，可单独评估新增事实字段；不得把派生决策落库。
+  - 若未来需要完整沟通日志或提醒系统，必须另开版本与决策，不在 v0.3 T2 顺手引入。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-004 / DEC-009 / DEC-020
+
+---
+
 # 5. 待定决策
 
 暂无。

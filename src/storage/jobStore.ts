@@ -36,6 +36,8 @@ export class JobStore {
       opportunityAnalysis: null,
 
       communicationStatus: 'not_contacted',
+      followupCount: 0,
+      highValueSignal: false,
     };
     this.write(job);
     return job;

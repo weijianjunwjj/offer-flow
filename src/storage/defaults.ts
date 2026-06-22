@@ -14,7 +14,8 @@ type JobRecordDefaultKeys =
   | 'companyInput'
   | 'companyAssessment'
   | 'opportunityAnalysis'
-  | 'communicationStatus';
+  | 'communicationStatus'
+  | 'followupCount';
 
 /**
  * 旧版持久化形状：保证含基础字段，后续新增字段视为可选。
@@ -90,5 +91,7 @@ export function withJobRecordDefaults(parsed: StoredJobRecord): JobRecord {
     communicationStatus: isCommunicationStatus(parsed.communicationStatus)
       ? parsed.communicationStatus
       : mapLegacyContactStatus(parsed.contactStatus),
+    followupCount: parsed.followupCount ?? 0,
+    highValueSignal: parsed.highValueSignal ?? false,
   };
 }

@@ -57,6 +57,13 @@ export type LegacyContactStatus =
   | 'rejected'
   | 'closed';
 
+/** v0.3 用户手动覆盖的跟进策略类型；这里只持久化用户事实，不做策略推导。 */
+export type StrategyType =
+  | 'main_attack'
+  | 'low_cost_probe'
+  | 'cautious_watch'
+  | 'cut_loss';
+
 /** AI 结果解析状态。Step 0 只存这个标记位,不依据它做分支逻辑 */
 export type ParseStatus = 'none' | 'parsed' | 'unparsed';
 
@@ -157,8 +164,15 @@ export interface JobRecord {
   companyAssessment: CompanyAssessment | null;
   opportunityAnalysis: OpportunityAnalysis | null;
 
-  // 沟通台账（v0.3：只写 communicationStatus，不再写 contactStatus）
+  // 沟通台账（v0.3：只写用户手动维护的事实，不持久化派生决策）
   communicationStatus: CommunicationStatus;
+  lastGreetedAt?: number;
+  followupCount: number;
+  lastFollowupAt?: number;
+  lastCommunicationNote?: string;
+  highValueSignal?: boolean;
+  strategyOverride?: StrategyType;
+  draftMessageText?: string;
 }
 
 /** 新建岗位时只收基础信息,其余字段由 store 填默认值 */

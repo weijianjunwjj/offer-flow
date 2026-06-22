@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。当前只执行 v0.3 PRD / Codex 执行版的 T1（数据模型与状态迁移）：contactStatus → communicationStatus、8 态枚举、旧数据读取迁移、状态 labels 单一信源。T1 已实现并通过 typecheck / selftest，待用户确认；未进入 T2。
+> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T2（新增跟进事实字段）。T2 已实现并通过 typecheck / selftest，待用户确认；未进入 T3。
 
 当前是否允许进入下一步：
 
-> 否。必须等待用户确认 v0.3 T1 后，才能进入 T2（新增跟进事实字段）。Codex 不自行连续推进下一张任务卡。
+> 否。必须等待用户确认 v0.3 T2 后，才能进入 T3（决策纯函数）。Codex 不自行连续推进下一张任务卡。
 
 ---
 
@@ -1347,3 +1347,64 @@ v0.1 不做：
   2. 列表 / 详情 UI 只是状态字段适配，尚未进入 v0.3 的跟进决策面板、话术模板和决策台筛选。
 - 是否允许进入下一步：否。等待用户确认 T1 后，才能进入 T2。
 - 建议 commit message：feat: v0.3 T1 将沟通状态迁移为 communicationStatus
+
+---
+
+### 2026-06-22 · v0.3 · T2 新增跟进事实字段
+
+- 状态：已实现，待用户确认（DEC-021）
+- 来源：用户确认 T2 对 `contactStatusUpdatedAt` 的最终裁定，并明确可以进入 T2；按 PRD 要求，每次只执行一张任务卡，本次仅执行 T2。
+- 执行者：Codex
+- 当前任务目标：
+  - 新增 `lastGreetedAt`
+  - 新增 `followupCount`
+  - 新增 `lastFollowupAt`
+  - 新增 `lastCommunicationNote`
+  - 新增 `highValueSignal`
+  - 新增 `strategyOverride`
+  - 新增 `draftMessageText`
+- 改动文件：
+  - `src/storage/types.ts`
+  - `src/storage/defaults.ts`
+  - `src/storage/jobStore.ts`
+  - `scripts/storage.selftest.ts`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 实现要点：
+  - `JobRecord` 新增 v0.3 允许持久化的跟进事实字段。
+  - `followupCount` 为必填数字字段，新建岗位默认 `0`，旧记录读取时补 `0`。
+  - `highValueSignal` 为用户手动输入的事实信号，新建岗位默认 `false`，旧记录缺省按 `false` 处理。
+  - `lastGreetedAt` / `lastFollowupAt` / `lastCommunicationNote` / `strategyOverride` / `draftMessageText` 保持 optional，缺失时不补伪值。
+  - `strategyOverride` 仅定义 PRD 给出的 4 个字面量类型，用于保存用户手动覆盖事实；未实现任何策略推导。
+  - 未新增 `currentStrategy` / `nextAction` / `nextActionHint` / `stopLoss` / `messageScenario` / `companyWarning` 等派生决策字段。
+  - 未执行 T3：未新增 `deriveDecision`、下一步动作、止损判断、话术场景推导。
+- `contactStatusUpdatedAt` 裁定：
+  - T2 不重新引入 `contactStatusUpdatedAt` 作为 v0.3 新模型字段。
+  - **T2 不做 contactStatusUpdatedAt → lastGreetedAt 时间迁移，只迁移状态，避免制造错误事实。**
+  - 原因：`contactStatusUpdatedAt` 是旧模型里的“任意沟通状态更新时间”，不能可靠表达“最近一次打招呼时间”。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+- T2 验收对照：
+  - 新字段可保存 / 读取 / 更新：已覆盖 `lastGreetedAt`、`followupCount`、`lastFollowupAt`、`lastCommunicationNote`、`highValueSignal`、`strategyOverride`、`draftMessageText`
+  - 旧记录缺字段不崩：已覆盖旧记录读取
+  - 旧记录含 `contactStatusUpdatedAt` 时读取不崩，且不会迁移成 `lastGreetedAt`：已覆盖断言
+  - 未新增派生决策字段：已自检
+- 红线自检：
+  - 未接 API / BYOK / 后端
+  - 未爬 Boss / 未自动检测已读未读 / 未自动发送消息
+  - 未新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体
+  - 未新增前端框架 / 状态库 / 网络库 / 运行时依赖
+  - 未持久化 `currentStrategy` / `nextAction` / `nextActionHint` / `stopLoss` / `messageScenario` / `companyWarning`
+- 是否涉及 decision-log 更新：是，新增 DEC-021，记录 T2 只存用户手动维护事实、不存派生决策，以及 `contactStatusUpdatedAt` 不迁移为 `lastGreetedAt` 的裁定。
+- 遗留风险：
+  1. T2 仅落地存储事实字段，尚未提供 UI 编辑入口；后续 T4 才在详情页接入编辑面板。
+  2. `strategyOverride` 当前只是用户事实字段，未参与任何派生逻辑；T3 决策纯函数落地后再消费。
+- 是否允许进入下一步：否。等待用户确认 T2 后，才能进入 T3。
+- 建议 commit message：feat: v0.3 T2 新增跟进事实字段
