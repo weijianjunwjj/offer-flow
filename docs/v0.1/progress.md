@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）、T5（话术模板与复制）和 T6（列表页决策台模式）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T7（公司级只读预警）。T7 已实现并通过 typecheck / selftest，待用户确认；未进入 T8。
+> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）、T5（话术模板与复制）、T6（列表页决策台模式）和 T7（公司级只读预警）已提交到 v0.3 分支；T8（文档与 release note 收口）已完成文档更新与验证，等待用户最终验收；未合并 main，未打 tag。
 
 当前是否允许进入下一步：
 
-> 否。必须等待用户确认 v0.3 T7 后，才能进入 T8。Codex 不自行连续推进下一张任务卡。
+> 否。v0.3 T8 已完成后必须等待用户最终验收；是否合并 main、是否打 tag 由用户另行确认。Codex 不自行合并 main，不自行打 tag。
 
 ---
 
@@ -1830,7 +1830,7 @@ v0.1 不做：
 
 ### 2026-06-23 · v0.3 · T7 公司级只读预警
 
-- 状态：已实现，待用户确认（DEC-024）
+- 状态：已确认并提交（DEC-024）
 - 来源：用户确认 T6 通过后，明确要求进入 T7：通过现有 `JobRecord[]` 派生同公司岗位预警，并在详情页 / 列表页只读展示；完成后停止，不进入 T8。
 - 执行者：Codex
 - 改动文件：
@@ -1871,5 +1871,55 @@ v0.1 不做：
   - 未新增依赖。
   - 未接 API / BYOK / 后端 / Boss 自动化。
   - 未自动发送、未自动投递、未做提醒系统、完整沟通日志或批量操作。
-- 是否允许进入下一步：否。等待用户确认 T7 后，才能进入 T8。
+- 是否允许进入下一步：是。用户已确认 T7 基本通过；Codex 已核对 `deriveCompanyWarning` 内部不递归调用 `deriveDecision(otherJob, allJobs)`，T7 已提交到 v0.3 分支，随后进入 T8。
 - 建议 commit message：feat: v0.3 T7 新增公司级只读预警
+
+---
+
+### 2026-06-23 · v0.3 · T8 文档与 release note 收口
+
+- 状态：已完成，待最终验收
+- 来源：用户确认 T7 通过后，明确要求进入 T8：只做文档与 release note 收口，不修改源码 / 测试 / 配置；完成后停止，不合并 main，不打 tag。
+- 执行者：Codex
+- 改动文件：
+  - `README.md`
+  - `docs/release/v0.1.0.md`
+  - `docs/release/v0.2.0.md`
+  - `docs/release/v0.3.0.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - README 升级为 v0.3.0 视角，明确 v0.3 是“半自动求职跟进决策台”。
+  - README 写清 v0.3 主线：策略建议 + 下一步动作 + 推荐话术 + 止损判断。
+  - README 与 release note 记录 `communicationStatus` 替换 `contactStatus`，以及 8 态沟通状态。
+  - README 与 release note 记录新增跟进事实字段：`lastGreetedAt`、`followupCount`、`lastFollowupAt`、`lastCommunicationNote`、`highValueSignal`、`strategyOverride`、`draftMessageText`。
+  - README 与 release note 记录“只存事实，不存决策”：不持久化 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`。
+  - release note 记录 `deriveDecision(record, allJobs?)` 纯函数派生 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`。
+  - release note 记录详情页跟进决策面板、话术模板与复制、列表页决策台模式、公司级只读预警。
+  - release note 明确公司级预警为只读派生，不新增 Company 实体。
+  - README 与 release note 写清完整 v0.3 不做清单，避免把 API / BYOK / Boss 自动化 / CRM 当作待办项。
+  - 修正 v0.1 release note 中旧的 BYOK 后续表述，改为“后续如需讨论必须另行拍板”，避免被误读为当前待办。
+  - 修正 v0.2 release note 中旧的 BYOK / AI Adapter 后续表述，改为“未纳入 v0.2.0，后续如需讨论必须另行拍板”。
+  - decision-log 已核对存在 DEC-020、DEC-021、DEC-022、DEC-024；T8 未新增产品决策，未修改 decision-log。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `npm.cmd run build`
+  - `rg -n "自动投递|自动发送|接 ?API|BYOK|后端|CRM|Company|Contact|Message" docs README.md`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：58 passed, 0 failed
+  - `npm.cmd run build`：通过，构建成功
+  - 文档红线 grep：命中均位于“明确不做 / 边界说明 / 被否决方案 / 决策说明”语境；未发现 API / BYOK / 自动投递 / CRM 被写成 v0.3 待办项。
+- 红线自检：
+  - 未修改 `src/`、`scripts/`、`package.json` 或任何源码 / 测试 / 配置文件。
+  - 未新增依赖。
+  - 未新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体。
+  - 未把 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning` 写成持久化字段。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未合并 main，未打 tag。
+- 是否允许进入下一步：否。等待用户最终验收；是否合并 main、是否打 tag 需用户另行确认。
+- 建议 commit message：docs: v0.3 文档与 release note 收口
