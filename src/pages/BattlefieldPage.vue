@@ -2,7 +2,7 @@
 // Task 3 - Task 6：保存岗位、生成 Prompt、承接外部 AI 原文，并展示报告原文 + 编辑/复制 Boss 话术。
 // 不接 AI API，不做复杂解析，不做完整评分系统 / 多版本话术 / 风险标签系统。
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { NSelect, NInput } from 'naive-ui';
+import { NDatePicker, NSelect, NInput } from 'naive-ui';
 import type {
   CommunicationStatus,
   CompanyInput,
@@ -13,6 +13,7 @@ import type {
   JobSeekerProfile,
   JobReport,
   ParseStatus,
+  StrategyType,
 } from '../storage';
 import { emptyCompanyInput } from '../storage';
 import { useStores } from '../app/stores';
@@ -40,6 +41,11 @@ import {
 } from '../app/targetProfileScore';
 import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
 import OpportunityRadarChart from '../components/OpportunityRadarChart.vue';
+import {
+  deriveDecision,
+  type MessageScenario,
+  type NextActionType,
+} from '../decision';
 
 const props = defineProps<{
   jobId: string | null;
@@ -66,6 +72,8 @@ const form = reactive<JobBasicForm>(emptyForm());
 // Task 4：公司与机会补充（v0.2）。与基础信息一起由「保存岗位」持久化，新建 / 编辑 / 旧岗位均适用。
 const companyForm = reactive<CompanyInput>(emptyCompanyInput());
 const loadError = ref('');
+const currentJob = ref<JobRecord | null>(null);
+const allJobs = ref<JobRecord[]>([]);
 
 const isEdit = computed(() => props.jobId !== null);
 const modeLabel = computed(() => (isEdit.value ? '查看 / 编辑岗位' : '新建岗位'));
@@ -249,6 +257,159 @@ const currentStatusLabel = computed(
     COMMUNICATION_STATUS_OPTIONS.find((option) => option.value === communicationStatus.value)
       ?.label ?? '',
 );
+const followupCount = ref(0);
+const lastCommunicationNote = ref('');
+const highValueSignal = ref(false);
+const draftMessageText = ref('');
+const lastGreetedAtValue = ref<number | null>(null);
+const lastFollowupAtValue = ref<number | null>(null);
+const followupSaveState = ref<'idle' | 'done' | 'fail'>('idle');
+const followupSaveError = ref('');
+
+const STRATEGY_LABELS: Record<StrategyType, string> = {
+  main_attack: '主攻机会',
+  low_cost_probe: '低成本试探',
+  cautious_watch: '谨慎观察',
+  cut_loss: '止损放弃',
+};
+
+const NEXT_ACTION_LABELS: Record<NextActionType, string> = {
+  send_greeting: '发送打招呼',
+  wait: '先等待',
+  follow_up_once: '跟进一次',
+  follow_up_with_new_angle: '换角度跟进',
+  continue_conversation: '继续沟通',
+  pause_watch: '暂停观察',
+  close_opportunity: '关闭机会',
+  prepare_interview: '准备面试',
+};
+
+const SCENARIO_LABELS: Record<MessageScenario, string> = {
+  first_greeting: '首次打招呼',
+  high_salary_low_match_probe: '高薪低匹配试探',
+  second_followup: '二次跟进',
+  final_unread_followup: '最终未读跟进',
+  premium_but_cold_closing: '优质但冷淡收口',
+  hr_reply_bridge: 'HR 回复承接',
+};
+
+const normalizedFollowupCount = computed(() => {
+  const count = Number(followupCount.value);
+  if (!Number.isFinite(count)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(count));
+});
+
+const followupTimingDisabled = computed(() => communicationStatus.value === 'not_contacted');
+
+function setLastGreetedAtNow(): void {
+  if (followupTimingDisabled.value) {
+    return;
+  }
+  lastGreetedAtValue.value = Date.now();
+}
+
+function clearLastGreetedAt(): void {
+  if (followupTimingDisabled.value) {
+    return;
+  }
+  lastGreetedAtValue.value = null;
+}
+
+function setLastFollowupAtNow(): void {
+  if (followupTimingDisabled.value) {
+    return;
+  }
+  lastFollowupAtValue.value = Date.now();
+}
+
+function clearLastFollowupAt(): void {
+  if (followupTimingDisabled.value) {
+    return;
+  }
+  lastFollowupAtValue.value = null;
+}
+
+const decisionReport = computed<JobReport | null>(() => {
+  const reportAdvice = report.value?.applyAdvice ?? '';
+  const analysisAdvice = opportunityAnalysis.value?.applyAdvice ?? '';
+  const applyAdvice = reportAdvice !== '' ? reportAdvice : analysisAdvice;
+  if (report.value === null && applyAdvice === '') {
+    return null;
+  }
+
+  return {
+    ...(report.value ?? emptyReport()),
+    applyAdvice,
+  };
+});
+
+const decisionRecord = computed<JobRecord | null>(() => {
+  if (currentJob.value === null) {
+    return null;
+  }
+
+  return {
+    ...currentJob.value,
+    report: decisionReport.value,
+    companyInput: { ...companyForm },
+    companyAssessment: companyAssessment.value,
+    opportunityAnalysis: opportunityAnalysis.value,
+    communicationStatus: communicationStatus.value,
+    followupCount: normalizedFollowupCount.value,
+    lastCommunicationNote:
+      lastCommunicationNote.value.trim() === '' ? undefined : lastCommunicationNote.value,
+    highValueSignal: highValueSignal.value,
+    draftMessageText: draftMessageText.value.trim() === '' ? undefined : draftMessageText.value,
+    lastGreetedAt: lastGreetedAtValue.value ?? undefined,
+    lastFollowupAt: lastFollowupAtValue.value ?? undefined,
+  };
+});
+const followupDecision = computed(() =>
+  decisionRecord.value === null ? null : deriveDecision(decisionRecord.value, allJobs.value),
+);
+const highValueSignalNote = computed(() => {
+  const advice = decisionReport.value?.applyAdvice ?? '';
+  return highValueSignal.value && (advice === 'strongly' || advice === 'ok');
+});
+const nextActionLabel = computed(() =>
+  followupDecision.value?.nextAction === null
+    ? '已结束，无下一步'
+    : followupDecision.value
+      ? NEXT_ACTION_LABELS[followupDecision.value.nextAction]
+      : '',
+);
+
+watch(
+  [
+    followupCount,
+    lastCommunicationNote,
+    highValueSignal,
+    draftMessageText,
+    lastGreetedAtValue,
+    lastFollowupAtValue,
+  ],
+  () => {
+    followupSaveState.value = 'idle';
+    followupSaveError.value = '';
+  },
+);
+
+function syncFollowupFacts(job: JobRecord): void {
+  communicationStatus.value = job.communicationStatus;
+  followupCount.value = job.followupCount;
+  lastCommunicationNote.value = job.lastCommunicationNote ?? '';
+  highValueSignal.value = job.highValueSignal ?? false;
+  draftMessageText.value = job.draftMessageText ?? '';
+  lastGreetedAtValue.value = job.lastGreetedAt ?? null;
+  lastFollowupAtValue.value = job.lastFollowupAt ?? null;
+}
+
+function rememberJob(job: JobRecord): void {
+  currentJob.value = job;
+  allJobs.value = useStores().jobs.listJobs();
+}
 
 function changeCommunicationStatus(next: CommunicationStatus): void {
   if (props.jobId === null) {
@@ -259,15 +420,42 @@ function changeCommunicationStatus(next: CommunicationStatus): void {
   statusSaveState.value = 'idle';
   statusSaveError.value = '';
   try {
-    useStores().jobs.updateJob(props.jobId, {
+    const updated = useStores().jobs.updateJob(props.jobId, {
       communicationStatus: next,
     });
+    rememberJob(updated);
     statusSaveState.value = 'done';
   } catch (error) {
     // 持久化失败则回滚选择，并提示。
     communicationStatus.value = previous;
     statusSaveState.value = 'fail';
     statusSaveError.value = `更新状态失败：${(error as Error).message}`;
+  }
+}
+
+function saveFollowupFacts(): void {
+  if (props.jobId === null) {
+    return;
+  }
+  followupSaveState.value = 'idle';
+  followupSaveError.value = '';
+  try {
+    const updated = useStores().jobs.updateJob(props.jobId, {
+      communicationStatus: communicationStatus.value,
+      followupCount: normalizedFollowupCount.value,
+      lastCommunicationNote:
+        lastCommunicationNote.value.trim() === '' ? undefined : lastCommunicationNote.value,
+      highValueSignal: highValueSignal.value,
+      draftMessageText: draftMessageText.value.trim() === '' ? undefined : draftMessageText.value,
+      lastGreetedAt: lastGreetedAtValue.value ?? undefined,
+      lastFollowupAt: lastFollowupAtValue.value ?? undefined,
+    });
+    rememberJob(updated);
+    syncFollowupFacts(updated);
+    followupSaveState.value = 'done';
+  } catch (error) {
+    followupSaveState.value = 'fail';
+    followupSaveError.value = `保存跟进事实失败：${(error as Error).message}`;
   }
 }
 
@@ -337,7 +525,8 @@ onMounted(() => {
     matchScore.value = job.matchScore;
     companyAssessment.value = job.companyAssessment;
     opportunityAnalysis.value = job.opportunityAnalysis;
-    communicationStatus.value = job.communicationStatus;
+    rememberJob(job);
+    syncFollowupFacts(job);
   } catch (error) {
     loadError.value = (error as Error).message;
   }
@@ -467,28 +656,208 @@ function saveAiResult(): void {
       {{ loadError }}
     </p>
 
-    <section v-if="isEdit" class="status-block">
-      <h2>沟通状态</h2>
-      <div class="status-options" role="group" aria-label="沟通状态">
-        <button
-          v-for="opt in COMMUNICATION_STATUS_OPTIONS"
-          :key="opt.value"
-          type="button"
-          class="status-chip"
-          :class="{ active: communicationStatus === opt.value }"
-          @click="changeCommunicationStatus(opt.value)"
-        >
-          {{ opt.label }}
-        </button>
+    <section v-if="isEdit" class="followup-panel">
+      <div class="followup-head">
+        <div>
+          <h2>跟进决策</h2>
+          <p class="followup-sub">基于当前岗位事实实时派生，仅保存下方手动维护的事实字段。</p>
+        </div>
+        <span class="status-pill">{{ currentStatusLabel }}</span>
       </div>
-      <p class="status-meta">
-        <span v-if="statusSaveState === 'fail'" class="status-fail" role="alert">
-          {{ statusSaveError }}
-        </span>
-        <span v-else class="status-saved">
-          当前：{{ currentStatusLabel }}
-        </span>
+
+      <div v-if="followupDecision" class="decision-grid">
+        <div class="decision-card">
+          <span class="decision-label">策略</span>
+          <strong>{{ STRATEGY_LABELS[followupDecision.strategy] }}</strong>
+        </div>
+        <div class="decision-card">
+          <span class="decision-label">下一步</span>
+          <strong>{{ nextActionLabel }}</strong>
+        </div>
+        <div class="decision-card">
+          <span class="decision-label">话术场景</span>
+          <strong>{{ SCENARIO_LABELS[followupDecision.scenario] }}</strong>
+        </div>
+        <div class="decision-card" :class="{ warn: followupDecision.stopLoss }">
+          <span class="decision-label">止损</span>
+          <strong>{{ followupDecision.stopLoss ? '建议止损' : '继续观察' }}</strong>
+        </div>
+      </div>
+
+      <p v-if="followupDecision?.stopLoss" class="stoploss-note">
+        建议止损：本轮不再继续消耗精力
       </p>
+      <p v-if="followupDecision?.companyWarning" class="company-warning">
+        {{ followupDecision.companyWarning }}
+      </p>
+      <p v-if="highValueSignalNote" class="followup-note">
+        当前岗位已是高匹配，高价值信号不会覆盖主攻策略。
+      </p>
+
+      <div class="followup-facts">
+        <div class="status-options" role="group" aria-label="沟通状态">
+          <button
+            v-for="opt in COMMUNICATION_STATUS_OPTIONS"
+            :key="opt.value"
+            type="button"
+            class="status-chip"
+            :class="{ active: communicationStatus === opt.value }"
+            @click="changeCommunicationStatus(opt.value)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+        <p class="status-meta">
+          <span v-if="statusSaveState === 'fail'" class="status-fail" role="alert">
+            {{ statusSaveError }}
+          </span>
+          <span v-else class="status-saved">
+            当前：{{ currentStatusLabel }}
+          </span>
+        </p>
+
+        <div class="followup-facts-grid">
+          <label class="fact-field" :class="{ disabled: followupTimingDisabled }">
+            <span class="field-label">跟进次数</span>
+            <input
+              v-model.number="followupCount"
+              type="number"
+              min="0"
+              step="1"
+              :disabled="followupTimingDisabled"
+            />
+          </label>
+          <label class="fact-toggle-card" :class="{ active: highValueSignal }">
+            <input v-model="highValueSignal" type="checkbox" />
+            <span>
+              <strong>高价值信号</strong>
+              <small>薪资 / 前景值得低成本试探</small>
+            </span>
+          </label>
+        </div>
+        <p v-if="followupTimingDisabled" class="followup-disabled-note">
+          未沟通时无需维护跟进次数和最近沟通时间，打招呼后再记录。
+        </p>
+
+        <div class="followup-time-grid">
+          <div class="time-fact-card" :class="{ disabled: followupTimingDisabled }">
+            <div class="time-fact-summary">
+              <span class="field-label">最近打招呼时间</span>
+              <strong>
+                {{
+                  lastGreetedAtValue === null
+                    ? '未记录'
+                    : formatTime(lastGreetedAtValue)
+                }}
+              </strong>
+            </div>
+            <NDatePicker
+              v-model:value="lastGreetedAtValue"
+              class="time-picker"
+              type="datetime"
+              clearable
+              :disabled="followupTimingDisabled"
+              placeholder="选择最近打招呼时间"
+            />
+            <div class="time-actions">
+              <button
+                type="button"
+                class="mini-btn"
+                :disabled="followupTimingDisabled"
+                @click="setLastGreetedAtNow"
+              >
+                设为现在
+              </button>
+              <button
+                type="button"
+                class="mini-btn ghost"
+                :disabled="followupTimingDisabled"
+                @click="clearLastGreetedAt"
+              >
+                清空
+              </button>
+            </div>
+          </div>
+
+          <div class="time-fact-card" :class="{ disabled: followupTimingDisabled }">
+            <div class="time-fact-summary">
+              <span class="field-label">最近跟进时间</span>
+              <strong>
+                {{
+                  lastFollowupAtValue === null
+                    ? '未记录'
+                    : formatTime(lastFollowupAtValue)
+                }}
+              </strong>
+            </div>
+            <NDatePicker
+              v-model:value="lastFollowupAtValue"
+              class="time-picker"
+              type="datetime"
+              clearable
+              :disabled="followupTimingDisabled"
+              placeholder="选择最近跟进时间"
+            />
+            <div class="time-actions">
+              <button
+                type="button"
+                class="mini-btn"
+                :disabled="followupTimingDisabled"
+                @click="setLastFollowupAtNow"
+              >
+                设为现在
+              </button>
+              <button
+                type="button"
+                class="mini-btn ghost"
+                :disabled="followupTimingDisabled"
+                @click="clearLastFollowupAt"
+              >
+                清空
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="followup-form-grid">
+          <label class="field wide">
+            <span class="label">沟通备注</span>
+            <textarea
+              v-model="lastCommunicationNote"
+              rows="3"
+              placeholder="例如：HR 已读未回、薪资很高但匹配度一般、暂时观察。"
+            ></textarea>
+          </label>
+          <label class="field wide">
+            <span class="label">话术草稿</span>
+            <textarea
+              v-model="draftMessageText"
+              rows="4"
+              placeholder="保存你准备发给 Boss / HR 的手动草稿。"
+            ></textarea>
+          </label>
+        </div>
+
+        <div class="followup-actions">
+          <button type="button" class="save-btn" @click="saveFollowupFacts">
+            保存跟进事实
+          </button>
+          <span
+            v-if="followupSaveState === 'done'"
+            class="save-feedback ok"
+            role="status"
+          >
+            已保存 ✓
+          </span>
+          <span
+            v-else-if="followupSaveState === 'fail'"
+            class="save-feedback fail"
+            role="alert"
+          >
+            {{ followupSaveError }}
+          </span>
+        </div>
+      </div>
     </section>
 
     <section v-if="isEdit" class="match-block">
@@ -917,8 +1286,8 @@ function saveAiResult(): void {
 
 <style scoped>
 .battlefield {
-  max-width: 1000px;
-  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
   padding: 24px 16px 64px;
   color: #1f2933;
 }
@@ -956,7 +1325,8 @@ h1 {
   background: #fdecec;
   color: #a4262c;
 }
-.status-block {
+.status-block,
+.followup-panel {
   margin-bottom: 20px;
   padding: 20px;
   border: 1px solid var(--of-line);
@@ -964,9 +1334,83 @@ h1 {
   background: var(--of-card);
   box-shadow: var(--of-shadow);
 }
-.status-block h2 {
+.status-block h2,
+.followup-panel h2 {
   margin: 0 0 10px;
   font-size: 15px;
+}
+.followup-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.followup-sub {
+  margin: -4px 0 0;
+  font-size: 12px;
+  color: #647084;
+}
+.status-pill {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #eef2f8;
+  color: #1f2933;
+  font-size: 12px;
+}
+.decision-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.decision-card {
+  min-height: 68px;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #e5eaf2;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.decision-card.warn {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+.decision-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #647084;
+}
+.decision-card strong {
+  font-size: 14px;
+  color: #1f2933;
+}
+.stoploss-note,
+.company-warning,
+.followup-note {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.stoploss-note {
+  background: #fffbeb;
+  color: #92400e;
+}
+.company-warning {
+  background: #eef6ff;
+  color: #1e40af;
+}
+.followup-note {
+  background: #f8fafc;
+  color: #647084;
+}
+.followup-facts {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--of-line);
 }
 .status-options {
   display: flex;
@@ -999,6 +1443,168 @@ h1 {
 }
 .status-fail {
   color: #a4262c;
+}
+.followup-facts-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(240px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 12px;
+}
+.fact-field,
+.fact-toggle-card {
+  min-height: 72px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  border: 1px solid #e5eaf2;
+  border-radius: 12px;
+  background: #fff;
+}
+.fact-field {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+.fact-field.disabled,
+.time-fact-card.disabled {
+  border-style: dashed;
+  background: #f8fafc;
+}
+.fact-field.disabled .field-label,
+.time-fact-card.disabled .field-label,
+.time-fact-card.disabled strong {
+  color: #94a3b8;
+}
+.field-label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2933;
+}
+.fact-field input {
+  width: 92px;
+  text-align: center;
+}
+.fact-field input:disabled {
+  color: #94a3b8;
+  background: #f1f5f9;
+  cursor: not-allowed;
+}
+.fact-toggle-card {
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.fact-toggle-card.active {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+.fact-toggle-card input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.fact-toggle-card span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.fact-toggle-card strong {
+  font-size: 13px;
+  color: #1f2933;
+}
+.fact-toggle-card small {
+  font-size: 12px;
+  color: #647084;
+}
+.followup-disabled-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.followup-time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.time-fact-card {
+  min-height: 96px;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(138px, 0.75fr) minmax(220px, 1fr) max-content;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid #e5eaf2;
+  border-radius: 12px;
+  background: #fff;
+}
+.time-fact-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.time-fact-summary strong {
+  font-size: 13px;
+  color: #647084;
+}
+.time-picker {
+  width: 100%;
+  min-width: 0;
+}
+.time-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.mini-btn {
+  border: 1px solid #d8e0ec;
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #1f2933;
+  cursor: pointer;
+}
+.mini-btn:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+.mini-btn:disabled {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #a8b3c1;
+  cursor: not-allowed;
+}
+.mini-btn:disabled:hover {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+.mini-btn.ghost {
+  background: #fff;
+  color: #647084;
+}
+.mini-btn.ghost:disabled {
+  background: #f8fafc;
+  color: #a8b3c1;
+}
+.followup-form-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin-top: 14px;
+}
+.followup-form-grid .wide {
+  grid-column: 1 / -1;
+}
+.followup-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
 }
 .match-block {
   margin-bottom: 20px;
@@ -1061,6 +1667,7 @@ h1 {
   font-weight: 600;
 }
 input[type='text'],
+input[type='number'],
 textarea {
   width: 100%;
   box-sizing: border-box;
@@ -1072,6 +1679,7 @@ textarea {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 input[type='text']:focus,
+input[type='number']:focus,
 textarea:focus {
   outline: none;
   border-color: var(--of-brand);
@@ -1591,6 +2199,21 @@ textarea {
   }
   .radar-grid {
     grid-template-columns: 1fr;
+  }
+  .followup-head {
+    flex-direction: column;
+  }
+  .decision-grid,
+  .followup-facts-grid,
+  .followup-time-grid,
+  .followup-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .time-fact-card {
+    grid-template-columns: 1fr;
+  }
+  .time-actions {
+    justify-content: flex-start;
   }
 }
 </style>

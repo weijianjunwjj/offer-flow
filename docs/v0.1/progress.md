@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）和 T2（新增跟进事实字段）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T3（决策纯函数）。T3 已实现并通过 typecheck / selftest，待用户确认；未进入 T4。
+> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）和 T3（决策纯函数）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T4.4（详情页内容最大宽度单一信源调整）。T4.4 已实现并通过 typecheck / selftest，待用户确认；未进入 T5。
 
 当前是否允许进入下一步：
 
-> 否。必须等待用户确认 v0.3 T3 后，才能进入 T4。Codex 不自行连续推进下一张任务卡。
+> 否。必须等待用户确认 v0.3 T4 后，才能进入 T5。Codex 不自行连续推进下一张任务卡。
 
 ---
 
@@ -1478,3 +1478,254 @@ v0.1 不做：
   3. 缺失 `lastGreetedAt` / `lastFollowupAt` 时保守等待，可能少提示一次跟进，但不会制造错误跟进事实。
 - 是否允许进入下一步：否。等待用户确认 T3 后，才能进入 T4。
 - 建议 commit message：feat: v0.3 T3 新增跟进决策纯函数
+
+---
+
+### 2026-06-22 · v0.3 · T4 详情页跟进决策面板
+
+- 状态：已实现，待用户确认（DEC-023）
+- 来源：用户确认 T3 通过后，明确要求进入 T4：在详情页新增“跟进决策面板”，展示 `deriveDecision(record, allJobs?)` 的派生结果，并允许编辑 v0.3 事实字段；完成后停止，不进入 T5。
+- 执行者：Codex
+- 当前任务目标：
+  - 在详情页展示 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`。
+  - 允许编辑并保存 `communicationStatus` / `followupCount` / `lastCommunicationNote` / `highValueSignal` / `draftMessageText`。
+  - 修改 `communicationStatus` / `followupCount` / `highValueSignal` 后，面板实时重新计算派生结果。
+- 改动文件：
+  - `src/pages/BattlefieldPage.vue`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 实现要点：
+  - 详情页新增“跟进决策”面板，打开岗位详情时基于当前岗位记录调用 `deriveDecision`。
+  - 旧的“沟通状态”区域升级为面板内的事实编辑区，继续支持手动切换 `communicationStatus` 并立即持久化。
+  - 面板新增 `followupCount`、`lastCommunicationNote`、`highValueSignal`、`draftMessageText` 编辑与保存。
+  - `draftMessageText` 作为用户话术草稿保存；不替代原有 Boss 打招呼话术字段。
+  - `closed` / `rejected` 终态下，`nextAction=null` 时 UI 显示“已结束，无下一步”。
+  - `stopLoss=true` 时展示“建议止损：本轮不再继续消耗精力”。
+  - `companyWarning` 只展示 `deriveDecision` 当前返回值；T4 不实现公司级预警。
+  - 页面只保存用户编辑事实字段；`strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning` 均只在 computed 中派生展示，不传给 `updateJob`。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "strategy|nextAction|stopLoss|scenario|companyWarning|currentStrategy|nextActionHint" src/storage`
+  - `rg -n "fetch\(|axios|XMLHttpRequest" src/pages src/components`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：43 passed, 0 failed
+  - storage 派生字段 grep：仅命中 `StrategyType` / `strategyOverride`，未命中 `nextAction` / `stopLoss` / `scenario` / `companyWarning` / `currentStrategy` / `nextActionHint` 等派生落库字段；`strategyOverride` 是 T2 已允许的用户事实字段。
+  - 页面/组件网络 grep：无命中
+  - 禁止实体 grep：无命中
+- T4 验收对照：
+  - 详情页出现跟进决策面板：已实现
+  - 能看到 `strategy` / `nextAction` / `stopLoss` / `scenario`：已实现
+  - 修改事实字段后派生结果实时变化：已实现，基于 computed 重新调用 `deriveDecision`
+  - 刷新后事实字段保留：已通过存储字段读写路径实现
+  - 刷新后策略 / 动作由 `deriveDecision` 重新计算：已实现，未从存储读取派生字段
+  - 终态显示“已结束，无下一步”：已实现
+  - `highValueSignal` 勾选后，低匹配机会可派生 `low_cost_probe`：已由 T3 规则 + T4 实时 computed 支持
+- 红线自检：
+  - 未把 `strategy` / `nextAction` / `stopLoss` / `scenario` / `messageScenario` / `companyWarning` / `currentStrategy` / `nextActionHint` 写入 `JobRecord` 或 localStorage。
+  - 未新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体。
+  - 未接 API / BYOK / 后端。
+  - 未做 Boss 自动化、自动检测已读、自动发送、自动投递、提醒系统、完整沟通日志、批量操作。
+  - 未新增依赖。
+  - 未进入 T5。
+- 是否涉及 decision-log 更新：是，新增 DEC-023，记录 T4 页面只展示派生决策、只保存事实字段的口径。
+- 遗留风险：
+  1. T4 未做公司级预警，`companyWarning` 在 T7 前通常为空。
+  2. T4 初版未强制编辑 `lastGreetedAt` / `lastFollowupAt` / `strategyOverride`，避免扩大 UI 范围。
+  3. 本次未新增浏览器端自动化测试；通过 typecheck、selftest 和红线 grep 验证代码路径。
+- 是否允许进入下一步：否。等待用户确认 T4 后，才能进入 T5。
+- 建议 commit message：feat: v0.3 T4 新增详情页跟进决策面板
+
+---
+
+### 2026-06-23 · v0.3 · T4.1 跟进决策面板实时派生修复与布局优化
+
+- 状态：已实现，待用户确认
+- 来源：用户实测反馈 T4 面板中修改 `followupCount` / `highValueSignal` 后顶部派生决策没有实时变化，并要求小幅优化事实字段布局；本次仅做 T4.1 bugfix + UI 对齐，不进入 T5。
+- 执行者：Codex
+- 改动文件：
+  - `src/pages/BattlefieldPage.vue`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 修复内容：
+  - 详情页构造专门用于派生决策的实时对象，明确纳入当前页面状态：`communicationStatus` / `followupCount` / `highValueSignal` / `lastCommunicationNote` / `draftMessageText`。
+  - `followupCount` 通过 `Number(...)` 归一为非负整数后再传入 `deriveDecision`，避免字符串进入规则判断。
+  - 派生输入兼容 v0.2 已解析岗位：当 `report.applyAdvice` 为空但 `opportunityAnalysis.applyAdvice` 存在时，用该已有事实作为当前页面派生输入，不写回存储。
+  - 勾选高价值信号时，若当前岗位已是 `strongly` / `ok` 高匹配，面板显示说明“当前岗位已是高匹配，高价值信号不会覆盖主攻策略”。
+  - 跟进次数与高价值信号改为两列事实卡片布局：同高、垂直居中；窄屏自然换行。
+- 手动验证结果：
+  - `communicationStatus` 变化会触发 `deriveDecision` computed 重新计算。
+  - `followupCount` 变化会以 number 进入派生对象并触发重新计算。
+  - `highValueSignal` 勾选 / 取消会进入派生对象并触发重新计算；低匹配且未沟通时可派生 `low_cost_probe`。
+  - `followupCount >= 2` 可派生 `cut_loss + close_opportunity + stopLoss=true`。
+  - T3 冷却期规则未改：`greeted_unread` 的 0 / 1 次跟进仍受 `lastGreetedAt` / `lastFollowupAt` 是否已过冷却期影响；缺失时间戳时继续按 T3 规则保守等待。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "strategy|nextAction|stopLoss|scenario|companyWarning|currentStrategy|nextActionHint" src/storage`
+  - `rg -n "fetch\(|axios|XMLHttpRequest" src/pages src/components`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：43 passed, 0 failed
+  - storage 派生字段 grep：仅命中 `strategyOverride?: StrategyType`，这是 T2 已允许的用户事实字段；未发现派生决策字段落库。
+  - 页面/组件网络 grep：无命中
+  - 禁止实体 grep：无命中
+- 红线自检：
+  - 未进入 T5。
+  - 未新增字段、未修改存储结构。
+  - 未新增依赖。
+  - 未保存派生结果。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未新增实体、未做完整沟通日志、未做提醒系统。
+- 是否允许进入下一步：否。等待用户确认 T4 / T4.1 后，才能进入 T5。
+- 建议 commit message：feat: v0.3 T4 新增详情页跟进决策面板
+
+---
+
+### 2026-06-23 · v0.3 · T4.2 补齐冷却期时间事实维护
+
+- 状态：已实现，待用户确认
+- 来源：用户指出 T3 冷却期规则依赖 `lastGreetedAt` / `lastFollowupAt`，但 T4/T4.1 面板未提供这两个已有事实字段的轻量维护入口，导致旧记录或新记录缺少时间戳时可能持续命中 `wait`；本次仅补齐 T4.2，不进入 T5。
+- 执行者：Codex
+- 改动文件：
+  - `src/pages/BattlefieldPage.vue`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 实现内容：
+  - 跟进决策面板新增“最近打招呼时间”和“最近跟进时间”两张轻量事实卡片。
+  - 两个时间事实卡片在未记录时显示“未记录”，支持 `datetime-local` 手动维护、“设为现在”和“清空”。
+  - 页面实时派生输入新增 `lastGreetedAt` / `lastFollowupAt`，点击“设为现在”或“清空”后会立即触发 `deriveDecision` computed 重新计算。
+  - “保存跟进事实”会保存当前表单中的 `lastGreetedAt` / `lastFollowupAt`；仍只保存事实字段，不保存 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`。
+  - 旧记录缺少 `lastGreetedAt` / `lastFollowupAt` 时读取为空，不崩溃，不从 `contactStatusUpdatedAt` 迁移，也不自动推断历史时间。
+- 规则说明：
+  - 缺时间戳时仍可能返回 `wait`，因为 T3 冷却期判断需要可信的最近打招呼 / 最近跟进时间；没有事实时间时保守等待，避免制造错误事实。
+  - 设置为 4 天前或足够早后，`greeted_unread` / `greeted_read_no_reply` 下的 `followupCount=0` 可派生 `follow_up_once + second_followup`。
+  - 设置为 4 天前或足够早后，`greeted_unread` / `greeted_read_no_reply` 下的 `followupCount=1` 可派生 `follow_up_with_new_angle + final_unread_followup`。
+  - `followupCount>=2` 继续派生 `cut_loss + close_opportunity + stopLoss=true`。
+  - 未沟通、低匹配且 `highValueSignal=true` 继续派生 `low_cost_probe + send_greeting + high_salary_low_match_probe`。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "strategy|nextAction|stopLoss|scenario|companyWarning|currentStrategy|nextActionHint" src/storage`
+  - `rg -n "fetch\(|axios|XMLHttpRequest" src/pages src/components`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：43 passed, 0 failed
+  - storage 派生字段 grep：仅命中 `strategyOverride?: StrategyType`，这是 T2 已允许的用户事实字段；未发现派生决策字段落库。
+  - 页面/组件网络 grep：无命中
+  - 禁止实体 grep：无命中
+- 红线自检：
+  - 未进入 T5。
+  - 未新增字段、未修改存储结构。
+  - 未修改 `deriveDecision` 规则。
+  - 未新增依赖。
+  - 未保存派生结果。
+  - 未从 `contactStatusUpdatedAt` 迁移时间。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未做提醒系统、日历系统、自动定时、完整沟通日志或新增实体。
+- 是否允许进入下一步：否。等待用户确认 T4 / T4.1 / T4.2 后，才能进入 T5。
+- 建议 commit message：feat: v0.3 T4 新增详情页跟进决策面板
+
+---
+
+### 2026-06-23 · v0.3 · T4.3 未沟通态禁用无语义跟进事实 + 时间控件与排版优化
+
+- 状态：已实现，待用户确认
+- 来源：用户基于截图反馈：`not_contacted` 未沟通状态下，跟进次数和最近沟通时间模块应为禁用状态；原生时间控件视觉割裂，时间模块排版未对齐。本次仅做 T4.3 小修，不进入 T5。
+- 执行者：Codex
+- 改动文件：
+  - `src/pages/BattlefieldPage.vue`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 实现内容：
+  - 新增 `followupTimingDisabled` 页面状态：当 `communicationStatus=not_contacted` 时，禁用 `followupCount`、`lastGreetedAt`、`lastFollowupAt` 及其“设为现在 / 清空”动作。
+  - 未沟通时保留 `highValueSignal` 可编辑，因为它仍参与 T3 的 `low_cost_probe` 判断。
+  - 时间事实控件从浏览器原生 `datetime-local` 切换为项目既有 Naive UI `NDatePicker`，不新增依赖。
+  - 时间卡片改为统一三列布局：左侧事实摘要，中间时间选择器，右侧动作按钮；两张卡片同高、同列宽、按钮横向对齐。
+  - 禁用态使用弱化边框和文字，不隐藏既有事实值，不自动清空历史事实。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "strategy|nextAction|stopLoss|scenario|companyWarning|currentStrategy|nextActionHint" src/storage`
+  - `rg -n "fetch\(|axios|XMLHttpRequest" src/pages src/components`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：43 passed, 0 failed
+  - storage 派生字段 grep：仅命中 `strategyOverride?: StrategyType`，这是 T2 已允许的用户事实字段；未发现派生决策字段落库。
+  - 页面/组件网络 grep：无命中
+  - 禁止实体 grep：无命中
+- 红线自检：
+  - 未进入 T5。
+  - 未新增字段、未修改存储结构。
+  - 未修改 `deriveDecision` 规则。
+  - 未新增依赖。
+  - 未保存派生结果。
+  - 未从 `contactStatusUpdatedAt` 迁移时间。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未做提醒系统、日历系统、自动定时、完整沟通日志或新增实体。
+- 是否允许进入下一步：否。等待用户确认 T4 / T4.1 / T4.2 / T4.3 后，才能进入 T5。
+- 建议 commit message：feat: v0.3 T4 新增详情页跟进决策面板
+
+---
+
+### 2026-06-23 · v0.3 · T4.4 详情页内容最大宽度单一信源调整
+
+- 状态：已实现，待用户确认
+- 来源：用户反馈 `.battlefield` 的 `max-width` 与 `n-layout-content` 的 `max-width` 重复，调整页面宽度时需要改两遍；本次仅做布局样式收敛，不进入 T5。
+- 执行者：Codex
+- 改动文件：
+  - `src/App.vue`
+  - `src/pages/BattlefieldPage.vue`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 在全局设计令牌中新增 `--of-content-max-width: 1212px`，作为 App 内容区最大宽度唯一信源。
+  - `n-layout-content` 的 `contentStyle` 改为引用 `var(--of-content-max-width)`，并增加 `box-sizing: border-box; width: 100%`，让最大宽度包含内容区 padding。
+  - 移除 `.battlefield` 自己的 `max-width` 和居中 `margin`，改为 `width: 100%; box-sizing: border-box;`。
+  - `.battlefield` 仍保留页面内部 padding 和文字样式，不扩大 T4 功能范围。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "strategy|nextAction|stopLoss|scenario|companyWarning|currentStrategy|nextActionHint" src/storage`
+  - `rg -n "fetch\(|axios|XMLHttpRequest" src/pages src/components`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：43 passed, 0 failed
+  - storage 派生字段 grep：仅命中 `strategyOverride?: StrategyType`，这是 T2 已允许的用户事实字段；未发现派生决策字段落库。
+  - 页面/组件网络 grep：无命中
+  - 禁止实体 grep：无命中
+- 红线自检：
+  - 未进入 T5。
+  - 未新增字段、未修改存储结构。
+  - 未修改 `deriveDecision` 规则。
+  - 未新增依赖。
+  - 未保存派生结果。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未做提醒系统、日历系统、自动定时、完整沟通日志或新增实体。
+- 是否允许进入下一步：否。等待用户确认 T4 / T4.1 / T4.2 / T4.3 / T4.4 后，才能进入 T5。
+- 建议 commit message：feat: v0.3 T4 新增详情页跟进决策面板

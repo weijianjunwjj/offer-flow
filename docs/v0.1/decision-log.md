@@ -941,6 +941,52 @@
 
 ---
 
+## DEC-023：v0.3 T4 详情页只展示派生决策，只保存用户维护事实
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过 T4 明确指令）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - T3 已将跟进判断收敛到 `deriveDecision(record, allJobs?)` 纯函数。
+  - T4 需要让用户在详情页看到策略、下一步动作、止损和话术场景，同时维护影响决策的事实字段。
+  - v0.3 红线仍是“只存事实，不存决策”，页面不得把派生结果写入存储。
+- 决策：
+  - 详情页新增“跟进决策”面板，展示 `deriveDecision` 当前返回的 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`。
+  - T4 初版允许编辑并保存的字段仅限 `communicationStatus` / `followupCount` / `lastCommunicationNote` / `highValueSignal` / `draftMessageText`。
+  - T4.2 允许在跟进决策面板中轻量维护 `lastGreetedAt` / `lastFollowupAt` 这两个 T2 已有事实字段，用于支撑 T3 冷却期判断；不新增字段、不迁移 `contactStatusUpdatedAt`、不自动推断历史时间。
+  - T4.3 中，`communicationStatus=not_contacted` 时禁用 `followupCount`、`lastGreetedAt`、`lastFollowupAt` 的编辑入口；未沟通还没有跟进事实，避免用户误填无语义时间。`highValueSignal` 仍保持可编辑，用于未沟通低匹配机会的低成本试探判断。
+  - T4.3 时间事实控件使用项目既有 Naive UI `NDatePicker`，不新增依赖，不引入日历 / 提醒系统。
+  - 页面构造派生输入时必须使用当前编辑态事实字段，而不是只使用已持久化记录；`followupCount` 必须以 number 进入 `deriveDecision`。
+  - 对 v0.2 已解析岗位，若 `report.applyAdvice` 为空但 `opportunityAnalysis.applyAdvice` 存在，页面可用该已有事实作为派生输入兼容来源；该兼容只发生在页面 computed 中，不写回存储。
+  - `companyWarning` 在 T7 前可以为空；T4 不实现公司级预警。
+  - 终态 `closed` / `rejected` 的 `nextAction=null` 在 UI 中显示为“已结束，无下一步”。
+  - `stopLoss=true` 时展示克制提示：“建议止损：本轮不再继续消耗精力”。
+  - 页面不得将 `strategy` / `nextAction` / `stopLoss` / `scenario` / `messageScenario` / `companyWarning` / `currentStrategy` / `nextActionHint` 写入 `JobRecord` 或 localStorage。
+- 理由：
+  1. UI 应消费 T3 纯函数结果，保持规则来源集中，避免页面中复制策略逻辑。
+  2. 用户维护事实会影响派生结果，保存事实即可保证刷新后重新计算，没必要保存派生结果。
+  3. T4 先跑通单岗位详情页闭环，不提前实现列表筛选、公司预警、提醒或完整日志。
+- 被否决方案：
+  1. 将派生决策字段随用户保存一起写入 `JobRecord`（违反 DEC-021 / DEC-022）。
+  2. 在 T4 页面内自行实现公司级预警（属于后续 T7 范围）。
+  3. 新增 FollowupLog / Reminder / Message 等实体（超出 T4 范围）。
+  4. 为跟进面板引入新依赖或提醒系统（违反 v0.3 红线）。
+- 影响范围：
+  - `src/pages/BattlefieldPage.vue`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若 T5 需要在列表页展示或筛选决策结果，仍应调用 `deriveDecision`，不得从存储读取派生字段。
+  - 若 T7 实现 `companyWarning`，必须继续保持 `deriveDecision` 纯函数口径，不新增 Company / Contact 实体。
+  - 若后续需要编辑 `strategyOverride`，应在对应任务中明确 UI 范围和保存语义。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-021 / DEC-022
+
+---
+
 # 5. 待定决策
 
 暂无。

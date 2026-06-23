@@ -57,8 +57,9 @@ function backToList(): void {
   jobsView.value = 'list';
 }
 
-// content 内边距与最大宽度，集中管理便于后续统一调版。
-const contentStyle = 'padding: 24px; max-width: 1080px; margin: 0 auto;';
+// content 内边距与最大宽度，最大宽度由全局设计令牌统一控制。
+const contentStyle =
+  'box-sizing: border-box; width: 100%; padding: 24px; max-width: var(--of-content-max-width); margin: 0 auto;';
 </script>
 
 <template>
@@ -134,6 +135,7 @@ const contentStyle = 'padding: 24px; max-width: 1080px; margin: 0 auto;';
   --of-card: #ffffff;
   --of-radius: 16px;
   --of-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 18px 40px -28px rgba(16, 24, 40, 0.22);
+  --of-content-max-width: 1212px;
 }
 html,
 body,
