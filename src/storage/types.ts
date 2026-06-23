@@ -37,14 +37,32 @@ export interface JobReport {
   greetingMessage: string;
 }
 
-/** 沟通状态:未沟通 / 已打招呼 / 已回复 / 已约面 / 已拒绝 / 已结束 */
-export type ContactStatus =
+/** v0.3 沟通状态：Boss 聊天语境下的当前事实状态（DEC-020）。 */
+export type CommunicationStatus =
+  | 'not_contacted'
+  | 'greeted_unread'
+  | 'greeted_read_no_reply'
+  | 'replied'
+  | 'interviewing'
+  | 'paused'
+  | 'closed'
+  | 'rejected';
+
+/** v0.1/v0.2 旧沟通状态，仅用于读取历史数据迁移，不再写入新记录。 */
+export type LegacyContactStatus =
   | 'not_contacted'
   | 'greeted'
   | 'replied'
   | 'interview_scheduled'
   | 'rejected'
   | 'closed';
+
+/** v0.3 用户手动覆盖的跟进策略类型；这里只持久化用户事实，不做策略推导。 */
+export type StrategyType =
+  | 'main_attack'
+  | 'low_cost_probe'
+  | 'cautious_watch'
+  | 'cut_loss';
 
 /** AI 结果解析状态。Step 0 只存这个标记位,不依据它做分支逻辑 */
 export type ParseStatus = 'none' | 'parsed' | 'unparsed';
@@ -146,9 +164,15 @@ export interface JobRecord {
   companyAssessment: CompanyAssessment | null;
   opportunityAnalysis: OpportunityAnalysis | null;
 
-  // 沟通台账
-  contactStatus: ContactStatus;
-  contactStatusUpdatedAt: number;
+  // 沟通台账（v0.3：只写用户手动维护的事实，不持久化派生决策）
+  communicationStatus: CommunicationStatus;
+  lastGreetedAt?: number;
+  followupCount: number;
+  lastFollowupAt?: number;
+  lastCommunicationNote?: string;
+  highValueSignal?: boolean;
+  strategyOverride?: StrategyType;
+  draftMessageText?: string;
 }
 
 /** 新建岗位时只收基础信息,其余字段由 store 填默认值 */

@@ -779,6 +779,256 @@
 
 ---
 
+## DEC-020：v0.3 使用 `communicationStatus` 替换 `contactStatus`，并通过读取迁移兼容旧数据
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过《OfferFlow v0.3 PRD / Codex 执行版》）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - v0.3 目标从「单岗位机会分析 / 机会雷达」升级为「半自动求职跟进决策台」。
+  - 旧字段 `contactStatus` 只有 v0.1/v0.2 六态：未沟通 / 已打招呼 / 已回复 / 已约面 / 已拒绝 / 已结束。
+  - v0.3 需要区分「已打招呼但未读」「已读未回」「暂停观察」「面试推进中」等更贴近 Boss 跟进场景的事实状态。
+  - PRD 明确要求：`communicationStatus` 替换旧的 `contactStatus`，不要两个字段并存；旧数据读取时迁移映射。
+- 决策：
+  - `JobRecord` 持久化字段改为 `communicationStatus: CommunicationStatus`。
+  - 新沟通状态枚举为：
+    1. `not_contacted`
+    2. `greeted_unread`
+    3. `greeted_read_no_reply`
+    4. `replied`
+    5. `interviewing`
+    6. `paused`
+    7. `closed`
+    8. `rejected`
+  - `contactStatus` 和 `contactStatusUpdatedAt` 只作为旧数据读取兼容输入，不再作为新 `JobRecord` 字段写入。
+  - 旧数据读取映射：
+    - `not_contacted -> not_contacted`
+    - `greeted -> greeted_unread`
+    - `replied -> replied`
+    - `interview_scheduled -> interviewing`
+    - `rejected -> rejected`
+    - `closed -> closed`
+    - 未知 / 缺失 -> `not_contacted`
+  - 状态 labels 以 `src/app/labels.ts` 为单一信源，页面只消费 `COMMUNICATION_STATUS_OPTIONS` / `COMMUNICATION_STATUS_LABELS`。
+- 理由：
+  1. v0.3 的跟进决策需要更精确地区分「未读」「已读未回」「暂停观察」等事实状态，旧六态不足以支撑后续 T3 决策纯函数。
+  2. 不并存两个状态字段，避免同一岗位出现两个来源不一致的沟通事实。
+  3. 通过读取时迁移旧数据，不做破坏性删除，符合本地优先和旧数据兼容原则。
+  4. T1 仅存事实状态，不持久化策略、下一步动作、止损、话术场景或公司预警，延续 v0.3「只存事实，不存决策」红线。
+- 被否决方案：
+  1. 保留 `contactStatus` 并新增 `communicationStatus`（两个状态字段并存会产生冲突，PRD 明确禁止）。
+  2. 继续使用旧六态（无法表达 v0.3 跟进决策所需的未读 / 已读未回 / 暂停观察）。
+  3. 新增状态日志实体或 append-only 沟通日志（违反 v0.3 不做完整沟通日志 / 不新增 JobStatusLog / FollowupLog 实体的边界）。
+- 影响范围：
+  - `src/storage/types.ts`
+  - `src/storage/defaults.ts`
+  - `src/storage/jobStore.ts`
+  - `src/app/labels.ts`
+  - `src/pages/JobListPage.vue`
+  - `src/pages/BattlefieldPage.vue`
+  - `scripts/storage.selftest.ts`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若 T3 决策纯函数落地后发现 8 态不足以表达真实 Boss 跟进场景，需另开决策评估；不得在实现中顺手扩展状态枚举。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-003 / DEC-004 / DEC-009
+
+---
+
+## DEC-021：v0.3 T2 只持久化跟进事实字段，不持久化派生决策
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过《OfferFlow v0.3 PRD / Codex 执行版》与后续确认）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - v0.3 目标是半自动求职跟进决策台，但红线是不自动操作 Boss、不做 CRM、不新增沟通日志实体。
+  - PRD 明确要求架构红线为“只存事实，不存决策”：用户手动维护的事实字段可以进入 `JobRecord`，策略、下一步动作、止损、话术场景、公司预警必须由后续纯函数实时派生。
+  - T1 已将旧 `contactStatus` 迁移为 `communicationStatus`；T2 需要补充后续决策函数所需的轻量事实字段。
+  - 用户进一步确认：旧字段 `contactStatusUpdatedAt` 是旧模型里的“任意沟通状态更新时间”，不能可靠表达“最近一次打招呼时间”。
+- 决策：
+  - T2 允许在 `JobRecord` 上新增以下用户手动维护的事实字段：
+    1. `lastGreetedAt?: number`
+    2. `followupCount: number`
+    3. `lastFollowupAt?: number`
+    4. `lastCommunicationNote?: string`
+    5. `highValueSignal?: boolean`
+    6. `strategyOverride?: StrategyType`
+    7. `draftMessageText?: string`
+  - `followupCount` 新建与旧记录缺省为 `0`。
+  - `highValueSignal` 是用户输入的事实信号，新建与旧记录缺省按 `false` 处理。
+  - 其余字段保持 optional，缺失时不补伪值。
+  - `StrategyType` 仅用于保存用户手动覆盖事实，枚举值为 `main_attack` / `low_cost_probe` / `cautious_watch` / `cut_loss`；T2 不实现策略推导。
+  - 禁止持久化以下派生决策结果：`currentStrategy`、`nextAction`、`nextActionHint`、`stopLoss`、`messageScenario`、`companyWarning`。
+  - 不重新引入 `contactStatusUpdatedAt` 作为 v0.3 新模型字段。
+  - 不做 `contactStatusUpdatedAt -> lastGreetedAt` 时间迁移；只迁移 `communicationStatus` 状态，不迁移旧时间字段。
+- 理由：
+  1. `lastGreetedAt`、`followupCount`、`lastFollowupAt`、备注、草稿等是用户手动维护的事实，能为后续 T3 纯函数提供输入。
+  2. 策略、下一步动作和止损判断会随规则迭代变化，持久化会造成历史数据与算法不一致，因此必须实时派生。
+  3. `contactStatusUpdatedAt` 记录的是旧模型任意状态切换时间，可能是已约面、已拒绝、已结束或逆向切换时间，不等于最近一次打招呼时间；迁移会制造错误事实。
+  4. 不新增日志实体、不做 append-only message log，保持 v0.3 仍是轻量本地优先工具，而不是 CRM。
+- 被否决方案：
+  1. 把 `contactStatusUpdatedAt` 迁移为 `lastGreetedAt`（语义不可靠，会制造错误事实）。
+  2. 持久化 `currentStrategy` / `nextAction` / `stopLoss` 等派生结果（违反“只存事实，不存决策”）。
+  3. 新增 FollowupLog / Message / Reminder 等实体（违反 v0.3 红线）。
+- 影响范围：
+  - `src/storage/types.ts`
+  - `src/storage/defaults.ts`
+  - `src/storage/jobStore.ts`
+  - `scripts/storage.selftest.ts`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若 T3 纯函数落地后发现事实字段不足，可单独评估新增事实字段；不得把派生决策落库。
+  - 若未来需要完整沟通日志或提醒系统，必须另开版本与决策，不在 v0.3 T2 顺手引入。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-004 / DEC-009 / DEC-020
+
+---
+
+## DEC-022：v0.3 T3 决策结果由纯函数实时派生，不持久化到 JobRecord
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过《OfferFlow v0.3 PRD / Codex 执行版》与 T3 明确指令）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - v0.3 要从手动台账升级为半自动跟进决策台，但红线仍是本地优先、半自动，不自动操作 Boss，不接 API，不做 CRM。
+  - T1 已将沟通状态迁移为 `communicationStatus`，T2 已新增用户手动维护的跟进事实字段。
+  - T3 需要基于这些事实字段实时回答“是否打招呼、是否跟进、是否放弃、用什么话术场景”等问题。
+- 决策：
+  - 新增 `deriveDecision(record, allJobs?)` 纯函数，作为 v0.3 跟进决策派生入口。
+  - `deriveDecision` 返回 `{ strategy, nextAction, stopLoss, scenario, companyWarning? }`。
+  - `FOLLOWUP_COOLDOWN_DAYS = 3`，`MAX_FOLLOWUPS = 2`。
+  - 匹配度判定以 `record.report?.applyAdvice` 为输入：`strongly` / `ok` 为高匹配，`cautious` / `skip` 为低匹配或一般，`report === null` 或 `applyAdvice === ''` 走空报告兜底。
+  - `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning` 都是派生结果，不写入 `JobRecord`。
+  - `StrategyType` 保持 4 个策略值：`main_attack` / `low_cost_probe` / `cautious_watch` / `cut_loss`。
+  - `follow_up_once` / `follow_up_with_new_angle` 只能作为 `NextActionType` 的下一步动作返回，不能作为 `StrategyType`。
+  - `deriveDecision` 不读写 localStorage，不读写 store，不访问 `window`，不发网络请求，不依赖 UI。
+  - T3 不新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体，不新增依赖，不修改 UI 页面。
+- 理由：
+  1. 决策结果会随规则、时间和用户维护事实变化而变化，落库存储会造成历史数据与当前规则不一致。
+  2. 纯函数让后续 T4/T5 UI 只负责展示和触发用户确认，不把策略判断散落到页面或 store。
+  3. 不接 store / storage / network 可以确保 T3 是可测试、可审查、可替换的规则内核。
+  4. 策略只表达战略层，跟进一次 / 换角度跟进属于战术动作，应放在 `nextAction`，避免污染 `strategyOverride?: StrategyType` 的四类策略边界。
+- 被否决方案：
+  1. 将 `currentStrategy` / `nextAction` / `stopLoss` / `messageScenario` / `companyWarning` 写入 `JobRecord`（违反“只存事实，不存决策”）。
+  2. 在页面组件或 store 中直接写规则判断（会让后续 UI 与规则耦合，难以自测）。
+  3. 为跟进行为新增 FollowupLog / Reminder / Message 等实体（超出 v0.3 T3 范围，也违反轻量本地工具边界）。
+  4. 缺失 `lastGreetedAt` / `lastFollowupAt` 时推断已经过冷却期（会在旧数据缺事实时制造错误跟进事实）。
+- 影响范围：
+  - `src/storage/types.ts`
+  - `src/decision/deriveDecision.ts`
+  - `src/decision/index.ts`
+  - `scripts/decision.selftest.ts`
+  - `package.json`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若后续 T4/T5 需要让用户手动覆盖策略，必须明确 `strategyOverride` 的消费优先级，并继续保证派生决策结果不落库。
+  - 若需要公司维度冷启动预警或重复公司预警，可在后续任务中使用 `allJobs`，但不得新增 Company / Contact 等实体，且必须补 selftest。
+  - 若 `FOLLOWUP_COOLDOWN_DAYS` 或 `MAX_FOLLOWUPS` 需要可配置化，需另开决策，不在 T3 顺手扩展。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-004 / DEC-009 / DEC-020 / DEC-021
+
+---
+
+## DEC-023：v0.3 T4 详情页只展示派生决策，只保存用户维护事实
+
+- 日期：2026-06-22
+- 状态：已拍板
+- 提出者：用户（通过 T4 明确指令）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - T3 已将跟进判断收敛到 `deriveDecision(record, allJobs?)` 纯函数。
+  - T4 需要让用户在详情页看到策略、下一步动作、止损和话术场景，同时维护影响决策的事实字段。
+  - v0.3 红线仍是“只存事实，不存决策”，页面不得把派生结果写入存储。
+- 决策：
+  - 详情页新增“跟进决策”面板，展示 `deriveDecision` 当前返回的 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`。
+  - T4 初版允许编辑并保存的字段仅限 `communicationStatus` / `followupCount` / `lastCommunicationNote` / `highValueSignal` / `draftMessageText`。
+  - T4.2 允许在跟进决策面板中轻量维护 `lastGreetedAt` / `lastFollowupAt` 这两个 T2 已有事实字段，用于支撑 T3 冷却期判断；不新增字段、不迁移 `contactStatusUpdatedAt`、不自动推断历史时间。
+  - T4.3 中，`communicationStatus=not_contacted` 时禁用 `followupCount`、`lastGreetedAt`、`lastFollowupAt` 的编辑入口；未沟通还没有跟进事实，避免用户误填无语义时间。`highValueSignal` 仍保持可编辑，用于未沟通低匹配机会的低成本试探判断。
+  - T4.3 时间事实控件使用项目既有 Naive UI `NDatePicker`，不新增依赖，不引入日历 / 提醒系统。
+  - 页面构造派生输入时必须使用当前编辑态事实字段，而不是只使用已持久化记录；`followupCount` 必须以 number 进入 `deriveDecision`。
+  - 对 v0.2 已解析岗位，若 `report.applyAdvice` 为空但 `opportunityAnalysis.applyAdvice` 存在，页面可用该已有事实作为派生输入兼容来源；该兼容只发生在页面 computed 中，不写回存储。
+  - `companyWarning` 在 T7 前可以为空；T4 不实现公司级预警。
+  - 终态 `closed` / `rejected` 的 `nextAction=null` 在 UI 中显示为“已结束，无下一步”。
+  - `stopLoss=true` 时展示克制提示：“建议止损：本轮不再继续消耗精力”。
+  - 页面不得将 `strategy` / `nextAction` / `stopLoss` / `scenario` / `messageScenario` / `companyWarning` / `currentStrategy` / `nextActionHint` 写入 `JobRecord` 或 localStorage。
+- 理由：
+  1. UI 应消费 T3 纯函数结果，保持规则来源集中，避免页面中复制策略逻辑。
+  2. 用户维护事实会影响派生结果，保存事实即可保证刷新后重新计算，没必要保存派生结果。
+  3. T4 先跑通单岗位详情页闭环，不提前实现列表筛选、公司预警、提醒或完整日志。
+- 被否决方案：
+  1. 将派生决策字段随用户保存一起写入 `JobRecord`（违反 DEC-021 / DEC-022）。
+  2. 在 T4 页面内自行实现公司级预警（属于后续 T7 范围）。
+  3. 新增 FollowupLog / Reminder / Message 等实体（超出 T4 范围）。
+  4. 为跟进面板引入新依赖或提醒系统（违反 v0.3 红线）。
+- 影响范围：
+  - `src/pages/BattlefieldPage.vue`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若 T5 需要在列表页展示或筛选决策结果，仍应调用 `deriveDecision`，不得从存储读取派生字段。
+  - 若 T7 实现 `companyWarning`，必须继续保持 `deriveDecision` 纯函数口径，不新增 Company / Contact 实体。
+  - 若后续需要编辑 `strategyOverride`，应在对应任务中明确 UI 范围和保存语义。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-021 / DEC-022
+
+---
+
+## DEC-024：v0.3 T7 公司级预警只从 JobRecord[] 派生，不新增公司实体
+
+- 日期：2026-06-23
+- 状态：已拍板
+- 提出者：用户（通过 T7 明确指令）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - T6 已在列表页通过 `deriveDecision(job, jobs)` 展示每条岗位的派生行动建议。
+  - 用户需要在同公司多岗位场景下看到“是否重复消耗”的只读预警。
+  - v0.3 红线仍是“只存事实，不存决策”，且不得引入 Company / Contact / Message 等实体。
+- 决策：
+  - 新增 `normalizeCompanyName(company?)` 纯函数，仅做 trim、合并连续空格、小写化；不做复杂工商名称解析，不接外部数据。
+  - 新增 `deriveCompanyWarning(currentJob, allJobs)` 纯函数，仅基于现有 `JobRecord[]` 判断同公司其他岗位，排除当前岗位自身。
+  - `deriveDecision(record, allJobs?)` 可以返回派生字段 `companyWarning`，但该字段只读展示，不写入 `JobRecord` 或 localStorage。
+  - 公司预警规则保持简单：已有回复 / 面试推进优先，其次同公司已有主攻机会，其次同公司多个未读 / 未回冷淡机会。
+  - 详情页和列表页只展示 `companyWarning`，不新增公司详情页、公司状态、公司历史或 CRM dashboard。
+- 理由：
+  1. 同公司预警本质是当前岗位台账的派生视图，使用 `JobRecord[]` 足够支撑 v0.3 半自动决策。
+  2. 不新增 Company 实体可以避免把 v0.3 扩展成 CRM 或公司数据库。
+  3. 预警只读展示能帮助用户控制投入，但不会替用户自动关闭、跟进或发送消息。
+- 被否决方案：
+  1. 新增 Company / Contact / Message 实体或公司聚合存储（超出 v0.3 红线）。
+  2. 写入 `companyWarning` / `companyKey` / 公司级状态到 `JobRecord`（违反“派生不落库”）。
+  3. 接外部工商数据、Boss 数据或 API 做公司匹配（违反本地手动模式）。
+  4. 基于公司预警做批量关闭、提醒或自动跟进（超出 T7 范围）。
+- 影响范围：
+  - `src/decision/deriveDecision.ts`
+  - `src/pages/BattlefieldPage.vue`
+  - `src/pages/JobListPage.vue`
+  - `scripts/decision.selftest.ts`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若后续需要更复杂的公司维度分析，必须重新确认是否仍属于 v0.3 范围，且继续禁止派生结果落库。
+  - 若后续要持久化公司维度事实，必须先由用户明确拍板新增模型边界。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-021 / DEC-022 / DEC-023
+
+---
+
 # 5. 待定决策
 
 暂无。
