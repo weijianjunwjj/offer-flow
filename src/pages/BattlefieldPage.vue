@@ -19,6 +19,7 @@ import { emptyCompanyInput } from '../storage';
 import { useStores } from '../app/stores';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
+import { buildMessageTemplate } from '../app/messageTemplates';
 import { COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
   COMPANY_SIZE_OPTIONS,
@@ -265,6 +266,8 @@ const lastGreetedAtValue = ref<number | null>(null);
 const lastFollowupAtValue = ref<number | null>(null);
 const followupSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const followupSaveError = ref('');
+const recommendedMessageCopyState = ref<'idle' | 'done' | 'fail'>('idle');
+const recommendedMessageFillState = ref<'idle' | 'done'>('idle');
 
 const STRATEGY_LABELS: Record<StrategyType, string> = {
   main_attack: '主攻机会',
@@ -380,6 +383,16 @@ const nextActionLabel = computed(() =>
       ? NEXT_ACTION_LABELS[followupDecision.value.nextAction]
       : '',
 );
+const recommendedMessageText = computed(() =>
+  decisionRecord.value === null || followupDecision.value === null
+    ? ''
+    : buildMessageTemplate(followupDecision.value.scenario, decisionRecord.value),
+);
+
+watch(recommendedMessageText, () => {
+  recommendedMessageCopyState.value = 'idle';
+  recommendedMessageFillState.value = 'idle';
+});
 
 watch(
   [
@@ -395,6 +408,17 @@ watch(
     followupSaveError.value = '';
   },
 );
+
+async function copyRecommendedMessage(): Promise<void> {
+  const ok = await copyText(recommendedMessageText.value);
+  recommendedMessageCopyState.value = ok ? 'done' : 'fail';
+}
+
+function fillDraftMessage(): void {
+  draftMessageText.value = recommendedMessageText.value;
+  recommendedMessageFillState.value = 'done';
+  recommendedMessageCopyState.value = 'idle';
+}
 
 function syncFollowupFacts(job: JobRecord): void {
   communicationStatus.value = job.communicationStatus;
@@ -817,6 +841,49 @@ function saveAiResult(): void {
               </button>
             </div>
           </div>
+        </div>
+
+        <div class="message-template-card">
+          <div class="template-head">
+            <div>
+              <span class="field-label">推荐话术</span>
+              <p class="template-hint">
+                根据当前话术场景生成，可复制或填入下方草稿。
+              </p>
+            </div>
+            <div class="template-actions">
+              <button
+                type="button"
+                class="mini-btn"
+                :disabled="recommendedMessageText === ''"
+                @click="copyRecommendedMessage"
+              >
+                复制推荐话术
+              </button>
+              <button
+                type="button"
+                class="mini-btn ghost"
+                :disabled="recommendedMessageText === ''"
+                @click="fillDraftMessage"
+              >
+                填入草稿
+              </button>
+            </div>
+          </div>
+          <p class="template-preview">
+            {{ recommendedMessageText }}
+          </p>
+          <p class="template-feedback">
+            <span v-if="recommendedMessageCopyState === 'done'" class="copy-feedback ok">
+              已复制 ✓
+            </span>
+            <span v-else-if="recommendedMessageCopyState === 'fail'" class="copy-feedback fail">
+              复制失败，请手动选择文本复制
+            </span>
+            <span v-else-if="recommendedMessageFillState === 'done'" class="copy-feedback ok">
+              已填入草稿，保存后才会落库
+            </span>
+          </p>
         </div>
 
         <div class="followup-form-grid">
@@ -1591,6 +1658,45 @@ h1 {
   background: #f8fafc;
   color: #a8b3c1;
 }
+.message-template-card {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #e5eaf2;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.template-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.template-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #647084;
+}
+.template-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.template-preview {
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid #d8e0ec;
+  border-radius: 10px;
+  background: #fff;
+  color: #1f2933;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.template-feedback {
+  min-height: 18px;
+  margin: 8px 0 0;
+}
 .followup-form-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -2213,6 +2319,12 @@ textarea {
     grid-template-columns: 1fr;
   }
   .time-actions {
+    justify-content: flex-start;
+  }
+  .template-head {
+    flex-direction: column;
+  }
+  .template-actions {
     justify-content: flex-start;
   }
 }

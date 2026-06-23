@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）和 T3（决策纯函数）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T4.4（详情页内容最大宽度单一信源调整）。T4.4 已实现并通过 typecheck / selftest，待用户确认；未进入 T5。
+> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）和 T4（详情页跟进决策面板）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T5（话术模板与复制）。T5 已实现并通过 typecheck / selftest，待用户确认；未进入 T6。
 
 当前是否允许进入下一步：
 
-> 否。必须等待用户确认 v0.3 T4 后，才能进入 T5。Codex 不自行连续推进下一张任务卡。
+> 否。必须等待用户确认 v0.3 T5 后，才能进入 T6。Codex 不自行连续推进下一张任务卡。
 
 ---
 
@@ -1729,3 +1729,50 @@ v0.1 不做：
   - 未做提醒系统、日历系统、自动定时、完整沟通日志或新增实体。
 - 是否允许进入下一步：否。等待用户确认 T4 / T4.1 / T4.2 / T4.3 / T4.4 后，才能进入 T5。
 - 建议 commit message：feat: v0.3 T4 新增详情页跟进决策面板
+
+---
+
+### 2026-06-23 · v0.3 · T5 话术模板与复制
+
+- 状态：已实现，待用户确认
+- 来源：用户确认 T4 / T4.1 / T4.2 通过并要求进入 T5：按 `MessageScenario` 提供 6 类话术模板，支持变量填充、复制、填入草稿、用户编辑并保存 `draftMessageText`；完成后停止，不进入 T6。
+- 执行者：Codex
+- 改动文件：
+  - `src/app/messageTemplates.ts`
+  - `src/pages/BattlefieldPage.vue`
+  - `scripts/decision.selftest.ts`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 `buildMessageTemplate(scenario, record)` 纯函数，覆盖 `first_greeting` / `second_followup` / `final_unread_followup` / `high_salary_low_match_probe` / `premium_but_cold_closing` / `hr_reply_bridge` 六类 `MessageScenario`。
+  - 模板变量来自当前岗位事实与已有报告 / 机会分析字段，并通过安全清洗和兜底，缺字段时不输出 `undefined` / `null` / `NaN`。
+  - 详情页跟进决策面板新增推荐话术区，根据当前 `deriveDecision(...).scenario` 实时展示推荐话术。
+  - 支持“一键复制推荐话术”和“填入草稿”；填入草稿只更新页面表单态，不自动保存，不自动覆盖已有草稿。
+  - 用户仍可编辑 `draftMessageText`，点击“保存跟进事实”后才保存草稿。
+  - `scenario` 仍是派生结果，不落库；没有新增 `messageScenario` 字段。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "fetch\(|axios|XMLHttpRequest|https?://|/api/" src/app src/decision src/pages`
+  - `rg -n "messageScenario|currentStrategy|nextActionHint|companyWarning|stopLoss" src/storage`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：48 passed, 0 failed（新增 Message templates 覆盖）
+  - 网络 / URL / API 红线 grep：无命中
+  - storage 派生字段 grep：无命中
+  - 禁止实体 grep：无命中
+- 红线自检：
+  - 未进入 T6。
+  - 未新增字段、未修改存储结构。
+  - 未保存 `messageScenario` / `scenario` / `nextAction` / `stopLoss` / `companyWarning` 等派生结果。
+  - 未修改 `deriveDecision` 规则。
+  - 未新增依赖。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未自动发送、未自动投递、未自动检测已读、未读取聊天上下文。
+  - 未做完整 AI Chat、批量操作、提醒系统或新增实体。
+- 是否允许进入下一步：否。等待用户确认 T5 后，才能进入 T6。
+- 建议 commit message：feat: v0.3 T5 新增话术模板与复制

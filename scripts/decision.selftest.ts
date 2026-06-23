@@ -5,7 +5,9 @@ import {
   deriveDecision,
   FOLLOWUP_COOLDOWN_DAYS,
   MAX_FOLLOWUPS,
+  type MessageScenario,
 } from '../src/decision';
+import { buildMessageTemplate } from '../src/app/messageTemplates';
 import { emptyCompanyInput } from '../src/storage';
 import type { JobRecord } from '../src/storage';
 
@@ -204,6 +206,60 @@ check('interviewing returns prepare_interview', decision.nextAction === 'prepare
 decision = deriveDecision(baseJob({ communicationStatus: 'paused' }));
 check('paused returns pause_watch', decision.nextAction === 'pause_watch');
 check('paused does not stop loss', decision.stopLoss === false);
+
+// --------------------------------------------------------------------------
+section('Message templates');
+
+const scenarios: MessageScenario[] = [
+  'first_greeting',
+  'second_followup',
+  'final_unread_followup',
+  'high_salary_low_match_probe',
+  'premium_but_cold_closing',
+  'hr_reply_bridge',
+];
+const richJob = baseJob({
+  company: '星河科技',
+  role: '前端平台工程师',
+  salaryRange: '25-35K',
+  report: {
+    ...baseJob().report!,
+    techStackMatch: 'Vue、TypeScript 和中后台工程化',
+    projectMatch: '复杂表单和数据平台经验',
+    strengths: '能独立推进前端工程质量',
+  },
+  companyInput: {
+    ...emptyCompanyInput(),
+    opportunityNote: '平台方向和长期成长空间',
+  },
+});
+const emptyTemplateJob = baseJob({
+  company: '',
+  role: '',
+  salaryRange: '',
+  jdText: '',
+  report: null,
+});
+const forbiddenPlaceholderPattern = /\b(undefined|null|NaN)\b/;
+const generatedTemplates = scenarios.map((scenario) => buildMessageTemplate(scenario, richJob));
+
+check('all MessageScenario values have templates', generatedTemplates.every((text) => text.length > 0));
+check(
+  'templates safely fill role variable',
+  buildMessageTemplate('first_greeting', richJob).includes('前端平台工程师'),
+);
+check(
+  'templates safely fill salary/value probe variables',
+  buildMessageTemplate('high_salary_low_match_probe', richJob).includes('25-35K'),
+);
+check(
+  'templates are short enough for Boss greeting',
+  generatedTemplates.every((text) => text.length <= 95),
+);
+check(
+  'empty record templates do not leak undefined/null/NaN',
+  scenarios.every((scenario) => !forbiddenPlaceholderPattern.test(buildMessageTemplate(scenario, emptyTemplateJob))),
+);
 
 // --------------------------------------------------------------------------
 section('Purity guard');
