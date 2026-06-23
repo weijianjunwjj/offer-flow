@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）和 T5（话术模板与复制）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T6（列表页决策台模式）。T6 已实现并通过 typecheck / selftest，待用户确认；未进入 T7。
+> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）、T5（话术模板与复制）和 T6（列表页决策台模式）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T7（公司级只读预警）。T7 已实现并通过 typecheck / selftest，待用户确认；未进入 T8。
 
 当前是否允许进入下一步：
 
-> 否。必须等待用户确认 v0.3 T6 后，才能进入 T7。Codex 不自行连续推进下一张任务卡。
+> 否。必须等待用户确认 v0.3 T7 后，才能进入 T8。Codex 不自行连续推进下一张任务卡。
 
 ---
 
@@ -1825,3 +1825,51 @@ v0.1 不做：
   - 未做提醒系统、完整沟通日志或新增实体。
 - 是否允许进入下一步：否。等待用户确认 T6 后，才能进入 T7。
 - 建议 commit message：feat: v0.3 T6 新增列表页决策台模式
+
+---
+
+### 2026-06-23 · v0.3 · T7 公司级只读预警
+
+- 状态：已实现，待用户确认（DEC-024）
+- 来源：用户确认 T6 通过后，明确要求进入 T7：通过现有 `JobRecord[]` 派生同公司岗位预警，并在详情页 / 列表页只读展示；完成后停止，不进入 T8。
+- 执行者：Codex
+- 改动文件：
+  - `src/decision/deriveDecision.ts`
+  - `scripts/decision.selftest.ts`
+  - `src/pages/BattlefieldPage.vue`
+  - `src/pages/JobListPage.vue`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.1/decision-log.md`
+- 实现内容：
+  - 新增纯函数 `normalizeCompanyName(company?)`：去首尾空格、合并连续空格、统一小写，空公司名返回空字符串。
+  - 新增纯函数 `deriveCompanyWarning(currentJob, allJobs)`：只基于现有 `JobRecord[]` 和同公司其他岗位派生预警，排除当前岗位自身。
+  - `deriveDecision(record, allJobs?)` 集成 `companyWarning`，仅返回派生结果，不写入 `JobRecord`。
+  - 预警优先级：已有回复 / 面试推进 > 已有主攻机会 > 多个冷淡机会。
+  - 详情页复用 T4 预留的 `companyWarning` 只读提示位，现由 T7 真正返回预警文案。
+  - 列表页在存在预警时展示轻量“同公司预警”徽章，完整文案放在 `title`。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+  - `rg -n "companyWarning|companyKey|strategy|nextAction|stopLoss|scenario|messageScenario|currentStrategy|nextActionHint" src/storage`
+  - `rg -n "fetch\(|axios|XMLHttpRequest" src/decision src/pages src/components src/app`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：58 passed, 0 failed（新增 Company warnings 覆盖）
+  - 禁止实体 grep：无命中
+  - storage 派生字段 grep：仅命中 `strategyOverride?: StrategyType`，这是 T2 已允许的用户事实字段；未发现 `companyWarning` / `companyKey` / 派生决策字段落库。
+  - 网络 grep：无命中
+- 红线自检：
+  - 未进入 T8。
+  - 未新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体。
+  - 未新增公司级状态、公司沟通历史、公司详情页、CRM dashboard 或 store。
+  - 未写入 `companyWarning` / `companyKey` / `strategy` / `nextAction` / `stopLoss` / `scenario` 等派生结果。
+  - 未新增依赖。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未自动发送、未自动投递、未做提醒系统、完整沟通日志或批量操作。
+- 是否允许进入下一步：否。等待用户确认 T7 后，才能进入 T8。
+- 建议 commit message：feat: v0.3 T7 新增公司级只读预警

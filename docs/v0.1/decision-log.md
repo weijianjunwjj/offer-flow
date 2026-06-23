@@ -987,6 +987,48 @@
 
 ---
 
+## DEC-024：v0.3 T7 公司级预警只从 JobRecord[] 派生，不新增公司实体
+
+- 日期：2026-06-23
+- 状态：已拍板
+- 提出者：用户（通过 T7 明确指令）
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - T6 已在列表页通过 `deriveDecision(job, jobs)` 展示每条岗位的派生行动建议。
+  - 用户需要在同公司多岗位场景下看到“是否重复消耗”的只读预警。
+  - v0.3 红线仍是“只存事实，不存决策”，且不得引入 Company / Contact / Message 等实体。
+- 决策：
+  - 新增 `normalizeCompanyName(company?)` 纯函数，仅做 trim、合并连续空格、小写化；不做复杂工商名称解析，不接外部数据。
+  - 新增 `deriveCompanyWarning(currentJob, allJobs)` 纯函数，仅基于现有 `JobRecord[]` 判断同公司其他岗位，排除当前岗位自身。
+  - `deriveDecision(record, allJobs?)` 可以返回派生字段 `companyWarning`，但该字段只读展示，不写入 `JobRecord` 或 localStorage。
+  - 公司预警规则保持简单：已有回复 / 面试推进优先，其次同公司已有主攻机会，其次同公司多个未读 / 未回冷淡机会。
+  - 详情页和列表页只展示 `companyWarning`，不新增公司详情页、公司状态、公司历史或 CRM dashboard。
+- 理由：
+  1. 同公司预警本质是当前岗位台账的派生视图，使用 `JobRecord[]` 足够支撑 v0.3 半自动决策。
+  2. 不新增 Company 实体可以避免把 v0.3 扩展成 CRM 或公司数据库。
+  3. 预警只读展示能帮助用户控制投入，但不会替用户自动关闭、跟进或发送消息。
+- 被否决方案：
+  1. 新增 Company / Contact / Message 实体或公司聚合存储（超出 v0.3 红线）。
+  2. 写入 `companyWarning` / `companyKey` / 公司级状态到 `JobRecord`（违反“派生不落库”）。
+  3. 接外部工商数据、Boss 数据或 API 做公司匹配（违反本地手动模式）。
+  4. 基于公司预警做批量关闭、提醒或自动跟进（超出 T7 范围）。
+- 影响范围：
+  - `src/decision/deriveDecision.ts`
+  - `src/pages/BattlefieldPage.vue`
+  - `src/pages/JobListPage.vue`
+  - `scripts/decision.selftest.ts`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 若后续需要更复杂的公司维度分析，必须重新确认是否仍属于 v0.3 范围，且继续禁止派生结果落库。
+  - 若后续要持久化公司维度事实，必须先由用户明确拍板新增模型边界。
+- 相关文档：
+  - 《OfferFlow v0.3 PRD / Codex 执行版》
+  - docs/v0.1/progress.md
+  - docs/v0.1/decision-log.md DEC-021 / DEC-022 / DEC-023
+
+---
+
 # 5. 待定决策
 
 暂无。

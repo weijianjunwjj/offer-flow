@@ -3,8 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import {
   deriveDecision,
+  deriveCompanyWarning,
   FOLLOWUP_COOLDOWN_DAYS,
   MAX_FOLLOWUPS,
+  normalizeCompanyName,
   type MessageScenario,
 } from '../src/decision';
 import { buildMessageTemplate } from '../src/app/messageTemplates';
@@ -206,6 +208,105 @@ check('interviewing returns prepare_interview', decision.nextAction === 'prepare
 decision = deriveDecision(baseJob({ communicationStatus: 'paused' }));
 check('paused returns pause_watch', decision.nextAction === 'pause_watch');
 check('paused does not stop loss', decision.stopLoss === false);
+
+// --------------------------------------------------------------------------
+section('Company warnings');
+
+check(
+  'normalizeCompanyName trims, lowers and collapses spaces',
+  normalizeCompanyName('  OfferFlow   TEST Co  ') === 'offerflow test co',
+);
+check('normalizeCompanyName empty fallback', normalizeCompanyName('   ') === '');
+
+const currentCompanyJob = baseJob({
+  id: 'current',
+  company: '星河科技',
+  report: {
+    ...baseJob().report!,
+    applyAdvice: 'cautious',
+  },
+});
+const repliedCompanyJob = baseJob({
+  id: 'replied',
+  company: ' 星河科技 ',
+  communicationStatus: 'replied',
+});
+const mainAttackCompanyJob = baseJob({
+  id: 'main',
+  company: '星河科技',
+  communicationStatus: 'not_contacted',
+  report: {
+    ...baseJob().report!,
+    applyAdvice: 'ok',
+  },
+});
+const coldCompanyJobA = baseJob({
+  id: 'cold-a',
+  company: '星河科技',
+  communicationStatus: 'greeted_unread',
+  report: {
+    ...baseJob().report!,
+    applyAdvice: 'cautious',
+  },
+});
+const coldCompanyJobB = baseJob({
+  id: 'cold-b',
+  company: ' 星河科技 ',
+  communicationStatus: 'greeted_read_no_reply',
+  report: {
+    ...baseJob().report!,
+    applyAdvice: 'skip',
+  },
+});
+const otherCompanyJob = baseJob({
+  id: 'other-company',
+  company: '另一家公司',
+  communicationStatus: 'replied',
+});
+
+check(
+  'same company replied/interviewing triggers priority warning',
+  deriveCompanyWarning(currentCompanyJob, [currentCompanyJob, repliedCompanyJob])?.includes('已有岗位进入沟通或面试推进') === true,
+);
+check(
+  'same company main attack triggers warning for non-main current job',
+  deriveCompanyWarning(currentCompanyJob, [currentCompanyJob, mainAttackCompanyJob])?.includes('已有其他岗位处于主攻推进') === true,
+);
+check(
+  'same company main attack does not warn when current is also main_attack',
+  deriveCompanyWarning(
+    baseJob({ id: 'current-main', company: '星河科技' }),
+    [baseJob({ id: 'current-main', company: '星河科技' }), mainAttackCompanyJob],
+  ) === undefined,
+);
+check(
+  'multiple cold opportunities trigger warning',
+  deriveCompanyWarning(currentCompanyJob, [currentCompanyJob, coldCompanyJobA, coldCompanyJobB])?.includes('已有多个岗位未读或未回') === true,
+);
+check(
+  'reply warning wins over main attack and cold warnings',
+  deriveCompanyWarning(currentCompanyJob, [
+    currentCompanyJob,
+    repliedCompanyJob,
+    mainAttackCompanyJob,
+    coldCompanyJobA,
+    coldCompanyJobB,
+  ])?.includes('已有岗位进入沟通或面试推进') === true,
+);
+check(
+  'different company does not trigger warning',
+  deriveCompanyWarning(currentCompanyJob, [currentCompanyJob, otherCompanyJob]) === undefined,
+);
+check(
+  'current job itself does not trigger company warning',
+  deriveCompanyWarning(baseJob({ id: 'self', company: '星河科技', communicationStatus: 'replied' }), [
+    baseJob({ id: 'self', company: '星河科技', communicationStatus: 'replied' }),
+  ]) === undefined,
+);
+check(
+  'deriveDecision returns companyWarning when allJobs provided',
+  deriveDecision(currentCompanyJob, [currentCompanyJob, repliedCompanyJob]).companyWarning?.includes('已有岗位进入沟通或面试推进') === true,
+);
 
 // --------------------------------------------------------------------------
 section('Message templates');

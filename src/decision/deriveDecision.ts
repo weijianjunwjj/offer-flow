@@ -29,13 +29,74 @@ export interface DerivedDecision {
 export const FOLLOWUP_COOLDOWN_DAYS = 3;
 export const MAX_FOLLOWUPS = 2;
 
+const WARNING_EXISTING_MAIN_ATTACK =
+  '该公司已有其他岗位处于主攻推进，当前机会建议控制投入，避免重复消耗。';
+const WARNING_EXISTING_REPLY_OR_INTERVIEW =
+  '该公司已有岗位进入沟通或面试推进，建议优先维护已有入口，避免多线打扰。';
+const WARNING_MULTIPLE_COLD_OPPORTUNITIES =
+  '该公司已有多个岗位未读或未回，建议降低投入，避免继续消耗精力。';
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const HIGH_MATCH_ADVICES: ReadonlySet<ApplyAdvice> = new Set(['strongly', 'ok']);
 
 export function deriveDecision(
   record: JobRecord,
-  _allJobs?: readonly JobRecord[],
+  allJobs?: readonly JobRecord[],
 ): DerivedDecision {
+  const decision = deriveBaseDecision(record);
+  const companyWarning =
+    allJobs === undefined ? undefined : deriveCompanyWarning(record, allJobs);
+
+  return companyWarning === undefined ? decision : { ...decision, companyWarning };
+}
+
+export function normalizeCompanyName(company?: string): string {
+  return (company ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+export function deriveCompanyWarning(
+  currentJob: JobRecord,
+  allJobs: readonly JobRecord[],
+): string | undefined {
+  const companyName = normalizeCompanyName(currentJob.company);
+  if (companyName === '') {
+    return undefined;
+  }
+
+  const sameCompanyJobs = allJobs.filter(
+    (job) =>
+      job.id !== currentJob.id &&
+      normalizeCompanyName(job.company) === companyName,
+  );
+  if (sameCompanyJobs.length === 0) {
+    return undefined;
+  }
+
+  const hasReplyOrInterview = sameCompanyJobs.some(
+    (job) => job.communicationStatus === 'replied' || job.communicationStatus === 'interviewing',
+  );
+  if (hasReplyOrInterview) {
+    return WARNING_EXISTING_REPLY_OR_INTERVIEW;
+  }
+
+  const currentStrategy = deriveBaseDecision(currentJob).strategy;
+  const hasOtherMainAttack = sameCompanyJobs.some((job) => {
+    const statusIsActive = job.communicationStatus !== 'closed' && job.communicationStatus !== 'rejected';
+    return statusIsActive && deriveBaseDecision(job).strategy === 'main_attack';
+  });
+  if (hasOtherMainAttack && currentStrategy !== 'main_attack') {
+    return WARNING_EXISTING_MAIN_ATTACK;
+  }
+
+  const coldCount = sameCompanyJobs.filter(
+    (job) =>
+      job.communicationStatus === 'greeted_unread' ||
+      job.communicationStatus === 'greeted_read_no_reply',
+  ).length;
+  return coldCount >= 2 ? WARNING_MULTIPLE_COLD_OPPORTUNITIES : undefined;
+}
+
+function deriveBaseDecision(record: JobRecord): DerivedDecision {
   switch (record.communicationStatus) {
     case 'closed':
     case 'rejected':

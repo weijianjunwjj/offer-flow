@@ -415,6 +415,13 @@ function formatTime(ts: number): string {
               >
                 建议止损
               </span>
+              <span
+                v-if="decisionOf(job).companyWarning"
+                class="ac-badge company-warning"
+                :title="decisionOf(job).companyWarning"
+              >
+                同公司预警
+              </span>
             </div>
             <div class="ac-context">{{ contextLine(job) }}</div>
           </div>
@@ -769,6 +776,10 @@ function formatTime(ts: number): string {
 .ac-badge.stop-loss {
   background: #fee2e2;
   color: #991b1b;
+}
+.ac-badge.company-warning {
+  background: #fff7ed;
+  color: #9a3412;
 }
 .ac-context {
   margin-top: 7px;
