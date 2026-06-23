@@ -13,8 +13,13 @@ import type {
   ApplyAdvice,
   OpportunityRadar,
 } from '../storage';
+import { deriveDecision, type DerivedDecision } from '../decision';
 import { useStores } from '../app/stores';
 import { COMMUNICATION_STATUS_LABELS, COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
+import {
+  STRATEGY_LABELS,
+  nextActionLabel,
+} from '../app/decisionLabels';
 import {
   COMPANY_SIZE_LABELS,
   COMPANY_SIZE_OPTIONS,
@@ -38,7 +43,10 @@ const cityFilter = ref<string>('');
 const sizeFilter = ref<CompanySizeTier | ''>('');
 const statusFilter = ref<CommunicationStatus | ''>('');
 const minScore = ref<number>(0);
-const sortKey = ref<'updated' | 'opportunity' | 'profile'>('opportunity');
+type SortKey = 'updated' | 'opportunity' | 'profile' | 'decision';
+type DecisionFilter = '' | 'greeting' | 'followup' | 'stopLoss' | 'waiting';
+const sortKey = ref<SortKey>('opportunity');
+const decisionFilter = ref<DecisionFilter>('');
 
 function load(): void {
   try {
@@ -108,6 +116,82 @@ function adviceToneOf(job: JobRecord): string {
 function adviceLabelOf(job: JobRecord): string {
   return APPLY_ADVICE_LABELS[adviceOf(job)];
 }
+const decisionById = computed(() => {
+  const map = new Map<string, DerivedDecision>();
+  for (const job of jobs.value) {
+    map.set(job.id, deriveDecision(job, jobs.value));
+  }
+  return map;
+});
+function decisionOf(job: JobRecord): DerivedDecision {
+  return decisionById.value.get(job.id) ?? deriveDecision(job, jobs.value);
+}
+function decisionActionLabel(job: JobRecord): string {
+  return nextActionLabel(decisionOf(job).nextAction);
+}
+function decisionActionKey(job: JobRecord): string {
+  return decisionOf(job).nextAction ?? 'done';
+}
+function isWaitingForReply(job: JobRecord, decision: DerivedDecision): boolean {
+  return (
+    decision.nextAction === 'wait' &&
+    (
+      job.communicationStatus === 'greeted_unread' ||
+      job.communicationStatus === 'greeted_read_no_reply' ||
+      job.communicationStatus === 'paused'
+    )
+  );
+}
+function matchesDecisionFilter(job: JobRecord): boolean {
+  if (decisionFilter.value === '') {
+    return true;
+  }
+  const decision = decisionOf(job);
+  switch (decisionFilter.value) {
+    case 'greeting':
+      return decision.nextAction === 'send_greeting';
+    case 'followup':
+      return (
+        decision.nextAction === 'follow_up_once' ||
+        decision.nextAction === 'follow_up_with_new_angle' ||
+        decision.nextAction === 'continue_conversation'
+      );
+    case 'stopLoss':
+      return decision.stopLoss === true || decision.nextAction === 'close_opportunity';
+    case 'waiting':
+      return isWaitingForReply(job, decision);
+    default: {
+      const exhaustive: never = decisionFilter.value;
+      return exhaustive;
+    }
+  }
+}
+function decisionPriority(job: JobRecord): number {
+  const decision = decisionOf(job);
+  if (decision.stopLoss || decision.nextAction === 'close_opportunity') {
+    return 1;
+  }
+  if (
+    decision.nextAction === 'follow_up_with_new_angle' ||
+    decision.nextAction === 'follow_up_once' ||
+    decision.nextAction === 'continue_conversation'
+  ) {
+    return 2;
+  }
+  if (decision.nextAction === 'send_greeting') {
+    return 3;
+  }
+  if (decision.nextAction === 'prepare_interview') {
+    return 4;
+  }
+  if (decision.nextAction === 'wait' || decision.nextAction === 'pause_watch') {
+    return 5;
+  }
+  if (decision.nextAction === null) {
+    return 6;
+  }
+  return 7;
+}
 // 上下文行：城市 / 薪资 / 规模，压成弱信息（非指标，不与判决抢注意力）。
 function contextLine(job: JobRecord): string {
   return [dash(job.city), dash(job.salaryRange), sizeLabel(job)].join(' · ');
@@ -134,9 +218,16 @@ const scoreOptions = [
   { label: '85+', value: 85 },
 ];
 const sortOptions = [
+  { label: '按决策优先级', value: 'decision' },
   { label: '按更新时间', value: 'updated' },
   { label: '按机会分', value: 'opportunity' },
   { label: '按目标画像', value: 'profile' },
+];
+const decisionFilterOptions: ReadonlyArray<{ value: DecisionFilter; label: string }> = [
+  { value: 'greeting', label: '待打招呼' },
+  { value: 'followup', label: '可跟进' },
+  { value: 'stopLoss', label: '待止损' },
+  { value: 'waiting', label: '等回复' },
 ];
 
 const filteredJobs = computed(() => {
@@ -144,6 +235,7 @@ const filteredJobs = computed(() => {
     if (cityFilter.value !== '' && j.city.trim() !== cityFilter.value) return false;
     if (sizeFilter.value !== '' && effectiveSizeTier(j) !== sizeFilter.value) return false;
     if (statusFilter.value !== '' && j.communicationStatus !== statusFilter.value) return false;
+    if (!matchesDecisionFilter(j)) return false;
     if (minScore.value > 0) {
       const s = opportunityScoreOf(j);
       if (s === null || s < minScore.value) return false;
@@ -155,6 +247,11 @@ const filteredJobs = computed(() => {
     sorted.sort((a, b) => (opportunityScoreOf(b) ?? -1) - (opportunityScoreOf(a) ?? -1));
   } else if (sortKey.value === 'profile') {
     sorted.sort((a, b) => (profileScoreOf(b) ?? -1) - (profileScoreOf(a) ?? -1));
+  } else if (sortKey.value === 'decision') {
+    sorted.sort((a, b) => {
+      const priorityDiff = decisionPriority(a) - decisionPriority(b);
+      return priorityDiff === 0 ? b.updatedAt - a.updatedAt : priorityDiff;
+    });
   } else {
     sorted.sort((a, b) => b.updatedAt - a.updatedAt);
   }
@@ -165,6 +262,7 @@ function resetFilters(): void {
   cityFilter.value = '';
   sizeFilter.value = '';
   statusFilter.value = '';
+  decisionFilter.value = '';
   minScore.value = 0;
   sortKey.value = 'updated';
 }
@@ -231,6 +329,27 @@ function formatTime(ts: number): string {
         <button class="reset-btn" type="button" @click="resetFilters">重置</button>
       </div>
 
+      <div class="decision-filters" aria-label="决策筛选">
+        <button
+          type="button"
+          class="decision-filter-chip"
+          :class="{ active: decisionFilter === '' }"
+          @click="decisionFilter = ''"
+        >
+          全部行动
+        </button>
+        <button
+          v-for="option in decisionFilterOptions"
+          :key="option.value"
+          type="button"
+          class="decision-filter-chip"
+          :class="{ active: decisionFilter === option.value }"
+          @click="decisionFilter = option.value"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+
       <p class="result-count">共 {{ filteredJobs.length }} / {{ jobs.length }} 个岗位</p>
 
       <div class="asset-list">
@@ -274,6 +393,27 @@ function formatTime(ts: number): string {
                 title="外部 AI 给出的投递建议"
               >
                 {{ adviceLabelOf(job) }}
+              </span>
+              <span
+                class="ac-badge decision strategy"
+                :data-strategy="decisionOf(job).strategy"
+                title="实时派生的跟进策略"
+              >
+                {{ STRATEGY_LABELS[decisionOf(job).strategy] }}
+              </span>
+              <span
+                class="ac-badge decision action"
+                :data-action="decisionActionKey(job)"
+                title="实时派生的下一步动作"
+              >
+                {{ decisionActionLabel(job) }}
+              </span>
+              <span
+                v-if="decisionOf(job).stopLoss"
+                class="ac-badge stop-loss"
+                title="当前建议收口，不再继续消耗精力"
+              >
+                建议止损
               </span>
             </div>
             <div class="ac-context">{{ contextLine(job) }}</div>
@@ -402,6 +542,30 @@ function formatTime(ts: number): string {
 }
 .reset-btn:hover {
   background: #f2f6ff;
+}
+.decision-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -2px 0 12px;
+}
+.decision-filter-chip {
+  padding: 6px 13px;
+  border: 1px solid #d8e0ec;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.decision-filter-chip:hover {
+  background: #f2f6ff;
+}
+.decision-filter-chip.active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
 }
 .result-count {
   margin: 0 0 12px;
@@ -560,6 +724,51 @@ function formatTime(ts: number): string {
 .ac-badge.tone-weak {
   background: #eef1f5;
   color: #475569;
+}
+.ac-badge.decision {
+  border: 1px solid transparent;
+  font-weight: 600;
+}
+.ac-badge.strategy[data-strategy='main_attack'] {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.ac-badge.strategy[data-strategy='low_cost_probe'] {
+  background: #cffafe;
+  color: #0e7490;
+}
+.ac-badge.strategy[data-strategy='cautious_watch'] {
+  background: #f1f5f9;
+  color: #475569;
+}
+.ac-badge.strategy[data-strategy='cut_loss'] {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.ac-badge.action[data-action='send_greeting'],
+.ac-badge.action[data-action='follow_up_once'],
+.ac-badge.action[data-action='follow_up_with_new_angle'],
+.ac-badge.action[data-action='continue_conversation'] {
+  background: #dcfce7;
+  color: #166534;
+}
+.ac-badge.action[data-action='prepare_interview'] {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+.ac-badge.action[data-action='wait'],
+.ac-badge.action[data-action='pause_watch'] {
+  background: #fef3c7;
+  color: #92400e;
+}
+.ac-badge.action[data-action='close_opportunity'],
+.ac-badge.action[data-action='done'] {
+  background: #eef1f5;
+  color: #475569;
+}
+.ac-badge.stop-loss {
+  background: #fee2e2;
+  color: #991b1b;
 }
 .ac-context {
   margin-top: 7px;

@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）和 T4（详情页跟进决策面板）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T5（话术模板与复制）。T5 已实现并通过 typecheck / selftest，待用户确认；未进入 T6。
+> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）和 T5（话术模板与复制）已提交到 v0.3 分支；当前只执行 v0.3 PRD / Codex 执行版的 T6（列表页决策台模式）。T6 已实现并通过 typecheck / selftest，待用户确认；未进入 T7。
 
 当前是否允许进入下一步：
 
-> 否。必须等待用户确认 v0.3 T5 后，才能进入 T6。Codex 不自行连续推进下一张任务卡。
+> 否。必须等待用户确认 v0.3 T6 后，才能进入 T7。Codex 不自行连续推进下一张任务卡。
 
 ---
 
@@ -1776,3 +1776,52 @@ v0.1 不做：
   - 未做完整 AI Chat、批量操作、提醒系统或新增实体。
 - 是否允许进入下一步：否。等待用户确认 T5 后，才能进入 T6。
 - 建议 commit message：feat: v0.3 T5 新增话术模板与复制
+
+---
+
+### 2026-06-23 · v0.3 · T6 列表页决策台模式
+
+- 状态：已实现，待用户确认
+- 来源：用户确认 T5 通过后，明确要求进入 T6：在列表页增加“决策台模式”，展示每条记录的行动建议，新增决策台排序和 4 个筛选 chips；完成后停止，不进入 T7。
+- 执行者：Codex
+- 改动文件：
+  - `src/pages/JobListPage.vue`
+  - `src/app/decisionLabels.ts`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 列表页继续通过 `JobStore.listJobs()` 读取现有岗位列表，不新增 store。
+  - 对每条 `JobRecord` 调用 `deriveDecision(job, jobs)` 实时派生决策结果，仅用于前端展示 / 筛选 / 排序。
+  - 列表行新增策略徽章、下一步动作徽章；`stopLoss=true` 时显示“建议止损”徽章。
+  - `nextAction=null` 时下一步动作显示“已结束”。
+  - 新增筛选 chips：全部行动 / 待打招呼 / 可跟进 / 待止损 / 等回复。
+  - 新增排序模式“按决策优先级”，优先级为：待止损 → 可跟进 → 待打招呼 → 准备面试 → 等回复 → 终态；同优先级按更新时间倒序。
+  - 新增 `src/app/decisionLabels.ts` 作为纯展示标签映射，不含存储或副作用。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run selftest`
+  - `rg -n "createStore|new .*Store|useDashboardStore" src/pages src/app src/storage`
+  - `rg -n "fetch\(|axios|XMLHttpRequest" src/pages src/components src/app`
+  - `rg -n "strategy|nextAction|stopLoss|scenario|companyWarning|currentStrategy|nextActionHint" src/storage`
+  - `rg -n "interface +(Company|Contact|Message|JobStatusLog|FollowupLog|Reminder)\b" src`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，0 error
+  - `npm.cmd run selftest`：通过
+    - storage selftest：67 passed, 0 failed
+    - offerFlowJson selftest：43 passed, 0 failed
+    - targetProfileScore selftest：23 passed, 0 failed
+    - decision selftest：48 passed, 0 failed
+  - store / dashboard grep：仅命中既有 `src/storage/index.ts` 的 `createStores(...)` 和原有 `new ConfigStore` / `new JobStore`；未新增 dashboard store。
+  - 页面 / 组件 / app 网络 grep：无命中
+  - storage 派生字段 grep：仅命中 `strategyOverride?: StrategyType`，这是 T2 已允许的用户事实字段；未发现 T6 派生决策字段落库。
+  - 禁止实体 grep：无命中
+- 红线自检：
+  - 未进入 T7。
+  - 未新增字段、未修改存储结构。
+  - 未保存 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning` 等派生结果。
+  - 未新增 dashboard store、独立 CRM 页面或批量操作按钮。
+  - 未新增依赖。
+  - 未接 API / BYOK / 后端 / Boss 自动化。
+  - 未自动发送、未自动投递、未自动检测已读。
+  - 未做提醒系统、完整沟通日志或新增实体。
+- 是否允许进入下一步：否。等待用户确认 T6 后，才能进入 T7。
+- 建议 commit message：feat: v0.3 T6 新增列表页决策台模式
