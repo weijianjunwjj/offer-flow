@@ -31,19 +31,19 @@
 
 当前版本：
 
-> v0.3 开发中（半自动求职跟进决策台）；v0.2.x 已完成机会雷达与指标分层实现，部分历史条目仍待用户统一确认 / 提交
+> v0.4 开工中（本地服务化与 SQLite 数据文件化）；v0.3 已作为当前功能基线，v0.4 只改本地存储底座，不扩展 AI API / BYOK / 云同步 / 自动操作 Boss 等产品边界。
 
 当前模式：
 
-> Manual / Semi-manual Mode（v0.3 仍不接 API、不做 BYOK、不做后端、不自动操作 Boss；仅基于用户手动维护的岗位事实派生跟进决策）
+> Local-first Desktop-capable Mode（v0.4 允许引入本地运行时 / 本地服务 / SQLite 数据库文件；仍不接 AI API、不做 BYOK、不做云同步、不做账号登录、不自动操作 Boss、不做 SaaS）。
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）、T5（话术模板与复制）、T6（列表页决策台模式）和 T7（公司级只读预警）已提交到 v0.3 分支；T8（文档与 release note 收口）已完成文档更新与验证，等待用户最终验收；未合并 main，未打 tag。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。Codex 已按要求从最新 main 切出 `feature/v0.4-local-sqlite-storage`。本轮只完成 v0.4 决策日志与技术方案文档，不安装 Tauri / SQLite，不修改源码，不写迁移代码，不提交 commit，不 push。
 
 当前是否允许进入下一步：
 
-> 否。v0.3 T8 已完成后必须等待用户最终验收；是否合并 main、是否打 tag 由用户另行确认。Codex 不自行合并 main，不自行打 tag。
+> 否。v0.4 本轮治理与技术方案完成后必须等待用户验收；下一步是否拆分实现任务、是否引入 Tauri / SQLite 依赖、是否修改 `src/storage/`，均需用户另行确认。Codex 不自行提交、不 push。
 
 ---
 
@@ -1923,3 +1923,54 @@ v0.1 不做：
   - 未合并 main，未打 tag。
 - 是否允许进入下一步：否。等待用户最终验收；是否合并 main、是否打 tag 需用户另行确认。
 - 建议 commit message：docs: v0.3 文档与 release note 收口
+
+---
+
+### 2026-06-26 · v0.4 · 本地服务化与 SQLite 数据文件化开工治理
+
+- 状态：已完成，待用户验收
+- 来源：用户明确拍板 v0.4 要一步到位，引入本地后端服务 / 本地运行时 + SQLite 本地数据库文件，并要求先从 main 切出 `feature/v0.4-local-sqlite-storage`，本轮只做决策日志和技术方案。
+- 执行者：Codex
+- 当前分支：
+  - `feature/v0.4-local-sqlite-storage`
+- 分支操作：
+  - `git status --short --branch`：工作区干净，当前 `main...origin/main`
+  - `git checkout main`：已在 main，且与 `origin/main` 同步
+  - `git pull origin main`：Already up to date
+  - `git checkout -b feature/v0.4-local-sqlite-storage`：已切出新分支
+- 改动文件：
+  - `docs/v0.1/decision-log.md`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+- 实现内容：
+  - 新增 DEC-025：记录 v0.4 引入本地服务与 SQLite 数据库文件，推翻此前“纯浏览器、无后端、localStorage 存储”的技术边界，但不推翻“不接 AI API、不云同步、不自动操作 Boss”等产品边界。
+  - 新增 v0.4 技术方案文档：明确目标 / 非目标、推荐架构、Tauri + SQLite 选择理由、备选方案取舍、数据库文件位置、备份策略、SQLite 表草案、localStorage 到 SQLite 迁移流程、失败回滚策略、验收标准、风险清单和后续任务拆分。
+  - 更新当前进度：记录已从 main 切出 `feature/v0.4-local-sqlite-storage`，用户已拍板 v0.4 方向，本轮只完成决策日志和技术方案，不做实现。
+- 自测命令：
+  - `git diff -- docs`
+  - `git status`
+- 自测结果：
+  - `git diff -- docs`：已执行，确认本轮只修改 docs 下内容；diff 显示 `docs/v0.1/decision-log.md` 新增 DEC-025、`docs/v0.1/progress.md` 更新 v0.4 进度记录。新建 `docs/v0.4/` 因尚未 staged，未出现在 `git diff` 正文中，由 `git status` 显示为 untracked。
+  - `git status`：已执行，当前分支为 `feature/v0.4-local-sqlite-storage`；未 staged；修改 `docs/v0.1/decision-log.md`、`docs/v0.1/progress.md`，新增未跟踪目录 `docs/v0.4/`。
+  - 文档检查脚本：未运行。`package.json` 仅有 `dev` / `build` / `preview` / `typecheck` / `selftest`，无 markdown lint 或 docs check 脚本。
+- 类型检查：
+  - 未运行。理由：本轮只修改文档，不修改 `src/`、`scripts/`、`package.json` 或任何源码 / 测试 / 配置。
+- 红线自检：
+  - 未安装 Tauri。
+  - 未安装 SQLite 相关依赖。
+  - 未修改 `package.json`。
+  - 未修改核心业务代码。
+  - 未修改 `src/storage` 实现。
+  - 未写迁移代码。
+  - 未写 Tauri command。
+  - 未删除 localStorage 逻辑。
+  - 未改 UI。
+  - 未提交 commit。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：是，新增 DEC-025。
+- 遗留风险：
+  1. Tauri + SQLite 仍需后续 spike 验证开发环境、打包、插件稳定性和跨平台路径。
+  2. SQLite schema 目前是草案，需在实现任务中通过迁移 selftest 校验。
+  3. localStorage 坏数据迁移策略需在实现任务中明确阻断 / 跳过 / 记录错误的具体行为。
+- 是否允许进入下一步：否。等待用户验收；下一步需先拆 v0.4 实现任务卡，再决定是否引入 Tauri / SQLite 依赖。
+- 建议 commit message：docs: v0.4 本地 SQLite 存储方案开工

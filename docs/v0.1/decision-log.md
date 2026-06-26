@@ -1029,6 +1029,58 @@
 
 ---
 
+## DEC-025：v0.4 引入本地服务与 SQLite 数据库文件
+
+- 日期：2026-06-26
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - OfferFlow v0.1 - v0.3 一直采用纯浏览器形态，所有数据保存在浏览器 `localStorage`。
+  - 当前持久化内容已经从最初的全局配置和岗位记录，扩展到 AI 原文、`OFFER_FLOW_JSON` 解析结果、机会雷达、8 态 `communicationStatus`、v0.3 跟进事实字段和草稿话术。
+  - `localStorage` 容量有限，缺少可靠备份、恢复、迁移、校验和文件级可见性；浏览器清理数据、换浏览器、换设备或误操作都可能让长期求职台账不可控。
+  - 用户已经明确拍板：v0.4 要一步到位，引入本地后端服务 / 本地运行时 + SQLite 本地数据库文件，让 OfferFlow 的数据成为可长期保存、可备份、可恢复、可迁移的本地数据文件。
+- 决策：
+  - v0.4 定位为：本地服务化与 SQLite 数据文件化。
+  - v0.4 允许引入本地运行时 / 本地服务 / SQLite 数据库文件，作为新的本地数据底座。
+  - 优先技术路线为 `Tauri + Vue3 + Vite + TypeScript + SQLite`。
+  - Electron / 本地 Node 服务可作为备选方案评估，但不得在未完成方案验收前直接实现。
+  - 本决策推翻此前“纯浏览器、无后端、localStorage 存储”的技术边界；v0.4 的“本地服务”仅指运行在用户本机的本地运行时或本地进程，不等同于远程后端或 SaaS。
+  - 本决策不推翻“不接 AI API、不做 BYOK、不云同步、不账号登录、不自动操作 Boss、不爬虫、不做浏览器插件、不做 SaaS、不接远程数据库”等产品边界。
+  - v0.4 仍只解决本地数据底座，不得顺手扩展 AI、云同步、账号、多端同步、自动投递、Boss 自动化或 CRM 功能。
+  - localStorage 到 SQLite 的迁移必须保证旧数据不丢。
+  - 迁移前必须自动生成完整 JSON 备份。
+  - 迁移后必须校验数据完整性，至少校验 profile 是否存在、jobs 数量、关键字段、AI 原文、report / opportunityAnalysis、`communicationStatus` 和 v0.3 跟进事实字段。
+  - 迁移成功后不得立即删除旧 `localStorage` 数据，只允许写入“已迁移”标记；旧数据保留为只读兜底，后续是否清理必须另行拍板。
+- 理由：
+  1. v0.3 已经从临时手账演进为长期求职数据仓库，`localStorage` 的容量、备份和可迁移性不足以支撑长期使用。
+  2. SQLite 文件更适合本地优先的数据资产：单文件、可备份、可复制、可恢复、可迁移，且便于后续做 schema version 和完整性校验。
+  3. Tauri 相比 Electron 更轻量，更适合作为 Vue3/Vite 前端的本地运行时外壳；SQLite 可作为稳定、成熟、可审计的本地数据文件。
+  4. 继续保留“不接 AI API、不云同步、不自动操作 Boss”等产品边界，可以避免 v0.4 因技术底座升级而膨胀成 SaaS、CRM 或自动化工具。
+  5. 迁移前备份、迁移后校验、保留旧 localStorage 只读兜底，是保护用户历史求职数据的最低安全线。
+- 被否决方案：
+  1. 继续长期依赖 `localStorage`，仅增加导入导出按钮（不能解决稳定数据库文件、schema version、校验与恢复问题）。
+  2. 只迁移到 IndexedDB / OPFS（仍主要受浏览器沙箱管理，文件可见性、备份和恢复体验不如 SQLite 数据文件明确）。
+  3. v0.4 同时接入云同步、账号或远程数据库（违反本地优先和本轮只改本地数据底座的边界）。
+  4. 迁移成功后立即删除旧 `localStorage` 数据（破坏回滚与兜底能力）。
+  5. 借 SQLite 改造顺手拆出 Company / Contact / Message / FollowupLog 等新业务实体（超出本轮目标，且可能推翻 v0.3 的轻量事实模型）。
+- 影响范围：
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.1/progress.md`
+  - 后续可能影响 `src/storage/` 适配层、Tauri 本地 command、SQLite schema、迁移脚本、自测脚本和打包配置；这些不在本轮实现。
+- 后续复审条件：
+  - 如果 Tauri 在当前开发环境、打包体积、系统兼容性或 SQLite 插件稳定性上不可接受，可复审 Electron 或本地 Node 服务方案。
+  - 如果 SQLite schema 草案在实现时发现无法覆盖 v0.3 数据形状，可复审表结构，但必须继续遵守“不丢旧数据、备份先行、迁移校验、旧 localStorage 不立即删除”的迁移红线。
+  - 如果未来要引入云同步、账号、多端、AI API、BYOK 或自动化能力，必须另开版本与决策，不得混入 v0.4 本地存储底座改造。
+- 相关文档：
+  - README.md
+  - docs/v0.1/progress.md
+  - docs/v0.4/local-sqlite-storage-plan.md
+  - docs/v0.1/decision-log.md DEC-001 / DEC-004 / DEC-009 / DEC-015 / DEC-020 / DEC-021 / DEC-022 / DEC-024
+
+---
+
 # 5. 待定决策
 
 暂无。
