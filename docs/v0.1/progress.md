@@ -1974,3 +1974,70 @@ v0.1 不做：
   3. localStorage 坏数据迁移策略需在实现任务中明确阻断 / 跳过 / 记录错误的具体行为。
 - 是否允许进入下一步：否。等待用户验收；下一步需先拆 v0.4 实现任务卡，再决定是否引入 Tauri / SQLite 依赖。
 - 建议 commit message：docs: v0.4 本地 SQLite 存储方案开工
+
+---
+
+### 2026-06-26 · v0.4 · T1 Tauri + SQLite 技术 Spike
+
+- 状态：阻塞，待补齐本机前置环境后重跑
+- 来源：用户确认 v0.4 治理与技术方案通过后，要求先提交文档 commit，再进入 T1：验证 Tauri + SQLite 技术可行性，不接业务数据、不迁移 localStorage、不改现有页面业务逻辑。
+- 执行者：Codex
+- 文档 commit：
+  - `794c2db docs: 确认 v0.4 本地 SQLite 存储方案`
+- 改动文件：
+  - `docs/v0.4/tauri-sqlite-spike.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 先提交已验收的 v0.4 决策日志与技术方案文档。
+  - 执行 Tauri / SQLite 前置环境检查。
+  - 新增 T1 Spike 记录文档，记录 Tauri 初始化未完成、SQLite 最小读写未执行、阻塞原因和后续重试条件。
+  - 更新 v0.4 方案文档中的 T1 Spike 结果。
+- 前置检查结果：
+  - 当前分支：`feature/v0.4-local-sqlite-storage`
+  - `node --version`：`v24.14.1`
+  - `npm.cmd --version`：`11.11.0`
+  - `npm --version`：PowerShell 执行策略阻止 `npm.ps1`，后续应使用 `npm.cmd`
+  - `rustc --version`：未找到 `rustc`
+  - `cargo --version`：未找到 `cargo`
+  - `where.exe rustc`：未找到
+  - `where.exe cargo`：未找到
+  - `where.exe cl`：未找到 Microsoft C++ Build Tools 编译器
+  - Visual Studio Installer / `vswhere`：未找到
+  - `winget --version`：当前会话无法运行，报错“指定的登录会话不存在。可能已被终止。”
+- Tauri 结果：
+  - 未初始化成功。原因：缺少 Rust toolchain 和 Microsoft C++ Build Tools，Tauri Windows 开发环境无法启动或编译。
+- SQLite 最小读写结果：
+  - 未执行。原因：Tauri 运行时和 SQL 插件无法在当前前置环境下完成初始化与编译。
+- 数据库文件实际路径：
+  - 未创建实际数据库文件。
+  - 计划路径仍为 `%APPDATA%/OfferFlow/offerflow.sqlite3`，待 T1 重跑时由 Tauri app data 目录实际确认。
+- 方案选择：
+  - 仍推荐 `Tauri v2 + tauri-plugin-sql + SQLite`。
+  - 本轮未安装 Tauri / SQLite 依赖，未创建 `src-tauri/`，未修改 `package.json`；避免在缺少 Rust / C++ 编译工具时产生半工作脚手架。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 成功构建；保留既有 chunk size warning（`assets/index-*.js` 超过 500 kB），不影响本轮验收。
+  - Tauri 独立检查命令：未运行。原因：本轮未安装 Tauri CLI，且当前环境缺 Rust / Cargo / C++ Build Tools，Tauri 无法初始化或编译。
+  - `git status --short --branch`：当前分支 `feature/v0.4-local-sqlite-storage`；修改 `docs/v0.1/progress.md`、`docs/v0.4/local-sqlite-storage-plan.md`，新增未跟踪文件 `docs/v0.4/tauri-sqlite-spike.md`。
+  - `git diff --stat`：显示 `docs/v0.1/progress.md` 与 `docs/v0.4/local-sqlite-storage-plan.md` 共 94 行新增；未跟踪的 `docs/v0.4/tauri-sqlite-spike.md` 不在 diff stat 正文中。
+- 红线自检：
+  - 未修改 `src/storage/` 业务实现。
+  - 未替换 localStorage。
+  - 未写 localStorage -> SQLite 正式迁移逻辑。
+  - 未改岗位页面、列表页、详情页 UI。
+  - 未改数据模型业务字段。
+  - 未做备份恢复 UI。
+  - 未做 AI API / 云同步 / 账号 / 自动操作 Boss。
+  - 未做大规模重构。
+- 遗留风险：
+  1. 本机缺 Rust / Cargo / C++ Build Tools，Tauri 无法实跑。
+  2. 当前会话无法使用 winget 自动安装前置环境。
+  3. 未验证 Tauri app data 实际路径和 `tauri-plugin-sql` SQLite 最小读写。
+- 是否允许进入下一步：否。不建议进入 T2 storage adapter 设计；需要先补齐 Rust stable toolchain 与 Microsoft C++ Build Tools，然后重跑 T1。
+- 建议 commit message：无。本轮 T1 Spike 改动不提交，等待用户验收。

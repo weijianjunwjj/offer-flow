@@ -391,3 +391,34 @@ SQLite 迁移成功后，可再生成一份数据库文件副本备份。数据�
 10. T9：文档与 release note 收口。
 
 每个任务完成后必须更新 `docs/v0.1/progress.md`；涉及技术边界、依赖、schema 或迁移策略变化时必须同步更新 `docs/v0.1/decision-log.md`。
+
+## 14. T1 Spike 结果记录
+
+日期：2026-06-26
+
+结论：T1 未完成 Tauri 启动和 SQLite 最小读写，原因是本机前置环境缺失。
+
+已确认：
+
+1. 当前分支为 `feature/v0.4-local-sqlite-storage`。
+2. Node 可用：`node --version => v24.14.1`。
+3. `npm.cmd` 可用：`npm.cmd --version => 11.11.0`。
+4. PowerShell 中直接运行 `npm` 会触发 `npm.ps1` 执行策略限制，后续应使用 `npm.cmd`。
+
+阻塞项：
+
+1. `rustc` 不存在。
+2. `cargo` 不存在。
+3. Microsoft C++ Build Tools 的 `cl` 不存在。
+4. Visual Studio Installer / `vswhere` 未找到。
+5. 当前会话无法运行 `winget`，不能通过 winget 自动补齐前置环境。
+
+本轮未安装 Tauri / SQLite 依赖，未创建 `src-tauri/`，未修改 `package.json`。原因：缺少 Rust 和 C++ 编译工具时继续安装项目依赖只能产生半工作状态，无法完成 Tauri 启动和 SQLite 最小读写验收。
+
+方案选择仍保持：`Tauri v2 + tauri-plugin-sql + SQLite`。后续重跑 T1 前必须先安装 Rust stable toolchain 与 Microsoft C++ Build Tools。
+
+详细记录见：
+
+```txt
+docs/v0.4/tauri-sqlite-spike.md
+```
