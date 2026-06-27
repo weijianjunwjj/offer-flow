@@ -1081,6 +1081,58 @@
 
 ---
 
+## DEC-026：v0.4 T1 采用 Tauri v2 与 SQLite Spike 依赖组合
+
+- 日期：2026-06-27
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - 用户已确认继续坚持 v0.4 优先路线：Tauri + SQLite。
+  - 首轮 T1 因本机 Windows 前置环境缺失被记录为阻塞；用户随后补齐 Rust / Cargo 与 MSVC Build Tools，并要求继续重跑 T1。
+  - T1 目标仅验证技术可行性：Tauri 能否初始化和启动、能否获得 app data 目录、能否创建 SQLite 文件并完成 `schema_version=1` 的最小读写、能否保持 Web 端构建不破坏。
+- 决策：
+  - T1 采用 Tauri v2 作为本地运行时。
+  - 前端依赖引入 `@tauri-apps/api`、`@tauri-apps/plugin-sql`。
+  - 开发依赖引入 `@tauri-apps/cli`。
+  - Rust 侧引入 `tauri`、`tauri-build`、`tauri-plugin-sql`，并启用 `tauri-plugin-sql` 的 `sqlite` feature。
+  - T1 的启动期最小 SQLite 读写验证使用 `rusqlite` + `bundled` feature，直接在 Tauri `setup` 生命周期中创建 `offerflow-spike.sqlite3`、写入并读回 `app_meta.schema_version=1`。
+  - `tauri-plugin-sql` 已注册并授权 `sql:default`，作为后续 T2/T3 storage adapter 与 SQLite 访问方案的候选底座；T1 不让现有页面直接访问 SQL。
+  - Tauri dev 专用端口固定为 `127.0.0.1:5175` 并启用 `--strictPort`，避免 Vite 自动换端口导致 Tauri devUrl 与实际端口不一致。
+  - 本决策只覆盖 T1 Spike 依赖与最小技术验证，不代表已经替换 `src/storage/`，也不代表已经开始正式 localStorage -> SQLite 迁移。
+- 理由：
+  1. Tauri v2 与 DEC-025 确定的优先技术路线一致，能在本地运行时内提供稳定的文件系统与 SQLite 能力。
+  2. `tauri-plugin-sql` 属于 Tauri 生态内直接面向 SQL 数据库的方案，适合后续通过本地运行时访问 SQLite。
+  3. `rusqlite` 的 `bundled` feature 可减少本机 SQLite 动态库差异，适合 T1 在 Rust 侧快速验证“能创建文件、能建表、能写入、能读回”。
+  4. 将最小读写放在 Tauri `setup` 阶段，不需要修改现有业务页面或 `src/storage/`，符合 T1 只做技术 Spike 的范围。
+  5. 固定 Tauri dev 端口能让开发环境验证更可重复，避免 dev server 自动换端口造成假阳性。
+- 被否决方案：
+  1. 继续停留在 T1 阻塞状态，不重跑验证（用户已补齐环境，且要求继续）。
+  2. 立即切换 Electron（用户已裁定当前阻塞不视为 Tauri 路线失败，暂不切换 Electron）。
+  3. 回退 IndexedDB / OPFS（用户已裁定暂不回退）。
+  4. 在 T1 中改造 `src/storage/` 或迁移业务数据（超出 T1 范围）。
+  5. 为了消除 `where cl` 在普通 PowerShell 中不可见而静默修改系统环境或安装系统级依赖（系统级依赖必须由用户授权或用户手动安装）。
+- 影响范围：
+  - `package.json`
+  - `package-lock.json`
+  - `src-tauri/`
+  - `docs/v0.4/tauri-sqlite-spike.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.1/progress.md`
+  - 本决策不影响 `src/storage/`、现有页面、业务数据模型和 localStorage 逻辑。
+- 后续复审条件：
+  - 如果 T2/T3 发现 `tauri-plugin-sql` 无法满足 adapter、事务、路径、备份或迁移校验要求，可以复审是否继续使用插件 API、Rust command + `rusqlite`、或两者组合。
+  - 如果 Tauri 在打包、安装体积、Windows 兼容性或 WebView2 分发上出现不可接受问题，可以按 DEC-025 复审 Electron 或本地 Node 服务。
+  - 如果未来要接 AI API、云同步、账号、多端同步、自动操作 Boss 或远程数据库，必须另开版本和决策，不得混入 v0.4 T1。
+- 相关文档：
+  - docs/v0.1/progress.md
+  - docs/v0.4/local-sqlite-storage-plan.md
+  - docs/v0.4/tauri-sqlite-spike.md
+  - docs/v0.1/decision-log.md DEC-025
+
+---
+
 # 5. 待定决策
 
 暂无。

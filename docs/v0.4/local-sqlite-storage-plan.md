@@ -394,6 +394,56 @@ SQLite 迁移成功后，可再生成一份数据库文件副本备份。数据�
 
 ## 14. T1 Spike 结果记录
 
+### 14.1 最新结论
+
+日期：2026-06-27
+
+结论：T1 Tauri + SQLite 技术 Spike 已通过，等待用户验收。
+
+已验证：
+
+1. Tauri v2 已成功初始化，新增 `src-tauri/`。
+2. 本机环境已满足 Tauri Windows 开发要求：
+   - `rustc 1.96.0`
+   - `cargo 1.96.0`
+   - `rustup 1.29.0`
+   - `tauri info` 确认 WebView2、MSVC、Rust toolchain、Node、npm 可用
+3. 已安装并验证 Tauri 相关依赖：
+   - `@tauri-apps/api`
+   - `@tauri-apps/plugin-sql`
+   - `@tauri-apps/cli`
+   - `tauri`
+   - `tauri-build`
+   - `tauri-plugin-sql` with `sqlite` feature
+4. Tauri dev 已固定使用 `http://127.0.0.1:5175`，并启用 `--strictPort`，避免 Vite 自动换端口。
+5. Tauri app 启动成功，并在 `setup` 阶段完成 SQLite 最小读写。
+6. Spike 数据库实际路径：
+
+```txt
+C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlite3
+```
+
+7. 最小读写结果：
+
+```txt
+[OfferFlow T1 SQLite Spike] db_path=C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlite3 schema_version=1
+```
+
+8. `npm.cmd run typecheck` 通过。
+9. `npm.cmd run build` 通过，现有 Web 端构建未被破坏。
+10. `cargo check` 通过。
+
+技术选择说明：
+
+1. `tauri-plugin-sql` 已安装并注册，作为后续 storage adapter 访问 SQLite 的候选底座。
+2. T1 最小读写使用 `rusqlite` + `bundled` feature 在 Rust 侧直接验证 SQLite 文件创建、建表、写入和读回。
+3. 页面层没有直接访问 SQL；`src/storage/` 仍未改动。
+4. T1 创建的 `offerflow-spike.sqlite3` 只是技术验证文件，不是正式生产数据库文件名。
+
+后续建议：可以进入 T2：storage adapter 设计，但必须先等待用户验收本轮 T1；不要自动提交、不要 push、不要继续实现正式迁移。
+
+### 14.2 首轮阻塞记录
+
 日期：2026-06-26
 
 结论：T1 未完成 Tauri 启动和 SQLite 最小读写，原因是本机前置环境缺失。

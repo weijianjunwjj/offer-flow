@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。Codex 已按要求从最新 main 切出 `feature/v0.4-local-sqlite-storage`。本轮只完成 v0.4 决策日志与技术方案文档，不安装 Tauri / SQLite，不修改源码，不写迁移代码，不提交 commit，不 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。v0.4 治理文档已提交；T1 Tauri + SQLite 技术 Spike 在用户补齐 Rust / Cargo / MSVC Build Tools 后已重跑通过：Tauri 可启动，SQLite Spike 数据库可创建，`schema_version=1` 可写入并读回。当前等待用户验收 T1；本轮未改 `src/storage/`、未迁移 localStorage、未改业务页面、未提交 T1 实装改动、未 push。
 
 当前是否允许进入下一步：
 
-> 否。v0.4 本轮治理与技术方案完成后必须等待用户验收；下一步是否拆分实现任务、是否引入 Tauri / SQLite 依赖、是否修改 `src/storage/`，均需用户另行确认。Codex 不自行提交、不 push。
+> 否。T1 Spike 已完成但仍需等待用户验收；建议验收通过后再进入 T2：storage adapter 设计。Codex 不自动提交 T1 实装改动、不 push、不继续正式迁移或 storage 替换。
 
 ---
 
@@ -2041,3 +2041,98 @@ v0.1 不做：
   3. 未验证 Tauri app data 实际路径和 `tauri-plugin-sql` SQLite 最小读写。
 - 是否允许进入下一步：否。不建议进入 T2 storage adapter 设计；需要先补齐 Rust stable toolchain 与 Microsoft C++ Build Tools，然后重跑 T1。
 - 建议 commit message：无。本轮 T1 Spike 改动不提交，等待用户验收。
+
+---
+
+### 2026-06-27 · v0.4 · T1 Tauri + SQLite 技术 Spike 重跑
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 Rust / Cargo 已安装成功，MSVC Build Tools 已通过 `vswhere` 检测到，并要求在环境补齐后继续 T1：Tauri 初始化 + SQLite 最小读写验证。
+- 执行者：Codex
+- 当前分支：
+  - `feature/v0.4-local-sqlite-storage`
+- 关联文档 commit：
+  - `7f787d0 docs: 记录 v0.4 T1 Tauri SQLite Spike 阻塞`
+- 改动文件：
+  - `package.json`
+  - `package-lock.json`
+  - `src-tauri/`
+  - `docs/v0.1/decision-log.md`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.4/tauri-sqlite-spike.md`
+- 实现内容：
+  - 安装 Tauri v2 必要依赖：`@tauri-apps/api`、`@tauri-apps/plugin-sql`、`@tauri-apps/cli`。
+  - 初始化 `src-tauri/`，应用标识设置为 `com.offerflow.local`。
+  - 注册 `tauri-plugin-sql`，并在 Rust 侧启用 `sqlite` feature。
+  - 引入 `rusqlite` + `bundled` feature，用于 T1 启动期最小 SQLite 文件读写验证。
+  - 新增 Tauri command `sqlite_spike_check`，但本轮未接入现有页面。
+  - 在 Tauri `setup` 阶段创建 / 打开 Spike 数据库文件，创建 `app_meta` 表，写入并读回 `schema_version=1`。
+  - 将 Tauri dev 固定到 `http://127.0.0.1:5175` 并启用 `--strictPort`，避免 Vite 自动换端口。
+  - 新增 DEC-026，记录 T1 依赖组合与 Spike 技术选择。
+- 环境检查结果：
+  - `node --version`：`v24.14.1`
+  - `npm.cmd --version`：`11.11.0`
+  - `rustc --version`：`rustc 1.96.0 (ac68faa20 2026-05-25)`
+  - `cargo --version`：`cargo 1.96.0 (30a34c682 2026-05-25)`
+  - `where.exe rustc`：`C:\Users\Administrator\.cargo\bin\rustc.exe`
+  - `where.exe cargo`：`C:\Users\Administrator\.cargo\bin\cargo.exe`
+  - `where.exe cl`：普通 PowerShell 中仍未找到
+  - `vswhere`：`C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools`
+  - `npm.cmd exec tauri -- info`：通过，确认 WebView2、MSVC、Rust toolchain、Tauri 包可用
+- Tauri 结果：
+  - 初始化成功。
+  - `npm.cmd exec tauri -- dev` 启动成功。
+  - Tauri app 成功运行到 `setup` 阶段并输出 SQLite Spike 日志。
+- SQLite 最小读写结果：
+  - 通过，稳定读回 `schema_version=1`。
+  - 启动日志：
+
+```txt
+[OfferFlow T1 SQLite Spike] db_path=C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlite3 schema_version=1
+```
+
+- 数据库文件实际路径：
+
+```txt
+C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlite3
+```
+
+- 文件检查结果：
+  - `Test-Path`：`True`
+  - `Length`：`12288 bytes`
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- info`
+  - `npm.cmd exec tauri -- dev`
+  - `git status --short --branch`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust app 编译检查成功。
+  - `npm.cmd exec tauri -- info`：通过，确认 Tauri 环境可用。
+  - `npm.cmd exec tauri -- dev`：通过，Tauri app 启动并完成 SQLite Spike 读写。
+- 红线自检：
+  - 未修改 `src/storage/` 业务实现。
+  - 未替换 localStorage。
+  - 未写 localStorage -> SQLite 正式迁移逻辑。
+  - 未改岗位页面、列表页、详情页 UI。
+  - 未改业务数据模型字段。
+  - 未做备份恢复 UI。
+  - 未做 AI API / 云同步 / 账号 / 自动操作 Boss。
+  - 未做大规模业务重构。
+  - 未提交 T1 实装改动。
+  - 未 push 远程。
+- 遇到的问题：
+  1. PowerShell 直接运行 `npm` 会触发 `npm.ps1` 执行策略限制，后续继续使用 `npm.cmd`。
+  2. Rust / Cargo 安装后当前 shell PATH 未自动刷新，命令中临时加入 `%USERPROFILE%\.cargo\bin`。
+  3. 普通 PowerShell 中 `where.exe cl` 仍找不到 `cl`，但 `vswhere`、`cargo check` 和 `tauri info` 已确认 MSVC 编译链可用。
+  4. 首次或依赖变化后的 Tauri dev 编译耗时较长；后续无依赖变化时会更快。
+  5. 首次运行时 Vite 自动从 5173 退到 5174，已改为 Tauri 专用 `127.0.0.1:5175 --strictPort`。
+  6. `npm install` 报告 1 个 low severity vulnerability；本轮未执行 `npm audit fix`，避免引入额外依赖变更。
+- 是否涉及 decision-log 更新：是，新增 DEC-026。
+- 是否允许进入下一步：否。T1 已完成但等待用户验收；建议验收后进入 T2：storage adapter 设计。
+- 建议 commit message：feat: 完成 v0.4 T1 Tauri SQLite 技术 Spike
