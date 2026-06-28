@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。v0.4 治理文档已提交；T1 Tauri + SQLite 技术 Spike 在用户补齐 Rust / Cargo / MSVC Build Tools 后已重跑通过：Tauri 可启动，SQLite Spike 数据库可创建，`schema_version=1` 可写入并读回。当前等待用户验收 T1；本轮未改 `src/storage/`、未迁移 localStorage、未改业务页面、未提交 T1 实装改动、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已完成：新增 v0.4 存储适配层设计文档，明确未来页面经 App Stores / Composables 调用 Storage Port，再由 LocalStorage Adapter 或 SQLite Adapter 落到底层存储；本轮未改 `src/storage/` 运行逻辑、未替换 localStorage、未写迁移、未改业务页面、未 push。
 
 当前是否允许进入下一步：
 
-> 否。T1 Spike 已完成但仍需等待用户验收；建议验收通过后再进入 T2：storage adapter 设计。Codex 不自动提交 T1 实装改动、不 push、不继续正式迁移或 storage 替换。
+> 否。T2 设计完成后等待用户验收；建议验收通过后进入 T3：SQLite schema 与基础 repository 实现。Codex 不自动提交 T2 改动、不 push、不继续实现正式 SQLite store 或迁移。
 
 ---
 
@@ -2136,3 +2136,51 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：是，新增 DEC-026。
 - 是否允许进入下一步：否。T1 已完成但等待用户验收；建议验收后进入 T2：storage adapter 设计。
 - 建议 commit message：feat: 完成 v0.4 T1 Tauri SQLite 技术 Spike
+
+---
+
+### 2026-06-28 · v0.4 · T2 storage adapter 设计
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T1 结果验收通过，允许提交 T1，并要求进入 T2：storage adapter 设计；T2 只做设计，不做 localStorage 迁移，不替换现有业务存储，不改页面 UI。
+- 执行者：Codex
+- T1 commit：
+  - `b2220ce chore: 完成 v0.4 T1 Tauri SQLite Spike`
+- 改动文件：
+  - `docs/v0.4/storage-adapter-design.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 v0.4 storage adapter 设计文档。
+  - 梳理当前 `src/storage/` 现状：`StorageDriver`、`ConfigStore`、`JobStore`、keys、defaults、legacy namespace migration 和 `useStores()` 当前调用路径。
+  - 设计未来分层：`Vue Pages -> App Stores / Composables -> Storage Port -> LocalStorage Adapter / SQLite Adapter -> Browser localStorage / Tauri SQLite Commands`。
+  - 给出文档级接口草案：`StoragePort`、`ProfileRepository`、`JobRepository`、`StorageMetaRepository`、`JobListQuery`。
+  - 明确 profile 读写、job CRUD、`listJobs` 排序 / 筛选字段来源、错误处理策略。
+  - 明确 SQLite 写入时“完整对象 `data_json` + 独立索引列”必须由同一个 normalized record 派生，并在同一事务内写入。
+  - 明确页面不能直接调用 Tauri command，Tauri command 只能被 SQLite adapter 或更底层 client 使用。
+  - 明确 LocalStorage Adapter 和 SQLite Adapter 分工，以及 T3 / T4 / T5 / T6 后续拆分建议。
+- 是否新增 TypeScript 接口文件：
+  - 否。T2 仅在文档中提供接口草案；没有新增 TS 文件，避免提前改运行调用链。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust / Tauri 侧编译检查成功。
+- 红线自检：
+  - 未修改现有页面。
+  - 未修改现有 `src/storage/` 运行逻辑。
+  - 未替换 localStorage。
+  - 未写正式 SQLite Store。
+  - 未写 localStorage -> SQLite 迁移。
+  - 未写备份恢复逻辑。
+  - 未删除旧数据。
+  - 未改 `JobRecord` 字段含义。
+  - 未做云同步、AI API、账号、多端或 Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T2 未新增依赖、未改 schema、未改存储运行策略；DEC-025 / DEC-026 已覆盖 v0.4 本地 SQLite 路线和 T1 依赖选择。
+- 是否允许进入下一步：否。等待用户验收 T2；建议验收后进入 T3：SQLite schema 与基础 repository 实现。
+- 建议 commit message：docs: 完成 v0.4 T2 storage adapter 设计
