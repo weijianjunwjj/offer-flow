@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已完成：新增 v0.4 存储适配层设计文档，明确未来页面经 App Stores / Composables 调用 Storage Port，再由 LocalStorage Adapter 或 SQLite Adapter 落到底层存储；本轮未改 `src/storage/` 运行逻辑、未替换 localStorage、未写迁移、未改业务页面、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交，commit 为 `0997b2b`。T3 SQLite schema 与基础 repository 实现已完成：在 `src-tauri/` 内新增 schema / database / repository / error / models 模块，创建 `app_meta`、`profiles`、`jobs`、`migration_logs`、`backup_logs`，完成 schema_version、profile、job CRUD 的 Rust 侧最小验证；本轮未改 `src/storage/` 运行逻辑、未替换 localStorage、未写迁移、未改业务页面、未 push。
 
 当前是否允许进入下一步：
 
-> 否。T2 设计完成后等待用户验收；建议验收通过后进入 T3：SQLite schema 与基础 repository 实现。Codex 不自动提交 T2 改动、不 push、不继续实现正式 SQLite store 或迁移。
+> 否。T3 实现完成后等待用户验收；建议验收通过后进入 T4：localStorage JSON 备份导出。Codex 不自动提交 T3 改动、不 push、不继续实现正式迁移或 storage adapter 接入。
 
 ---
 
@@ -2184,3 +2184,68 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：否。T2 未新增依赖、未改 schema、未改存储运行策略；DEC-025 / DEC-026 已覆盖 v0.4 本地 SQLite 路线和 T1 依赖选择。
 - 是否允许进入下一步：否。等待用户验收 T2；建议验收后进入 T3：SQLite schema 与基础 repository 实现。
 - 建议 commit message：docs: 完成 v0.4 T2 storage adapter 设计
+
+---
+
+### 2026-06-28 · v0.4 · T3 SQLite schema 与基础 repository 实现
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T2 storage adapter 设计验收通过，允许提交 T2，并要求进入 T3：SQLite schema 与基础 repository 实现；T3 只做 SQLite 侧地基层，不接入现有业务页面，不迁移 localStorage。
+- 执行者：Codex
+- T2 commit：
+  - `0997b2b docs: 完成 v0.4 T2 存储适配层设计`
+- 改动文件：
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/database.rs`
+  - `src-tauri/src/sqlite/error.rs`
+  - `src-tauri/src/sqlite/models.rs`
+  - `src-tauri/src/sqlite/repository.rs`
+  - `src-tauri/src/sqlite/schema.rs`
+  - `docs/v0.4/sqlite-schema-repository.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 SQLite schema 初始化模块，创建 `app_meta`、`profiles`、`jobs`、`migration_logs`、`backup_logs`。
+  - 写入 SQLite `PRAGMA user_version = 1`，并通过 `app_meta.schema_version=1` 提供应用层可读 schema version。
+  - 新增数据库路径与打开初始化逻辑，T3 smoke 数据库文件为 `offerflow-t3.sqlite3`。
+  - 新增基础 repository：`set_app_meta` / `get_app_meta`、`upsert_profile` / `get_profile`、`upsert_job` / `get_job` / `list_jobs_by_updated_desc` / `delete_job`。
+  - repository 写入遵守“完整对象 -> derive indexed columns -> 写入独立列和 `data_json`”策略，调用方不传第二套可能冲突的列数据。
+  - 新增 Rust 侧 `StorageError`，区分数据库打开、schema 初始化、JSON 序列化 / 反序列化、写入、查询和记录不存在。
+  - 新增 Tauri command `sqlite_t3_check` 和启动期 T3 repository smoke；未接入页面。
+  - 新增 T3 技术文档，记录 schema、repository、一致性策略、错误处理、验证结果和后续 T4 建议。
+- 数据库文件实际路径：
+  - `C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3`
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust / Tauri 侧编译检查成功。
+  - `cargo test`：通过，3 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，Tauri app 启动并输出 T3 repository smoke 日志，`schema_version=1`、profile upsert/get、job upsert/get/list/delete 均通过。
+- Tauri dev smoke 日志：
+
+```txt
+[OfferFlow T3 SQLite Repository] db_path=C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3 schema_version=1 profile_id=default job_id=t3-smoke-job-new listed_jobs=t3-smoke-job-new,t3-smoke-job-old remaining_jobs=0
+```
+
+- 红线自检：
+  - 未修改现有 Vue 页面。
+  - 未修改现有 `src/storage/` 运行逻辑。
+  - 未替换 localStorage。
+  - 未读取真实 localStorage 数据。
+  - 未写 localStorage -> SQLite 迁移。
+  - 未写备份恢复 UI。
+  - 未删除旧数据。
+  - 未改 `JobRecord` / `Profile` 字段含义。
+  - 未做 AI API / BYOK / 云同步 / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T3 按 DEC-025 / DEC-026 和 T2 设计落地既定 SQLite 地基层；未新增依赖、未推翻既有产品边界、未改业务模型含义。
+- 是否允许进入下一步：否。等待用户验收 T3；建议验收后进入 T4：localStorage JSON 备份导出。
+- 建议 commit message：chore: 完成 v0.4 T3 SQLite schema 与基础 repository
