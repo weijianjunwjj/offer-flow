@@ -23,12 +23,29 @@ export {
   createLocalStorageAsyncStores,
 } from './localStorageRepositories';
 export { TauriSQLiteClient } from './sqliteClient';
-export type { SQLiteClient, TauriInvoke } from './sqliteClient';
+export type {
+  LocalStorageBackupWriteResult,
+  LocalStorageMigrationResult,
+  SQLiteClient,
+  SQLiteControlledMigrationClient,
+  SQLiteMigrationStatusClient,
+  SQLiteStorageMigrationStatus,
+  TauriInvoke,
+} from './sqliteClient';
 export {
   SQLiteJobRepository,
   SQLiteProfileRepository,
   createSQLiteAsyncStores,
 } from './sqliteRepositories';
+export {
+  STORAGE_BACKEND_KEY,
+  readBackendPreference,
+  resolveStorageBackend,
+  writeBackendPreference,
+} from './backendSelection';
+export type { StorageBackendResolution, StorageBackendState } from './backendSelection';
+export { detectStorageRuntime } from './runtimeEnv';
+export type { StorageRuntime, StorageRuntimeKind } from './runtimeEnv';
 
 import type { StorageDriver } from './driver';
 import { BrowserStorageDriver, MemoryStorageDriver } from './driver';

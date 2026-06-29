@@ -1,7 +1,7 @@
 mod sqlite;
 
 use serde_json::Value;
-use sqlite::adapter::T7AdapterSmokeResult;
+use sqlite::adapter::{StorageMigrationStatusResult, T7AdapterSmokeResult};
 use sqlite::backup::LocalStorageBackupWriteResult;
 use sqlite::error::StorageErrorPayload;
 use sqlite::migration::LocalStorageMigrationResult;
@@ -72,6 +72,13 @@ fn sqlite_update_job(app: AppHandle, job_json: String) -> Result<Value, StorageE
 #[tauri::command]
 fn sqlite_delete_job(app: AppHandle, id: String) -> Result<bool, StorageErrorPayload> {
     sqlite::adapter::sqlite_delete_job(&app, &id).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_get_storage_migration_status(
+    app: AppHandle,
+) -> Result<StorageMigrationStatusResult, StorageErrorPayload> {
+    sqlite::adapter::sqlite_get_storage_migration_status(&app).map_err(|error| error.payload())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -173,7 +180,8 @@ pub fn run() {
             sqlite_get_job,
             sqlite_list_jobs,
             sqlite_update_job,
-            sqlite_delete_job
+            sqlite_delete_job,
+            sqlite_get_storage_migration_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

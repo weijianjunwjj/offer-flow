@@ -7,6 +7,15 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
+const MIGRATION_TYPE_LOCALSTORAGE_TO_SQLITE: &str = "localstorage_to_sqlite";
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageMigrationStatusResult {
+    pub migration_status: Option<String>,
+    pub last_migration_status: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct T7AdapterSmokeResult {
@@ -63,6 +72,16 @@ pub fn sqlite_update_job(app: &AppHandle, job_json: &str) -> StorageResult<Value
 pub fn sqlite_delete_job(app: &AppHandle, id: &str) -> StorageResult<bool> {
     let conn = open_app_database(app)?;
     delete_job_value(&conn, id)
+}
+
+pub fn sqlite_get_storage_migration_status(
+    app: &AppHandle,
+) -> StorageResult<StorageMigrationStatusResult> {
+    let conn = open_app_database(app)?;
+    Ok(StorageMigrationStatusResult {
+        migration_status: get_app_meta_value(&conn, "migration_status")?,
+        last_migration_status: get_last_migration_status(&conn)?,
+    })
 }
 
 pub fn run_t7_adapter_smoke(app: &AppHandle) -> StorageResult<T7AdapterSmokeResult> {
@@ -125,6 +144,30 @@ pub fn run_t7_adapter_smoke(app: &AppHandle) -> StorageResult<T7AdapterSmokeResu
 fn open_app_database(app: &AppHandle) -> StorageResult<Connection> {
     let db_path = app_database_path(app, T3_SMOKE_DB_FILE)?;
     open_initialized_database(&db_path)
+}
+
+fn get_app_meta_value(conn: &Connection, key: &str) -> StorageResult<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM app_meta WHERE key = ?1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|error| StorageError::query("app_meta", error.to_string()))
+}
+
+fn get_last_migration_status(conn: &Connection) -> StorageResult<Option<String>> {
+    conn.query_row(
+        "SELECT status
+         FROM migration_logs
+         WHERE migration_type = ?1
+         ORDER BY started_at DESC
+         LIMIT 1",
+        params![MIGRATION_TYPE_LOCALSTORAGE_TO_SQLITE],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|error| StorageError::query("migration_logs", error.to_string()))
 }
 
 fn parse_json_object(raw: &str, entity: &'static str) -> StorageResult<Value> {

@@ -12,9 +12,45 @@ export interface SQLiteClient {
   deleteJob(id: string): Promise<void>;
 }
 
+export interface SQLiteStorageMigrationStatus {
+  migrationStatus: string | null;
+  lastMigrationStatus: string | null;
+}
+
+export interface LocalStorageBackupWriteResult {
+  dbPath: string;
+  backupPath: string;
+  fileName: string;
+  checksum: string;
+  sizeBytes: number;
+  profileCount: number;
+  jobCount: number;
+  rawEntryCount: number;
+  backupLogId: string;
+}
+
+export interface LocalStorageMigrationResult {
+  dbPath: string;
+  migrationId: string;
+  status: string;
+  profileCount: number;
+  jobCount: number;
+  backupChecksum: string;
+  migrationStatus: string;
+}
+
+export interface SQLiteMigrationStatusClient {
+  getStorageMigrationStatus(): Promise<SQLiteStorageMigrationStatus>;
+}
+
+export interface SQLiteControlledMigrationClient extends SQLiteMigrationStatusClient {
+  writeLocalStorageBackup(payload: unknown): Promise<LocalStorageBackupWriteResult>;
+  migrateLocalStorageToSqlite(payload: unknown): Promise<LocalStorageMigrationResult>;
+}
+
 export type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
-export class TauriSQLiteClient implements SQLiteClient {
+export class TauriSQLiteClient implements SQLiteClient, SQLiteControlledMigrationClient {
   constructor(private readonly invoke: TauriInvoke = tauriInvoke) {}
 
   getProfile(): Promise<JobSeekerProfile | null> {
@@ -53,5 +89,21 @@ export class TauriSQLiteClient implements SQLiteClient {
 
   async deleteJob(id: string): Promise<void> {
     await this.invoke<boolean>('sqlite_delete_job', { id });
+  }
+
+  getStorageMigrationStatus(): Promise<SQLiteStorageMigrationStatus> {
+    return this.invoke('sqlite_get_storage_migration_status');
+  }
+
+  writeLocalStorageBackup(payload: unknown): Promise<LocalStorageBackupWriteResult> {
+    return this.invoke('write_localstorage_backup', {
+      payloadJson: JSON.stringify(payload),
+    });
+  }
+
+  migrateLocalStorageToSqlite(payload: unknown): Promise<LocalStorageMigrationResult> {
+    return this.invoke('migrate_localstorage_to_sqlite', {
+      migrationPayloadJson: JSON.stringify(payload),
+    });
   }
 }
