@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交，commit 为 `0997b2b`。T3 SQLite schema 与基础 repository 实现已完成：在 `src-tauri/` 内新增 schema / database / repository / error / models 模块，创建 `app_meta`、`profiles`、`jobs`、`migration_logs`、`backup_logs`，完成 schema_version、profile、job CRUD 的 Rust 侧最小验证；本轮未改 `src/storage/` 运行逻辑、未替换 localStorage、未写迁移、未改业务页面、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交，commit 为 `ff52669`。T4 localStorage JSON 备份导出已完成：新增前端纯函数生成 backup payload，新增 Tauri/Rust 侧写入 backups 目录、生成 checksum、记录 `backup_logs`，并新增自测与文档；本轮未替换 localStorage、未执行正式迁移、未改业务页面、未写 `migration_status=migrated`、未 push。
 
 当前是否允许进入下一步：
 
-> 否。T3 实现完成后等待用户验收；建议验收通过后进入 T4：localStorage JSON 备份导出。Codex 不自动提交 T3 改动、不 push、不继续实现正式迁移或 storage adapter 接入。
+> 否。T4 实现完成后等待用户验收；建议验收通过后进入 T5：localStorage -> SQLite 迁移。Codex 不自动提交 T4 改动、不 push、不继续执行正式迁移。
 
 ---
 
@@ -2249,3 +2249,80 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：否。T3 按 DEC-025 / DEC-026 和 T2 设计落地既定 SQLite 地基层；未新增依赖、未推翻既有产品边界、未改业务模型含义。
 - 是否允许进入下一步：否。等待用户验收 T3；建议验收后进入 T4：localStorage JSON 备份导出。
 - 建议 commit message：chore: 完成 v0.4 T3 SQLite schema 与基础 repository
+
+---
+
+### 2026-06-28 · v0.4 · T4 localStorage JSON 备份导出
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T3 SQLite schema 与基础 repository 验收通过，允许提交 T3，并要求进入 T4：localStorage JSON 备份导出；T4 只做迁移前 JSON 备份安全绳，不执行正式迁移、不替换现有业务存储、不改业务页面。
+- 执行者：Codex
+- T3 commit：
+  - `ff52669 feat: 完成 v0.4 T3 SQLite schema 与基础 repository`
+- 改动文件：
+  - `src/app/legacyLocalStorageBackup.ts`
+  - `scripts/localStorageBackup.selftest.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/error.rs`
+  - `src-tauri/src/sqlite/backup.rs`
+  - `docs/v0.4/localstorage-backup.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增前端纯函数 `createLegacyLocalStorageBackupPayload(driver, options?)`，扫描 `offerflow:profile`、`offerflow:job:*`、`offerpilot:profile`、`offerpilot:job:*`。
+  - 生成 backup payload，包含 `backupVersion`、`createdAt`、`source`、`namespace`、`namespaces`、`profile`、`profiles`、`jobs`、`rawEntries`、`counts`、`warnings`、`checksum`。
+  - JSON parse 成功的 profile/job 进入结构化字段；坏 JSON 不进入结构化字段，但原始 value 保留在 `rawEntries`，并写入 warning。
+  - 新增 Rust/Tauri backup 模块，接收 `payload_json`，写入 app data 下 `backups/` 目录。
+  - Rust 写入侧生成 checksum，使用轻量 Rust 依赖 `sha2` 生成 SHA-256，格式为 `sha256:<64位hex>`；checksum 计算来源为 checksum 置 null 后的 payload JSON。
+  - 写入成功后记录 `backup_logs.backup_type=localstorage_json`、`status=succeeded`、path、profile/job/raw entry 数量、size、checksum 和 data_json。
+  - 新增 Tauri command `write_localstorage_backup`，但未接入页面。
+  - Tauri dev smoke 只写测试 payload，不读取真实 localStorage、不执行迁移。
+- backup 文件实际路径：
+  - `C:\Users\Administrator\AppData\Roaming\com.offerflow.local\backups\offerflow-localstorage-backup-20260629-050113.json`
+- backup_logs 记录摘要：
+  - `backup_log_id=localstorage-json-1782709273-3d2e119d1232a6eb6423c8533661591af336849b0db7ad51418b6dbe039b3fca`
+  - `backup_type=localstorage_json`
+  - `status=succeeded`
+  - `profile_count=1`
+  - `job_count=1`
+  - `raw_entries=2`
+  - `size_bytes=1306`
+  - `checksum=sha256:3d2e119d1232a6eb6423c8533661591af336849b0db7ad51418b6dbe039b3fca`
+- 备份文件读回检查：
+  - `Exists=True`
+  - `BackupVersion=1`
+  - `Source=localStorage`
+  - `Profiles=1`
+  - `Jobs=1`
+  - `RawEntries=2`
+  - `Checksum=sha256:3d2e119d1232a6eb6423c8533661591af336849b0db7ad51418b6dbe039b3fca`
+  - `Warnings=0`
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust / Tauri 侧编译检查成功。
+  - `cargo test`：通过，5 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3 repository smoke 与 T4 backup smoke 均输出成功日志。
+- 红线自检：
+  - 未执行 localStorage -> SQLite 正式迁移。
+  - 未写 `migration_logs` 正式迁移记录。
+  - 未写 `migration_status=migrated`。
+  - 未删除或修改 localStorage 旧数据。
+  - 未替换现有 `ConfigStore` / `JobStore`。
+  - 未改 Vue 页面。
+  - 未做备份恢复 UI。
+  - 未做 AI API / BYOK / 云同步 / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T4 按 DEC-025 的迁移前备份要求落地，不新增依赖、不推翻既有存储策略、不执行正式迁移；checksum 使用无新增依赖的实现，已在 T4 文档说明。
+- 是否允许进入下一步：否。等待用户验收 T4；建议验收后进入 T5：localStorage -> SQLite 迁移。
+- 建议 commit message：feat: 完成 v0.4 T4 localStorage JSON 备份导出

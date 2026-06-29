@@ -17,6 +17,9 @@ pub enum StorageError {
     JsonDeserialize {
         message: String,
     },
+    BackupWrite {
+        message: String,
+    },
     Write {
         entity: &'static str,
         message: String,
@@ -63,6 +66,12 @@ impl StorageError {
         }
     }
 
+    pub fn backup_write(message: impl Into<String>) -> Self {
+        Self::BackupWrite {
+            message: message.into(),
+        }
+    }
+
     pub fn write(entity: &'static str, message: impl Into<String>) -> Self {
         Self::Write {
             entity,
@@ -90,6 +99,7 @@ impl StorageError {
             Self::SchemaInit { .. } => "schema_init_failed",
             Self::JsonSerialize { .. } => "json_serialize_failed",
             Self::JsonDeserialize { .. } => "json_deserialize_failed",
+            Self::BackupWrite { .. } => "backup_write_failed",
             Self::Write { .. } => "write_failed",
             Self::Query { .. } => "query_failed",
             Self::NotFound { .. } => "not_found",
@@ -102,6 +112,7 @@ impl StorageError {
             Self::SchemaInit { .. } => "SQLite schema could not be initialized.".to_string(),
             Self::JsonSerialize { .. } => "Record could not be serialized to JSON.".to_string(),
             Self::JsonDeserialize { .. } => "Record JSON could not be read back.".to_string(),
+            Self::BackupWrite { .. } => "Backup file could not be written.".to_string(),
             Self::Write { entity, .. } => format!("SQLite write failed for {entity}."),
             Self::Query { entity, .. } => format!("SQLite query failed for {entity}."),
             Self::NotFound { entity, id } => {
@@ -115,7 +126,8 @@ impl StorageError {
             Self::DatabaseOpen { message }
             | Self::SchemaInit { message }
             | Self::JsonSerialize { message }
-            | Self::JsonDeserialize { message } => message.clone(),
+            | Self::JsonDeserialize { message }
+            | Self::BackupWrite { message } => message.clone(),
             Self::Write { entity, message } | Self::Query { entity, message } => {
                 format!("{entity}: {message}")
             }
