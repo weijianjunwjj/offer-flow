@@ -1,6 +1,7 @@
 mod sqlite;
 
 use sqlite::backup::LocalStorageBackupWriteResult;
+use sqlite::migration::LocalStorageMigrationResult;
 use sqlite::models::T3RepositorySmokeResult;
 use tauri::AppHandle;
 
@@ -15,6 +16,15 @@ fn write_localstorage_backup(
     payload_json: String,
 ) -> Result<LocalStorageBackupWriteResult, String> {
     sqlite::backup::write_localstorage_backup(&app, &payload_json)
+        .map_err(|error| error.payload().message)
+}
+
+#[tauri::command]
+fn migrate_localstorage_to_sqlite(
+    app: AppHandle,
+    migration_payload_json: String,
+) -> Result<LocalStorageMigrationResult, String> {
+    sqlite::migration::migrate_localstorage_to_sqlite(&app, &migration_payload_json)
         .map_err(|error| error.payload().message)
 }
 
@@ -59,13 +69,31 @@ pub fn run() {
                         error.technical_message()
                     ),
                 }
+
+                match sqlite::migration::run_t5_migration_smoke(&app.handle()) {
+                    Ok(result) => println!(
+                        "[OfferFlow T5 LocalStorage Migration] migration_id={} status={} profile_count={} job_count={} backup_checksum={} migration_status={}",
+                        result.migration_id,
+                        result.status,
+                        result.profile_count,
+                        result.job_count,
+                        result.backup_checksum,
+                        result.migration_status
+                    ),
+                    Err(error) => eprintln!(
+                        "[OfferFlow T5 LocalStorage Migration] failed: {} ({})",
+                        error.payload().message,
+                        error.technical_message()
+                    ),
+                }
             }
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             sqlite_t3_check,
-            write_localstorage_backup
+            write_localstorage_backup,
+            migrate_localstorage_to_sqlite
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交，commit 为 `ff52669`。T4 localStorage JSON 备份导出已完成：新增前端纯函数生成 backup payload，新增 Tauri/Rust 侧写入 backups 目录、生成 checksum、记录 `backup_logs`，并新增自测与文档；本轮未替换 localStorage、未执行正式迁移、未改业务页面、未写 `migration_status=migrated`、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交，commit 为 `624fbce`。T5 localStorage -> SQLite 迁移已完成：新增 migration payload 纯函数、localStorage done 标记纯函数、Tauri migration command、Rust 侧事务迁移 / 校验 / migration_logs / app_meta.migration_status 写入，以及自测和文档；本轮未替换现有页面运行存储、未删除旧 localStorage、未改业务页面、未 push。
 
 当前是否允许进入下一步：
 
-> 否。T4 实现完成后等待用户验收；建议验收通过后进入 T5：localStorage -> SQLite 迁移。Codex 不自动提交 T4 改动、不 push、不继续执行正式迁移。
+> 否。T5 实现完成后等待用户验收；建议验收通过后进入 T6：迁移校验强化与失败回滚测试。Codex 不自动提交 T5 改动、不 push。
 
 ---
 
@@ -2326,3 +2326,79 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：否。T4 按 DEC-025 的迁移前备份要求落地，不新增依赖、不推翻既有存储策略、不执行正式迁移；checksum 使用无新增依赖的实现，已在 T4 文档说明。
 - 是否允许进入下一步：否。等待用户验收 T4；建议验收后进入 T5：localStorage -> SQLite 迁移。
 - 建议 commit message：feat: 完成 v0.4 T4 localStorage JSON 备份导出
+
+---
+
+### 2026-06-29 · v0.4 · T5 localStorage -> SQLite 迁移
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T4 备份 payload / rawEntries / warnings / backup_logs / 边界均验收通过；提交前要求 checksum 升级为 `sha256`，随后提交 T4，并进入 T5：localStorage -> SQLite 正式迁移流程。
+- 执行者：Codex
+- T4 commit：
+  - `624fbce feat: 完成 v0.4 T4 localStorage JSON 备份导出`
+- 改动文件：
+  - `src/app/localStorageSqliteMigration.ts`
+  - `scripts/localStorageMigration.selftest.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/migration.rs`
+  - `docs/v0.4/localstorage-to-sqlite-migration.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增前端纯函数 `createLocalStorageSqliteMigrationPayload(backup, options?)`，基于 T4 backup payload 派生迁移输入。
+  - 新增前端纯函数 `markSqliteMigrationDone(driver)`，只写 `offerflow:migration:sqlite:v0.4=done`，不删除旧 key。
+  - namespace 冲突策略：profile / job 同时存在 `offerflow:*` 和 `offerpilot:*` 时优先 `offerflow:*`，并写入 warnings。
+  - T4 parse warnings 会带入 T5 migration warnings，坏数据不静默丢弃。
+  - 新增 Tauri command `migrate_localstorage_to_sqlite`。
+  - Rust 侧事务写入 `profiles` / `jobs`，独立列由完整对象派生，完整对象写入 `data_json`。
+  - 写入 `migration_logs.status=succeeded`、`app_meta.migration_status=migrated` 和 `app_meta.last_successful_migration_id`。
+  - 校验失败时回滚 profile/job 写入，尽量写入 `migration_logs.status=failed`，不写 migrated 状态。
+  - 写入 `jobs.data_json` 前移除派生决策字段：`strategy`、`nextAction`、`stopLoss`、`scenario`、`companyWarning`。
+  - T3 repository smoke 在持久数据库中只校验本次 T3 fixture 的两个 job 相对顺序，避免被 T5 smoke 写入的迁移测试数据影响。
+- backup 文件路径：
+  - T5 smoke 使用 T4 smoke 备份文件：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\backups\offerflow-localstorage-backup-20260629-051752.json`
+- migration_logs 摘要：
+  - `migration_id=localstorage-to-sqlite-1782710272000-1111111111111111111111111111111111111111111111111111111111111111`
+  - `migration_type=localstorage_to_sqlite`
+  - `status=succeeded`
+  - `profile_count_before=1`
+  - `job_count_before=2`
+  - `profile_count_after=1`
+  - `job_count_after=2`
+  - `checksum_before=sha256:1111111111111111111111111111111111111111111111111111111111111111`
+- app_meta 迁移状态：
+  - `migration_status=migrated`
+  - `last_successful_migration_id=<migration_id>`
+- localStorage done 标记：
+  - `offerflow:migration:sqlite:v0.4=done`
+  - 由 `scripts/localStorageMigration.selftest.ts` 验证；旧 profile/job key 未删除。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，12 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，无 warning。
+  - `cargo test`：通过，7 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3/T4/T5 smoke 均输出成功日志。
+- 红线自检：
+  - 未删除任何旧 localStorage 数据。
+  - 未替换现有 `ConfigStore` / `JobStore`。
+  - 未修改 `src/storage/` 现有运行逻辑。
+  - 未改 Vue 页面。
+  - 未做自动启动迁移 UI。
+  - 未做恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T5 按 DEC-025 迁移红线和 T4 备份安全绳落地，未新增产品边界、未替换运行存储、未删除旧数据；checksum 升级为 SHA-256 是用户本轮明确裁定。
+- 是否允许进入下一步：否。等待用户验收 T5；建议验收后进入 T6：迁移校验强化与失败回滚测试。
+- 建议 commit message：feat: 完成 v0.4 T5 localStorage 到 SQLite 迁移

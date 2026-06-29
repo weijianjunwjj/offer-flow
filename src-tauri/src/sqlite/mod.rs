@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod database;
 pub mod error;
+pub mod migration;
 pub mod models;
 pub mod repository;
 pub mod schema;
@@ -46,8 +47,13 @@ pub fn run_t3_repository_smoke_at_path(db_path: &Path) -> StorageResult<T3Reposi
         .iter()
         .map(|job| job.id.clone())
         .collect::<Vec<_>>();
+    let smoke_listed_job_ids = listed_job_ids
+        .iter()
+        .filter(|id| **id == newer_job.id || **id == older_job.id)
+        .cloned()
+        .collect::<Vec<_>>();
 
-    if listed_job_ids.first() != Some(&newer_job.id) {
+    if smoke_listed_job_ids != vec![newer_job.id.clone(), older_job.id.clone()] {
         return Err(StorageError::query(
             "jobs",
             "list jobs by updated_at desc returned an unexpected order",
@@ -68,7 +74,7 @@ pub fn run_t3_repository_smoke_at_path(db_path: &Path) -> StorageResult<T3Reposi
         profile_id: stored_profile.id,
         profile_target_city: stored_profile.target_city.unwrap_or_default(),
         job_id: stored_newer_job.id,
-        listed_job_ids,
+        listed_job_ids: smoke_listed_job_ids,
         deleted_old_job,
         deleted_new_job,
         deleted_job_missing,
