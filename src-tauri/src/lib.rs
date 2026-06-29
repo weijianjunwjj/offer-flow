@@ -1,6 +1,7 @@
 mod sqlite;
 
 use sqlite::backup::LocalStorageBackupWriteResult;
+use sqlite::error::StorageErrorPayload;
 use sqlite::migration::LocalStorageMigrationResult;
 use sqlite::models::T3RepositorySmokeResult;
 use tauri::AppHandle;
@@ -23,9 +24,9 @@ fn write_localstorage_backup(
 fn migrate_localstorage_to_sqlite(
     app: AppHandle,
     migration_payload_json: String,
-) -> Result<LocalStorageMigrationResult, String> {
+) -> Result<LocalStorageMigrationResult, StorageErrorPayload> {
     sqlite::migration::migrate_localstorage_to_sqlite(&app, &migration_payload_json)
-        .map_err(|error| error.payload().message)
+        .map_err(|error| error.payload())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

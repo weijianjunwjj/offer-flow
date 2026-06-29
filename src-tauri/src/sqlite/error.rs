@@ -20,6 +20,9 @@ pub enum StorageError {
     BackupWrite {
         message: String,
     },
+    AlreadyMigrated {
+        message: String,
+    },
     Write {
         entity: &'static str,
         message: String,
@@ -72,6 +75,12 @@ impl StorageError {
         }
     }
 
+    pub fn already_migrated(message: impl Into<String>) -> Self {
+        Self::AlreadyMigrated {
+            message: message.into(),
+        }
+    }
+
     pub fn write(entity: &'static str, message: impl Into<String>) -> Self {
         Self::Write {
             entity,
@@ -100,6 +109,7 @@ impl StorageError {
             Self::JsonSerialize { .. } => "json_serialize_failed",
             Self::JsonDeserialize { .. } => "json_deserialize_failed",
             Self::BackupWrite { .. } => "backup_write_failed",
+            Self::AlreadyMigrated { .. } => "already_migrated",
             Self::Write { .. } => "write_failed",
             Self::Query { .. } => "query_failed",
             Self::NotFound { .. } => "not_found",
@@ -113,6 +123,9 @@ impl StorageError {
             Self::JsonSerialize { .. } => "Record could not be serialized to JSON.".to_string(),
             Self::JsonDeserialize { .. } => "Record JSON could not be read back.".to_string(),
             Self::BackupWrite { .. } => "Backup file could not be written.".to_string(),
+            Self::AlreadyMigrated { .. } => {
+                "SQLite migration has already completed.".to_string()
+            }
             Self::Write { entity, .. } => format!("SQLite write failed for {entity}."),
             Self::Query { entity, .. } => format!("SQLite query failed for {entity}."),
             Self::NotFound { entity, id } => {
@@ -127,7 +140,8 @@ impl StorageError {
             | Self::SchemaInit { message }
             | Self::JsonSerialize { message }
             | Self::JsonDeserialize { message }
-            | Self::BackupWrite { message } => message.clone(),
+            | Self::BackupWrite { message }
+            | Self::AlreadyMigrated { message } => message.clone(),
             Self::Write { entity, message } | Self::Query { entity, message } => {
                 format!("{entity}: {message}")
             }

@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交，commit 为 `624fbce`。T5 localStorage -> SQLite 迁移已完成：新增 migration payload 纯函数、localStorage done 标记纯函数、Tauri migration command、Rust 侧事务迁移 / 校验 / migration_logs / app_meta.migration_status 写入，以及自测和文档；本轮未替换现有页面运行存储、未删除旧 localStorage、未改业务页面、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交。T5 localStorage -> SQLite 迁移已由用户验收并提交，commit 为 `f2268d2`。T6 迁移校验强化与失败回滚测试已完成：新增 repeated migration `already_migrated` 策略、事务回滚测试、失败日志 errorCode、前端 backup/done 标记失败门禁测试，以及 T6 文档；本轮未替换现有页面运行存储、未删除旧 localStorage、未改业务页面、未 push。
 
 当前是否允许进入下一步：
 
-> 否。T5 实现完成后等待用户验收；建议验收通过后进入 T6：迁移校验强化与失败回滚测试。Codex 不自动提交 T5 改动、不 push。
+> 否。T6 实现完成后等待用户验收；建议验收通过后进入 T7：SQLite adapter 接入 ConfigStore / JobStore。Codex 不自动提交 T6 改动、不 push。
 
 ---
 
@@ -2402,3 +2402,71 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：否。T5 按 DEC-025 迁移红线和 T4 备份安全绳落地，未新增产品边界、未替换运行存储、未删除旧数据；checksum 升级为 SHA-256 是用户本轮明确裁定。
 - 是否允许进入下一步：否。等待用户验收 T5；建议验收后进入 T6：迁移校验强化与失败回滚测试。
 - 建议 commit message：feat: 完成 v0.4 T5 localStorage 到 SQLite 迁移
+
+---
+
+### 2026-06-29 · v0.4 · T6 迁移校验强化与失败回滚测试
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T5 通过并要求先提交 T5，再进入 T6：强化迁移失败路径、校验边界、幂等行为和回滚测试，确保 T5 迁移链路不是只在 happy path 成功。
+- 执行者：Codex
+- T5 commit：
+  - `f2268d2 feat: 完成 v0.4 T5 localStorage 到 SQLite 迁移`
+- 改动文件：
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/error.rs`
+  - `src-tauri/src/sqlite/migration.rs`
+  - `scripts/localStorageMigration.selftest.ts`
+  - `docs/v0.4/migration-validation-rollback.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 Rust 错误码 `already_migrated`，当 `app_meta.migration_status=migrated` 已存在时默认拒绝重复迁移。
+  - Tauri migration command 返回结构化 `StorageErrorPayload`，保留错误码给后续 adapter 识别。
+  - T5 dev smoke 改用独立 T5 smoke SQLite 文件，避免重复启动时被正式幂等策略挡住。
+  - `migration_logs.data_json` 在失败记录中写入 `errorCode`，便于失败摘要排查。
+  - Rust 侧新增重复 job id 校验，防止迁移数量与实际落库数量不一致。
+  - Rust 单元测试覆盖 missing checksum、profile 写失败、job 中途失败、校验失败、重复迁移 already_migrated 和既有 happy path。
+  - 前端 selftest 覆盖 backup failure gate、T4 parse warning 传递、坏 JSON raw value 保留、namespace 冲突、done 标记重复写与 done 写失败。
+  - 新增 T6 文档 `docs/v0.4/migration-validation-rollback.md`，记录 A-H 失败场景、策略和覆盖测试。
+- repeated migration / already_migrated 策略：
+  - 默认拒绝重复迁移，返回 `already_migrated`。
+  - 不覆盖既有 SQLite 数据。
+  - 不写第二条 failed migration log。
+  - 不新增第二个 done 标记。
+  - force remigrate 不在 T6 默认实现范围内。
+- rollback 策略：
+  - profile/job 写入和 succeeded log / migrated meta 位于同一 SQLite transaction。
+  - 任一步失败时 transaction 回滚，profile/job 不部分保留。
+  - transaction 外尽量写入 `migration_logs.status=failed`。
+  - 不写 `app_meta.migration_status=migrated`。
+  - 前端不写 done 标记，旧 localStorage 保持不动。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，21 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，12 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3/T4/T5 smoke 均输出成功日志；T5 smoke 使用独立 T5 smoke SQLite 文件，避免重复启动时触发正式 already_migrated 策略。
+- 红线自检：
+  - 未替换现有 `ConfigStore` / `JobStore`。
+  - 未修改 `src/storage/` 现有运行逻辑。
+  - 未改 Vue 页面。
+  - 未做自动启动迁移 UI。
+  - 未删除 localStorage。
+  - 未做恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T6 落地用户已明确的迁移可靠性要求和重复迁移默认拒绝策略，未新增产品边界、未替换运行存储、未删除旧数据。
+- 是否允许进入下一步：否。等待用户验收 T6；建议验收后进入 T7：SQLite adapter 接入 ConfigStore / JobStore。
+- 建议 commit message：test: 强化 v0.4 localStorage 到 SQLite 迁移回滚测试

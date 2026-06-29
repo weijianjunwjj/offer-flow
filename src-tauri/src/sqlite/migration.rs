@@ -2,9 +2,10 @@ use super::database::{app_database_path, open_initialized_database, unix_timesta
 use super::error::{StorageError, StorageResult};
 use super::repository::PROFILE_ID_DEFAULT;
 use super::T3_SMOKE_DB_FILE;
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 use tauri::AppHandle;
 
 const MIGRATION_TYPE_LOCALSTORAGE_TO_SQLITE: &str = "localstorage_to_sqlite";
@@ -41,11 +42,15 @@ pub fn migrate_localstorage_to_sqlite(
 
 pub fn run_t5_migration_smoke(app: &AppHandle) -> StorageResult<LocalStorageMigrationResult> {
     let now_millis = unix_timestamp()? * 1000;
+    let smoke_db_file = format!("offerflow-t5-smoke-{now_millis}.sqlite3");
+    let db_path = app_database_path(app, &smoke_db_file)?;
+    let mut conn = open_initialized_database(&db_path)?;
+    let backup_checksum = format!("sha256:{:064x}", 1_u8);
     let payload = json!({
         "migrationVersion": 1,
         "createdAt": now_millis,
         "source": "localStorageBackup",
-        "backupChecksum": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "backupChecksum": backup_checksum,
         "backupCreatedAt": now_millis - 1000,
         "profile": {
             "key": "offerflow:profile",
@@ -86,8 +91,9 @@ pub fn run_t5_migration_smoke(app: &AppHandle) -> StorageResult<LocalStorageMigr
         "warnings": []
     });
 
-    migrate_localstorage_to_sqlite(
-        app,
+    migrate_localstorage_payload_with_conn(
+        &mut conn,
+        &db_path.display().to_string(),
         &serde_json::to_string(&payload)
             .map_err(|error| StorageError::json_serialize(error.to_string()))?,
     )
@@ -102,6 +108,8 @@ pub fn migrate_localstorage_payload_with_conn(
     let migration = MigrationInput::from_payload(&payload)?;
     let migration_id = migration_id(migration.created_at, &migration.backup_checksum);
     let started_at = unix_timestamp()?;
+
+    ensure_not_already_migrated(conn)?;
 
     match attempt_migration(conn, &migration, &migration_id, started_at) {
         Ok(result) => Ok(LocalStorageMigrationResult {
@@ -204,6 +212,25 @@ fn parse_payload(payload_json: &str) -> StorageResult<Value> {
         .map_err(|error| StorageError::json_deserialize(error.to_string()))
 }
 
+fn ensure_not_already_migrated(conn: &Connection) -> StorageResult<()> {
+    let status = conn
+        .query_row(
+            "SELECT value FROM app_meta WHERE key = ?1",
+            params![APP_META_MIGRATION_STATUS],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| StorageError::query("app_meta", error.to_string()))?;
+
+    if status.as_deref() == Some("migrated") {
+        return Err(StorageError::already_migrated(
+            "app_meta.migration_status is already migrated",
+        ));
+    }
+
+    Ok(())
+}
+
 fn upsert_profile_value(
     tx: &Transaction<'_>,
     profile: &MigratedProfile,
@@ -297,6 +324,16 @@ fn validate_migration(
     migration: &MigrationInput,
     profile_count: i64,
 ) -> StorageResult<()> {
+    let mut job_ids = HashSet::new();
+    for job in &migration.jobs {
+        if !job_ids.insert(job.id.as_str()) {
+            return Err(StorageError::query(
+                "jobs",
+                format!("job migration count mismatch: duplicate id {}", job.id),
+            ));
+        }
+    }
+
     if profile_count > 0 {
         let stored_profile_count = tx
             .query_row(
@@ -387,7 +424,7 @@ fn insert_failed_migration_log(
             checksum_before: Some(migration.backup_checksum.clone()),
             checksum_after: None,
             error_message: Some(error.user_message()),
-            data_json: migration_log_data_json(migration),
+            data_json: migration_log_data_json_with_error(migration, Some(error)),
         },
     )
 }
@@ -447,11 +484,19 @@ fn set_app_meta(conn: &Connection, key: &str, value: &str, updated_at: i64) -> S
 }
 
 fn migration_log_data_json(migration: &MigrationInput) -> Option<String> {
+    migration_log_data_json_with_error(migration, None)
+}
+
+fn migration_log_data_json_with_error(
+    migration: &MigrationInput,
+    error: Option<&StorageError>,
+) -> Option<String> {
     Some(
         json!({
             "warningCount": migration.warning_count,
             "backupRawEntries": migration.backup_raw_entries,
-            "backupParseErrors": migration.backup_parse_errors
+            "backupParseErrors": migration.backup_parse_errors,
+            "errorCode": error.map(StorageError::code)
         })
         .to_string(),
     )
@@ -852,10 +897,147 @@ mod tests {
         assert_eq!(failed_count, 1);
     }
 
+    #[test]
+    fn missing_backup_checksum_rejects_before_sqlite_writes() {
+        let mut conn = test_connection();
+        let mut payload = test_migration_payload();
+        payload["backupChecksum"] = Value::Null;
+
+        let result =
+            migrate_localstorage_payload_with_conn(&mut conn, ":memory:", &payload.to_string());
+
+        assert!(result.is_err());
+        assert_eq!(table_count(&conn, "profiles"), 0);
+        assert_eq!(table_count(&conn, "jobs"), 0);
+        assert_eq!(table_count(&conn, "migration_logs"), 0);
+        assert_eq!(app_meta(&conn, APP_META_MIGRATION_STATUS), None);
+    }
+
+    #[test]
+    fn profile_write_failure_rolls_back_jobs_and_logs_failed() {
+        let mut conn = test_connection();
+        conn.execute("DROP TABLE profiles", [])
+            .expect("drop profiles table");
+        let payload = test_migration_payload();
+
+        let result =
+            migrate_localstorage_payload_with_conn(&mut conn, ":memory:", &payload.to_string());
+
+        assert!(result.is_err());
+        assert_eq!(table_count(&conn, "jobs"), 0);
+        assert_eq!(status_count(&conn, MIGRATION_STATUS_FAILED), 1);
+        assert_eq!(app_meta(&conn, APP_META_MIGRATION_STATUS), None);
+    }
+
+    #[test]
+    fn job_write_midway_failure_rolls_back_profile_and_jobs() {
+        let mut conn = test_connection();
+        let mut payload = test_migration_payload();
+        payload["jobs"][1]["data"]["updatedAt"] = Value::Null;
+
+        let result =
+            migrate_localstorage_payload_with_conn(&mut conn, ":memory:", &payload.to_string());
+
+        assert!(result.is_err());
+        assert_eq!(table_count(&conn, "profiles"), 0);
+        assert_eq!(table_count(&conn, "jobs"), 0);
+        assert_eq!(status_count(&conn, MIGRATION_STATUS_FAILED), 1);
+        assert_eq!(app_meta(&conn, APP_META_MIGRATION_STATUS), None);
+    }
+
+    #[test]
+    fn validation_failure_rolls_back_and_logs_failed() {
+        let mut conn = test_connection();
+        let mut payload = test_migration_payload();
+        payload["jobs"][1]["id"] = json!("job-new");
+        payload["jobs"][1]["data"]["id"] = json!("job-new");
+        payload["jobs"][1]["data"]["company"] = json!("Duplicate Co");
+
+        let result =
+            migrate_localstorage_payload_with_conn(&mut conn, ":memory:", &payload.to_string());
+
+        assert!(result.is_err());
+        assert_eq!(table_count(&conn, "profiles"), 0);
+        assert_eq!(table_count(&conn, "jobs"), 0);
+        assert_eq!(status_count(&conn, MIGRATION_STATUS_FAILED), 1);
+        assert_eq!(app_meta(&conn, APP_META_MIGRATION_STATUS), None);
+
+        let failed_data_json: String = conn
+            .query_row(
+                "SELECT data_json FROM migration_logs WHERE status = ?1",
+                params![MIGRATION_STATUS_FAILED],
+                |row| row.get(0),
+            )
+            .expect("failed migration data_json");
+        let failed_data: Value =
+            serde_json::from_str(&failed_data_json).expect("parse failed data_json");
+        assert_eq!(failed_data["errorCode"], "query_failed");
+    }
+
+    #[test]
+    fn repeated_migration_returns_already_migrated_and_preserves_existing_data() {
+        let mut conn = test_connection();
+        let payload = test_migration_payload();
+        migrate_localstorage_payload_with_conn(&mut conn, ":memory:", &payload.to_string())
+            .expect("first migration");
+
+        let mut repeated_payload = test_migration_payload();
+        repeated_payload["jobs"][0]["data"]["company"] = json!("Overwritten Co");
+
+        let result = migrate_localstorage_payload_with_conn(
+            &mut conn,
+            ":memory:",
+            &repeated_payload.to_string(),
+        );
+
+        let error = result.expect_err("repeated migration should be rejected");
+        assert_eq!(error.code(), "already_migrated");
+        assert_eq!(status_count(&conn, MIGRATION_STATUS_SUCCEEDED), 1);
+        assert_eq!(status_count(&conn, MIGRATION_STATUS_FAILED), 0);
+        assert_eq!(
+            app_meta(&conn, APP_META_LAST_SUCCESSFUL_MIGRATION_ID).is_some(),
+            true,
+        );
+
+        let company: String = conn
+            .query_row(
+                "SELECT company FROM jobs WHERE id = ?1",
+                params!["job-new"],
+                |row| row.get(0),
+            )
+            .expect("job company");
+        assert_eq!(company, "New Co");
+    }
+
     fn test_connection() -> Connection {
         let mut conn = Connection::open_in_memory().expect("open memory database");
         super::super::schema::initialize_schema(&mut conn).expect("initialize schema");
         conn
+    }
+
+    fn table_count(conn: &Connection, table_name: &str) -> i64 {
+        let sql = format!("SELECT COUNT(*) FROM {table_name}");
+        conn.query_row(&sql, [], |row| row.get(0))
+            .expect("table count")
+    }
+
+    fn status_count(conn: &Connection, status: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM migration_logs WHERE status = ?1",
+            params![status],
+            |row| row.get(0),
+        )
+        .expect("status count")
+    }
+
+    fn app_meta(conn: &Connection, key: &str) -> Option<String> {
+        conn.query_row(
+            "SELECT value FROM app_meta WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()
+        .expect("app_meta")
     }
 
     fn test_migration_payload() -> Value {
