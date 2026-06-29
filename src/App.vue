@@ -12,7 +12,6 @@ import {
   NLayoutHeader,
   NLayoutContent,
   NButton,
-  NSpace,
 } from 'naive-ui';
 import ProfileConfigPage from './pages/ProfileConfigPage.vue';
 import JobListPage from './pages/JobListPage.vue';
@@ -79,7 +78,7 @@ const contentStyle =
               </span>
             </div>
           </div>
-          <n-space :size="8">
+          <div class="nav-actions">
             <n-button
               :type="section === 'profile' ? 'primary' : 'tertiary'"
               :ghost="section === 'profile'"
@@ -96,7 +95,7 @@ const contentStyle =
             >
               岗位台账
             </n-button>
-          </n-space>
+          </div>
         </n-layout-header>
 
         <n-layout-content class="app-content" :content-style="contentStyle">
@@ -175,6 +174,8 @@ body,
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  padding-right: 190px;
   margin-right: auto;
 }
 .brand-mark {
@@ -189,6 +190,7 @@ body,
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 .brand-line {
   display: flex;
@@ -213,7 +215,20 @@ body,
   border-radius: 999px;
 }
 .tagline {
+  max-width: min(56vw, 720px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   color: #5b6573;
+}
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: absolute;
+  top: 18px;
+  right: 24px;
+  flex: none;
 }
 </style>

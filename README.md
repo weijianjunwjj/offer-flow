@@ -4,7 +4,7 @@ Offer来了（OfferFlow）是面向 Boss 直聘求职场景的本地优先 AI �
 
 它不接 API，不做自动投递，不做爬虫，不做后端。它帮助求职者把“看岗位、补充公司与机会信息、生成一次性分析 Prompt、承接外部 AI 结果、自动解析机会雷达、维护跟进事实、派生下一步动作、复制推荐话术、保存岗位台账”整理成一条稳定流程。
 
-当前版本：**v0.3.0 · Semi-manual Follow-up Decision Desk / 半自动求职跟进决策台**。
+当前版本：**v0.4.0 收口中 · 本地服务化与 SQLite 数据文件化**。
 
 ## 项目定位
 
@@ -20,6 +20,7 @@ OfferFlow 不是 AI 自动分析器，而是：
 - 分析能力来自你自己选择的外部 AI：工具生成一份 One-Shot Prompt，你**复制一次**给外部 AI，再把返回的完整内容**粘贴回工具一次**。
 - v0.2.0 相比 v0.1 的关键变化：Prompt 要求外部 AI 在报告末尾附带一段固定的 `OFFER_FLOW_JSON` 数据块；工具会**尽力解析**它，自动生成机会雷达。这仍然是手动复制粘贴，不是自动调用 AI。
 - v0.3.0 在机会雷达之上增加半自动跟进决策：用户手动维护沟通与跟进事实，工具通过纯函数实时派生策略建议、下一步动作、推荐话术场景、止损判断和同公司只读预警。
+- v0.4.0 引入 Tauri 桌面运行时和本地 SQLite 数据库文件；Web 浏览器模式仍可继续使用 localStorage。v0.4 只改本地存储底座，仍不接 AI API、不做 BYOK、不云同步、不登录、不自动操作 Boss。
 - 解析失败、未找到 JSON、字段不完整都不会阻断保存，也不会清空已有数据（原文永远优先落盘）。
 
 ## 核心闭环
@@ -53,26 +54,41 @@ OfferFlow 不是 AI 自动分析器，而是：
 
 ## 本地运行
 
-要求 Node 18+。
+要求 Node 18+。Tauri 桌面模式还需要 Rust / Cargo 和 Windows MSVC Build Tools。
 
 ```bash
 # 安装依赖
 npm install
 
-# 启动开发服务器（默认 http://localhost:5173）
+# Web dev（localStorage）
 npm run dev
+
+# Tauri dev（桌面 SQLite 能力）
+npm.cmd exec tauri -- dev
 
 # TypeScript 类型检查（strict，期望 0 error）
 npm run typecheck
 
-# 自测（存储层 + OFFER_FLOW_JSON 解析器；期望全部通过）
+# Web 构建
+npm run build
+
+# 旧 selftest 汇总
 npm run selftest
 
-# 生产构建
-npm run build
+# v0.4 storage / migration selftest
+npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts
+npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts
+npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts
+npm.cmd exec tsx -- scripts/backendSwitch.selftest.ts
+npm.cmd exec tsx -- scripts/storageMigrationPanel.selftest.ts
+
+# Rust / Tauri 侧检查
+cd src-tauri
+cargo check
+cargo test
 ```
 
-所有数据保存在浏览器 localStorage，本地优先、刷新不丢，无需登录、无需后端。旧版本（v0.1）岗位数据读取时会自动补默认值，兼容打开。
+Web 模式数据保存在浏览器 localStorage，本地优先、刷新不丢，无需登录、无需云端。Tauri 桌面模式支持在用户确认后生成 localStorage JSON 备份，并迁移到本机 SQLite 文件；旧 localStorage 数据不会被删除。
 
 ## 功能清单（v0.3.0 累计）
 
@@ -123,10 +139,12 @@ npm run build
 - v0.1：Manual Mode，不接 API，验证求职工作流（已封版 v0.1.0）
 - v0.2：One-Shot Opportunity Radar，固定 JSON 解析 + 机会雷达 + Naive UI 浅色壳（已封版 v0.2.0，仍不接 API）
 - v0.3：Semi-manual Follow-up Decision Desk，半自动求职跟进决策台（当前 v0.3.0，仍不接 API、不自动操作 Boss、不做 CRM）
-- 后续：是否进入 BYOK / 正式 AI Adapter 必须由用户另行明确拍板，不属于 v0.3 待办项
+- v0.4：Local SQLite Storage，本地服务化与 SQLite 数据文件化（收口中，桌面模式支持本地 SQLite，Web 模式仍可 localStorage）
+- 后续：是否进入 BYOK / 正式 AI Adapter 必须由用户另行明确拍板，不属于 v0.4 待办项
 
 ## Release Notes
 
+- v0.4.0：本地服务化与 SQLite 数据文件化。详见 [docs/release/v0.4.0.md](docs/release/v0.4.0.md)。
 - v0.3.0：半自动求职跟进决策台。详见 [docs/release/v0.3.0.md](docs/release/v0.3.0.md)。
 - v0.2.0：One-Shot Opportunity Radar。详见 [docs/release/v0.2.0.md](docs/release/v0.2.0.md)。
 - v0.1.0：P0 manual-mode 闭环完成。详见 [docs/release/v0.1.0.md](docs/release/v0.1.0.md)。

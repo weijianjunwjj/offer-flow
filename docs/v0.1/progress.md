@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交。T5 localStorage -> SQLite 迁移已由用户验收并提交。T6 迁移校验强化与失败回滚测试已由用户验收并提交。T7 SQLite adapter 接入 ConfigStore / JobStore 已由用户验收并提交。T8 受控切换 SQLite backend / 启动迁移入口设计已由用户验收并提交，commit 为 `8cc014f`。T9 桌面模式最小 UI / 数据迁移确认入口已完成：新增 `StorageMigrationPanel`、UI 状态辅助、panel selftest 和 T9 文档；入口挂在配置页底部，Web 模式不显示可执行迁移按钮，Tauri 模式必须用户确认后才调用受控迁移；本轮未自动迁移、未删除 localStorage、未默认强制切 SQLite、未做恢复 UI、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1-T8 均已由用户验收并提交。T9 桌面模式最小 UI / 数据迁移确认入口已由用户验收并提交，commit 为 `df4710f`。当前进入 T10：真实桌面端端到端验收与 release 文档收口；本轮只做验收、小 bug 修复和文档收口，不新增大功能、不改迁移策略、不删除 localStorage、不 push。
 
 当前是否允许进入下一步：
 
-> 否。T9 实现完成后等待用户验收；建议验收通过后进入 T10：真实桌面端端到端验收与 release 文档收口。Codex 不自动提交 T9 改动、不 push。
+> 否。T10 正在收口并等待用户验收；本轮不自动提交、不 push、不打 tag。验收通过后再由用户决定是否进入 v0.4.0 最终提交 / tag / push。
 
 ---
 
@@ -2697,3 +2697,87 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：否。T9 是 DEC-025 / DEC-026 和 T8 受控迁移机制的 UI 入口落地，未新增产品边界，未改变默认 backend 策略，未删除旧数据。
 - 是否允许进入下一步：否。等待用户验收 T9；建议验收后进入 T10：真实桌面端端到端验收与 release 文档收口。
 - 建议 commit message：feat: 新增 v0.4 桌面端 SQLite 迁移确认入口
+
+---
+
+### 2026-06-29 · v0.4 · T10 真实桌面端端到端验收与 release 文档收口
+
+- 状态：已完成命令级验收与文档收口，等待用户验收；可见窗口人工点击项受当前 Codex 沙箱 / 提升权限环境限制，需用户在本机补验。
+- 来源：用户确认 T9 通过并要求先提交 T9，再进入 T10：真实桌面端端到端验收与 release 文档收口。
+- 执行者：Codex
+- T9 commit：
+  - `df4710f feat: 完成 v0.4 T9 桌面端迁移确认入口`
+- 改动文件：
+  - `src/App.vue`
+  - `docs/v0.4/desktop-e2e-acceptance.md`
+  - `docs/release/v0.4.0.md`
+  - `README.md`
+  - `docs/v0.1/progress.md`
+- T10 小修：
+  - 真实桌面检查中发现顶部导航在 Tauri WebView 下可能被品牌说明挤出可视区域。
+  - `src/App.vue` 将品牌说明限制为单行省略，并将顶部导航按钮固定为右侧 flex 容器。
+  - 该修复不改迁移策略、不改数据模型、不改业务页面流程、不新增路由。
+- release 文档收口：
+  - 新增 `docs/release/v0.4.0.md`，记录 v0.4 版本定位、主要能力、仍然不做、数据安全说明、验证结果和已知限制。
+  - 新增 `docs/v0.4/desktop-e2e-acceptance.md`，记录 T10 桌面端验收命令、真实路径、smoke 输出、当前环境限制和用户补验清单。
+  - 更新 `README.md`，说明 v0.4 支持 Tauri 桌面 SQLite，Web 模式仍使用 localStorage，并补充基本运行 / 验证命令。
+- Tauri dev 验收：
+  - 未提升权限运行时，当前 Codex 沙箱会拦截 `%APPDATA%/com.offerflow.local` 写入，SQLite smoke 报 `attempt to write a readonly database` / `unable to open database file`。
+  - 提升权限运行后，`npm.cmd exec tauri -- dev` 命令级 smoke 通过，T3/T4/T5/T7 均输出成功日志。
+  - 提升权限运行时 GUI 窗口未暴露到当前可枚举交互桌面，因此 Codex 无法诚实完成全部可见窗口点击验收。
+- Tauri dev smoke 摘要：
+  - SQLite 数据库文件：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3`
+  - backup 文件：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\backups\offerflow-localstorage-backup-20260629-111022.json`
+  - migration id：`localstorage-to-sqlite-1782731422000-0000000000000000000000000000000000000000000000000000000000000001`
+  - `migration_status=migrated`
+  - `profile_count=1`
+  - `job_count=2`
+- 自动验证结果：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`：通过，11 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`：通过，21 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts`：通过，14 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/backendSwitch.selftest.ts`：通过，22 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/storageMigrationPanel.selftest.ts`：通过，18 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过。
+  - `npm.cmd run build`：通过，保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，13 passed, 0 failed。
+- 红线自检：
+  - 未新增大功能。
+  - 未改数据模型。
+  - 未改迁移策略。
+  - 未删除 localStorage。
+  - 未做恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+  - 未打 tag。
+- 是否涉及 decision-log 更新：否。T10 是验收、小 bug 修复和 release 文档收口，未新增产品边界，未推翻 DEC-025 / DEC-026。
+- 是否允许进入下一步：否。等待用户验收 T10；建议最终 tag / push 前由用户在本机可见 Tauri 窗口补跑 `docs/v0.4/desktop-e2e-acceptance.md` 的点击清单。
+- 建议 commit message：docs: 收口 v0.4 桌面端验收与 release 文档
+
+---
+
+### 2026-06-29 · v0.4 · T10 接力复跑（Claude Code）
+
+- 背景：Codex token 用完，由 Claude Code 接力 T10 收口；只复跑验证、记录真实结果、收口文档，不重做、不新增功能。
+- 接手前检查：`git status` / `git diff` 确认未提交内容仅为 T10 收口的 5 个文件（README.md、docs/v0.1/progress.md、src/App.vue、docs/release/v0.4.0.md、docs/v0.4/desktop-e2e-acceptance.md），无其它越界改动。
+- 自动验证（本接力环境复跑，全部通过，与 Codex 记录一致）：
+  - `localStorageBackup.selftest`：11 passed, 0 failed。
+  - `localStorageMigration.selftest`：21 passed, 0 failed。
+  - `storageAdapter.selftest`：14 passed, 0 failed。
+  - `backendSwitch.selftest`：22 passed, 0 failed。
+  - `storageMigrationPanel.selftest`：18 passed, 0 failed。
+  - `npm run typecheck`：通过。
+  - `npm run build`：通过，保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：13 passed, 0 failed。
+- Tauri dev 实际启动：本接力环境（Claude Code，本机 Console 会话）`npm.cmd exec tauri -- dev` 成功启动，Vite 起在 5175，cargo 构建完成并运行 `app.exe`（进程实际存活）。与 Codex 沙箱不同，本环境**未提权**即可写入 AppData，启动期 desktop SQLite smoke（T3/T4/T5/T7）真实落盘成功：
+  - SQLite：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3`（69632 bytes）
+  - backup：`...\backups\offerflow-localstorage-backup-20260629-113643.json`
+  - `migration_status=migrated`，`profile_count=1`，`job_count=2`
+  - 注：以上为应用启动期 smoke fixture 自动写入，非人工点击迁移面板的结果。
+- 可见窗口人工点击验收：**仍未完成**。尝试用 computer-use 申请控制 OfferFlow 窗口以自动点击迁移面板，授权对话框 300s 超时未获批准（无人在场点击）。复跑后已停止接力启动的 `app.exe`，释放 5175 端口。
+- 小修：本接力轮**未**新增代码改动，保留 Codex 的 `src/App.vue` 顶部导航修复；仅更新 `docs/v0.4/desktop-e2e-acceptance.md`、`docs/release/v0.4.0.md`、`docs/v0.1/progress.md` 以诚实记录接力复跑结果。
+- 是否涉及 decision-log 更新：否。
+- 是否允许进入下一步：否。不建议进入 v0.4.0 最终 tag / push；必须先由用户在本机可见 Tauri 窗口亲自补跑 `docs/v0.4/desktop-e2e-acceptance.md` 第 6 节点击清单。
+- 建议 commit message：docs: 完成 v0.4 T10 桌面验收与发布文档
