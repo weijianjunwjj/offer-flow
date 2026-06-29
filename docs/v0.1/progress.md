@@ -31,19 +31,19 @@
 
 当前版本：
 
-> v0.3 开发中（半自动求职跟进决策台）；v0.2.x 已完成机会雷达与指标分层实现，部分历史条目仍待用户统一确认 / 提交
+> v0.4 开工中（本地服务化与 SQLite 数据文件化）；v0.3 已作为当前功能基线，v0.4 只改本地存储底座，不扩展 AI API / BYOK / 云同步 / 自动操作 Boss 等产品边界。
 
 当前模式：
 
-> Manual / Semi-manual Mode（v0.3 仍不接 API、不做 BYOK、不做后端、不自动操作 Boss；仅基于用户手动维护的岗位事实派生跟进决策）
+> Local-first Desktop-capable Mode（v0.4 允许引入本地运行时 / 本地服务 / SQLite 数据库文件；仍不接 AI API、不做 BYOK、不做云同步、不做账号登录、不自动操作 Boss、不做 SaaS）。
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）、T5（话术模板与复制）、T6（列表页决策台模式）和 T7（公司级只读预警）已提交到 v0.3 分支；T8（文档与 release note 收口）已完成文档更新与验证，等待用户最终验收；未合并 main，未打 tag。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1-T8 均已由用户验收并提交。T9 桌面模式最小 UI / 数据迁移确认入口已由用户验收并提交，commit 为 `df4710f`。当前进入 T10：真实桌面端端到端验收与 release 文档收口；本轮只做验收、小 bug 修复和文档收口，不新增大功能、不改迁移策略、不删除 localStorage、不 push。
 
 当前是否允许进入下一步：
 
-> 否。v0.3 T8 已完成后必须等待用户最终验收；是否合并 main、是否打 tag 由用户另行确认。Codex 不自行合并 main，不自行打 tag。
+> 否。T10 正在收口并等待用户验收；本轮不自动提交、不 push、不打 tag。验收通过后再由用户决定是否进入 v0.4.0 最终提交 / tag / push。
 
 ---
 
@@ -1923,3 +1923,891 @@ v0.1 不做：
   - 未合并 main，未打 tag。
 - 是否允许进入下一步：否。等待用户最终验收；是否合并 main、是否打 tag 需用户另行确认。
 - 建议 commit message：docs: v0.3 文档与 release note 收口
+
+---
+
+### 2026-06-26 · v0.4 · 本地服务化与 SQLite 数据文件化开工治理
+
+- 状态：已完成，待用户验收
+- 来源：用户明确拍板 v0.4 要一步到位，引入本地后端服务 / 本地运行时 + SQLite 本地数据库文件，并要求先从 main 切出 `feature/v0.4-local-sqlite-storage`，本轮只做决策日志和技术方案。
+- 执行者：Codex
+- 当前分支：
+  - `feature/v0.4-local-sqlite-storage`
+- 分支操作：
+  - `git status --short --branch`：工作区干净，当前 `main...origin/main`
+  - `git checkout main`：已在 main，且与 `origin/main` 同步
+  - `git pull origin main`：Already up to date
+  - `git checkout -b feature/v0.4-local-sqlite-storage`：已切出新分支
+- 改动文件：
+  - `docs/v0.1/decision-log.md`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+- 实现内容：
+  - 新增 DEC-025：记录 v0.4 引入本地服务与 SQLite 数据库文件，推翻此前“纯浏览器、无后端、localStorage 存储”的技术边界，但不推翻“不接 AI API、不云同步、不自动操作 Boss”等产品边界。
+  - 新增 v0.4 技术方案文档：明确目标 / 非目标、推荐架构、Tauri + SQLite 选择理由、备选方案取舍、数据库文件位置、备份策略、SQLite 表草案、localStorage 到 SQLite 迁移流程、失败回滚策略、验收标准、风险清单和后续任务拆分。
+  - 更新当前进度：记录已从 main 切出 `feature/v0.4-local-sqlite-storage`，用户已拍板 v0.4 方向，本轮只完成决策日志和技术方案，不做实现。
+- 自测命令：
+  - `git diff -- docs`
+  - `git status`
+- 自测结果：
+  - `git diff -- docs`：已执行，确认本轮只修改 docs 下内容；diff 显示 `docs/v0.1/decision-log.md` 新增 DEC-025、`docs/v0.1/progress.md` 更新 v0.4 进度记录。新建 `docs/v0.4/` 因尚未 staged，未出现在 `git diff` 正文中，由 `git status` 显示为 untracked。
+  - `git status`：已执行，当前分支为 `feature/v0.4-local-sqlite-storage`；未 staged；修改 `docs/v0.1/decision-log.md`、`docs/v0.1/progress.md`，新增未跟踪目录 `docs/v0.4/`。
+  - 文档检查脚本：未运行。`package.json` 仅有 `dev` / `build` / `preview` / `typecheck` / `selftest`，无 markdown lint 或 docs check 脚本。
+- 类型检查：
+  - 未运行。理由：本轮只修改文档，不修改 `src/`、`scripts/`、`package.json` 或任何源码 / 测试 / 配置。
+- 红线自检：
+  - 未安装 Tauri。
+  - 未安装 SQLite 相关依赖。
+  - 未修改 `package.json`。
+  - 未修改核心业务代码。
+  - 未修改 `src/storage` 实现。
+  - 未写迁移代码。
+  - 未写 Tauri command。
+  - 未删除 localStorage 逻辑。
+  - 未改 UI。
+  - 未提交 commit。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：是，新增 DEC-025。
+- 遗留风险：
+  1. Tauri + SQLite 仍需后续 spike 验证开发环境、打包、插件稳定性和跨平台路径。
+  2. SQLite schema 目前是草案，需在实现任务中通过迁移 selftest 校验。
+  3. localStorage 坏数据迁移策略需在实现任务中明确阻断 / 跳过 / 记录错误的具体行为。
+- 是否允许进入下一步：否。等待用户验收；下一步需先拆 v0.4 实现任务卡，再决定是否引入 Tauri / SQLite 依赖。
+- 建议 commit message：docs: v0.4 本地 SQLite 存储方案开工
+
+---
+
+### 2026-06-26 · v0.4 · T1 Tauri + SQLite 技术 Spike
+
+- 状态：阻塞，待补齐本机前置环境后重跑
+- 来源：用户确认 v0.4 治理与技术方案通过后，要求先提交文档 commit，再进入 T1：验证 Tauri + SQLite 技术可行性，不接业务数据、不迁移 localStorage、不改现有页面业务逻辑。
+- 执行者：Codex
+- 文档 commit：
+  - `794c2db docs: 确认 v0.4 本地 SQLite 存储方案`
+- 改动文件：
+  - `docs/v0.4/tauri-sqlite-spike.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 先提交已验收的 v0.4 决策日志与技术方案文档。
+  - 执行 Tauri / SQLite 前置环境检查。
+  - 新增 T1 Spike 记录文档，记录 Tauri 初始化未完成、SQLite 最小读写未执行、阻塞原因和后续重试条件。
+  - 更新 v0.4 方案文档中的 T1 Spike 结果。
+- 前置检查结果：
+  - 当前分支：`feature/v0.4-local-sqlite-storage`
+  - `node --version`：`v24.14.1`
+  - `npm.cmd --version`：`11.11.0`
+  - `npm --version`：PowerShell 执行策略阻止 `npm.ps1`，后续应使用 `npm.cmd`
+  - `rustc --version`：未找到 `rustc`
+  - `cargo --version`：未找到 `cargo`
+  - `where.exe rustc`：未找到
+  - `where.exe cargo`：未找到
+  - `where.exe cl`：未找到 Microsoft C++ Build Tools 编译器
+  - Visual Studio Installer / `vswhere`：未找到
+  - `winget --version`：当前会话无法运行，报错“指定的登录会话不存在。可能已被终止。”
+- Tauri 结果：
+  - 未初始化成功。原因：缺少 Rust toolchain 和 Microsoft C++ Build Tools，Tauri Windows 开发环境无法启动或编译。
+- SQLite 最小读写结果：
+  - 未执行。原因：Tauri 运行时和 SQL 插件无法在当前前置环境下完成初始化与编译。
+- 数据库文件实际路径：
+  - 未创建实际数据库文件。
+  - 计划路径仍为 `%APPDATA%/OfferFlow/offerflow.sqlite3`，待 T1 重跑时由 Tauri app data 目录实际确认。
+- 方案选择：
+  - 仍推荐 `Tauri v2 + tauri-plugin-sql + SQLite`。
+  - 本轮未安装 Tauri / SQLite 依赖，未创建 `src-tauri/`，未修改 `package.json`；避免在缺少 Rust / C++ 编译工具时产生半工作脚手架。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 成功构建；保留既有 chunk size warning（`assets/index-*.js` 超过 500 kB），不影响本轮验收。
+  - Tauri 独立检查命令：未运行。原因：本轮未安装 Tauri CLI，且当前环境缺 Rust / Cargo / C++ Build Tools，Tauri 无法初始化或编译。
+  - `git status --short --branch`：当前分支 `feature/v0.4-local-sqlite-storage`；修改 `docs/v0.1/progress.md`、`docs/v0.4/local-sqlite-storage-plan.md`，新增未跟踪文件 `docs/v0.4/tauri-sqlite-spike.md`。
+  - `git diff --stat`：显示 `docs/v0.1/progress.md` 与 `docs/v0.4/local-sqlite-storage-plan.md` 共 94 行新增；未跟踪的 `docs/v0.4/tauri-sqlite-spike.md` 不在 diff stat 正文中。
+- 红线自检：
+  - 未修改 `src/storage/` 业务实现。
+  - 未替换 localStorage。
+  - 未写 localStorage -> SQLite 正式迁移逻辑。
+  - 未改岗位页面、列表页、详情页 UI。
+  - 未改数据模型业务字段。
+  - 未做备份恢复 UI。
+  - 未做 AI API / 云同步 / 账号 / 自动操作 Boss。
+  - 未做大规模重构。
+- 遗留风险：
+  1. 本机缺 Rust / Cargo / C++ Build Tools，Tauri 无法实跑。
+  2. 当前会话无法使用 winget 自动安装前置环境。
+  3. 未验证 Tauri app data 实际路径和 `tauri-plugin-sql` SQLite 最小读写。
+- 是否允许进入下一步：否。不建议进入 T2 storage adapter 设计；需要先补齐 Rust stable toolchain 与 Microsoft C++ Build Tools，然后重跑 T1。
+- 建议 commit message：无。本轮 T1 Spike 改动不提交，等待用户验收。
+
+---
+
+### 2026-06-27 · v0.4 · T1 Tauri + SQLite 技术 Spike 重跑
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 Rust / Cargo 已安装成功，MSVC Build Tools 已通过 `vswhere` 检测到，并要求在环境补齐后继续 T1：Tauri 初始化 + SQLite 最小读写验证。
+- 执行者：Codex
+- 当前分支：
+  - `feature/v0.4-local-sqlite-storage`
+- 关联文档 commit：
+  - `7f787d0 docs: 记录 v0.4 T1 Tauri SQLite Spike 阻塞`
+- 改动文件：
+  - `package.json`
+  - `package-lock.json`
+  - `src-tauri/`
+  - `docs/v0.1/decision-log.md`
+  - `docs/v0.1/progress.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.4/tauri-sqlite-spike.md`
+- 实现内容：
+  - 安装 Tauri v2 必要依赖：`@tauri-apps/api`、`@tauri-apps/plugin-sql`、`@tauri-apps/cli`。
+  - 初始化 `src-tauri/`，应用标识设置为 `com.offerflow.local`。
+  - 注册 `tauri-plugin-sql`，并在 Rust 侧启用 `sqlite` feature。
+  - 引入 `rusqlite` + `bundled` feature，用于 T1 启动期最小 SQLite 文件读写验证。
+  - 新增 Tauri command `sqlite_spike_check`，但本轮未接入现有页面。
+  - 在 Tauri `setup` 阶段创建 / 打开 Spike 数据库文件，创建 `app_meta` 表，写入并读回 `schema_version=1`。
+  - 将 Tauri dev 固定到 `http://127.0.0.1:5175` 并启用 `--strictPort`，避免 Vite 自动换端口。
+  - 新增 DEC-026，记录 T1 依赖组合与 Spike 技术选择。
+- 环境检查结果：
+  - `node --version`：`v24.14.1`
+  - `npm.cmd --version`：`11.11.0`
+  - `rustc --version`：`rustc 1.96.0 (ac68faa20 2026-05-25)`
+  - `cargo --version`：`cargo 1.96.0 (30a34c682 2026-05-25)`
+  - `where.exe rustc`：`C:\Users\Administrator\.cargo\bin\rustc.exe`
+  - `where.exe cargo`：`C:\Users\Administrator\.cargo\bin\cargo.exe`
+  - `where.exe cl`：普通 PowerShell 中仍未找到
+  - `vswhere`：`C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools`
+  - `npm.cmd exec tauri -- info`：通过，确认 WebView2、MSVC、Rust toolchain、Tauri 包可用
+- Tauri 结果：
+  - 初始化成功。
+  - `npm.cmd exec tauri -- dev` 启动成功。
+  - Tauri app 成功运行到 `setup` 阶段并输出 SQLite Spike 日志。
+- SQLite 最小读写结果：
+  - 通过，稳定读回 `schema_version=1`。
+  - 启动日志：
+
+```txt
+[OfferFlow T1 SQLite Spike] db_path=C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlite3 schema_version=1
+```
+
+- 数据库文件实际路径：
+
+```txt
+C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlite3
+```
+
+- 文件检查结果：
+  - `Test-Path`：`True`
+  - `Length`：`12288 bytes`
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- info`
+  - `npm.cmd exec tauri -- dev`
+  - `git status --short --branch`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust app 编译检查成功。
+  - `npm.cmd exec tauri -- info`：通过，确认 Tauri 环境可用。
+  - `npm.cmd exec tauri -- dev`：通过，Tauri app 启动并完成 SQLite Spike 读写。
+- 红线自检：
+  - 未修改 `src/storage/` 业务实现。
+  - 未替换 localStorage。
+  - 未写 localStorage -> SQLite 正式迁移逻辑。
+  - 未改岗位页面、列表页、详情页 UI。
+  - 未改业务数据模型字段。
+  - 未做备份恢复 UI。
+  - 未做 AI API / 云同步 / 账号 / 自动操作 Boss。
+  - 未做大规模业务重构。
+  - 未提交 T1 实装改动。
+  - 未 push 远程。
+- 遇到的问题：
+  1. PowerShell 直接运行 `npm` 会触发 `npm.ps1` 执行策略限制，后续继续使用 `npm.cmd`。
+  2. Rust / Cargo 安装后当前 shell PATH 未自动刷新，命令中临时加入 `%USERPROFILE%\.cargo\bin`。
+  3. 普通 PowerShell 中 `where.exe cl` 仍找不到 `cl`，但 `vswhere`、`cargo check` 和 `tauri info` 已确认 MSVC 编译链可用。
+  4. 首次或依赖变化后的 Tauri dev 编译耗时较长；后续无依赖变化时会更快。
+  5. 首次运行时 Vite 自动从 5173 退到 5174，已改为 Tauri 专用 `127.0.0.1:5175 --strictPort`。
+  6. `npm install` 报告 1 个 low severity vulnerability；本轮未执行 `npm audit fix`，避免引入额外依赖变更。
+- 是否涉及 decision-log 更新：是，新增 DEC-026。
+- 是否允许进入下一步：否。T1 已完成但等待用户验收；建议验收后进入 T2：storage adapter 设计。
+- 建议 commit message：feat: 完成 v0.4 T1 Tauri SQLite 技术 Spike
+
+---
+
+### 2026-06-28 · v0.4 · T2 storage adapter 设计
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T1 结果验收通过，允许提交 T1，并要求进入 T2：storage adapter 设计；T2 只做设计，不做 localStorage 迁移，不替换现有业务存储，不改页面 UI。
+- 执行者：Codex
+- T1 commit：
+  - `b2220ce chore: 完成 v0.4 T1 Tauri SQLite Spike`
+- 改动文件：
+  - `docs/v0.4/storage-adapter-design.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 v0.4 storage adapter 设计文档。
+  - 梳理当前 `src/storage/` 现状：`StorageDriver`、`ConfigStore`、`JobStore`、keys、defaults、legacy namespace migration 和 `useStores()` 当前调用路径。
+  - 设计未来分层：`Vue Pages -> App Stores / Composables -> Storage Port -> LocalStorage Adapter / SQLite Adapter -> Browser localStorage / Tauri SQLite Commands`。
+  - 给出文档级接口草案：`StoragePort`、`ProfileRepository`、`JobRepository`、`StorageMetaRepository`、`JobListQuery`。
+  - 明确 profile 读写、job CRUD、`listJobs` 排序 / 筛选字段来源、错误处理策略。
+  - 明确 SQLite 写入时“完整对象 `data_json` + 独立索引列”必须由同一个 normalized record 派生，并在同一事务内写入。
+  - 明确页面不能直接调用 Tauri command，Tauri command 只能被 SQLite adapter 或更底层 client 使用。
+  - 明确 LocalStorage Adapter 和 SQLite Adapter 分工，以及 T3 / T4 / T5 / T6 后续拆分建议。
+- 是否新增 TypeScript 接口文件：
+  - 否。T2 仅在文档中提供接口草案；没有新增 TS 文件，避免提前改运行调用链。
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust / Tauri 侧编译检查成功。
+- 红线自检：
+  - 未修改现有页面。
+  - 未修改现有 `src/storage/` 运行逻辑。
+  - 未替换 localStorage。
+  - 未写正式 SQLite Store。
+  - 未写 localStorage -> SQLite 迁移。
+  - 未写备份恢复逻辑。
+  - 未删除旧数据。
+  - 未改 `JobRecord` 字段含义。
+  - 未做云同步、AI API、账号、多端或 Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T2 未新增依赖、未改 schema、未改存储运行策略；DEC-025 / DEC-026 已覆盖 v0.4 本地 SQLite 路线和 T1 依赖选择。
+- 是否允许进入下一步：否。等待用户验收 T2；建议验收后进入 T3：SQLite schema 与基础 repository 实现。
+- 建议 commit message：docs: 完成 v0.4 T2 storage adapter 设计
+
+---
+
+### 2026-06-28 · v0.4 · T3 SQLite schema 与基础 repository 实现
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T2 storage adapter 设计验收通过，允许提交 T2，并要求进入 T3：SQLite schema 与基础 repository 实现；T3 只做 SQLite 侧地基层，不接入现有业务页面，不迁移 localStorage。
+- 执行者：Codex
+- T2 commit：
+  - `0997b2b docs: 完成 v0.4 T2 存储适配层设计`
+- 改动文件：
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/database.rs`
+  - `src-tauri/src/sqlite/error.rs`
+  - `src-tauri/src/sqlite/models.rs`
+  - `src-tauri/src/sqlite/repository.rs`
+  - `src-tauri/src/sqlite/schema.rs`
+  - `docs/v0.4/sqlite-schema-repository.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 SQLite schema 初始化模块，创建 `app_meta`、`profiles`、`jobs`、`migration_logs`、`backup_logs`。
+  - 写入 SQLite `PRAGMA user_version = 1`，并通过 `app_meta.schema_version=1` 提供应用层可读 schema version。
+  - 新增数据库路径与打开初始化逻辑，T3 smoke 数据库文件为 `offerflow-t3.sqlite3`。
+  - 新增基础 repository：`set_app_meta` / `get_app_meta`、`upsert_profile` / `get_profile`、`upsert_job` / `get_job` / `list_jobs_by_updated_desc` / `delete_job`。
+  - repository 写入遵守“完整对象 -> derive indexed columns -> 写入独立列和 `data_json`”策略，调用方不传第二套可能冲突的列数据。
+  - 新增 Rust 侧 `StorageError`，区分数据库打开、schema 初始化、JSON 序列化 / 反序列化、写入、查询和记录不存在。
+  - 新增 Tauri command `sqlite_t3_check` 和启动期 T3 repository smoke；未接入页面。
+  - 新增 T3 技术文档，记录 schema、repository、一致性策略、错误处理、验证结果和后续 T4 建议。
+- 数据库文件实际路径：
+  - `C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3`
+- 自测命令：
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust / Tauri 侧编译检查成功。
+  - `cargo test`：通过，3 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，Tauri app 启动并输出 T3 repository smoke 日志，`schema_version=1`、profile upsert/get、job upsert/get/list/delete 均通过。
+- Tauri dev smoke 日志：
+
+```txt
+[OfferFlow T3 SQLite Repository] db_path=C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3 schema_version=1 profile_id=default job_id=t3-smoke-job-new listed_jobs=t3-smoke-job-new,t3-smoke-job-old remaining_jobs=0
+```
+
+- 红线自检：
+  - 未修改现有 Vue 页面。
+  - 未修改现有 `src/storage/` 运行逻辑。
+  - 未替换 localStorage。
+  - 未读取真实 localStorage 数据。
+  - 未写 localStorage -> SQLite 迁移。
+  - 未写备份恢复 UI。
+  - 未删除旧数据。
+  - 未改 `JobRecord` / `Profile` 字段含义。
+  - 未做 AI API / BYOK / 云同步 / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T3 按 DEC-025 / DEC-026 和 T2 设计落地既定 SQLite 地基层；未新增依赖、未推翻既有产品边界、未改业务模型含义。
+- 是否允许进入下一步：否。等待用户验收 T3；建议验收后进入 T4：localStorage JSON 备份导出。
+- 建议 commit message：chore: 完成 v0.4 T3 SQLite schema 与基础 repository
+
+---
+
+### 2026-06-28 · v0.4 · T4 localStorage JSON 备份导出
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T3 SQLite schema 与基础 repository 验收通过，允许提交 T3，并要求进入 T4：localStorage JSON 备份导出；T4 只做迁移前 JSON 备份安全绳，不执行正式迁移、不替换现有业务存储、不改业务页面。
+- 执行者：Codex
+- T3 commit：
+  - `ff52669 feat: 完成 v0.4 T3 SQLite schema 与基础 repository`
+- 改动文件：
+  - `src/app/legacyLocalStorageBackup.ts`
+  - `scripts/localStorageBackup.selftest.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/error.rs`
+  - `src-tauri/src/sqlite/backup.rs`
+  - `docs/v0.4/localstorage-backup.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增前端纯函数 `createLegacyLocalStorageBackupPayload(driver, options?)`，扫描 `offerflow:profile`、`offerflow:job:*`、`offerpilot:profile`、`offerpilot:job:*`。
+  - 生成 backup payload，包含 `backupVersion`、`createdAt`、`source`、`namespace`、`namespaces`、`profile`、`profiles`、`jobs`、`rawEntries`、`counts`、`warnings`、`checksum`。
+  - JSON parse 成功的 profile/job 进入结构化字段；坏 JSON 不进入结构化字段，但原始 value 保留在 `rawEntries`，并写入 warning。
+  - 新增 Rust/Tauri backup 模块，接收 `payload_json`，写入 app data 下 `backups/` 目录。
+  - Rust 写入侧生成 checksum，使用轻量 Rust 依赖 `sha2` 生成 SHA-256，格式为 `sha256:<64位hex>`；checksum 计算来源为 checksum 置 null 后的 payload JSON。
+  - 写入成功后记录 `backup_logs.backup_type=localstorage_json`、`status=succeeded`、path、profile/job/raw entry 数量、size、checksum 和 data_json。
+  - 新增 Tauri command `write_localstorage_backup`，但未接入页面。
+  - Tauri dev smoke 只写测试 payload，不读取真实 localStorage、不执行迁移。
+- backup 文件实际路径：
+  - `C:\Users\Administrator\AppData\Roaming\com.offerflow.local\backups\offerflow-localstorage-backup-20260629-050113.json`
+- backup_logs 记录摘要：
+  - `backup_log_id=localstorage-json-1782709273-3d2e119d1232a6eb6423c8533661591af336849b0db7ad51418b6dbe039b3fca`
+  - `backup_type=localstorage_json`
+  - `status=succeeded`
+  - `profile_count=1`
+  - `job_count=1`
+  - `raw_entries=2`
+  - `size_bytes=1306`
+  - `checksum=sha256:3d2e119d1232a6eb6423c8533661591af336849b0db7ad51418b6dbe039b3fca`
+- 备份文件读回检查：
+  - `Exists=True`
+  - `BackupVersion=1`
+  - `Source=localStorage`
+  - `Profiles=1`
+  - `Jobs=1`
+  - `RawEntries=2`
+  - `Checksum=sha256:3d2e119d1232a6eb6423c8533661591af336849b0db7ad51418b6dbe039b3fca`
+  - `Warnings=0`
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，Rust / Tauri 侧编译检查成功。
+  - `cargo test`：通过，5 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3 repository smoke 与 T4 backup smoke 均输出成功日志。
+- 红线自检：
+  - 未执行 localStorage -> SQLite 正式迁移。
+  - 未写 `migration_logs` 正式迁移记录。
+  - 未写 `migration_status=migrated`。
+  - 未删除或修改 localStorage 旧数据。
+  - 未替换现有 `ConfigStore` / `JobStore`。
+  - 未改 Vue 页面。
+  - 未做备份恢复 UI。
+  - 未做 AI API / BYOK / 云同步 / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T4 按 DEC-025 的迁移前备份要求落地，不新增依赖、不推翻既有存储策略、不执行正式迁移；checksum 使用无新增依赖的实现，已在 T4 文档说明。
+- 是否允许进入下一步：否。等待用户验收 T4；建议验收后进入 T5：localStorage -> SQLite 迁移。
+- 建议 commit message：feat: 完成 v0.4 T4 localStorage JSON 备份导出
+
+---
+
+### 2026-06-29 · v0.4 · T5 localStorage -> SQLite 迁移
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T4 备份 payload / rawEntries / warnings / backup_logs / 边界均验收通过；提交前要求 checksum 升级为 `sha256`，随后提交 T4，并进入 T5：localStorage -> SQLite 正式迁移流程。
+- 执行者：Codex
+- T4 commit：
+  - `624fbce feat: 完成 v0.4 T4 localStorage JSON 备份导出`
+- 改动文件：
+  - `src/app/localStorageSqliteMigration.ts`
+  - `scripts/localStorageMigration.selftest.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/migration.rs`
+  - `docs/v0.4/localstorage-to-sqlite-migration.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增前端纯函数 `createLocalStorageSqliteMigrationPayload(backup, options?)`，基于 T4 backup payload 派生迁移输入。
+  - 新增前端纯函数 `markSqliteMigrationDone(driver)`，只写 `offerflow:migration:sqlite:v0.4=done`，不删除旧 key。
+  - namespace 冲突策略：profile / job 同时存在 `offerflow:*` 和 `offerpilot:*` 时优先 `offerflow:*`，并写入 warnings。
+  - T4 parse warnings 会带入 T5 migration warnings，坏数据不静默丢弃。
+  - 新增 Tauri command `migrate_localstorage_to_sqlite`。
+  - Rust 侧事务写入 `profiles` / `jobs`，独立列由完整对象派生，完整对象写入 `data_json`。
+  - 写入 `migration_logs.status=succeeded`、`app_meta.migration_status=migrated` 和 `app_meta.last_successful_migration_id`。
+  - 校验失败时回滚 profile/job 写入，尽量写入 `migration_logs.status=failed`，不写 migrated 状态。
+  - 写入 `jobs.data_json` 前移除派生决策字段：`strategy`、`nextAction`、`stopLoss`、`scenario`、`companyWarning`。
+  - T3 repository smoke 在持久数据库中只校验本次 T3 fixture 的两个 job 相对顺序，避免被 T5 smoke 写入的迁移测试数据影响。
+- backup 文件路径：
+  - T5 smoke 使用 T4 smoke 备份文件：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\backups\offerflow-localstorage-backup-20260629-051752.json`
+- migration_logs 摘要：
+  - `migration_id=localstorage-to-sqlite-1782710272000-1111111111111111111111111111111111111111111111111111111111111111`
+  - `migration_type=localstorage_to_sqlite`
+  - `status=succeeded`
+  - `profile_count_before=1`
+  - `job_count_before=2`
+  - `profile_count_after=1`
+  - `job_count_after=2`
+  - `checksum_before=sha256:1111111111111111111111111111111111111111111111111111111111111111`
+- app_meta 迁移状态：
+  - `migration_status=migrated`
+  - `last_successful_migration_id=<migration_id>`
+- localStorage done 标记：
+  - `offerflow:migration:sqlite:v0.4=done`
+  - 由 `scripts/localStorageMigration.selftest.ts` 验证；旧 profile/job key 未删除。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，12 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过，无 warning。
+  - `cargo test`：通过，7 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3/T4/T5 smoke 均输出成功日志。
+- 红线自检：
+  - 未删除任何旧 localStorage 数据。
+  - 未替换现有 `ConfigStore` / `JobStore`。
+  - 未修改 `src/storage/` 现有运行逻辑。
+  - 未改 Vue 页面。
+  - 未做自动启动迁移 UI。
+  - 未做恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T5 按 DEC-025 迁移红线和 T4 备份安全绳落地，未新增产品边界、未替换运行存储、未删除旧数据；checksum 升级为 SHA-256 是用户本轮明确裁定。
+- 是否允许进入下一步：否。等待用户验收 T5；建议验收后进入 T6：迁移校验强化与失败回滚测试。
+- 建议 commit message：feat: 完成 v0.4 T5 localStorage 到 SQLite 迁移
+
+---
+
+### 2026-06-29 · v0.4 · T6 迁移校验强化与失败回滚测试
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T5 通过并要求先提交 T5，再进入 T6：强化迁移失败路径、校验边界、幂等行为和回滚测试，确保 T5 迁移链路不是只在 happy path 成功。
+- 执行者：Codex
+- T5 commit：
+  - `f2268d2 feat: 完成 v0.4 T5 localStorage 到 SQLite 迁移`
+- 改动文件：
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/error.rs`
+  - `src-tauri/src/sqlite/migration.rs`
+  - `scripts/localStorageMigration.selftest.ts`
+  - `docs/v0.4/migration-validation-rollback.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 Rust 错误码 `already_migrated`，当 `app_meta.migration_status=migrated` 已存在时默认拒绝重复迁移。
+  - Tauri migration command 返回结构化 `StorageErrorPayload`，保留错误码给后续 adapter 识别。
+  - T5 dev smoke 改用独立 T5 smoke SQLite 文件，避免重复启动时被正式幂等策略挡住。
+  - `migration_logs.data_json` 在失败记录中写入 `errorCode`，便于失败摘要排查。
+  - Rust 侧新增重复 job id 校验，防止迁移数量与实际落库数量不一致。
+  - Rust 单元测试覆盖 missing checksum、profile 写失败、job 中途失败、校验失败、重复迁移 already_migrated 和既有 happy path。
+  - 前端 selftest 覆盖 backup failure gate、T4 parse warning 传递、坏 JSON raw value 保留、namespace 冲突、done 标记重复写与 done 写失败。
+  - 新增 T6 文档 `docs/v0.4/migration-validation-rollback.md`，记录 A-H 失败场景、策略和覆盖测试。
+- repeated migration / already_migrated 策略：
+  - 默认拒绝重复迁移，返回 `already_migrated`。
+  - 不覆盖既有 SQLite 数据。
+  - 不写第二条 failed migration log。
+  - 不新增第二个 done 标记。
+  - force remigrate 不在 T6 默认实现范围内。
+- rollback 策略：
+  - profile/job 写入和 succeeded log / migrated meta 位于同一 SQLite transaction。
+  - 任一步失败时 transaction 回滚，profile/job 不部分保留。
+  - transaction 外尽量写入 `migration_logs.status=failed`。
+  - 不写 `app_meta.migration_status=migrated`。
+  - 前端不写 done 标记，旧 localStorage 保持不动。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，21 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，12 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3/T4/T5 smoke 均输出成功日志；T5 smoke 使用独立 T5 smoke SQLite 文件，避免重复启动时触发正式 already_migrated 策略。
+- 红线自检：
+  - 未替换现有 `ConfigStore` / `JobStore`。
+  - 未修改 `src/storage/` 现有运行逻辑。
+  - 未改 Vue 页面。
+  - 未做自动启动迁移 UI。
+  - 未删除 localStorage。
+  - 未做恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T6 落地用户已明确的迁移可靠性要求和重复迁移默认拒绝策略，未新增产品边界、未替换运行存储、未删除旧数据。
+- 是否允许进入下一步：否。等待用户验收 T6；建议验收后进入 T7：SQLite adapter 接入 ConfigStore / JobStore。
+- 建议 commit message：test: 强化 v0.4 localStorage 到 SQLite 迁移回滚测试
+
+---
+
+### 2026-06-29 · v0.4 · T7 SQLite adapter 接入 ConfigStore / JobStore
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T6 通过并要求先提交 T6，再进入 T7：让 OfferFlow 具备 SQLite 版 ConfigStore / JobStore 适配能力，但不自动切换生产默认存储、不自动迁移、不改页面业务流程。
+- 执行者：Codex
+- T6 commit：
+  - `e7eb3f7 test: 强化 v0.4 T6 迁移校验与回滚`
+- 改动文件：
+  - `src/storage/ports.ts`
+  - `src/storage/localStorageRepositories.ts`
+  - `src/storage/sqliteClient.ts`
+  - `src/storage/sqliteRepositories.ts`
+  - `src/storage/index.ts`
+  - `src/app/stores.ts`
+  - `scripts/storageAdapter.selftest.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/adapter.rs`
+  - `docs/v0.4/sqlite-adapter-integration.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 async storage port：`ProfileRepository`、`JobRepository`、`AsyncOfferFlowStores`、`StorageBackend`。
+  - 新增 localStorage async adapter，包装现有 `ConfigStore` / `JobStore`，不修改旧同步 store 行为。
+  - 新增 `TauriSQLiteClient`，封装 Tauri `sqlite_*` commands，避免页面直接调用 Tauri command。
+  - 新增 SQLite profile/job repositories；`createJob()` 生成完整默认字段，`updateJob()` 采用先读后合并 patch 的语义，避免丢失已有 `data_json` 字段。
+  - `src/app/stores.ts` 保留现有 `useStores()` 默认 localStorage 行为，新增 `createAsyncStores({ backend })` 作为未来受控切换入口。
+  - 新增 Tauri commands：`sqlite_get_profile`、`sqlite_save_profile`、`sqlite_clear_profile`、`sqlite_create_job`、`sqlite_get_job`、`sqlite_list_jobs`、`sqlite_update_job`、`sqlite_delete_job`。
+  - 新增 Rust adapter 写入逻辑，仍从完整 JSON 派生 SQLite 独立索引列，调用方不传第二套列数据。
+  - 新增 T7 adapter smoke，使用独立 `offerflow-t7-adapter-smoke-*.sqlite3` 文件，不污染正式数据。
+  - 新增 T7 文档 `docs/v0.4/sqlite-adapter-integration.md`。
+- 默认 backend 策略：
+  - 浏览器 Web 模式继续默认 localStorage。
+  - Tauri 桌面模式允许 SQLite adapter smoke / 手动指定 SQLite backend。
+  - 正式默认切换留到 T8 或单独验收。
+  - T7 不自动触发迁移，也不因运行在 Tauri 中就自动切换用户数据 backend。
+- Tauri commands 摘要：
+  - profile：get / save / clear。
+  - jobs：create / get / list / update / delete。
+  - commands 只做数据访问边界，不做页面业务判断；错误返回沿用 T6 的 `StorageErrorPayload`。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，21 passed, 0 failed。
+  - `storageAdapter.selftest`：通过，14 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，13 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3/T4/T5/T7 smoke 均输出成功日志。
+  - T7 smoke 摘要：`profile_target_city=Suzhou`、`listed_jobs=t7-smoke-job-new,t7-smoke-job-old`、`updated_match_score=91`、`patch_preserved_ai_raw=true`、`deleted_job_missing=true`。
+- 红线自检：
+  - 未自动执行 localStorage -> SQLite 迁移。
+  - 未删除任何 localStorage 数据。
+  - 未默认强制切换到 SQLite。
+  - 未改 Vue 页面业务流程。
+  - 未做迁移 UI。
+  - 未做备份恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T7 是 DEC-025 / DEC-026 已批准的本地 SQLite 存储底座落地，不新增产品边界；默认 backend 仍保持 localStorage，不推翻既有运行策略。
+- 是否允许进入下一步：否。等待用户验收 T7；建议验收后进入 T8：受控切换 SQLite backend / 启动迁移入口设计。
+- 建议 commit message：feat: 接入 v0.4 SQLite storage adapter
+
+---
+
+### 2026-06-29 · v0.4 · T8 受控切换 SQLite backend / 启动迁移入口设计
+
+- 状态：已由用户验收并提交
+- 来源：用户确认 T7 通过并要求先提交 T7，再进入 T8：让 OfferFlow 具备“明确、可控、可回退”的 SQLite backend 启用机制。
+- 执行者：Codex
+- T7 commit：
+  - `dedfc29 feat: 完成 v0.4 T7 SQLite 存储适配器接入`
+- T8 commit：
+  - `8cc014f feat: 完成 v0.4 T8 SQLite 后端受控切换`
+- 改动文件：
+  - `src/storage/runtimeEnv.ts`
+  - `src/storage/backendSelection.ts`
+  - `src/storage/sqliteClient.ts`
+  - `src/storage/index.ts`
+  - `src/app/stores.ts`
+  - `src/app/controlledSqliteMigration.ts`
+  - `scripts/backendSwitch.selftest.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/adapter.rs`
+  - `docs/v0.4/sqlite-backend-switch.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 runtime 检测：区分 `web` / `tauri`。
+  - 新增 backend key：`offerflow:storage:backend = localStorage | sqlite`。
+  - 新增 backend selection 状态机：`localStorage_only`、`sqlite_available`、`sqlite_ready`、`migration_required`、`migration_running`、`migration_succeeded`、`migration_failed`、`already_migrated`、`sqlite_active`、`fallback_localStorage`。
+  - 新增 `resolveStorageBackend()`：Web 始终 active localStorage；Tauri 只有显式 `backend=sqlite` 且 `app_meta.migration_status=migrated` 才 active SQLite。
+  - 新增 `initializeStorageBackend()`：返回 resolution + async stores；现有 `useStores()` 旧同步入口不变。
+  - 新增 Tauri command `sqlite_get_storage_migration_status`，读取 `app_meta.migration_status` 与最新 `migration_logs.status`。
+  - 新增受控迁移入口 `runControlledLocalStorageToSqliteMigration()`：先 T4 backup，再 T5 migration，成功后写 done marker 和 `backend=sqlite`。
+  - 受控迁移失败时不写 `backend=sqlite`、不写 done marker、不删除旧 localStorage。
+  - `already_migrated` 时不重复 backup / migration；done marker 成功后可写 `backend=sqlite`。
+  - done marker 失败返回 `done_marker_failed`，不写 `backend=sqlite`，旧 localStorage 保持不动。
+  - 新增 T8 文档 `docs/v0.4/sqlite-backend-switch.md`。
+- sqlite_active 判定条件：
+  - runtime 必须是 Tauri。
+  - localStorage 明确存在 `offerflow:storage:backend=sqlite`。
+  - SQLite `app_meta.migration_status=migrated`。
+  - 三者缺一则不判定为 `sqlite_active`。
+- 失败回退策略：
+  - Web 模式或 SQLite 不可用：`fallback_localStorage`。
+  - 显式 sqlite 但未 migrated：`migration_required`，active backend 仍 localStorage。
+  - 最近 migration failed：`migration_failed`，active backend 仍 localStorage。
+  - backup / migration / done marker 任一步失败：不写 `backend=sqlite`，不删除旧 localStorage。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/backendSwitch.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，21 passed, 0 failed。
+  - `storageAdapter.selftest`：通过，14 passed, 0 failed。
+  - `backendSwitch.selftest`：通过，22 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，13 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：本轮补跑已发起，命令在 120 秒内未自然结束，随后清理了由本次命令残留的 npm / tauri / vite / esbuild 进程；未取得完整 Tauri dev smoke 通过结论。已有 `cargo check` / `cargo test` 验证 Rust/Tauri 命令可编译，仍需在环境允许时补跑 Tauri dev smoke。
+- 红线自检：
+  - 未默认自动迁移真实用户数据。
+  - 未启动应用时无提示直接迁移。
+  - 未删除任何 localStorage 数据。
+  - 未默认强制切 SQLite。
+  - 未改 Vue 页面业务 UI。
+  - 未做完整迁移设置页。
+  - 未做备份恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T8 落地用户明确要求的受控 backend 启用机制，未新增产品边界，未默认切 SQLite，未删除旧数据。
+- 是否允许进入下一步：是。用户已验收 T8 并要求进入 T9：桌面模式最小 UI / 数据迁移确认入口。
+- 建议 commit message：feat: 新增 v0.4 SQLite backend 受控切换机制
+
+---
+
+### 2026-06-29 · v0.4 · T9 桌面模式最小 UI / 数据迁移确认入口
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T8 通过并要求先提交 T8，再进入 T9：给用户一个明确、可见、可确认、可回退的桌面端数据迁移入口。
+- 执行者：Codex
+- T8 commit：
+  - `8cc014f feat: 完成 v0.4 T8 SQLite 后端受控切换`
+- 改动文件：
+  - `src/components/StorageMigrationPanel.vue`
+  - `src/pages/ProfileConfigPage.vue`
+  - `src/app/storageMigrationUiState.ts`
+  - `src/app/controlledSqliteMigration.ts`
+  - `scripts/storageMigrationPanel.selftest.ts`
+  - `docs/v0.4/storage-migration-ui.md`
+  - `docs/v0.1/progress.md`
+- UI 入口位置：
+  - 入口挂在现有 `ProfileConfigPage.vue` 底部，不新增路由，不大改导航。
+- 展示状态：
+  - 当前运行环境：Web 浏览器模式 / Tauri 桌面模式。
+  - 当前 active backend：localStorage / SQLite。
+  - backend 标记：`offerflow:storage:backend` 当前偏好。
+  - SQLite 状态：不可用 / 可用未迁移 / 需要迁移 / 上次失败 / 已迁移待启用 / 已启用。
+  - localStorage 数据概览：profile 是否存在、job 数量、raw entry 数量、warning 数量。
+  - 迁移结果：backup 路径、migration id、profile/job 数量、warning / error 摘要、backend 是否已切为 SQLite。
+- 用户确认迁移流程：
+  - Web 浏览器模式不显示可执行 SQLite 迁移按钮，只显示说明。
+  - Tauri 桌面模式显示迁移按钮，但点击后仍需 `window.confirm` 二次确认。
+  - 确认后调用 T8 `runControlledLocalStorageToSqliteMigration()`。
+  - 受控迁移仍先生成 JSON 备份，再写 SQLite，成功并写 done 标记后才写 `backend=sqlite`。
+- 失败 / 回退展示策略：
+  - 备份失败：展示错误，不执行 migration，不写 `backend=sqlite`，不删除 localStorage。
+  - 迁移失败：展示错误，active backend 仍为 localStorage，不写 `backend=sqlite`，不删除 localStorage。
+  - `already_migrated`：不重复备份 / 迁移，按 T8 逻辑允许启用 SQLite backend。
+  - done 标记失败：展示半成功状态，不写 `backend=sqlite`，不删除 localStorage。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/storageMigrationPanel.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/backendSwitch.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，21 passed, 0 failed。
+  - `storageAdapter.selftest`：通过，14 passed, 0 failed。
+  - `backendSwitch.selftest`：通过，22 passed, 0 failed。
+  - `storageMigrationPanel.selftest`：通过，18 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，13 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：T9 未再次强行运行。本轮提交 T8 前已按要求尝试补跑该命令，命令在 120 秒内未自然结束，并留下 npm / tauri / vite / esbuild 进程，已清理；为避免重复留下后台进程，T9 桌面端真实 smoke 仍需在可交互环境中手动补跑。
+- 红线自检：
+  - 未自动迁移。
+  - 未默认强制切 SQLite。
+  - 未删除 localStorage。
+  - 未做恢复 UI。
+  - 未新增路由。
+  - 未引入新的 UI 框架。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T9 是 DEC-025 / DEC-026 和 T8 受控迁移机制的 UI 入口落地，未新增产品边界，未改变默认 backend 策略，未删除旧数据。
+- 是否允许进入下一步：否。等待用户验收 T9；建议验收后进入 T10：真实桌面端端到端验收与 release 文档收口。
+- 建议 commit message：feat: 新增 v0.4 桌面端 SQLite 迁移确认入口
+
+---
+
+### 2026-06-29 · v0.4 · T10 真实桌面端端到端验收与 release 文档收口
+
+- 状态：已完成命令级验收与文档收口，等待用户验收；可见窗口人工点击项受当前 Codex 沙箱 / 提升权限环境限制，需用户在本机补验。
+- 来源：用户确认 T9 通过并要求先提交 T9，再进入 T10：真实桌面端端到端验收与 release 文档收口。
+- 执行者：Codex
+- T9 commit：
+  - `df4710f feat: 完成 v0.4 T9 桌面端迁移确认入口`
+- 改动文件：
+  - `src/App.vue`
+  - `docs/v0.4/desktop-e2e-acceptance.md`
+  - `docs/release/v0.4.0.md`
+  - `README.md`
+  - `docs/v0.1/progress.md`
+- T10 小修：
+  - 真实桌面检查中发现顶部导航在 Tauri WebView 下可能被品牌说明挤出可视区域。
+  - `src/App.vue` 将品牌说明限制为单行省略，并将顶部导航按钮固定为右侧 flex 容器。
+  - 该修复不改迁移策略、不改数据模型、不改业务页面流程、不新增路由。
+- release 文档收口：
+  - 新增 `docs/release/v0.4.0.md`，记录 v0.4 版本定位、主要能力、仍然不做、数据安全说明、验证结果和已知限制。
+  - 新增 `docs/v0.4/desktop-e2e-acceptance.md`，记录 T10 桌面端验收命令、真实路径、smoke 输出、当前环境限制和用户补验清单。
+  - 更新 `README.md`，说明 v0.4 支持 Tauri 桌面 SQLite，Web 模式仍使用 localStorage，并补充基本运行 / 验证命令。
+- Tauri dev 验收：
+  - 未提升权限运行时，当前 Codex 沙箱会拦截 `%APPDATA%/com.offerflow.local` 写入，SQLite smoke 报 `attempt to write a readonly database` / `unable to open database file`。
+  - 提升权限运行后，`npm.cmd exec tauri -- dev` 命令级 smoke 通过，T3/T4/T5/T7 均输出成功日志。
+  - 提升权限运行时 GUI 窗口未暴露到当前可枚举交互桌面，因此 Codex 无法诚实完成全部可见窗口点击验收。
+- Tauri dev smoke 摘要：
+  - SQLite 数据库文件：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3`
+  - backup 文件：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\backups\offerflow-localstorage-backup-20260629-111022.json`
+  - migration id：`localstorage-to-sqlite-1782731422000-0000000000000000000000000000000000000000000000000000000000000001`
+  - `migration_status=migrated`
+  - `profile_count=1`
+  - `job_count=2`
+- 自动验证结果：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`：通过，11 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`：通过，21 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts`：通过，14 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/backendSwitch.selftest.ts`：通过，22 passed, 0 failed。
+  - `npm.cmd exec tsx -- scripts/storageMigrationPanel.selftest.ts`：通过，18 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过。
+  - `npm.cmd run build`：通过，保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，13 passed, 0 failed。
+- 红线自检：
+  - 未新增大功能。
+  - 未改数据模型。
+  - 未改迁移策略。
+  - 未删除 localStorage。
+  - 未做恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+  - 未打 tag。
+- 是否涉及 decision-log 更新：否。T10 是验收、小 bug 修复和 release 文档收口，未新增产品边界，未推翻 DEC-025 / DEC-026。
+- 是否允许进入下一步：否。等待用户验收 T10；建议最终 tag / push 前由用户在本机可见 Tauri 窗口补跑 `docs/v0.4/desktop-e2e-acceptance.md` 的点击清单。
+- 建议 commit message：docs: 收口 v0.4 桌面端验收与 release 文档
+
+---
+
+### 2026-06-29 · v0.4 · T10 接力复跑（Claude Code）
+
+- 背景：Codex token 用完，由 Claude Code 接力 T10 收口；只复跑验证、记录真实结果、收口文档，不重做、不新增功能。
+- 接手前检查：`git status` / `git diff` 确认未提交内容仅为 T10 收口的 5 个文件（README.md、docs/v0.1/progress.md、src/App.vue、docs/release/v0.4.0.md、docs/v0.4/desktop-e2e-acceptance.md），无其它越界改动。
+- 自动验证（本接力环境复跑，全部通过，与 Codex 记录一致）：
+  - `localStorageBackup.selftest`：11 passed, 0 failed。
+  - `localStorageMigration.selftest`：21 passed, 0 failed。
+  - `storageAdapter.selftest`：14 passed, 0 failed。
+  - `backendSwitch.selftest`：22 passed, 0 failed。
+  - `storageMigrationPanel.selftest`：18 passed, 0 failed。
+  - `npm run typecheck`：通过。
+  - `npm run build`：通过，保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：13 passed, 0 failed。
+- Tauri dev 实际启动：本接力环境（Claude Code，本机 Console 会话）`npm.cmd exec tauri -- dev` 成功启动，Vite 起在 5175，cargo 构建完成并运行 `app.exe`（进程实际存活）。与 Codex 沙箱不同，本环境**未提权**即可写入 AppData，启动期 desktop SQLite smoke（T3/T4/T5/T7）真实落盘成功：
+  - SQLite：`C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-t3.sqlite3`（69632 bytes）
+  - backup：`...\backups\offerflow-localstorage-backup-20260629-113643.json`
+  - `migration_status=migrated`，`profile_count=1`，`job_count=2`
+  - 注：以上为应用启动期 smoke fixture 自动写入，非人工点击迁移面板的结果。
+- 可见窗口人工点击验收：**仍未完成**。尝试用 computer-use 申请控制 OfferFlow 窗口以自动点击迁移面板，授权对话框 300s 超时未获批准（无人在场点击）。复跑后已停止接力启动的 `app.exe`，释放 5175 端口。
+- 小修：本接力轮**未**新增代码改动，保留 Codex 的 `src/App.vue` 顶部导航修复；仅更新 `docs/v0.4/desktop-e2e-acceptance.md`、`docs/release/v0.4.0.md`、`docs/v0.1/progress.md` 以诚实记录接力复跑结果。
+- 是否涉及 decision-log 更新：否。
+- 是否允许进入下一步：否。不建议进入 v0.4.0 最终 tag / push；必须先由用户在本机可见 Tauri 窗口亲自补跑 `docs/v0.4/desktop-e2e-acceptance.md` 第 6 节点击清单。
+- 建议 commit message：docs: 完成 v0.4 T10 桌面验收与发布文档
+
+---
+
+### 2026-06-29 · v0.4 · T10 封版决策（方案 A）与封版文档
+
+- 状态：用户已就"封版前是否把浏览器真实数据导入桌面 SQLite"做出最终裁定，采纳**方案 A**。本轮新增封版决策简报并定稿封版口径，等待用户最终确认。
+- 来源：用户基于决策简报反馈 GPT 后拍板方案 A，要求新增 `docs/v0.4/sealing-decision-brief.md` 并同步更新封版文档。
+- 执行者：Claude Code
+- 封版决策（方案 A）：
+  - 直接封版，**不**在 v0.4 封版前把浏览器真实 localStorage 数据导入桌面 SQLite。
+  - **不选方案 B**（开发者控制台一次性手动搬运）。
+  - **不选方案 C**（v0.4 追加导入 / 恢复 UI）。
+  - 理由：浏览器 localStorage 与 Tauri WebView localStorage 隔离，当前导入只是冻结快照、不形成长期同步；v0.4 封版目标是"本地 SQLite 能力完成"，而非"完成真实数据迁入"；用户真实浏览器数据已通过 JSON 备份落盘，数据安全优先级已满足。
+  - 未来如长期切桌面版，再单独立项设计"从 JSON 导入 / 恢复到 SQLite"，不在 v0.4。
+- 改动文件：
+  - 新增 `docs/v0.4/sealing-decision-brief.md`（封版前决策简报 + 最终裁定 + 封版口径）。
+  - 更新 `docs/v0.4/desktop-e2e-acceptance.md`（新增封版决策 + 封版口径）。
+  - 更新 `docs/release/v0.4.0.md`（新增封版决策 / 封版口径，已知限制补充）。
+  - 更新 `docs/v0.1/progress.md`（本条）。
+- 封版口径（如实记录）：
+  - v0.4 封版选择方案 A。
+  - v0.4.0 可以**本地封版**（定稿文档 + 合并 main + 本地 tag）。
+  - 可见窗口人工点击验收仍建议在最终 push / 打远程 tag 前由用户在本机可见 Tauri 窗口补跑一次。
+  - 在用户补完可见窗口验收前，**不建议 push GitHub / 打远程 tag**。
+  - 不承诺"永不丢失"。
+  - 不新增导入 UI、不做恢复 UI、不做云同步、不做账号、不做 AI API。
+- 自动验证（本轮复跑结果见交付小结，全部通过）。
+- 是否涉及 decision-log 更新：否。本条是封版口径与决策记录落到 v0.4 文档，未改产品边界、未新增实体、未推翻已有 DEC。
+- 是否允许进入下一步：否。本地封版文档已就绪；最终 push / 远程 tag 前等待用户补跑可见窗口验收并确认。
+- 建议 commit message：docs: 完成 v0.4 T10 桌面验收与封版文档

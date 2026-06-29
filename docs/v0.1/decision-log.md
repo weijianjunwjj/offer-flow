@@ -1029,6 +1029,110 @@
 
 ---
 
+## DEC-025：v0.4 引入本地服务与 SQLite 数据库文件
+
+- 日期：2026-06-26
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - OfferFlow v0.1 - v0.3 一直采用纯浏览器形态，所有数据保存在浏览器 `localStorage`。
+  - 当前持久化内容已经从最初的全局配置和岗位记录，扩展到 AI 原文、`OFFER_FLOW_JSON` 解析结果、机会雷达、8 态 `communicationStatus`、v0.3 跟进事实字段和草稿话术。
+  - `localStorage` 容量有限，缺少可靠备份、恢复、迁移、校验和文件级可见性；浏览器清理数据、换浏览器、换设备或误操作都可能让长期求职台账不可控。
+  - 用户已经明确拍板：v0.4 要一步到位，引入本地后端服务 / 本地运行时 + SQLite 本地数据库文件，让 OfferFlow 的数据成为可长期保存、可备份、可恢复、可迁移的本地数据文件。
+- 决策：
+  - v0.4 定位为：本地服务化与 SQLite 数据文件化。
+  - v0.4 允许引入本地运行时 / 本地服务 / SQLite 数据库文件，作为新的本地数据底座。
+  - 优先技术路线为 `Tauri + Vue3 + Vite + TypeScript + SQLite`。
+  - Electron / 本地 Node 服务可作为备选方案评估，但不得在未完成方案验收前直接实现。
+  - 本决策推翻此前“纯浏览器、无后端、localStorage 存储”的技术边界；v0.4 的“本地服务”仅指运行在用户本机的本地运行时或本地进程，不等同于远程后端或 SaaS。
+  - 本决策不推翻“不接 AI API、不做 BYOK、不云同步、不账号登录、不自动操作 Boss、不爬虫、不做浏览器插件、不做 SaaS、不接远程数据库”等产品边界。
+  - v0.4 仍只解决本地数据底座，不得顺手扩展 AI、云同步、账号、多端同步、自动投递、Boss 自动化或 CRM 功能。
+  - localStorage 到 SQLite 的迁移必须保证旧数据不丢。
+  - 迁移前必须自动生成完整 JSON 备份。
+  - 迁移后必须校验数据完整性，至少校验 profile 是否存在、jobs 数量、关键字段、AI 原文、report / opportunityAnalysis、`communicationStatus` 和 v0.3 跟进事实字段。
+  - 迁移成功后不得立即删除旧 `localStorage` 数据，只允许写入“已迁移”标记；旧数据保留为只读兜底，后续是否清理必须另行拍板。
+- 理由：
+  1. v0.3 已经从临时手账演进为长期求职数据仓库，`localStorage` 的容量、备份和可迁移性不足以支撑长期使用。
+  2. SQLite 文件更适合本地优先的数据资产：单文件、可备份、可复制、可恢复、可迁移，且便于后续做 schema version 和完整性校验。
+  3. Tauri 相比 Electron 更轻量，更适合作为 Vue3/Vite 前端的本地运行时外壳；SQLite 可作为稳定、成熟、可审计的本地数据文件。
+  4. 继续保留“不接 AI API、不云同步、不自动操作 Boss”等产品边界，可以避免 v0.4 因技术底座升级而膨胀成 SaaS、CRM 或自动化工具。
+  5. 迁移前备份、迁移后校验、保留旧 localStorage 只读兜底，是保护用户历史求职数据的最低安全线。
+- 被否决方案：
+  1. 继续长期依赖 `localStorage`，仅增加导入导出按钮（不能解决稳定数据库文件、schema version、校验与恢复问题）。
+  2. 只迁移到 IndexedDB / OPFS（仍主要受浏览器沙箱管理，文件可见性、备份和恢复体验不如 SQLite 数据文件明确）。
+  3. v0.4 同时接入云同步、账号或远程数据库（违反本地优先和本轮只改本地数据底座的边界）。
+  4. 迁移成功后立即删除旧 `localStorage` 数据（破坏回滚与兜底能力）。
+  5. 借 SQLite 改造顺手拆出 Company / Contact / Message / FollowupLog 等新业务实体（超出本轮目标，且可能推翻 v0.3 的轻量事实模型）。
+- 影响范围：
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.1/progress.md`
+  - 后续可能影响 `src/storage/` 适配层、Tauri 本地 command、SQLite schema、迁移脚本、自测脚本和打包配置；这些不在本轮实现。
+- 后续复审条件：
+  - 如果 Tauri 在当前开发环境、打包体积、系统兼容性或 SQLite 插件稳定性上不可接受，可复审 Electron 或本地 Node 服务方案。
+  - 如果 SQLite schema 草案在实现时发现无法覆盖 v0.3 数据形状，可复审表结构，但必须继续遵守“不丢旧数据、备份先行、迁移校验、旧 localStorage 不立即删除”的迁移红线。
+  - 如果未来要引入云同步、账号、多端、AI API、BYOK 或自动化能力，必须另开版本与决策，不得混入 v0.4 本地存储底座改造。
+- 相关文档：
+  - README.md
+  - docs/v0.1/progress.md
+  - docs/v0.4/local-sqlite-storage-plan.md
+  - docs/v0.1/decision-log.md DEC-001 / DEC-004 / DEC-009 / DEC-015 / DEC-020 / DEC-021 / DEC-022 / DEC-024
+
+---
+
+## DEC-026：v0.4 T1 采用 Tauri v2 与 SQLite Spike 依赖组合
+
+- 日期：2026-06-27
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、GPT、Codex
+- 拍板者：用户
+- 背景：
+  - 用户已确认继续坚持 v0.4 优先路线：Tauri + SQLite。
+  - 首轮 T1 因本机 Windows 前置环境缺失被记录为阻塞；用户随后补齐 Rust / Cargo 与 MSVC Build Tools，并要求继续重跑 T1。
+  - T1 目标仅验证技术可行性：Tauri 能否初始化和启动、能否获得 app data 目录、能否创建 SQLite 文件并完成 `schema_version=1` 的最小读写、能否保持 Web 端构建不破坏。
+- 决策：
+  - T1 采用 Tauri v2 作为本地运行时。
+  - 前端依赖引入 `@tauri-apps/api`、`@tauri-apps/plugin-sql`。
+  - 开发依赖引入 `@tauri-apps/cli`。
+  - Rust 侧引入 `tauri`、`tauri-build`、`tauri-plugin-sql`，并启用 `tauri-plugin-sql` 的 `sqlite` feature。
+  - T1 的启动期最小 SQLite 读写验证使用 `rusqlite` + `bundled` feature，直接在 Tauri `setup` 生命周期中创建 `offerflow-spike.sqlite3`、写入并读回 `app_meta.schema_version=1`。
+  - `tauri-plugin-sql` 已注册并授权 `sql:default`，作为后续 T2/T3 storage adapter 与 SQLite 访问方案的候选底座；T1 不让现有页面直接访问 SQL。
+  - Tauri dev 专用端口固定为 `127.0.0.1:5175` 并启用 `--strictPort`，避免 Vite 自动换端口导致 Tauri devUrl 与实际端口不一致。
+  - 本决策只覆盖 T1 Spike 依赖与最小技术验证，不代表已经替换 `src/storage/`，也不代表已经开始正式 localStorage -> SQLite 迁移。
+- 理由：
+  1. Tauri v2 与 DEC-025 确定的优先技术路线一致，能在本地运行时内提供稳定的文件系统与 SQLite 能力。
+  2. `tauri-plugin-sql` 属于 Tauri 生态内直接面向 SQL 数据库的方案，适合后续通过本地运行时访问 SQLite。
+  3. `rusqlite` 的 `bundled` feature 可减少本机 SQLite 动态库差异，适合 T1 在 Rust 侧快速验证“能创建文件、能建表、能写入、能读回”。
+  4. 将最小读写放在 Tauri `setup` 阶段，不需要修改现有业务页面或 `src/storage/`，符合 T1 只做技术 Spike 的范围。
+  5. 固定 Tauri dev 端口能让开发环境验证更可重复，避免 dev server 自动换端口造成假阳性。
+- 被否决方案：
+  1. 继续停留在 T1 阻塞状态，不重跑验证（用户已补齐环境，且要求继续）。
+  2. 立即切换 Electron（用户已裁定当前阻塞不视为 Tauri 路线失败，暂不切换 Electron）。
+  3. 回退 IndexedDB / OPFS（用户已裁定暂不回退）。
+  4. 在 T1 中改造 `src/storage/` 或迁移业务数据（超出 T1 范围）。
+  5. 为了消除 `where cl` 在普通 PowerShell 中不可见而静默修改系统环境或安装系统级依赖（系统级依赖必须由用户授权或用户手动安装）。
+- 影响范围：
+  - `package.json`
+  - `package-lock.json`
+  - `src-tauri/`
+  - `docs/v0.4/tauri-sqlite-spike.md`
+  - `docs/v0.4/local-sqlite-storage-plan.md`
+  - `docs/v0.1/progress.md`
+  - 本决策不影响 `src/storage/`、现有页面、业务数据模型和 localStorage 逻辑。
+- 后续复审条件：
+  - 如果 T2/T3 发现 `tauri-plugin-sql` 无法满足 adapter、事务、路径、备份或迁移校验要求，可以复审是否继续使用插件 API、Rust command + `rusqlite`、或两者组合。
+  - 如果 Tauri 在打包、安装体积、Windows 兼容性或 WebView2 分发上出现不可接受问题，可以按 DEC-025 复审 Electron 或本地 Node 服务。
+  - 如果未来要接 AI API、云同步、账号、多端同步、自动操作 Boss 或远程数据库，必须另开版本和决策，不得混入 v0.4 T1。
+- 相关文档：
+  - docs/v0.1/progress.md
+  - docs/v0.4/local-sqlite-storage-plan.md
+  - docs/v0.4/tauri-sqlite-spike.md
+  - docs/v0.1/decision-log.md DEC-025
+
+---
+
 # 5. 待定决策
 
 暂无。
