@@ -2781,3 +2781,33 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：否。
 - 是否允许进入下一步：否。不建议进入 v0.4.0 最终 tag / push；必须先由用户在本机可见 Tauri 窗口亲自补跑 `docs/v0.4/desktop-e2e-acceptance.md` 第 6 节点击清单。
 - 建议 commit message：docs: 完成 v0.4 T10 桌面验收与发布文档
+
+---
+
+### 2026-06-29 · v0.4 · T10 封版决策（方案 A）与封版文档
+
+- 状态：用户已就"封版前是否把浏览器真实数据导入桌面 SQLite"做出最终裁定，采纳**方案 A**。本轮新增封版决策简报并定稿封版口径，等待用户最终确认。
+- 来源：用户基于决策简报反馈 GPT 后拍板方案 A，要求新增 `docs/v0.4/sealing-decision-brief.md` 并同步更新封版文档。
+- 执行者：Claude Code
+- 封版决策（方案 A）：
+  - 直接封版，**不**在 v0.4 封版前把浏览器真实 localStorage 数据导入桌面 SQLite。
+  - **不选方案 B**（开发者控制台一次性手动搬运）。
+  - **不选方案 C**（v0.4 追加导入 / 恢复 UI）。
+  - 理由：浏览器 localStorage 与 Tauri WebView localStorage 隔离，当前导入只是冻结快照、不形成长期同步；v0.4 封版目标是"本地 SQLite 能力完成"，而非"完成真实数据迁入"；用户真实浏览器数据已通过 JSON 备份落盘，数据安全优先级已满足。
+  - 未来如长期切桌面版，再单独立项设计"从 JSON 导入 / 恢复到 SQLite"，不在 v0.4。
+- 改动文件：
+  - 新增 `docs/v0.4/sealing-decision-brief.md`（封版前决策简报 + 最终裁定 + 封版口径）。
+  - 更新 `docs/v0.4/desktop-e2e-acceptance.md`（新增封版决策 + 封版口径）。
+  - 更新 `docs/release/v0.4.0.md`（新增封版决策 / 封版口径，已知限制补充）。
+  - 更新 `docs/v0.1/progress.md`（本条）。
+- 封版口径（如实记录）：
+  - v0.4 封版选择方案 A。
+  - v0.4.0 可以**本地封版**（定稿文档 + 合并 main + 本地 tag）。
+  - 可见窗口人工点击验收仍建议在最终 push / 打远程 tag 前由用户在本机可见 Tauri 窗口补跑一次。
+  - 在用户补完可见窗口验收前，**不建议 push GitHub / 打远程 tag**。
+  - 不承诺"永不丢失"。
+  - 不新增导入 UI、不做恢复 UI、不做云同步、不做账号、不做 AI API。
+- 自动验证（本轮复跑结果见交付小结，全部通过）。
+- 是否涉及 decision-log 更新：否。本条是封版口径与决策记录落到 v0.4 文档，未改产品边界、未新增实体、未推翻已有 DEC。
+- 是否允许进入下一步：否。本地封版文档已就绪；最终 push / 远程 tag 前等待用户补跑可见窗口验收并确认。
+- 建议 commit message：docs: 完成 v0.4 T10 桌面验收与封版文档

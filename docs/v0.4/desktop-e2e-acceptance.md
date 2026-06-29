@@ -128,6 +128,22 @@ Tauri dev 实际启动结果：
 
 结论：命令级与启动期 smoke 在本接力环境真实落盘成功（且无需提权），但第 6 节的可见窗口点击清单仍需用户在本机交互桌面亲自补跑一次。
 
-## 8. 当前结论
+## 8. 封版决策（方案 A）
 
-命令级 Tauri + SQLite + backup + migration + adapter smoke 已通过，并在 Claude Code 接力环境中真实落盘复现成功。可见桌面窗口的人工点击项至今未由任何自动化代理完成，需用户在本机交互窗口中亲自补验一次后，再进入 v0.4.0 tag / push 更稳妥。
+v0.4 封版采纳**方案 A：直接封版，不在封版前把浏览器真实 localStorage 数据导入桌面 SQLite**。完整决策过程与裁定理由见 [`sealing-decision-brief.md`](sealing-decision-brief.md)。要点：
+
+1. 浏览器 localStorage 与 Tauri WebView localStorage 隔离，当前导入只是冻结快照，不形成长期同步。
+2. v0.4 封版目标是**本地 SQLite 能力完成**，不是完成真实数据迁入。
+3. 用户真实浏览器数据已通过 JSON 备份落盘，数据安全优先级已满足。
+4. 不新增导入 UI、不做恢复 UI、不做云同步、不做账号、不做 AI API；未来如长期切桌面版，再单独立项设计"从 JSON 导入 / 恢复到 SQLite"。
+
+## 9. 当前结论
+
+命令级 Tauri + SQLite + backup + migration + adapter smoke 已通过，并在 Claude Code 接力环境中真实落盘复现成功。可见桌面窗口的人工点击项至今未由任何自动化代理完成。
+
+封版口径：
+
+- v0.4.0 **可以本地封版**（定稿文档 + 合并 main + 本地 tag）。
+- 但**可见窗口人工点击验收仍建议在最终 push / tag 到远端前，由用户在本机可见 Tauri 窗口补跑一次**（清单见第 6 节）。
+- 在用户补完可见窗口验收前，**不建议 push GitHub / 打远程 tag**。
+- 不承诺"永不丢失"，用户仍应保留 JSON 备份。
