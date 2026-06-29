@@ -23,6 +23,10 @@ export interface ControlledSqliteMigrationResult {
   backend: 'localStorage' | 'sqlite';
   backupPath: string | null;
   migrationId: string | null;
+  profileCount: number | null;
+  jobCount: number | null;
+  warningCount: number;
+  warnings: string[];
   errorCode: string | null;
   message: string;
 }
@@ -44,6 +48,10 @@ export async function runControlledLocalStorageToSqliteMigration(
       backend: 'localStorage',
       backupPath: null,
       migrationId: null,
+      profileCount: null,
+      jobCount: null,
+      warningCount: 0,
+      warnings: [],
       errorCode: 'sqlite_unavailable',
       message: 'SQLite migration can only run inside the Tauri runtime.',
     };
@@ -56,27 +64,42 @@ export async function runControlledLocalStorageToSqliteMigration(
       backendState: 'already_migrated',
       backupPath: null,
       migrationId: null,
+      profileCount: null,
+      jobCount: null,
+      warningCount: 0,
+      warnings: [],
       message: 'SQLite migration was already completed; no migration was rerun.',
     });
   }
 
   let backupPath: string | null = null;
+  let profileCount: number | null = null;
+  let jobCount: number | null = null;
+  let warnings: string[] = [];
   try {
     const backup = createLegacyLocalStorageBackupPayload(options.driver);
+    warnings = backup.warnings.map(formatWarning);
     const backupResult = await options.sqliteClient.writeLocalStorageBackup(backup);
     backup.checksum = backupResult.checksum;
     backupPath = backupResult.backupPath;
 
     const migrationPayload = createLocalStorageSqliteMigrationPayload(backup);
+    warnings = migrationPayload.warnings.map(formatWarning);
     const migrationResult = await options.sqliteClient.migrateLocalStorageToSqlite(
       migrationPayload,
     );
+    profileCount = migrationResult.profileCount;
+    jobCount = migrationResult.jobCount;
 
     return enableSqliteAfterSuccessfulMigration(options.driver, {
       status: 'migration_succeeded',
       backendState: 'migration_succeeded',
       backupPath,
       migrationId: migrationResult.migrationId,
+      profileCount,
+      jobCount,
+      warningCount: warnings.length,
+      warnings,
       message: 'SQLite migration completed and backend preference was set to sqlite.',
     });
   } catch (error) {
@@ -86,6 +109,10 @@ export async function runControlledLocalStorageToSqliteMigration(
         backendState: 'already_migrated',
         backupPath,
         migrationId: null,
+        profileCount,
+        jobCount,
+        warningCount: warnings.length,
+        warnings,
         message: 'SQLite migration was already completed; no migration was rerun.',
       });
     }
@@ -96,6 +123,10 @@ export async function runControlledLocalStorageToSqliteMigration(
       backend: 'localStorage',
       backupPath,
       migrationId: null,
+      profileCount,
+      jobCount,
+      warningCount: warnings.length,
+      warnings,
       errorCode: errorCode(error),
       message: errorMessage(error),
     };
@@ -115,6 +146,10 @@ function enableSqliteAfterSuccessfulMigration(
       backend: 'localStorage',
       backupPath: result.backupPath,
       migrationId: result.migrationId,
+      profileCount: result.profileCount,
+      jobCount: result.jobCount,
+      warningCount: result.warningCount,
+      warnings: result.warnings,
       errorCode: errorCode(error),
       message:
         'SQLite database migration succeeded, but the legacy localStorage done marker could not be written.',
@@ -127,6 +162,10 @@ function enableSqliteAfterSuccessfulMigration(
     backend: 'sqlite',
     errorCode: null,
   };
+}
+
+function formatWarning(warning: { key: string; code: string; message: string }): string {
+  return `${warning.code} ${warning.key}: ${warning.message}`;
 }
 
 function errorCode(error: unknown): string {

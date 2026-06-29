@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交。T5 localStorage -> SQLite 迁移已由用户验收并提交。T6 迁移校验强化与失败回滚测试已由用户验收并提交。T7 SQLite adapter 接入 ConfigStore / JobStore 已由用户验收并提交，commit 为 `dedfc29`。T8 受控切换 SQLite backend / 启动迁移入口设计已完成：新增 backend selection 状态机、runtime 检测、`offerflow:storage:backend` 明确标记、受控迁移入口、migration status Tauri command、selftest 和 T8 文档；本轮未自动迁移真实用户数据、未默认强制切 SQLite、未删除旧 localStorage、未改 Vue 页面、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交。T5 localStorage -> SQLite 迁移已由用户验收并提交。T6 迁移校验强化与失败回滚测试已由用户验收并提交。T7 SQLite adapter 接入 ConfigStore / JobStore 已由用户验收并提交。T8 受控切换 SQLite backend / 启动迁移入口设计已由用户验收并提交，commit 为 `8cc014f`。T9 桌面模式最小 UI / 数据迁移确认入口已完成：新增 `StorageMigrationPanel`、UI 状态辅助、panel selftest 和 T9 文档；入口挂在配置页底部，Web 模式不显示可执行迁移按钮，Tauri 模式必须用户确认后才调用受控迁移；本轮未自动迁移、未删除 localStorage、未默认强制切 SQLite、未做恢复 UI、未 push。
 
 当前是否允许进入下一步：
 
-> 否。T8 实现完成后等待用户验收；建议验收通过后进入 T9：桌面模式最小 UI / 数据迁移确认入口。Codex 不自动提交 T8 改动、不 push。
+> 否。T9 实现完成后等待用户验收；建议验收通过后进入 T10：真实桌面端端到端验收与 release 文档收口。Codex 不自动提交 T9 改动、不 push。
 
 ---
 
@@ -2550,11 +2550,13 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 
 ### 2026-06-29 · v0.4 · T8 受控切换 SQLite backend / 启动迁移入口设计
 
-- 状态：已完成，待用户验收
+- 状态：已由用户验收并提交
 - 来源：用户确认 T7 通过并要求先提交 T7，再进入 T8：让 OfferFlow 具备“明确、可控、可回退”的 SQLite backend 启用机制。
 - 执行者：Codex
 - T7 commit：
   - `dedfc29 feat: 完成 v0.4 T7 SQLite 存储适配器接入`
+- T8 commit：
+  - `8cc014f feat: 完成 v0.4 T8 SQLite 后端受控切换`
 - 改动文件：
   - `src/storage/runtimeEnv.ts`
   - `src/storage/backendSelection.ts`
@@ -2622,5 +2624,76 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
   - 未做云同步 / AI API / 账号 / Boss 自动化。
   - 未 push 远程。
 - 是否涉及 decision-log 更新：否。T8 落地用户明确要求的受控 backend 启用机制，未新增产品边界，未默认切 SQLite，未删除旧数据。
-- 是否允许进入下一步：否。等待用户验收 T8；建议验收后进入 T9：桌面模式最小 UI / 数据迁移确认入口。
+- 是否允许进入下一步：是。用户已验收 T8 并要求进入 T9：桌面模式最小 UI / 数据迁移确认入口。
 - 建议 commit message：feat: 新增 v0.4 SQLite backend 受控切换机制
+
+---
+
+### 2026-06-29 · v0.4 · T9 桌面模式最小 UI / 数据迁移确认入口
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T8 通过并要求先提交 T8，再进入 T9：给用户一个明确、可见、可确认、可回退的桌面端数据迁移入口。
+- 执行者：Codex
+- T8 commit：
+  - `8cc014f feat: 完成 v0.4 T8 SQLite 后端受控切换`
+- 改动文件：
+  - `src/components/StorageMigrationPanel.vue`
+  - `src/pages/ProfileConfigPage.vue`
+  - `src/app/storageMigrationUiState.ts`
+  - `src/app/controlledSqliteMigration.ts`
+  - `scripts/storageMigrationPanel.selftest.ts`
+  - `docs/v0.4/storage-migration-ui.md`
+  - `docs/v0.1/progress.md`
+- UI 入口位置：
+  - 入口挂在现有 `ProfileConfigPage.vue` 底部，不新增路由，不大改导航。
+- 展示状态：
+  - 当前运行环境：Web 浏览器模式 / Tauri 桌面模式。
+  - 当前 active backend：localStorage / SQLite。
+  - backend 标记：`offerflow:storage:backend` 当前偏好。
+  - SQLite 状态：不可用 / 可用未迁移 / 需要迁移 / 上次失败 / 已迁移待启用 / 已启用。
+  - localStorage 数据概览：profile 是否存在、job 数量、raw entry 数量、warning 数量。
+  - 迁移结果：backup 路径、migration id、profile/job 数量、warning / error 摘要、backend 是否已切为 SQLite。
+- 用户确认迁移流程：
+  - Web 浏览器模式不显示可执行 SQLite 迁移按钮，只显示说明。
+  - Tauri 桌面模式显示迁移按钮，但点击后仍需 `window.confirm` 二次确认。
+  - 确认后调用 T8 `runControlledLocalStorageToSqliteMigration()`。
+  - 受控迁移仍先生成 JSON 备份，再写 SQLite，成功并写 done 标记后才写 `backend=sqlite`。
+- 失败 / 回退展示策略：
+  - 备份失败：展示错误，不执行 migration，不写 `backend=sqlite`，不删除 localStorage。
+  - 迁移失败：展示错误，active backend 仍为 localStorage，不写 `backend=sqlite`，不删除 localStorage。
+  - `already_migrated`：不重复备份 / 迁移，按 T8 逻辑允许启用 SQLite backend。
+  - done 标记失败：展示半成功状态，不写 `backend=sqlite`，不删除 localStorage。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/storageMigrationPanel.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/backendSwitch.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，21 passed, 0 failed。
+  - `storageAdapter.selftest`：通过，14 passed, 0 failed。
+  - `backendSwitch.selftest`：通过，22 passed, 0 failed。
+  - `storageMigrationPanel.selftest`：通过，18 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，13 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：T9 未再次强行运行。本轮提交 T8 前已按要求尝试补跑该命令，命令在 120 秒内未自然结束，并留下 npm / tauri / vite / esbuild 进程，已清理；为避免重复留下后台进程，T9 桌面端真实 smoke 仍需在可交互环境中手动补跑。
+- 红线自检：
+  - 未自动迁移。
+  - 未默认强制切 SQLite。
+  - 未删除 localStorage。
+  - 未做恢复 UI。
+  - 未新增路由。
+  - 未引入新的 UI 框架。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T9 是 DEC-025 / DEC-026 和 T8 受控迁移机制的 UI 入口落地，未新增产品边界，未改变默认 backend 策略，未删除旧数据。
+- 是否允许进入下一步：否。等待用户验收 T9；建议验收后进入 T10：真实桌面端端到端验收与 release 文档收口。
+- 建议 commit message：feat: 新增 v0.4 桌面端 SQLite 迁移确认入口

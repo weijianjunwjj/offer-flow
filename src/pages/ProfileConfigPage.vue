@@ -5,6 +5,7 @@
 import { onMounted, reactive, ref } from 'vue';
 import type { JobSeekerProfile, JobSearchFocus } from '../storage';
 import { useStores } from '../app/stores';
+import StorageMigrationPanel from '../components/StorageMigrationPanel.vue';
 
 function emptyProfile(): JobSeekerProfile {
   return {
@@ -151,6 +152,8 @@ function formatTime(ts: number): string {
         </span>
       </div>
     </form>
+
+    <StorageMigrationPanel />
   </main>
 </template>
 
