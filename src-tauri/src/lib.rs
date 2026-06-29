@@ -1,5 +1,7 @@
 mod sqlite;
 
+use serde_json::Value;
+use sqlite::adapter::T7AdapterSmokeResult;
 use sqlite::backup::LocalStorageBackupWriteResult;
 use sqlite::error::StorageErrorPayload;
 use sqlite::migration::LocalStorageMigrationResult;
@@ -27,6 +29,49 @@ fn migrate_localstorage_to_sqlite(
 ) -> Result<LocalStorageMigrationResult, StorageErrorPayload> {
     sqlite::migration::migrate_localstorage_to_sqlite(&app, &migration_payload_json)
         .map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_get_profile(app: AppHandle) -> Result<Option<Value>, StorageErrorPayload> {
+    sqlite::adapter::sqlite_get_profile(&app).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_save_profile(
+    app: AppHandle,
+    profile_json: String,
+) -> Result<Value, StorageErrorPayload> {
+    sqlite::adapter::sqlite_save_profile(&app, &profile_json).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_clear_profile(app: AppHandle) -> Result<bool, StorageErrorPayload> {
+    sqlite::adapter::sqlite_clear_profile(&app).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_create_job(app: AppHandle, job_json: String) -> Result<Value, StorageErrorPayload> {
+    sqlite::adapter::sqlite_create_job(&app, &job_json).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_get_job(app: AppHandle, id: String) -> Result<Option<Value>, StorageErrorPayload> {
+    sqlite::adapter::sqlite_get_job(&app, &id).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_list_jobs(app: AppHandle) -> Result<Vec<Value>, StorageErrorPayload> {
+    sqlite::adapter::sqlite_list_jobs(&app).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_update_job(app: AppHandle, job_json: String) -> Result<Value, StorageErrorPayload> {
+    sqlite::adapter::sqlite_update_job(&app, &job_json).map_err(|error| error.payload())
+}
+
+#[tauri::command]
+fn sqlite_delete_job(app: AppHandle, id: String) -> Result<bool, StorageErrorPayload> {
+    sqlite::adapter::sqlite_delete_job(&app, &id).map_err(|error| error.payload())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -87,6 +132,32 @@ pub fn run() {
                         error.technical_message()
                     ),
                 }
+
+                match sqlite::adapter::run_t7_adapter_smoke(&app.handle()) {
+                    Ok(T7AdapterSmokeResult {
+                        db_path,
+                        profile_target_city,
+                        created_job_id,
+                        listed_job_ids,
+                        updated_job_match_score,
+                        patch_preserved_ai_raw,
+                        deleted_job_missing,
+                    }) => println!(
+                        "[OfferFlow T7 SQLite Adapter] db_path={} profile_target_city={} created_job_id={} listed_jobs={} updated_match_score={} patch_preserved_ai_raw={} deleted_job_missing={}",
+                        db_path,
+                        profile_target_city,
+                        created_job_id,
+                        listed_job_ids.join(","),
+                        updated_job_match_score,
+                        patch_preserved_ai_raw,
+                        deleted_job_missing
+                    ),
+                    Err(error) => eprintln!(
+                        "[OfferFlow T7 SQLite Adapter] failed: {} ({})",
+                        error.payload().message,
+                        error.technical_message()
+                    ),
+                }
             }
 
             Ok(())
@@ -94,7 +165,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             sqlite_t3_check,
             write_localstorage_backup,
-            migrate_localstorage_to_sqlite
+            migrate_localstorage_to_sqlite,
+            sqlite_get_profile,
+            sqlite_save_profile,
+            sqlite_clear_profile,
+            sqlite_create_job,
+            sqlite_get_job,
+            sqlite_list_jobs,
+            sqlite_update_job,
+            sqlite_delete_job
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

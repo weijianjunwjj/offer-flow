@@ -11,6 +11,24 @@ export type { StorageDriver } from './driver';
 
 export { ConfigStore } from './configStore';
 export { JobStore } from './jobStore';
+export type {
+  AsyncOfferFlowStores,
+  JobRepository,
+  ProfileRepository,
+  StorageBackend,
+} from './ports';
+export {
+  LocalStorageJobRepository,
+  LocalStorageProfileRepository,
+  createLocalStorageAsyncStores,
+} from './localStorageRepositories';
+export { TauriSQLiteClient } from './sqliteClient';
+export type { SQLiteClient, TauriInvoke } from './sqliteClient';
+export {
+  SQLiteJobRepository,
+  SQLiteProfileRepository,
+  createSQLiteAsyncStores,
+} from './sqliteRepositories';
 
 import type { StorageDriver } from './driver';
 import { BrowserStorageDriver, MemoryStorageDriver } from './driver';

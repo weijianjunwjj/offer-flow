@@ -39,11 +39,11 @@
 
 当前阶段：
 
-> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交。T5 localStorage -> SQLite 迁移已由用户验收并提交，commit 为 `f2268d2`。T6 迁移校验强化与失败回滚测试已完成：新增 repeated migration `already_migrated` 策略、事务回滚测试、失败日志 errorCode、前端 backup/done 标记失败门禁测试，以及 T6 文档；本轮未替换现有页面运行存储、未删除旧 localStorage、未改业务页面、未 push。
+> 用户于 2026-06-26 拍板 v0.4 进入“本地服务化与 SQLite 数据文件化”方向。当前分支为 `feature/v0.4-local-sqlite-storage`。T1 Tauri + SQLite 技术 Spike 已由用户验收并提交。T2 storage adapter 设计已由用户验收并提交。T3 SQLite schema 与基础 repository 实现已由用户验收并提交。T4 localStorage JSON 备份导出已由用户验收并提交。T5 localStorage -> SQLite 迁移已由用户验收并提交。T6 迁移校验强化与失败回滚测试已由用户验收并提交，commit 为 `e7eb3f7`。T7 SQLite adapter 接入 ConfigStore / JobStore 已完成：新增 async storage ports、localStorage adapter、SQLite client / repositories、Tauri SQLite CRUD commands、adapter selftest 和 T7 文档；本轮未自动迁移、未默认切 SQLite、未删除旧 localStorage、未改 Vue 页面、未 push。
 
 当前是否允许进入下一步：
 
-> 否。T6 实现完成后等待用户验收；建议验收通过后进入 T7：SQLite adapter 接入 ConfigStore / JobStore。Codex 不自动提交 T6 改动、不 push。
+> 否。T7 实现完成后等待用户验收；建议验收通过后进入 T8：受控切换 SQLite backend / 启动迁移入口设计。Codex 不自动提交 T7 改动、不 push。
 
 ---
 
@@ -2470,3 +2470,78 @@ C:\Users\Administrator\AppData\Roaming\com.offerflow.local\offerflow-spike.sqlit
 - 是否涉及 decision-log 更新：否。T6 落地用户已明确的迁移可靠性要求和重复迁移默认拒绝策略，未新增产品边界、未替换运行存储、未删除旧数据。
 - 是否允许进入下一步：否。等待用户验收 T6；建议验收后进入 T7：SQLite adapter 接入 ConfigStore / JobStore。
 - 建议 commit message：test: 强化 v0.4 localStorage 到 SQLite 迁移回滚测试
+
+---
+
+### 2026-06-29 · v0.4 · T7 SQLite adapter 接入 ConfigStore / JobStore
+
+- 状态：已完成，待用户验收
+- 来源：用户确认 T6 通过并要求先提交 T6，再进入 T7：让 OfferFlow 具备 SQLite 版 ConfigStore / JobStore 适配能力，但不自动切换生产默认存储、不自动迁移、不改页面业务流程。
+- 执行者：Codex
+- T6 commit：
+  - `e7eb3f7 test: 强化 v0.4 T6 迁移校验与回滚`
+- 改动文件：
+  - `src/storage/ports.ts`
+  - `src/storage/localStorageRepositories.ts`
+  - `src/storage/sqliteClient.ts`
+  - `src/storage/sqliteRepositories.ts`
+  - `src/storage/index.ts`
+  - `src/app/stores.ts`
+  - `scripts/storageAdapter.selftest.ts`
+  - `src-tauri/src/lib.rs`
+  - `src-tauri/src/sqlite/mod.rs`
+  - `src-tauri/src/sqlite/adapter.rs`
+  - `docs/v0.4/sqlite-adapter-integration.md`
+  - `docs/v0.1/progress.md`
+- 实现内容：
+  - 新增 async storage port：`ProfileRepository`、`JobRepository`、`AsyncOfferFlowStores`、`StorageBackend`。
+  - 新增 localStorage async adapter，包装现有 `ConfigStore` / `JobStore`，不修改旧同步 store 行为。
+  - 新增 `TauriSQLiteClient`，封装 Tauri `sqlite_*` commands，避免页面直接调用 Tauri command。
+  - 新增 SQLite profile/job repositories；`createJob()` 生成完整默认字段，`updateJob()` 采用先读后合并 patch 的语义，避免丢失已有 `data_json` 字段。
+  - `src/app/stores.ts` 保留现有 `useStores()` 默认 localStorage 行为，新增 `createAsyncStores({ backend })` 作为未来受控切换入口。
+  - 新增 Tauri commands：`sqlite_get_profile`、`sqlite_save_profile`、`sqlite_clear_profile`、`sqlite_create_job`、`sqlite_get_job`、`sqlite_list_jobs`、`sqlite_update_job`、`sqlite_delete_job`。
+  - 新增 Rust adapter 写入逻辑，仍从完整 JSON 派生 SQLite 独立索引列，调用方不传第二套列数据。
+  - 新增 T7 adapter smoke，使用独立 `offerflow-t7-adapter-smoke-*.sqlite3` 文件，不污染正式数据。
+  - 新增 T7 文档 `docs/v0.4/sqlite-adapter-integration.md`。
+- 默认 backend 策略：
+  - 浏览器 Web 模式继续默认 localStorage。
+  - Tauri 桌面模式允许 SQLite adapter smoke / 手动指定 SQLite backend。
+  - 正式默认切换留到 T8 或单独验收。
+  - T7 不自动触发迁移，也不因运行在 Tauri 中就自动切换用户数据 backend。
+- Tauri commands 摘要：
+  - profile：get / save / clear。
+  - jobs：create / get / list / update / delete。
+  - commands 只做数据访问边界，不做页面业务判断；错误返回沿用 T6 的 `StorageErrorPayload`。
+- 自测命令：
+  - `npm.cmd exec tsx -- scripts/localStorageBackup.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/localStorageMigration.selftest.ts`
+  - `npm.cmd exec tsx -- scripts/storageAdapter.selftest.ts`
+  - `npm.cmd run typecheck`
+  - `npm.cmd run build`
+  - `cargo check`（在 `src-tauri/` 下）
+  - `cargo test`（在 `src-tauri/` 下）
+  - `npm.cmd exec tauri -- dev`
+  - `git status`
+  - `git diff --stat`
+- 自测结果：
+  - `localStorageBackup.selftest`：通过，11 passed, 0 failed。
+  - `localStorageMigration.selftest`：通过，21 passed, 0 failed。
+  - `storageAdapter.selftest`：通过，14 passed, 0 failed。
+  - `npm.cmd run typecheck`：通过，`vue-tsc --noEmit` 无错误。
+  - `npm.cmd run build`：通过，Vite 构建成功；保留既有 chunk size warning。
+  - `cargo check`：通过。
+  - `cargo test`：通过，13 个 Rust 单元测试通过。
+  - `npm.cmd exec tauri -- dev`：通过，T3/T4/T5/T7 smoke 均输出成功日志。
+  - T7 smoke 摘要：`profile_target_city=Suzhou`、`listed_jobs=t7-smoke-job-new,t7-smoke-job-old`、`updated_match_score=91`、`patch_preserved_ai_raw=true`、`deleted_job_missing=true`。
+- 红线自检：
+  - 未自动执行 localStorage -> SQLite 迁移。
+  - 未删除任何 localStorage 数据。
+  - 未默认强制切换到 SQLite。
+  - 未改 Vue 页面业务流程。
+  - 未做迁移 UI。
+  - 未做备份恢复 UI。
+  - 未做云同步 / AI API / 账号 / Boss 自动化。
+  - 未 push 远程。
+- 是否涉及 decision-log 更新：否。T7 是 DEC-025 / DEC-026 已批准的本地 SQLite 存储底座落地，不新增产品边界；默认 backend 仍保持 localStorage，不推翻既有运行策略。
+- 是否允许进入下一步：否。等待用户验收 T7；建议验收后进入 T8：受控切换 SQLite backend / 启动迁移入口设计。
+- 建议 commit message：feat: 接入 v0.4 SQLite storage adapter

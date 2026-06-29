@@ -1,3 +1,4 @@
+pub mod adapter;
 pub mod backup;
 pub mod database;
 pub mod error;
