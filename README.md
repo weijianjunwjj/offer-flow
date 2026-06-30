@@ -2,9 +2,9 @@
 
 Offer来了（OfferFlow）是面向 Boss 直聘求职场景的本地优先 AI 求职手账。
 
-它不接 API，不做自动投递，不做爬虫，不做后端。它帮助求职者把“看岗位、补充公司与机会信息、生成一次性分析 Prompt、承接外部 AI 结果、自动解析机会雷达、维护跟进事实、派生下一步动作、复制推荐话术、保存岗位台账”整理成一条稳定流程。
+它不接 AI API，不做自动投递，不做爬虫，不做云同步。它帮助求职者把“看岗位、补充公司与机会信息、生成一次性分析 Prompt、承接外部 AI 结果、自动解析机会雷达、维护跟进事实、派生下一步动作、复制推荐话术、保存岗位台账”整理成一条稳定流程。
 
-当前版本：**v0.3.0 · Semi-manual Follow-up Decision Desk / 半自动求职跟进决策台**。
+当前版本：**v0.4.0 · Backend + Project SQLite / 本地后端与项目 SQLite 数据库**。
 
 ## 项目定位
 
@@ -16,11 +16,28 @@ OfferFlow 不是 AI 自动分析器，而是：
 
 ## 当前模式：Manual / Semi-manual Mode（不接 AI API）
 
-- 工具本身**不接入** OpenAI / Claude / Gemini 等任何 AI API，也**不做 BYOK、不做后端、不爬 Boss、不联网查公司**。
+- 工具本身**不接入** OpenAI / Claude / Gemini 等任何 AI API，也**不做 BYOK、不爬 Boss、不联网查公司**。
 - 分析能力来自你自己选择的外部 AI：工具生成一份 One-Shot Prompt，你**复制一次**给外部 AI，再把返回的完整内容**粘贴回工具一次**。
 - v0.2.0 相比 v0.1 的关键变化：Prompt 要求外部 AI 在报告末尾附带一段固定的 `OFFER_FLOW_JSON` 数据块；工具会**尽力解析**它，自动生成机会雷达。这仍然是手动复制粘贴，不是自动调用 AI。
 - v0.3.0 在机会雷达之上增加半自动跟进决策：用户手动维护沟通与跟进事实，工具通过纯函数实时派生策略建议、下一步动作、推荐话术场景、止损判断和同公司只读预警。
+- v0.4.0 补齐本地 Node Fastify 后端与项目内 SQLite 数据库，前端通过 HTTP API 读写 `data/offerflow.sqlite3`；旧 Tauri / Rust / localService / 桌面路线已废弃。
 - 解析失败、未找到 JSON、字段不完整都不会阻断保存，也不会清空已有数据（原文永远优先落盘）。
+
+## v0.4.0 后端与数据库
+
+```txt
+Vue 前端
+  → HTTP API
+Node.js + Fastify 后端
+  → SQLite DB 文件：data/offerflow.sqlite3
+```
+
+- 后端监听：`http://127.0.0.1:17365`
+- DB 文件固定：`data/offerflow.sqlite3`
+- 启动：`npm run dev` 同时启动后端和 Vite 前端
+- 迁移：`npm run import:backup -- path/to/offerflow-web-backup.json`
+- 旧 v0.4 / v0.5 的 Tauri、Rust、localService、桌面路线已废弃
+- 仍不做云同步、账号、AI API / BYOK、Boss 自动化
 
 ## 核心闭环
 
@@ -59,8 +76,18 @@ OfferFlow 不是 AI 自动分析器，而是：
 # 安装依赖
 npm install
 
-# 启动开发服务器（默认 http://localhost:5173）
+# 启动后端 + 前端
 npm run dev
+
+# 仅后端 / 仅前端
+npm run server
+npm run web
+
+# 初始化项目内 SQLite DB
+npm run db:init
+
+# 导入浏览器 localStorage JSON 备份
+npm run import:backup -- path/to/offerflow-web-backup.json
 
 # TypeScript 类型检查（strict，期望 0 error）
 npm run typecheck
@@ -72,7 +99,7 @@ npm run selftest
 npm run build
 ```
 
-所有数据保存在浏览器 localStorage，本地优先、刷新不丢，无需登录、无需后端。旧版本（v0.1）岗位数据读取时会自动补默认值，兼容打开。
+v0.4 起主存储为项目内 SQLite 文件 `data/offerflow.sqlite3`。浏览器 localStorage 仅作为 legacy 数据来源，可通过 JSON 备份导入；导入不会删除原 JSON 或浏览器 localStorage。
 
 ## 功能清单（v0.3.0 累计）
 
@@ -122,11 +149,13 @@ npm run build
 
 - v0.1：Manual Mode，不接 API，验证求职工作流（已封版 v0.1.0）
 - v0.2：One-Shot Opportunity Radar，固定 JSON 解析 + 机会雷达 + Naive UI 浅色壳（已封版 v0.2.0，仍不接 API）
-- v0.3：Semi-manual Follow-up Decision Desk，半自动求职跟进决策台（当前 v0.3.0，仍不接 API、不自动操作 Boss、不做 CRM）
+- v0.3：Semi-manual Follow-up Decision Desk，半自动求职跟进决策台（已封版 v0.3.0，仍不接 AI API、不自动操作 Boss、不做 CRM）
+- v0.4：Backend + Project SQLite，本地 Node Fastify 后端与项目内 SQLite 数据库（当前 v0.4.0）
 - 后续：是否进入 BYOK / 正式 AI Adapter 必须由用户另行明确拍板，不属于 v0.3 待办项
 
 ## Release Notes
 
+- v0.4.0：本地后端与项目 SQLite 数据库。详见 [docs/release/v0.4.0.md](docs/release/v0.4.0.md)。
 - v0.3.0：半自动求职跟进决策台。详见 [docs/release/v0.3.0.md](docs/release/v0.3.0.md)。
 - v0.2.0：One-Shot Opportunity Radar。详见 [docs/release/v0.2.0.md](docs/release/v0.2.0.md)。
 - v0.1.0：P0 manual-mode 闭环完成。详见 [docs/release/v0.1.0.md](docs/release/v0.1.0.md)。

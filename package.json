@@ -4,22 +4,34 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"npm:server\" \"npm:web\"",
+    "web": "vite",
+    "server": "tsx server/index.ts",
+    "db:init": "tsx server/schema.ts",
+    "import:backup": "tsx scripts/importBackupToDb.ts",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts"
   },
   "dependencies": {
+    "fastify": "^5.9.0",
     "naive-ui": "^2.44.1",
-    "vue": "^3.5.13"
+    "nanoid": "^5.1.16",
+    "vue": "^3.5.13",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.5",
     "@vitejs/plugin-vue": "^5.2.1",
+    "concurrently": "^10.0.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
     "vue-tsc": "^2.2.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.11.1"
   }
 }

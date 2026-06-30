@@ -31,19 +31,19 @@
 
 当前版本：
 
-> v0.3 开发中（半自动求职跟进决策台）；v0.2.x 已完成机会雷达与指标分层实现，部分历史条目仍待用户统一确认 / 提交
+> v0.4 重做中（本地 Node Fastify 后端 + 项目内 SQLite 数据库）；基于 v0.3.0 功能基线重做，不继承旧 v0.4 / v0.5 的 Tauri、Rust、localService、桌面路线。
 
 当前模式：
 
-> Manual / Semi-manual Mode（v0.3 仍不接 API、不做 BYOK、不做后端、不自动操作 Boss；仅基于用户手动维护的岗位事实派生跟进决策）
+> Backend + Project SQLite Mode（v0.4 引入本地 Node Fastify HTTP API 与项目内 SQLite 文件；仍不接 AI API、不做 BYOK、不做云同步、不做账号、不自动操作 Boss、不做远程数据库）。
 
 当前阶段：
 
-> 用户于 2026-06-22 明确启动 v0.3。T1（数据模型与状态迁移）、T2（新增跟进事实字段）、T3（决策纯函数）、T4（详情页跟进决策面板）、T5（话术模板与复制）、T6（列表页决策台模式）和 T7（公司级只读预警）已提交到 v0.3 分支；T8（文档与 release note 收口）已完成文档更新与验证，等待用户最终验收；未合并 main，未打 tag。
+> 用户于 2026-06-30 最终指挥：删除旧 v0.4 / v0.5 路线，基于 `v0.3.0` 重新做 v0.4，主题为补齐 OfferFlow 后端和数据库。当前分支为 `rebuild/v0.4-backend-db`，已创建安全备份分支 / tag，旧 `src-tauri/` 路径已从工作区移除，正在收口实现与验证。
 
 当前是否允许进入下一步：
 
-> 否。v0.3 T8 已完成后必须等待用户最终验收；是否合并 main、是否打 tag 由用户另行确认。Codex 不自行合并 main，不自行打 tag。
+> 否。新版 v0.4 正在本分支收口；完成自测、文档和 commit 后停止，不 push。
 
 ---
 
@@ -1923,3 +1923,49 @@ v0.1 不做：
   - 未合并 main，未打 tag。
 - 是否允许进入下一步：否。等待用户最终验收；是否合并 main、是否打 tag 需用户另行确认。
 - 建议 commit message：docs: v0.3 文档与 release note 收口
+
+---
+
+### 2026-06-30 · v0.4 · 重做后端与项目 SQLite 数据库
+
+- 状态：实现与自动验证已完成，等待最终提交。
+- 来源：用户最终指令“删掉 v0.4 和 v0.5 的所有东西，重新做 v0.4，主题是补齐 OfferFlow 的后端和数据库”。
+- 执行者：Codex。
+- 当前分支：`rebuild/v0.4-backend-db`。
+- 安全备份：
+  - 原 `feature/v0.5-local-db-api` 未提交改动已通过 git stash 保存，stash message 为 `backup before rebuild v0.4 backend db`。
+  - 已创建 / 确认备份分支：`backup/pre-rebuild-v04`。
+  - 已创建 / 确认备份 tag：`backup-pre-rebuild-v04`。
+- 删除旧路线：
+  - 从工作区移除旧 `src-tauri/` 路径。
+  - v0.3 基线本身不存在 `docs/v0.4/`、`docs/v0.5/`、`src/storage/sqlite*`、`src/storage/localService*`、`StorageMigrationPanel.vue`、`LocalServicePanel.vue` 等旧路线文件。
+- 本次实现：
+  - 新增 `server/`：Fastify 后端、SQLite schema、profile/jobs repository、localStorage JSON import preview/apply。
+  - 新增 `src/api/`：profile/jobs/import HTTP client。
+  - 前端 `ProfileConfigPage.vue`、`JobListPage.vue`、`BattlefieldPage.vue` 主流程改走 HTTP API。
+  - `npm run dev` 改为同时启动 server 与 web。
+  - 新增 `scripts/importBackupToDb.ts`、`scripts/backendApi.selftest.ts`、`scripts/importBackup.selftest.ts`。
+  - 新增 `data/offerflow.sqlite3`，并在 `.gitignore` 忽略 `data/*.sqlite3-wal`、`data/*.sqlite3-shm`。
+  - 新增 `docs/v0.4/backend-db-plan.md`、`docs/v0.4/api.md`、`docs/release/v0.4.0.md`。
+  - 更新 `README.md`、`docs/v0.1/decision-log.md`、`docs/v0.1/progress.md`。
+- 自动验证：
+  - `npm run typecheck`：通过。
+  - `npm run build`：通过，保留 Vite chunk size warning。
+  - `npm run selftest`：通过，旧 selftest 合计 191 passed, 0 failed。
+  - `npm exec tsx -- scripts/backendApi.selftest.ts`：通过。
+  - `npm exec tsx -- scripts/importBackup.selftest.ts`：通过。
+- 手动 / 端口验收：
+  - `/health` 返回 `{ ok: true }`。
+  - `/meta/db-path` 指向 `D:\VSCode\offer-pilot\data\offerflow.sqlite3`。
+  - Vite 前端 `http://127.0.0.1:5173` 返回 200。
+  - 浏览器轻量验收：页面可加载，显示 `v0.4.0` 与 `Backend + SQLite · 本地 HTTP API`，无错误横幅。
+- 真实数据迁移：
+  - 当前仓库未发现用户真实浏览器备份 JSON。
+  - 已用 fixture 完整验证 preview/apply：profile 1、job 3、ignored 6、warnings 1；用户本机可执行 `npm run import:backup -- path/to/offerflow-web-backup.json` 迁移真实备份。
+- 遗留风险：
+  - 本轮浏览器验收为轻量加载检查，未逐项人工点击配置页、岗位新建、编辑、删除。
+  - 运行环境拦截了停止临时 dev 进程的清理命令；PID `1720`、`24676` 可能需要用户本机手动停止。
+  - `better-sqlite3` 已安装并可 require，但其原生模块对 Node / 系统环境敏感，后续换机安装需关注。
+- 是否涉及 decision-log 更新：是，已新增 DEC-025。
+- 是否允许进入下一步：否。完成 commit 后停止，不 push。
+- 建议 commit message：feat: 重做 v0.4 后端与项目 SQLite 数据库

@@ -16,7 +16,8 @@ import type {
   StrategyType,
 } from '../storage';
 import { emptyCompanyInput } from '../storage';
-import { useStores } from '../app/stores';
+import { profileApi } from '../api/profileApi';
+import { jobsApi } from '../api/jobsApi';
 import { buildAnalysisPrompt } from '../app/prompt';
 import { copyText } from '../app/clipboard';
 import { buildMessageTemplate } from '../app/messageTemplates';
@@ -229,7 +230,7 @@ async function copyGreeting(): Promise<void> {
   greetingCopyState.value = ok ? 'done' : 'fail';
 }
 
-function saveGreeting(): void {
+async function saveGreeting(): Promise<void> {
   if (props.jobId === null) {
     return;
   }
@@ -240,7 +241,7 @@ function saveGreeting(): void {
       ...(report.value ?? emptyReport()),
       greetingMessage: greeting.value,
     };
-    useStores().jobs.updateJob(props.jobId, { report: nextReport });
+    await jobsApi.patch(props.jobId, { report: nextReport });
     report.value = nextReport;
     greetingSaveState.value = 'done';
   } catch (error) {
@@ -430,12 +431,12 @@ function syncFollowupFacts(job: JobRecord): void {
   lastFollowupAtValue.value = job.lastFollowupAt ?? null;
 }
 
-function rememberJob(job: JobRecord): void {
+async function rememberJob(job: JobRecord): Promise<void> {
   currentJob.value = job;
-  allJobs.value = useStores().jobs.listJobs();
+  allJobs.value = await jobsApi.list();
 }
 
-function changeCommunicationStatus(next: CommunicationStatus): void {
+async function changeCommunicationStatus(next: CommunicationStatus): Promise<void> {
   if (props.jobId === null) {
     return;
   }
@@ -444,10 +445,10 @@ function changeCommunicationStatus(next: CommunicationStatus): void {
   statusSaveState.value = 'idle';
   statusSaveError.value = '';
   try {
-    const updated = useStores().jobs.updateJob(props.jobId, {
+    const updated = await jobsApi.patch(props.jobId, {
       communicationStatus: next,
     });
-    rememberJob(updated);
+    await rememberJob(updated);
     statusSaveState.value = 'done';
   } catch (error) {
     // 持久化失败则回滚选择，并提示。
@@ -457,14 +458,14 @@ function changeCommunicationStatus(next: CommunicationStatus): void {
   }
 }
 
-function saveFollowupFacts(): void {
+async function saveFollowupFacts(): Promise<void> {
   if (props.jobId === null) {
     return;
   }
   followupSaveState.value = 'idle';
   followupSaveError.value = '';
   try {
-    const updated = useStores().jobs.updateJob(props.jobId, {
+    const updated = await jobsApi.patch(props.jobId, {
       communicationStatus: communicationStatus.value,
       followupCount: normalizedFollowupCount.value,
       lastCommunicationNote:
@@ -474,7 +475,7 @@ function saveFollowupFacts(): void {
       lastGreetedAt: lastGreetedAtValue.value ?? undefined,
       lastFollowupAt: lastFollowupAtValue.value ?? undefined,
     });
-    rememberJob(updated);
+    await rememberJob(updated);
     syncFollowupFacts(updated);
     followupSaveState.value = 'done';
   } catch (error) {
@@ -496,7 +497,7 @@ function onMatchInput(): void {
   matchSaveError.value = '';
 }
 
-function saveMatchScore(): void {
+async function saveMatchScore(): Promise<void> {
   if (props.jobId === null) {
     return;
   }
@@ -504,7 +505,7 @@ function saveMatchScore(): void {
   matchSaveError.value = '';
   try {
     const normalized = normalizeMatchScore(matchScore.value);
-    useStores().jobs.updateJob(props.jobId, { matchScore: normalized });
+    await jobsApi.patch(props.jobId, { matchScore: normalized });
     matchScore.value = normalized;
     matchSaveState.value = 'done';
   } catch (error) {
@@ -517,9 +518,9 @@ function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
 }
 
-onMounted(() => {
+onMounted(async () => {
   try {
-    profile.value = useStores().config.getProfile();
+    profile.value = await profileApi.get();
   } catch {
     // 配置读取失败不阻断主战场；Prompt 中对应字段以「（未填写）」兜底。
     profile.value = null;
@@ -529,11 +530,7 @@ onMounted(() => {
     return;
   }
   try {
-    const job = useStores().jobs.getJob(props.jobId);
-    if (job === null) {
-      loadError.value = '该岗位不存在，可能已被删除。';
-      return;
-    }
+    const job = await jobsApi.get(props.jobId);
     form.company = job.company;
     form.role = job.role;
     form.city = job.city;
@@ -549,14 +546,14 @@ onMounted(() => {
     matchScore.value = job.matchScore;
     companyAssessment.value = job.companyAssessment;
     opportunityAnalysis.value = job.opportunityAnalysis;
-    rememberJob(job);
+    await rememberJob(job);
     syncFollowupFacts(job);
   } catch (error) {
     loadError.value = (error as Error).message;
   }
 });
 
-function handleSave(): void {
+async function handleSave(): Promise<void> {
   if (!canSave.value) {
     return;
   }
@@ -570,13 +567,10 @@ function handleSave(): void {
       jdText: form.jdText,
     };
     const companyInput: CompanyInput = { ...companyForm };
-    const stores = useStores();
     if (props.jobId === null) {
-      // createJob 只收基础信息；公司补充随后用 updateJob 写入（不改数据层接口）。
-      const created = stores.jobs.createJob(payload);
-      stores.jobs.updateJob(created.id, { companyInput });
+      await jobsApi.create({ ...payload, companyInput });
     } else {
-      stores.jobs.updateJob(props.jobId, { ...payload, companyInput });
+      await jobsApi.patch(props.jobId, { ...payload, companyInput });
     }
     emit('saved');
   } catch (error) {
@@ -584,7 +578,7 @@ function handleSave(): void {
   }
 }
 
-function saveAiResult(): void {
+async function saveAiResult(): Promise<void> {
   if (props.jobId === null || !canSaveAiResult.value) {
     return;
   }
@@ -638,7 +632,7 @@ function saveAiResult(): void {
     // 写了结构化数据视为已解析；否则保持「未解析（原文已保存）」。
     patch.parseStatus = wroteStructured ? 'parsed' : 'unparsed';
 
-    useStores().jobs.updateJob(props.jobId, patch);
+    await jobsApi.patch(props.jobId, patch);
 
     // 同步本地状态（仅同步实际写入的字段）。
     aiPastedAt.value = pastedAt;

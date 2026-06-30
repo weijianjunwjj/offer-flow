@@ -1029,6 +1029,64 @@
 
 ---
 
+## DEC-025：v0.4 重做为 Node Fastify 后端与项目内 SQLite 数据库
+
+- 日期：2026-06-30
+- 状态：已拍板
+- 提出者：用户
+- 参与讨论：用户、Codex
+- 拍板者：用户
+- 背景：
+  - 用户最终明确要求删除 v0.4 / v0.5 的所有旧路线内容，并基于 `v0.3.0` 重新做 v0.4。
+  - 用户明确裁定技术栈为 `Node.js + Fastify + better-sqlite3 + SQLite`。
+  - 用户明确要求 DB 文件放项目内，路径固定为 `data/offerflow.sqlite3`，并允许本轮提交该 DB 文件。
+- 决策：
+  - 新版 v0.4 主题为：补齐 OfferFlow 的后端和数据库。
+  - 技术路线改为：Vue 前端通过 HTTP API 调用 Node Fastify 后端，后端读写项目内 SQLite 文件 `data/offerflow.sqlite3`。
+  - 后端固定监听 `http://127.0.0.1:17365`。
+  - `data/offerflow.sqlite3` 本轮允许进入 git；`data/*.sqlite3-wal` 和 `data/*.sqlite3-shm` 不提交。
+  - 废弃旧 v0.4 / v0.5 的 Tauri、Rust、localService、桌面路线，不继续 v0.5。
+  - 前端 profile / jobs 主流程改走 HTTP API；localStorage 仅作为 legacy 数据来源。
+  - 支持从浏览器 localStorage JSON 备份导入，规则为 offerflow 优先 offerpilot、坏 job JSON 进 warnings、upsert、不清空已有 DB、不删除原 JSON 或浏览器 localStorage。
+  - 仍不做云同步、账号、AI API / BYOK、Boss 自动化、远程数据库。
+- 理由：
+  1. Node Fastify 后端比旧 Tauri / Rust / localService 路线更贴近当前项目和用户执行效率要求。
+  2. 项目内 SQLite 文件让数据资产可见、可提交、可迁移。
+  3. 基于 `v0.3.0` 重做可以避开旧 v0.4 / v0.5 路线复杂度，同时保留 v0.3 业务页面和核心功能。
+- 被否决方案：
+  1. 继续旧 v0.4 / v0.5 Tauri / Rust / localService 路线。
+  2. 保留桌面路线。
+  3. 继续推进 v0.5。
+  4. 本轮接云同步、账号、AI API、Boss 自动化或远程数据库。
+- 影响范围：
+  - `package.json`
+  - `package-lock.json`
+  - `server/`
+  - `src/api/`
+  - `src/pages/ProfileConfigPage.vue`
+  - `src/pages/JobListPage.vue`
+  - `src/pages/BattlefieldPage.vue`
+  - `scripts/importBackupToDb.ts`
+  - `scripts/backendApi.selftest.ts`
+  - `scripts/importBackup.selftest.ts`
+  - `data/offerflow.sqlite3`
+  - `README.md`
+  - `docs/v0.4/backend-db-plan.md`
+  - `docs/v0.4/api.md`
+  - `docs/release/v0.4.0.md`
+  - `docs/v0.1/progress.md`
+- 后续复审条件：
+  - 如果 `better-sqlite3` 在用户本机安装或运行环境出现原生模块兼容问题，可复审 Node 版本或 SQLite 访问实现，但不得自动回到 Tauri / Rust 路线。
+  - 如果未来需要云同步、账号、AI API、Boss 自动化或桌面版，必须另开版本重新拍板。
+- 相关文档：
+  - 用户 2026-06-30 最终指令
+  - docs/v0.4/backend-db-plan.md
+  - docs/v0.4/api.md
+  - docs/release/v0.4.0.md
+  - docs/v0.1/progress.md
+
+---
+
 # 5. 待定决策
 
 暂无。

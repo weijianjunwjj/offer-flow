@@ -14,7 +14,6 @@ import type {
   OpportunityRadar,
 } from '../storage';
 import { deriveDecision, type DerivedDecision } from '../decision';
-import { useStores } from '../app/stores';
 import { COMMUNICATION_STATUS_LABELS, COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
   STRATEGY_LABELS,
@@ -25,6 +24,7 @@ import {
   COMPANY_SIZE_OPTIONS,
   APPLY_ADVICE_LABELS,
 } from '../app/companyLabels';
+import { jobsApi } from '../api/jobsApi';
 import { calculateTargetProfileScore, getTargetProfileLevel } from '../app/targetProfileScore';
 import { getOpportunityScoreLevel } from '../app/opportunityScore';
 import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
@@ -48,9 +48,9 @@ type DecisionFilter = '' | 'greeting' | 'followup' | 'stopLoss' | 'waiting';
 const sortKey = ref<SortKey>('opportunity');
 const decisionFilter = ref<DecisionFilter>('');
 
-function load(): void {
+async function load(): Promise<void> {
   try {
-    jobs.value = useStores().jobs.listJobs();
+    jobs.value = await jobsApi.list();
   } catch (error) {
     loadError.value = (error as Error).message;
   }

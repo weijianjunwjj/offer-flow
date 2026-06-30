@@ -24,6 +24,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# SQLite sidecar files
+data/*.sqlite3-wal
+data/*.sqlite3-shm
+
 # Task 0 临时候选代码解压目录（不入库）
 .step0-candidate/
 

@@ -72,10 +72,10 @@ const contentStyle =
             <div class="brand-text">
               <div class="brand-line">
                 <strong class="brand">OfferFlow · Offer来了</strong>
-                <span class="brand-ver">v0.2.0</span>
+                <span class="brand-ver">v0.4.0</span>
               </div>
               <span class="tagline">
-                One-Shot Opportunity Radar · 手动模式 · 不接入 AI API，分析交给你选的外部 AI
+                Backend + SQLite · 本地 HTTP API · 不接入 AI API，不做 Boss 自动化
               </span>
             </div>
           </div>

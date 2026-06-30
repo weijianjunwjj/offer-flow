@@ -4,7 +4,7 @@
 // 不做岗位主战场、不做 Prompt、不做 AI 结果、不做报告。
 import { onMounted, reactive, ref } from 'vue';
 import type { JobSeekerProfile, JobSearchFocus } from '../storage';
-import { useStores } from '../app/stores';
+import { profileApi } from '../api/profileApi';
 
 function emptyProfile(): JobSeekerProfile {
   return {
@@ -31,9 +31,9 @@ const form = reactive<JobSeekerProfile>(emptyProfile());
 const loadError = ref('');
 const savedAt = ref<number | null>(null);
 
-onMounted(() => {
+onMounted(async () => {
   try {
-    const saved = useStores().config.getProfile();
+    const saved = await profileApi.get();
     if (saved !== null) {
       // 用默认值兜底缺失字段，再覆盖已存字段，避免旧数据缺字段时报错。
       Object.assign(form, emptyProfile(), saved);
@@ -43,10 +43,14 @@ onMounted(() => {
   }
 });
 
-function handleSave(): void {
+async function handleSave(): Promise<void> {
   // 覆盖式保存：全局配置只存一份。
-  useStores().config.saveProfile({ ...form });
-  savedAt.value = Date.now();
+  try {
+    await profileApi.save({ ...form });
+    savedAt.value = Date.now();
+  } catch (error) {
+    loadError.value = (error as Error).message;
+  }
 }
 
 function formatTime(ts: number): string {
