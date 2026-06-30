@@ -1,0 +1,57 @@
+{
+  "runId": "2026-06-30-derive-decision-001",
+  "createdAt": "2026-06-30T00:00:00+08:00",
+  "target": "deriveDecision",
+  "mode": "manual",
+  "specRef": {
+    "path": "spec/derive-decision.yaml",
+    "hash": "6b077c1198f2d558000645e28bd1ab3b2fd3d4dd768317a9f6827e7a697bb288"
+  },
+  "promptRefs": [
+    {
+      "path": "prompts/spec-to-types.md",
+      "hash": "efc5c825ae2f990b221c89d2e71254832b193e84d0a1c87293c0089ac2dc9c67"
+    },
+    {
+      "path": "prompts/spec-to-function.md",
+      "hash": "6f9f92a29223831097ceff49b5101ffa033a155333523417245eb351e4502653"
+    },
+    {
+      "path": "prompts/spec-to-tests.md",
+      "hash": "52041febf5405b508191ab478e25035fcf8fac63422a7eacf8c70cc738e8265a"
+    }
+  ],
+  "generatedRefs": [
+    {
+      "path": "generated/deriveDecision.generated.ts",
+      "hash": "633b48e0ff3ceba5cc776c719bf5f96f578cd289938b8420f43655209714826d"
+    },
+    {
+      "path": "generated/deriveDecision.generated.spec.ts",
+      "hash": "bd5d876e607970d4fff002c9d0e46ebd596e1786f24359b4d76e2aafdee8914b"
+    }
+  ],
+  "qualityGate": {
+    "conformance": {
+      "passed": true,
+      "casesChecked": 14,
+      "failed": 0
+    },
+    "differential": {
+      "passed": true,
+      "casesChecked": 768,
+      "declaredChangesConfirmed": true,
+      "unexpectedMismatches": []
+    }
+  },
+  "humanReview": {
+    "decision": "approved",
+    "reviewer": "wjj",
+    "notes": "v0.5.0 high value read-no-reply scenario change approved"
+  },
+  "promotion": {
+    "promoted": false,
+    "reason": "v0.1 deliberately not wired into OfferFlow App"
+  },
+  "finalStatus": "passed"
+}

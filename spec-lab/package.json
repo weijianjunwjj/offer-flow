@@ -1,0 +1,17 @@
+{
+  "name": "offerflow-spec-lab",
+  "private": true,
+  "version": "0.5.0",
+  "type": "module",
+  "scripts": {
+    "spec:validate": "tsx gate/validateSpec.ts",
+    "test:conformance": "tsx gate/conformance.ts",
+    "gate:diff": "tsx gate/differential.ts",
+    "trace:write": "tsx gate/writeTrace.ts",
+    "verify": "pnpm spec:validate && pnpm test:conformance && pnpm gate:diff && pnpm trace:write"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

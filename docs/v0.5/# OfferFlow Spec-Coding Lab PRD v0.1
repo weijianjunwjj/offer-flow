@@ -1,0 +1,861 @@
+# OfferFlow Spec-Coding Lab PRD v0.1
+
+## 1. 文档信息
+
+* 项目名称：OfferFlow Spec-Coding Lab
+* 对应版本：OfferFlow v0.5.0
+* PRD 版本：v0.1
+* 模块位置：OfferFlow 同仓库根目录 `spec-lab/`
+* 模块性质：工程化实验层，不是 App 用户功能
+* 核心目标：用 OfferFlow 的真实业务规则，验证一条可审计的 Spec-to-Code 流水线
+
+---
+
+## 2. 背景
+
+OfferFlow v0.4 已完成本地 SQLite / Storage Adapter / Repository 方向的基础收口，项目已有较明确的真实业务上下文：
+
+* 求职机会管理；
+* 沟通状态流转；
+* 跟进次数；
+* 冷却时间；
+* 高价值机会识别；
+* 止损策略；
+* AI 分析结果承接；
+* 状态留痕。
+
+当前 AI 开发方式正在从 Vibe Coding 进入 Spec Coding 阶段。
+仅仅“会用 AI 写代码”已经不足以体现工程价值，真正有价值的是：
+
+> 能否把业务需求结构化为 Spec，并通过代码生成、测试门禁、人工确认和 Trace 留痕，形成可复现、可审计的工程流程。
+
+因此，OfferFlow v0.5 不新增一个大而全的新产品，也不把 Spec Coding 直接接入主 App，而是在 OfferFlow 同仓库下新增 `spec-lab/`，用真实业务规则 `deriveDecision` 做第一条 Spec-to-Code 样本。
+
+---
+
+## 3. 产品定位
+
+### 3.1 一句话定位
+
+OfferFlow Spec-Coding Lab 是一个围绕真实业务规则的 Spec-to-Code 工程实验层，用于证明：
+
+> 从业务规则，到结构化 Spec，到 AI 生成代码/测试，到质量门禁，到人工确认，到 Trace 留痕，这条链路可以被工程化管理。
+
+### 3.2 它是什么
+
+它是：
+
+* 一个同仓库、不同运行时的工程实验层；
+* 一个 Spec Coding 样板；
+* 一个 AI 生成代码的质量门禁样本；
+* 一个可展示给面试官的 AI 工程化证据；
+* 一个未来沉淀 Spec Coding Starter Kit 的第一案例。
+
+### 3.3 它不是什么
+
+它不是：
+
+* 不是 OfferFlow 主 App 新页面；
+* 不是 AI Agent Desk；
+* 不是完整 AI 编程平台；
+* 不是自动调用 LLM API 的系统；
+* 不是通用低代码平台；
+* 不是 OpenAPI / Gherkin / DSL 工具链；
+* 不是替换当前 `deriveDecision` 主实现的机制。
+
+---
+
+## 4. 核心目标
+
+v0.1 只验证一件事：
+
+> 能否基于 OfferFlow 的真实业务规则 `deriveDecision`，跑通一条最小 Spec-to-Code 流水线。
+
+最小流水线：
+
+```txt
+业务规则需求
+↓
+example-based YAML Spec
+↓
+Prompt 模板
+↓
+Manual Mode 生成代码/测试
+↓
+Conformance Test
+↓
+Differential Gate
+↓
+Human Review
+↓
+Trace JSON
+↓
+README 展示
+```
+
+---
+
+## 5. 范围边界
+
+### 5.1 v0.1 要做
+
+v0.1 必须完成：
+
+1. 在 OfferFlow 仓库根目录新增 `spec-lab/`；
+2. 冻结一份 `deriveDecision.oracle.ts` 作为旧行为基线；
+3. 编写 `derive-decision.yaml`，用 example-based YAML 表达规则；
+4. 编写 `changeset-v0.5.0.md`，声明第一条小规则变更；
+5. 编写 Prompt 模板，用于生成类型、函数、测试；
+6. 使用 Manual Mode 生成 `deriveDecision.generated.ts`；
+7. 使用 Manual Mode 生成 `deriveDecision.generated.spec.ts`；
+8. 实现 conformance test，验证 generated 实现是否符合 YAML examples；
+9. 实现 differential gate，验证 generated 与 oracle 的差异是否只发生在声明变更范围内；
+10. 生成一份 trace JSON；
+11. 编写 `spec-lab/README.md`，说明方法论、流程、门禁结果和边界。
+
+### 5.2 v0.1 不做
+
+v0.1 明确不做：
+
+* 不接真实 LLM API；
+* 不做 Web UI；
+* 不做 Trace Viewer；
+* 不做 Agent 自治循环；
+* 不接入 OfferFlow 主 App；
+* 不替换主 App 里的 `deriveDecision`；
+* 不碰 v0.4 Storage Adapter；
+* 不碰 SQLite；
+* 不引入 OpenAPI；
+* 不引入 Gherkin/Cucumber；
+* 不设计通用 DSL；
+* 不上 monorepo；
+* 不做多规则扩展；
+* 不做自动 promote。
+
+---
+
+## 6. 目录结构
+
+v0.1 目录结构如下：
+
+```txt
+spec-lab/
+  README.md
+  package.json
+  tsconfig.json
+
+  spec/
+    derive-decision.schema.ts
+    derive-decision.yaml
+    changeset-v0.5.0.md
+
+  prompts/
+    spec-to-types.md
+    spec-to-function.md
+    spec-to-tests.md
+
+  generated/
+    deriveDecision.generated.ts
+    deriveDecision.generated.spec.ts
+
+  oracle/
+    deriveDecision.oracle.ts
+
+  gate/
+    conformance.ts
+    differential.ts
+    matrix.ts
+    hash.ts
+    writeTrace.ts
+
+  traces/
+    2026-06-30-derive-decision-001.json
+```
+
+### 6.1 目录说明
+
+#### `spec/`
+
+存放规则规格。
+
+* `derive-decision.schema.ts`：用于校验 YAML Spec 的最小 schema；
+* `derive-decision.yaml`：业务规则 examples；
+* `changeset-v0.5.0.md`：声明本次规则变更。
+
+#### `prompts/`
+
+存放给 Claude / Cursor 使用的 Prompt 模板。
+
+* `spec-to-types.md`：根据 Spec 生成类型；
+* `spec-to-function.md`：根据 Spec 生成函数实现；
+* `spec-to-tests.md`：根据 Spec 生成测试用例。
+
+#### `generated/`
+
+存放 AI / Manual Mode 生成结果。
+
+生成文件必须加文件头：
+
+```ts
+// GENERATED FILE - DO NOT EDIT DIRECTLY
+```
+
+#### `oracle/`
+
+存放冻结版旧实现。
+
+`deriveDecision.oracle.ts` 从当前可信主项目实现复制而来，不从 `src/` import。
+
+原因：
+
+* 防止主项目后续重构污染基线；
+* 防止 spec-lab 依赖 App 运行时；
+* 保持实验层独立。
+
+#### `gate/`
+
+存放质量门禁脚本。
+
+* `conformance.ts`：验证 generated 是否符合 YAML examples；
+* `differential.ts`：验证 generated 与 oracle 的差异；
+* `matrix.ts`：生成有限输入矩阵；
+* `hash.ts`：计算文件 hash；
+* `writeTrace.ts`：写入 trace JSON。
+
+#### `traces/`
+
+存放每次运行后的不可变 Trace 文件。
+
+---
+
+## 7. 第一条业务规则样本
+
+### 7.1 样本对象
+
+第一条样本选择：
+
+```txt
+deriveDecision
+```
+
+原因：
+
+* 它是真实业务规则；
+* 它是纯函数；
+* 输入输出清晰；
+* 有状态机特征；
+* 有时间冷却逻辑；
+* 有止损规则；
+* 有高价值信号；
+* 适合测试；
+* 适合做 differential gate。
+
+### 7.2 输入字段
+
+v0.1 关注以下输入：
+
+```ts
+{
+  communicationStatus: CommunicationStatus;
+  followupCount: number;
+  lastGreetedAt?: string;
+  lastFollowupAt?: string;
+  highValueSignal: boolean;
+  reportScore?: 'high' | 'medium' | 'low' | 'missing';
+  now: string;
+}
+```
+
+### 7.3 输出字段
+
+v0.1 关注以下输出：
+
+```ts
+{
+  strategy: string;
+  nextAction: string | null;
+  stopLoss: string;
+  scenario: string;
+  companyWarning?: string;
+}
+```
+
+### 7.4 时间规则
+
+所有涉及冷却时间的测试必须固定 `now`。
+
+禁止在 generated 代码中直接使用：
+
+```ts
+Date.now()
+new Date()
+```
+
+必须通过输入参数 `now` 传入当前时间。
+
+---
+
+## 8. 第一条小规则变更
+
+### 8.1 变更名称
+
+```txt
+v0.5.0: high value read-no-reply followup scenario
+```
+
+### 8.2 变更内容
+
+旧规则：
+
+> 当 `communicationStatus = greeted_read_no_reply` 且 `followupCount = 0` 时，输出 `scenario = follow_up_with_new_angle`。
+
+新规则：
+
+> 当 `communicationStatus = greeted_read_no_reply` 且 `followupCount = 0` 且 `highValueSignal = true` 时，输出 `scenario = follow_up_with_value_angle`。
+
+### 8.3 变更原则
+
+本次变更只改变 scenario，不改变最大跟进次数，不改变止损纪律。
+
+也就是说：
+
+* 不把 `MAX_FOLLOWUPS` 从 2 改成 3；
+* 不鼓励多追一次；
+* 只让高价值机会的话术角度更精准。
+
+产品含义：
+
+> 高价值机会不增加纠缠次数，但要更聪明地跟进。
+
+### 8.4 预期差异
+
+在 differential gate 中：
+
+* 只有满足以下条件的输入允许出现 oracle 与 generated 差异：
+
+```ts
+communicationStatus === 'greeted_read_no_reply'
+followupCount === 0
+highValueSignal === true
+```
+
+* 其他输入如出现差异，视为 unexpected mismatch，门禁失败。
+
+---
+
+## 9. Spec 格式
+
+v0.1 使用 example-based YAML，不使用自定义 DSL，不使用 Gherkin 工具链。
+
+示例结构：
+
+```yaml
+rule: deriveDecision
+version: v0.5.0
+constants:
+  FOLLOWUP_COOLDOWN_DAYS: 3
+  MAX_FOLLOWUPS: 2
+
+cases:
+  - id: read-no-reply-normal-followup
+    when:
+      communicationStatus: greeted_read_no_reply
+      followupCount: 0
+      highValueSignal: false
+      now: 2026-06-30T00:00:00+08:00
+    then:
+      strategy: continue_probe
+      nextAction: follow_up_with_new_angle
+      scenario: follow_up_with_new_angle
+
+  - id: read-no-reply-high-value-followup
+    when:
+      communicationStatus: greeted_read_no_reply
+      followupCount: 0
+      highValueSignal: true
+      now: 2026-06-30T00:00:00+08:00
+    then:
+      strategy: continue_probe
+      nextAction: follow_up_with_new_angle
+      scenario: follow_up_with_value_angle
+```
+
+---
+
+## 10. 质量门禁设计
+
+v0.1 有两道门禁。
+
+### 10.1 Gate A: Conformance Test
+
+目标：
+
+> 验证 generated 实现是否符合 YAML examples。
+
+逻辑：
+
+```txt
+读取 derive-decision.yaml
+↓
+解析 cases
+↓
+逐条输入 generated deriveDecision
+↓
+比较 actual output 与 then expected output
+↓
+全部一致则通过
+```
+
+失败条件：
+
+* 任一 case 输出不符合 YAML；
+* generated 函数抛异常；
+* YAML 格式不合法；
+* 时间字段不可解析。
+
+### 10.2 Gate B: Differential Gate
+
+目标：
+
+> 验证 generated 与 oracle 的行为差异是否只发生在 changeset 声明范围内。
+
+逻辑：
+
+```txt
+生成有限输入矩阵
+↓
+同一输入分别喂给 oracle 和 generated
+↓
+比较输出差异
+↓
+判断 mismatch 是否属于 declared changeset
+↓
+若存在 unexpected mismatch，门禁失败
+```
+
+通过条件：
+
+```txt
+unexpectedMismatches.length === 0
+declaredChangesConfirmed === true
+```
+
+失败条件：
+
+* 出现未声明差异；
+* 声明的变更没有实际发生；
+* oracle 或 generated 执行异常；
+* 输入矩阵生成失败。
+
+### 10.3 真理来源说明
+
+v0.1 中：
+
+* YAML examples 是人工确认的规则真理来源；
+* oracle 是旧行为基线；
+* generated 是 AI / Manual Mode 生成实现；
+* differential gate 不是用旧代码定义真理，而是验证“新实现相对旧实现的差异是否受控”。
+
+---
+
+## 11. Trace 设计
+
+### 11.1 Trace 文件原则
+
+每次完整运行生成一份不可变 trace。
+
+重跑不覆盖旧 trace，而是新增文件。
+
+命名格式：
+
+```txt
+traces/YYYY-MM-DD-derive-decision-XXX.json
+```
+
+### 11.2 v0.1 Trace 最小字段
+
+```json
+{
+  "runId": "2026-06-30-derive-decision-001",
+  "createdAt": "2026-06-30T00:00:00+08:00",
+  "target": "deriveDecision",
+  "mode": "manual",
+  "specRef": {
+    "path": "spec/derive-decision.yaml",
+    "hash": "..."
+  },
+  "promptRefs": [
+    {
+      "path": "prompts/spec-to-types.md",
+      "hash": "..."
+    },
+    {
+      "path": "prompts/spec-to-function.md",
+      "hash": "..."
+    },
+    {
+      "path": "prompts/spec-to-tests.md",
+      "hash": "..."
+    }
+  ],
+  "generatedRefs": [
+    {
+      "path": "generated/deriveDecision.generated.ts",
+      "hash": "..."
+    },
+    {
+      "path": "generated/deriveDecision.generated.spec.ts",
+      "hash": "..."
+    }
+  ],
+  "qualityGate": {
+    "conformance": {
+      "passed": true,
+      "casesChecked": 12,
+      "failed": 0
+    },
+    "differential": {
+      "passed": true,
+      "casesChecked": 96,
+      "declaredChangesConfirmed": true,
+      "unexpectedMismatches": []
+    }
+  },
+  "humanReview": {
+    "decision": "approved",
+    "reviewer": "wjj",
+    "notes": "v0.5.0 high value read-no-reply scenario change approved"
+  },
+  "promotion": {
+    "promoted": false,
+    "reason": "v0.1 deliberately not wired into OfferFlow App"
+  },
+  "finalStatus": "passed"
+}
+```
+
+---
+
+## 12. 命令设计
+
+`spec-lab/package.json` 提供以下 scripts：
+
+```json
+{
+  "scripts": {
+    "spec:validate": "tsx gate/validateSpec.ts",
+    "test:conformance": "tsx gate/conformance.ts",
+    "gate:diff": "tsx gate/differential.ts",
+    "trace:write": "tsx gate/writeTrace.ts",
+    "verify": "pnpm spec:validate && pnpm test:conformance && pnpm gate:diff && pnpm trace:write"
+  }
+}
+```
+
+v0.1 必须支持：
+
+```bash
+cd spec-lab
+pnpm verify
+```
+
+---
+
+## 13. README 要求
+
+`spec-lab/README.md` 面向面试官 / 技术负责人。
+
+### 13.1 README 核心结构
+
+1. 项目一句话说明；
+2. 为什么做这个实验；
+3. Vibe Coding 的问题；
+4. Spec Coding 的价值；
+5. 本项目流水线图；
+6. deriveDecision 业务背景；
+7. v0.5.0 小规则变更；
+8. YAML Spec 示例；
+9. generated 产物说明；
+10. Conformance Test 结果；
+11. Differential Gate 结果；
+12. Trace 示例；
+13. 为什么 v0.1 不接 LLM API；
+14. 为什么 v0.1 不接入主 App；
+15. 未来演进方向。
+
+### 13.2 README 最重要的一屏
+
+README 最应该展示：
+
+```txt
+规则变更
+↓
+YAML Spec
+↓
+generated 实现
+↓
+differential gate: unexpected mismatch = 0
+↓
+trace: human review approved
+```
+
+这一屏必须让人 30 秒看懂：
+
+> 这不是 AI 乱写代码，而是一次受 Spec、测试、门禁和人工确认约束的业务规则演进。
+
+---
+
+## 14. 验收标准
+
+v0.1 完成标准：
+
+### 14.1 文件验收
+
+必须存在：
+
+```txt
+spec-lab/README.md
+spec-lab/package.json
+spec-lab/tsconfig.json
+spec-lab/spec/derive-decision.schema.ts
+spec-lab/spec/derive-decision.yaml
+spec-lab/spec/changeset-v0.5.0.md
+spec-lab/prompts/spec-to-types.md
+spec-lab/prompts/spec-to-function.md
+spec-lab/prompts/spec-to-tests.md
+spec-lab/generated/deriveDecision.generated.ts
+spec-lab/generated/deriveDecision.generated.spec.ts
+spec-lab/oracle/deriveDecision.oracle.ts
+spec-lab/gate/conformance.ts
+spec-lab/gate/differential.ts
+spec-lab/gate/matrix.ts
+spec-lab/gate/hash.ts
+spec-lab/gate/writeTrace.ts
+spec-lab/traces/2026-06-30-derive-decision-001.json
+```
+
+### 14.2 命令验收
+
+在 `spec-lab/` 下执行：
+
+```bash
+pnpm verify
+```
+
+必须成功。
+
+### 14.3 门禁验收
+
+必须满足：
+
+```txt
+conformance.passed = true
+differential.passed = true
+unexpectedMismatches.length = 0
+declaredChangesConfirmed = true
+humanReview.decision = approved
+promotion.promoted = false
+finalStatus = passed
+```
+
+### 14.4 边界验收
+
+必须满足：
+
+* 主 App 可正常运行；
+* 主 App 不 import `spec-lab/`；
+* `spec-lab/` 不 import store / Tauri / SQLite / Storage Adapter；
+* generated 代码不自动替换主实现；
+* trace 不写数据库；
+* 不接真实 LLM API。
+
+---
+
+## 15. 3 天实施计划
+
+### Day 1：骨架与 Spec
+
+目标：把规则和边界定死。
+
+产出：
+
+* 创建 `spec-lab/` 目录；
+* 创建独立 `package.json`；
+* 创建独立 `tsconfig.json`；
+* 拷贝冻结版 `deriveDecision.oracle.ts`；
+* 编写 `derive-decision.yaml`；
+* 编写 `changeset-v0.5.0.md`；
+* 编写最小 `derive-decision.schema.ts`；
+* 固定 `now` 规则。
+
+不做：
+
+* 不生成代码；
+* 不写 UI；
+* 不碰主 App。
+
+### Day 2：Prompt 与 Generated 产物
+
+目标：用 Manual Mode 生成代码和测试。
+
+产出：
+
+* 编写 `spec-to-types.md`；
+* 编写 `spec-to-function.md`；
+* 编写 `spec-to-tests.md`；
+* 把 Prompt 复制给外部 AI；
+* 回填 `deriveDecision.generated.ts`；
+* 回填 `deriveDecision.generated.spec.ts`；
+* 确保 TypeScript 编译通过。
+
+不做：
+
+* 不接 API；
+* 不设计 Adapter 大框架；
+* 不抽象通用生成器。
+
+### Day 3：门禁、Trace、README
+
+目标：跑通完整闭环。
+
+产出：
+
+* 实现 `conformance.ts`；
+* 实现 `matrix.ts`；
+* 实现 `differential.ts`；
+* 实现 `hash.ts`；
+* 实现 `writeTrace.ts`；
+* 生成第一份 trace；
+* 编写 README；
+* 执行 `pnpm verify` 全绿。
+
+不做：
+
+* 不做 Trace Viewer；
+* 不做 Web 工作台；
+* 不接主 App。
+
+---
+
+## 16. 风险与控制
+
+### 16.1 风险：看起来像复刻旧代码
+
+控制：
+
+* YAML examples 由人工编写；
+* changeset 事先声明；
+* differential gate 只允许声明范围内的差异；
+* README 明确说明 oracle 是旧行为基线，不是真理来源。
+
+### 16.2 风险：影响 v0.4 主线
+
+控制：
+
+* `spec-lab/` 与 `src/` 平级；
+* 不进入 App 构建；
+* 不 import 主 App 运行时；
+* 不改 Storage Adapter；
+* 不改 SQLite；
+* 独立分支开发。
+
+### 16.3 风险：范围失控
+
+控制：
+
+* v0.1 只做 `deriveDecision`；
+* 不做 UI；
+* 不接 API；
+* 不做多规则；
+* 不做 DSL；
+* 不做自动 promote。
+
+### 16.4 风险：测试时间漂移
+
+控制：
+
+* 所有测试固定 `now`；
+* 禁止 generated 使用 `Date.now()`；
+* 时间由输入传入。
+
+---
+
+## 17. Git 隔离策略
+
+在开始 v0.5 前，必须确认 v0.4 已收口。
+
+建议流程：
+
+```bash
+git status
+pnpm typecheck
+pnpm build
+pnpm selftest
+```
+
+确认无问题后：
+
+```bash
+git checkout main
+git pull
+git checkout -b feat/v0.5-spec-coding-lab
+```
+
+v0.5 分支只允许新增 / 修改：
+
+```txt
+spec-lab/
+docs/v0.5/
+```
+
+除非明确必要，不修改：
+
+```txt
+src/
+src-tauri/
+```
+
+---
+
+## 18. 未来演进
+
+v0.1 完成后，未来可以考虑：
+
+### v0.2
+
+* 引入真实 LLM API Adapter；
+* 将 Manual Mode 抽象为 ManualGenerator；
+* 将 LLM 调用抽象为 LlmGenerator。
+
+### v0.3
+
+* 增加 Trace Viewer；
+* 把 trace JSON 可视化；
+* 展示输入、Spec、输出、门禁结果和人工确认。
+
+### v0.4
+
+* 增加更多 OfferFlow 规则样本；
+* 例如机会评分、沟通状态迁移、消息模板生成。
+
+### v1.0
+
+* 抽出通用 Spec Coding Starter Kit；
+* 独立沉淀到 `ai-code-rules` 或新仓库；
+* 形成可复用模板库、Prompt 库、审查清单。
+
+---
+
+## 19. 最终定义
+
+OfferFlow Spec-Coding Lab v0.1 的成功，不以代码量衡量。
+
+它的成功标准是：
+
+> 能否用一个真实业务规则，证明 AI 生成代码可以被 Spec 约束、被测试验证、被差分门禁兜底、被人工确认、被 Trace 留痕。
+
+这不是为了做一个大工具，而是为了沉淀一套可展示、可复用、可审计的 AI 工程化方法。
+
+一句话：
+
+> OfferFlow v0.5 不是再造一个产品，而是在真实业务里炼出第一把 Spec Coding 的刀。

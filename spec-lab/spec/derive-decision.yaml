@@ -1,0 +1,208 @@
+rule: deriveDecision
+version: v0.5.0
+constants:
+  FOLLOWUP_COOLDOWN_DAYS: 3
+  MAX_FOLLOWUPS: 2
+
+cases:
+  - id: report-missing-fallback
+    description: 报告缺失时回退到谨慎观察
+    when:
+      communicationStatus: not_contacted
+      followupCount: 0
+      highValueSignal: false
+      reportScore: missing
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: cautious_watch
+      nextAction: wait
+      stopLoss: continue
+      scenario: first_greeting
+
+  - id: not-contacted-high-score
+    description: 高评分新机会应发送打招呼
+    when:
+      communicationStatus: not_contacted
+      followupCount: 0
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: main_attack
+      nextAction: send_greeting
+      stopLoss: continue
+      scenario: first_greeting
+
+  - id: not-contacted-low-score-high-value
+    description: 高价值信号可触发低成本试探
+    when:
+      communicationStatus: not_contacted
+      followupCount: 0
+      highValueSignal: true
+      reportScore: low
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: low_cost_probe
+      nextAction: send_greeting
+      stopLoss: continue
+      scenario: high_salary_low_match_probe
+
+  - id: greeted-unread-before-cooldown
+    description: 未读打招呼在冷却期结束前应等待
+    when:
+      communicationStatus: greeted_unread
+      followupCount: 0
+      lastGreetedAt: 2026-06-29T10:00:00+08:00
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: cautious_watch
+      nextAction: wait
+      stopLoss: continue
+      scenario: second_followup
+
+  - id: greeted-unread-after-cooldown-first-followup
+    description: 未读打招呼过冷却期后可跟进一次
+    when:
+      communicationStatus: greeted_unread
+      followupCount: 0
+      lastGreetedAt: 2026-06-26T10:00:00+08:00
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: main_attack
+      nextAction: follow_up_once
+      stopLoss: continue
+      scenario: second_followup
+
+  - id: read-no-reply-normal-followup
+    description: 普通已读未回按旧场景换角度跟进
+    when:
+      communicationStatus: greeted_read_no_reply
+      followupCount: 0
+      lastGreetedAt: 2026-06-30T09:00:00+08:00
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: main_attack
+      nextAction: follow_up_with_new_angle
+      stopLoss: continue
+      scenario: follow_up_with_new_angle
+
+  - id: read-no-reply-high-value-followup
+    description: 高价值已读未回使用价值角度但不增加跟进次数
+    when:
+      communicationStatus: greeted_read_no_reply
+      followupCount: 0
+      lastGreetedAt: 2026-06-30T09:00:00+08:00
+      highValueSignal: true
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: main_attack
+      nextAction: follow_up_with_new_angle
+      stopLoss: continue
+      scenario: follow_up_with_value_angle
+
+  - id: followup-count-one-after-cooldown
+    description: 已跟进一次且过冷却期后允许第二次跟进
+    when:
+      communicationStatus: greeted_unread
+      followupCount: 1
+      lastFollowupAt: 2026-06-26T10:00:00+08:00
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: main_attack
+      nextAction: follow_up_with_new_angle
+      stopLoss: continue
+      scenario: final_unread_followup
+
+  - id: max-followups-stop-loss
+    description: 跟进次数达到上限时应止损
+    when:
+      communicationStatus: greeted_read_no_reply
+      followupCount: 2
+      lastFollowupAt: 2026-06-26T10:00:00+08:00
+      highValueSignal: true
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: cut_loss
+      nextAction: close_opportunity
+      stopLoss: stop
+      scenario: premium_but_cold_closing
+
+  - id: replied-active
+    description: 已回复机会继续沟通
+    when:
+      communicationStatus: replied
+      followupCount: 0
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: main_attack
+      nextAction: continue_conversation
+      stopLoss: continue
+      scenario: hr_reply_bridge
+
+  - id: interviewing-active
+    description: 面试中机会准备面试
+    when:
+      communicationStatus: interviewing
+      followupCount: 0
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: main_attack
+      nextAction: prepare_interview
+      stopLoss: continue
+      scenario: hr_reply_bridge
+
+  - id: paused-watch
+    description: 暂停机会保持观察
+    when:
+      communicationStatus: paused
+      followupCount: 0
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: cautious_watch
+      nextAction: pause_watch
+      stopLoss: continue
+      scenario: first_greeting
+
+  - id: rejected-terminal
+    description: 已拒绝机会为终态
+    when:
+      communicationStatus: rejected
+      followupCount: 0
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: cut_loss
+      nextAction: null
+      stopLoss: continue
+      scenario: premium_but_cold_closing
+
+  - id: closed-terminal
+    description: 已结束机会为终态
+    when:
+      communicationStatus: closed
+      followupCount: 0
+      highValueSignal: false
+      reportScore: high
+      now: 2026-06-30T10:00:00+08:00
+    then:
+      strategy: cut_loss
+      nextAction: null
+      stopLoss: continue
+      scenario: premium_but_cold_closing
