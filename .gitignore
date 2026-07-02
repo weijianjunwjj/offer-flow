@@ -8,9 +8,11 @@ dist-ssr/
 # 本地缓存
 .vite/
 *.local
+*.tmp
 
 # 编辑器
 .DS_Store
+Thumbs.db
 .idea/
 *.suo
 *.ntvs*
@@ -19,10 +21,24 @@ dist-ssr/
 *.sw?
 
 # 日志
+logs/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# 运行状态与已处理 inbox
+state/daemon/
+state/checkpoints/
+inbox/**/processed/
+inbox/**/failed/
+
+# 本地验收样例
+**/example-vue*
+**/example-react-risk*
+**/watch-test*
+**/test-diary*
 
 # SQLite sidecar files
 data/*.sqlite3-wal
