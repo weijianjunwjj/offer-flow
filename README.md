@@ -204,5 +204,6 @@ npm run build
 - v0.4：Node Fastify + SQLite，本地后端和项目内数据库。
 - v0.5：轻量 Spec Guard，针对高风险规则保留规则卡、测试、差分门禁和 trace 样本。
 - v0.5.1：JD 输入体验增强，支持截图粘贴、预览和跨端 OCR adapter 入口；当前不内置真实 OCR 引擎。
+- v0.5.2：Tesseract.js OCR POC 已在 macOS Chrome 验证通过；方案理论上跨端，Windows 端待补测。
 
 当前求职冲刺主线：收口 Demo 证据、Workflow Trace、`deriveDecision` selftest、Human-in-the-loop review 闭环。`OFFER_FLOW_JSON` Eval 样本已补齐在 `eval/offer-flow-json/`。

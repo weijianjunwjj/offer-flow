@@ -1,12 +1,26 @@
-export const JD_IMAGE_OCR_ENGINE_NOT_CONFIGURED = 'OCR engine not configured';
+export const JD_IMAGE_OCR_LANGUAGES = 'chi_sim+eng';
+export const JD_IMAGE_OCR_OEM_LSTM_ONLY = 1;
 
-export class JdImageOcrNotConfiguredError extends Error {
-  constructor() {
-    super(JD_IMAGE_OCR_ENGINE_NOT_CONFIGURED);
-    this.name = 'JdImageOcrNotConfiguredError';
-  }
+type TesseractModule = typeof import('tesseract.js');
+type TesseractWorker = Awaited<ReturnType<TesseractModule['createWorker']>>;
+
+function formatOcrError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`OCR failed: ${message}`);
 }
 
-export async function performJdImageOcr(_file: File): Promise<string> {
-  throw new JdImageOcrNotConfiguredError();
+export async function performJdImageOcr(file: File): Promise<string> {
+  let worker: TesseractWorker | null = null;
+  try {
+    const { createWorker } = await import('tesseract.js');
+    worker = await createWorker(JD_IMAGE_OCR_LANGUAGES, JD_IMAGE_OCR_OEM_LSTM_ONLY);
+    const result = await worker.recognize(file);
+    return result.data.text.trim();
+  } catch (error) {
+    throw formatOcrError(error);
+  } finally {
+    if (worker !== null) {
+      await worker.terminate().catch(() => undefined);
+    }
+  }
 }
