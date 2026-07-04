@@ -14,6 +14,7 @@ import type {
   OpportunityRadar,
 } from '../storage';
 import { deriveDecision, type DerivedDecision } from '../decision';
+import { isPendingReview } from '../review/reviewWorkflow';
 import { COMMUNICATION_STATUS_LABELS, COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
   STRATEGY_LABELS,
@@ -57,6 +58,31 @@ async function load(): Promise<void> {
 }
 
 onMounted(load);
+
+function isImportedDraft(job: JobRecord): boolean {
+  return job.importStatus === 'imported_draft' || job.importedDraft !== undefined;
+}
+
+function isPendingReviewJob(job: JobRecord): boolean {
+  return isPendingReview(job);
+}
+
+function importCategoryLabel(job: JobRecord): string {
+  return job.importedDraft?.recommendedCategory ?? 'wait_review';
+}
+
+function importConfidenceLabel(job: JobRecord): string {
+  const confidence = job.importedDraft?.confidence;
+  return typeof confidence === 'number' ? `${Math.round(confidence * 100)}%` : '待确认';
+}
+
+function importReason(job: JobRecord): string {
+  return job.importedDraft?.reason?.trim() ?? '';
+}
+
+function importWarnings(job: JobRecord): string[] {
+  return job.importedDraft?.warnings ?? [];
+}
 
 // 公司规模：以用户在表单手填的 companyInput.sizeTier 为准（用户的明确意图最优先）；
 // 仅当用户未填（unknown）时，才回退用 AI 画像 companyAssessment.sizeTier；都没有才 unknown。
@@ -168,6 +194,9 @@ function matchesDecisionFilter(job: JobRecord): boolean {
 }
 function decisionPriority(job: JobRecord): number {
   const decision = decisionOf(job);
+  if (decision.nextAction === 'manual_review') {
+    return 0;
+  }
   if (decision.stopLoss || decision.nextAction === 'close_opportunity') {
     return 1;
   }
@@ -422,8 +451,25 @@ function formatTime(ts: number): string {
               >
                 同公司预警
               </span>
+              <span
+                v-if="isPendingReviewJob(job)"
+                class="ac-badge pending-review"
+                title="待人工确认，确认前不会建议主动跟进。"
+              >
+                待人工确认
+              </span>
             </div>
             <div class="ac-context">{{ contextLine(job) }}</div>
+            <div v-if="isImportedDraft(job)" class="ac-import-note">
+              <span class="import-chip">{{ importCategoryLabel(job) }}</span>
+              <span class="import-chip">置信度 {{ importConfidenceLabel(job) }}</span>
+              <span v-if="importReason(job)" class="import-reason">{{ importReason(job) }}</span>
+              <ul v-if="importWarnings(job).length > 0" class="import-warnings">
+                <li v-for="warning in importWarnings(job).slice(0, 2)" :key="warning">
+                  {{ warning }}
+                </li>
+              </ul>
+            </div>
           </div>
           <div class="ac-side">
             <span class="ac-status" :data-status="job.communicationStatus">
@@ -764,7 +810,8 @@ function formatTime(ts: number): string {
   color: #3730a3;
 }
 .ac-badge.action[data-action='wait'],
-.ac-badge.action[data-action='pause_watch'] {
+.ac-badge.action[data-action='pause_watch'],
+.ac-badge.action[data-action='manual_review'] {
   background: #fef3c7;
   color: #92400e;
 }
@@ -781,10 +828,45 @@ function formatTime(ts: number): string {
   background: #fff7ed;
   color: #9a3412;
 }
+.ac-badge.pending-review {
+  background: #eef2ff;
+  color: #3730a3;
+}
 .ac-context {
   margin-top: 7px;
   font-size: 12px;
   color: var(--of-muted);
+}
+.ac-import-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e2e8f0;
+  font-size: 12px;
+  color: #475569;
+}
+.import-chip {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  font-weight: 600;
+}
+.import-reason {
+  flex: 1 1 260px;
+  min-width: 0;
+  line-height: 1.5;
+}
+.import-warnings {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 18px;
+  color: #92400e;
+  line-height: 1.6;
 }
 .ac-side {
   display: flex;

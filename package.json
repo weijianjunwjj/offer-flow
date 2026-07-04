@@ -9,10 +9,12 @@
     "server": "tsx server/index.ts",
     "db:init": "tsx server/schema.ts",
     "import:backup": "tsx scripts/importBackupToDb.ts",
+    "import:jd-drafts": "tsx scripts/importJdDrafts.ts",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts"
+    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts && tsx scripts/reviewWorkflow.selftest.ts",
+    "eval:offerflow-json": "tsx scripts/offerFlowJson.eval.ts"
   },
   "dependencies": {
     "fastify": "^5.9.0",

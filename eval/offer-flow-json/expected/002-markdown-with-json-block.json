@@ -1,0 +1,9 @@
+{
+    "caseId":  "002-markdown-with-json-block",
+    "expectedStatus":  "success",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+
+                                 ],
+    "notes":  "大量 Markdown 解释不应影响标记内 JSON 解析。"
+}

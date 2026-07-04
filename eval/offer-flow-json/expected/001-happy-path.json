@@ -1,0 +1,9 @@
+{
+    "caseId":  "001-happy-path",
+    "expectedStatus":  "success",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+
+                                 ],
+    "notes":  "完整标记包裹的标准输出，应稳定解析。"
+}

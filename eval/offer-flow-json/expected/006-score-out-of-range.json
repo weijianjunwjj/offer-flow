@@ -1,0 +1,10 @@
+{
+    "caseId":  "006-score-out-of-range",
+    "expectedStatus":  "success",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+                                     "opportunityRadar.salaryScore=120",
+                                     "opportunityRadar.riskControlScore=-5"
+                                 ],
+    "notes":  "分数越界应归一并给出 warning，结构完整时仍可 success。"
+}

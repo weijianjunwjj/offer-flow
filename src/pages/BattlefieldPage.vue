@@ -48,6 +48,12 @@ import {
   type MessageScenario,
   type NextActionType,
 } from '../decision';
+import {
+  applyReviewAction,
+  getAvailableReviewActions,
+  isPendingReview,
+} from '../review/reviewWorkflow';
+import type { ReviewAction } from '../review/reviewWorkflow';
 
 const props = defineProps<{
   jobId: string | null;
@@ -270,6 +276,116 @@ const followupSaveError = ref('');
 const recommendedMessageCopyState = ref<'idle' | 'done' | 'fail'>('idle');
 const recommendedMessageFillState = ref<'idle' | 'done'>('idle');
 
+const reviewSaveState = ref<'idle' | 'done' | 'fail'>('idle');
+const reviewSaveError = ref('');
+const showReviewPanel = computed(() => {
+  const job = currentJob.value;
+  return (
+    job !== null &&
+    (job.reviewStatus !== undefined ||
+      job.importStatus === 'imported_draft' ||
+      job.importedDraft !== undefined)
+  );
+});
+const pendingReview = computed(() => currentJob.value !== null && isPendingReview(currentJob.value));
+const availableReviewActions = computed<ReviewAction[]>(() =>
+  currentJob.value === null ? [] : getAvailableReviewActions(currentJob.value),
+);
+const reviewStatusLabel = computed(() => {
+  const status = currentJob.value?.reviewStatus;
+  switch (status) {
+    case 'pending_review':
+      return '待人工确认';
+    case 'confirmed':
+      return '已确认';
+    case 'deferred':
+      return '已暂缓';
+    case 'rejected':
+      return '已拒绝';
+    case undefined:
+      return '未进入确认';
+    default: {
+      const exhaustive: never = status;
+      return exhaustive;
+    }
+  }
+});
+const reviewNotice = computed(() => {
+  const status = currentJob.value?.reviewStatus;
+  switch (status) {
+    case 'confirmed':
+      return '已人工确认，可进入正常跟进决策。';
+    case 'deferred':
+      return '已暂缓观察，暂不进入主攻跟进。';
+    case 'rejected':
+      return '已人工拒绝 / 关闭，不再建议跟进。';
+    case 'pending_review':
+    case undefined:
+      return '';
+    default: {
+      const exhaustive: never = status;
+      return exhaustive;
+    }
+  }
+});
+const reviewSourceRows = computed<Array<{ label: string; value: string }>>(() => {
+  const job = currentJob.value;
+  if (job === null) {
+    return [];
+  }
+  const draft = job.importedDraft;
+  const rows = [
+    { label: '公司', value: form.company.trim() },
+    { label: '岗位', value: form.role.trim() },
+    { label: '城市', value: form.city.trim() },
+    { label: '薪资', value: form.salaryRange.trim() },
+    { label: '导入分类', value: draft?.recommendedCategory ?? '' },
+    { label: '置信度', value: formatReviewConfidence(draft?.confidence) },
+  ];
+  return rows.filter((row) => row.value !== '');
+});
+const reviewReason = computed(() => currentJob.value?.importedDraft?.reason?.trim() ?? '');
+const reviewWarnings = computed(() => currentJob.value?.importedDraft?.warnings ?? []);
+const hasReviewAiRawResult = computed(() => aiRawResult.value.trim() !== '');
+const reviewParseStatusText = computed(() => {
+  switch (parseStatus.value) {
+    case 'parsed':
+      return '已解析';
+    case 'unparsed':
+      return '未解析 / 原文已保存';
+    case 'none':
+      return '无';
+    default: {
+      const exhaustive: never = parseStatus.value;
+      return exhaustive;
+    }
+  }
+});
+
+function formatReviewConfidence(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? ${Math.round(value * 100)}%
+    : '';
+}
+
+function reviewActionLabel(action: ReviewAction): string {
+  switch (action) {
+    case 'confirm':
+      return '确认进入机会';
+    case 'defer':
+      return '暂缓观察';
+    case 'reject':
+      return '拒绝关闭';
+    default: {
+      const exhaustive: never = action;
+      return exhaustive;
+    }
+  }
+}
+
+function reviewActionClass(action: ReviewAction): string {
+  return action === 'reject' ? 'danger' : action;
+}
 const STRATEGY_LABELS: Record<StrategyType, string> = {
   main_attack: '主攻机会',
   low_cost_probe: '低成本试探',
@@ -286,6 +402,7 @@ const NEXT_ACTION_LABELS: Record<NextActionType, string> = {
   pause_watch: '暂停观察',
   close_opportunity: '关闭机会',
   prepare_interview: '准备面试',
+  manual_review: '先人工确认',
 };
 
 const SCENARIO_LABELS: Record<MessageScenario, string> = {
@@ -385,7 +502,9 @@ const nextActionLabel = computed(() =>
       : '',
 );
 const recommendedMessageText = computed(() =>
-  decisionRecord.value === null || followupDecision.value === null
+  decisionRecord.value === null ||
+  followupDecision.value === null ||
+  followupDecision.value.nextAction === 'manual_review'
     ? ''
     : buildMessageTemplate(followupDecision.value.scenario, decisionRecord.value),
 );
@@ -434,6 +553,27 @@ function syncFollowupFacts(job: JobRecord): void {
 async function rememberJob(job: JobRecord): Promise<void> {
   currentJob.value = job;
   allJobs.value = await jobsApi.list();
+}
+
+async function handleReviewAction(action: ReviewAction): Promise<void> {
+  if (props.jobId === null || currentJob.value === null) {
+    return;
+  }
+  reviewSaveState.value = 'idle';
+  reviewSaveError.value = '';
+  try {
+    const next = applyReviewAction(currentJob.value, action, new Date().toISOString());
+    const updated = await jobsApi.patch(props.jobId, {
+      reviewStatus: next.reviewStatus,
+      communicationStatus: next.communicationStatus,
+    });
+    await rememberJob(updated);
+    syncFollowupFacts(updated);
+    reviewSaveState.value = 'done';
+  } catch (error) {
+    reviewSaveState.value = 'fail';
+    reviewSaveError.value = `保存人工确认失败：${(error as Error).message}`;
+  }
 }
 
 async function changeCommunicationStatus(next: CommunicationStatus): Promise<void> {
@@ -673,6 +813,59 @@ async function saveAiResult(): Promise<void> {
     <p v-if="loadError" class="banner banner-error" role="alert">
       {{ loadError }}
     </p>
+
+    <section v-if="showReviewPanel" class="review-panel" :data-review-status="currentJob?.reviewStatus ?? 'none'">
+      <div class="review-head">
+        <div>
+          <h2>人工确认</h2>
+          <p class="review-sub">AI / 导入结果仅作为草稿，确认后才进入正式机会流转。</p>
+        </div>
+        <span class="review-pill">{{ reviewStatusLabel }}</span>
+      </div>
+
+      <template v-if="pendingReview">
+        <div v-if="reviewSourceRows.length > 0" class="review-source-grid">
+          <div v-for="row in reviewSourceRows" :key="row.label" class="review-source-item">
+            <span>{{ row.label }}</span>
+            <strong>{{ row.value }}</strong>
+          </div>
+        </div>
+        <p v-if="reviewReason" class="review-reason">{{ reviewReason }}</p>
+        <div class="review-source-flags">
+          <span v-if="currentJob?.importedDraft">已保留导入草稿</span>
+          <span v-if="hasReviewAiRawResult">已保留 AI 原文</span>
+          <span>解析状态：{{ reviewParseStatusText }}</span>
+        </div>
+        <ul v-if="reviewWarnings.length > 0" class="review-warnings">
+          <li v-for="warning in reviewWarnings.slice(0, 3)" :key="warning">{{ warning }}</li>
+        </ul>
+        <div class="review-actions" role="group" aria-label="人工确认动作">
+          <button
+            v-for="action in availableReviewActions"
+            :key="action"
+            type="button"
+            class="review-action-btn"
+            :class="reviewActionClass(action)"
+            @click="handleReviewAction(action)"
+          >
+            {{ reviewActionLabel(action) }}
+          </button>
+        </div>
+      </template>
+
+      <p v-else class="review-notice">
+        {{ reviewNotice || '导入来源已保留，当前未处于待确认状态。' }}
+      </p>
+
+      <p class="review-feedback">
+        <span v-if="reviewSaveState === 'done'" class="save-feedback ok" role="status">
+          已保存 ✓
+        </span>
+        <span v-else-if="reviewSaveState === 'fail'" class="save-feedback fail" role="alert">
+          {{ reviewSaveError }}
+        </span>
+      </p>
+    </section>
 
     <section v-if="isEdit" class="followup-panel">
       <div class="followup-head">
@@ -1387,6 +1580,7 @@ h1 {
   color: #a4262c;
 }
 .status-block,
+.review-panel,
 .followup-panel {
   margin-bottom: 20px;
   padding: 20px;
@@ -1396,6 +1590,7 @@ h1 {
   box-shadow: var(--of-shadow);
 }
 .status-block h2,
+.review-panel h2,
 .followup-panel h2 {
   margin: 0 0 10px;
   font-size: 15px;
@@ -1411,6 +1606,123 @@ h1 {
   margin: -4px 0 0;
   font-size: 12px;
   color: #647084;
+}
+.review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.review-sub {
+  margin: -4px 0 0;
+  font-size: 12px;
+  color: #647084;
+}
+.review-pill {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+  font-weight: 600;
+}
+.review-source-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.review-source-item {
+  min-height: 58px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid #e5eaf2;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.review-source-item span {
+  font-size: 12px;
+  color: #647084;
+}
+.review-source-item strong {
+  font-size: 13px;
+  color: #1f2933;
+  line-height: 1.4;
+}
+.review-reason,
+.review-notice {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.review-source-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.review-source-flags span {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #475569;
+  font-size: 12px;
+}
+.review-warnings {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.review-action-btn {
+  padding: 8px 14px;
+  border: 1px solid #cbd2d9;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f2933;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-action-btn:hover {
+  background: #f2f6ff;
+}
+.review-action-btn.confirm {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+.review-action-btn.confirm:hover {
+  background: #1d4ed8;
+}
+.review-action-btn.defer {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+.review-action-btn.danger {
+  border-color: #fecaca;
+  background: #fee2e2;
+  color: #991b1b;
+}
+.review-feedback {
+  min-height: 18px;
+  margin: 10px 0 0;
 }
 .status-pill {
   flex: 0 0 auto;
@@ -2304,6 +2616,7 @@ textarea {
     flex-direction: column;
   }
   .decision-grid,
+  .review-source-grid,
   .followup-facts-grid,
   .followup-time-grid,
   .followup-form-grid {

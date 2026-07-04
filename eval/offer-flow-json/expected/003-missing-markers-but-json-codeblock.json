@@ -1,0 +1,9 @@
+{
+    "caseId":  "003-missing-markers-but-json-codeblock",
+    "expectedStatus":  "success",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+
+                                 ],
+    "notes":  "缺少 START/END 时，应按现有规则兜底解析最后一个 json 代码块。"
+}

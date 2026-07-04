@@ -1,0 +1,9 @@
+{
+    "caseId":  "008-multiple-json-blocks",
+    "expectedStatus":  "success",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+
+                                 ],
+    "notes":  "多个 json 代码块时，缺少标记则解析最后一个 json 代码块。"
+}

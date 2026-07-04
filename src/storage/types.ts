@@ -64,6 +64,27 @@ export type StrategyType =
   | 'cautious_watch'
   | 'cut_loss';
 
+export type ImportStatus = 'draft' | 'imported_draft';
+export type ReviewStatus = 'pending_review' | 'confirmed' | 'deferred' | 'rejected';
+
+export interface JobImportSource {
+  sourceType: string;
+  sourceImagePath?: string;
+  dedupeKey: string;
+  importedAt: number;
+}
+
+export interface ImportedJdDraft {
+  recommendedCategory: string;
+  reason: string;
+  confidence: number | null;
+  riskFlags: string[];
+  warnings: string[];
+  missingFields: string[];
+  rawText: string;
+  sourceCreatedAt?: string;
+}
+
 /** AI 结果解析状态。Step 0 只存这个标记位,不依据它做分支逻辑 */
 export type ParseStatus = 'none' | 'parsed' | 'unparsed';
 
@@ -173,6 +194,12 @@ export interface JobRecord {
   highValueSignal?: boolean;
   strategyOverride?: StrategyType;
   draftMessageText?: string;
+
+  // JD import inbox drafts are visible in OfferFlow but are not formal applied opportunities.
+  importStatus?: ImportStatus;
+  reviewStatus?: ReviewStatus;
+  importSource?: JobImportSource;
+  importedDraft?: ImportedJdDraft;
 }
 
 /** 新建岗位时只收基础信息,其余字段由 store 填默认值 */

@@ -1,0 +1,9 @@
+{
+    "caseId":  "009-no-structured-json",
+    "expectedStatus":  "not_found",
+    "shouldParse":  false,
+    "expectedWarningsIncludes":  [
+                                     "未找到 OFFER_FLOW_JSON 数据块"
+                                 ],
+    "notes":  "完全没有结构化 JSON 时应返回 not_found。"
+}

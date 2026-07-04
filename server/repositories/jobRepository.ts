@@ -45,6 +45,10 @@ function makeJob(input: JobCreateInput & Partial<JobRecord> = {}): JobRecord {
     lastCommunicationNote: input.lastCommunicationNote,
     strategyOverride: input.strategyOverride,
     draftMessageText: input.draftMessageText,
+    importStatus: input.importStatus,
+    reviewStatus: input.reviewStatus,
+    importSource: input.importSource,
+    importedDraft: input.importedDraft,
   });
 }
 

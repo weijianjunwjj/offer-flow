@@ -1,0 +1,9 @@
+{
+    "caseId":  "005-partial-required-fields",
+    "expectedStatus":  "partial",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+                                     "缺少 companyAssessment 对象"
+                                 ],
+    "notes":  "缺少关键对象时应降级为 partial，并保留机会分析可用部分。"
+}

@@ -1,0 +1,9 @@
+{
+    "caseId":  "004-invalid-json",
+    "expectedStatus":  "invalid_json",
+    "shouldParse":  false,
+    "expectedWarningsIncludes":  [
+                                     "JSON 解析失败"
+                                 ],
+    "notes":  "标记存在但 JSON 语法错误，应返回 invalid_json。"
+}

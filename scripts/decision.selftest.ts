@@ -122,6 +122,49 @@ decision = deriveDecision(
 check('empty applyAdvice uses empty report fallback', decision.nextAction === 'wait');
 
 // --------------------------------------------------------------------------
+section('Human review gating');
+
+const reviewDraft = {
+  recommendedCategory: 'main_attack',
+  reason: 'Looks promising, but must be reviewed by a human first.',
+  confidence: 0.83,
+  riskFlags: [],
+  warnings: [],
+  missingFields: [],
+  rawText: 'imported jd draft',
+};
+
+decision = deriveDecision(
+  baseJob({
+    importStatus: 'imported_draft',
+    reviewStatus: 'pending_review',
+    importedDraft: reviewDraft,
+    communicationStatus: 'not_contacted',
+  }),
+);
+check('pending_review blocks direct greeting', decision.nextAction === 'manual_review');
+check('pending_review keeps cautious watch strategy', decision.strategy === 'cautious_watch');
+check('pending_review does not become main_attack', decision.strategy !== 'main_attack');
+
+decision = deriveDecision(
+  baseJob({
+    importStatus: 'imported_draft',
+    reviewStatus: 'confirmed',
+    importedDraft: reviewDraft,
+    communicationStatus: 'not_contacted',
+  }),
+);
+check('confirmed review enters normal decision flow', decision.nextAction === 'send_greeting');
+
+decision = deriveDecision(baseJob({ reviewStatus: 'deferred', communicationStatus: 'not_contacted' }));
+check('deferred review stays paused for observation', decision.nextAction === 'pause_watch');
+check('deferred review does not send greeting', decision.nextAction !== 'send_greeting');
+
+decision = deriveDecision(baseJob({ reviewStatus: 'rejected', communicationStatus: 'not_contacted' }));
+check('rejected review returns no next action', decision.nextAction === null);
+check('rejected review cuts loss', decision.strategy === 'cut_loss');
+
+// --------------------------------------------------------------------------
 section('Followup count decisions');
 
 decision = deriveDecision(

@@ -1,0 +1,9 @@
+{
+    "caseId":  "010-realistic-noisy-ai-response",
+    "expectedStatus":  "success",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+
+                                 ],
+    "notes":  "接近真实的长回复噪音，最终标记内 JSON 应稳定解析。"
+}

@@ -17,6 +17,7 @@ export const NEXT_ACTION_LABELS: Record<NextActionType, string> = {
   continue_conversation: '继续沟通',
   prepare_interview: '准备面试',
   pause_watch: '暂停观察',
+  manual_review: '先人工确认',
 };
 
 export function nextActionLabel(action: NextActionType | null): string {

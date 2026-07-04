@@ -1,0 +1,11 @@
+{
+    "caseId":  "007-invalid-enum-values",
+    "expectedStatus":  "partial",
+    "shouldParse":  true,
+    "expectedWarningsIncludes":  [
+                                     "companyAssessment.sizeTier 非法",
+                                     "opportunityAnalysis.applyAdvice 非法",
+                                     "opportunityAnalysis.riskLevel 缺失或非法"
+                                 ],
+    "notes":  "非法枚举应归 unknown 或空值，并降级为 partial。"
+}

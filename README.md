@@ -1,85 +1,116 @@
-# OfferFlow / Offer来了
+# OfferFlow | 本地优先 AI 求职工作流与机会决策台
 
-Offer来了（OfferFlow）是面向 Boss 直聘求职场景的本地优先 AI 求职手账。
+OfferFlow 是一个用于验证 AI Workflow 工程化能力的本地优先求职工具。它不是普通求职台账，也不是全自动招聘平台；它把 JD 分析和 Boss 跟进拆成一条可控、可追踪、可复盘的半自动工作流。
 
-它不接 AI API，不做自动投递，不做爬虫，不做云同步。它帮助求职者把“看岗位、补充公司与机会信息、生成一次性分析 Prompt、承接外部 AI 结果、自动解析机会雷达、维护跟进事实、派生下一步动作、复制推荐话术、保存岗位台账”整理成一条稳定流程。
+核心链路：
 
-当前版本：**v0.4.0 · Backend + Project SQLite / 本地后端与项目 SQLite 数据库**。
+```txt
+JD / 岗位输入
+-> 生成结构化 One-Shot Prompt
+-> 外部 AI 返回 Markdown + OFFER_FLOW_JSON
+-> 保存 AI 原文
+-> 解析结构化结果
+-> 人工确认
+-> communicationStatus 状态流转
+-> deriveDecision 决策面板
+-> selftest / Spec Guard 兜底
+```
+
+当前版本已经从早期 v0.1 localStorage 手账演进为 v0.4 本地后端版本：前端使用 Vue3 / TypeScript / Vite / Naive UI，后端使用 Node.js / Fastify / SQLite / better-sqlite3，数据默认写入 `data/offerflow.sqlite3`。
 
 ## 项目定位
 
-OfferFlow 不是 AI 自动分析器，而是：
+OfferFlow 的目标不是替用户自动投递，也不是把 AI 直接接成黑盒 Agent。它验证的是：当 AI 参与真实业务判断时，系统如何约束输入、承接输出、保存原文、解析结构化结果、保留人工确认，并把后续行动沉淀为可测试的状态流转规则。
 
-> 本地优先的 AI 求职工作流容器 + 机会决策工作台。
+真正的模型推理由用户自带的外部 AI 完成，例如 ChatGPT / Claude / Gemini。OfferFlow 负责：
 
-真正的模型推理由用户自带的外部 AI（ChatGPT / Claude / Gemini）完成。工具负责输入标准化、One-Shot Prompt 生成、结果承接与解析、台账沉淀与机会可视化。
+- 把简历、偏好、JD、公司补充信息整理成结构化 Prompt。
+- 要求外部 AI 返回给人看的 Markdown 报告和给机器解析的 `OFFER_FLOW_JSON`。
+- 保存 AI 返回的完整原文，解析失败也不丢数据。
+- 将结构化结果展示为机会雷达、匹配度、风险点和话术建议。
+- 通过 `communicationStatus` 和 `deriveDecision` 派生下一步跟进行动。
+- 用 selftest 和 Spec Guard 约束高风险规则，避免 AI 协作时悄悄改坏协议或状态规则。
 
-## 当前模式：Manual / Semi-manual Mode（不接 AI API）
+## 当前核心能力
 
-- 工具本身**不接入** OpenAI / Claude / Gemini 等任何 AI API，也**不做 BYOK、不爬 Boss、不联网查公司**。
-- 分析能力来自你自己选择的外部 AI：工具生成一份 One-Shot Prompt，你**复制一次**给外部 AI，再把返回的完整内容**粘贴回工具一次**。
-- v0.2.0 相比 v0.1 的关键变化：Prompt 要求外部 AI 在报告末尾附带一段固定的 `OFFER_FLOW_JSON` 数据块；工具会**尽力解析**它，自动生成机会雷达。这仍然是手动复制粘贴，不是自动调用 AI。
-- v0.3.0 在机会雷达之上增加半自动跟进决策：用户手动维护沟通与跟进事实，工具通过纯函数实时派生策略建议、下一步动作、推荐话术场景、止损判断和同公司只读预警。
-- v0.4.0 补齐本地 Node Fastify 后端与项目内 SQLite 数据库，前端通过 HTTP API 读写 `data/offerflow.sqlite3`；旧 Tauri / Rust / localService / 桌面路线已废弃。
-- 解析失败、未找到 JSON、字段不完整都不会阻断保存，也不会清空已有数据（原文永远优先落盘）。
+- 结构化 Prompt 生成：`src/app/prompt.ts` 的 `buildAnalysisPrompt()`。
+- `OFFER_FLOW_JSON` 输出协议：固定 START / END 标记、枚举、分数和字段层级。
+- AI 原文承接：岗位详情页保存完整 AI 返回内容，原文优先落盘。
+- JSON 解析与容错：`src/app/offerFlowJson.ts` 支持标记提取、json 代码块兜底、枚举归一、分数归一、partial warnings。
+- 机会雷达 / 匹配分析展示：`src/pages/BattlefieldPage.vue` 和 `src/components/OpportunityRadarChart.vue`。
+- `communicationStatus` 8 态沟通状态：未沟通、已打招呼未读、已读未回、已回复、面试推进中、暂停观察、已结束、已拒绝。
+- `deriveDecision` 跟进策略派生：`src/decision/deriveDecision.ts` 根据事实字段派生策略、下一步动作、止损判断和话术场景。
+- Human-in-the-loop 人工确认边界：AI 只给分析和建议，用户手动粘贴、确认、修改状态、决定是否发送。
+- 本地 Fastify + SQLite 持久化：`server/index.ts`、`server/db.ts`、`server/schema.ts`、`server/routes/`。
+- OFFER_FLOW_JSON Eval 样本：`eval/offer-flow-json/` 覆盖真实 AI 返回噪音、异常和降级路径。
+- selftest / Spec Guard 证据：`scripts/*.selftest.ts`、`docs/v0.5/spec-guard.md`、`spec-lab/`。
 
-## v0.4.0 后端与数据库
+## 技术栈
 
-```txt
-Vue 前端
-  → HTTP API
-Node.js + Fastify 后端
-  → SQLite DB 文件：data/offerflow.sqlite3
-```
+- Vue3
+- TypeScript
+- Vite
+- Naive UI
+- Node.js
+- Fastify
+- SQLite / better-sqlite3
+- tsx selftest
 
-- 后端监听：`http://127.0.0.1:17365`
-- DB 文件固定：`data/offerflow.sqlite3`
-- 启动：`npm run dev` 同时启动后端和 Vite 前端
-- 迁移：`npm run import:backup -- path/to/offerflow-web-backup.json`
-- 旧 v0.4 / v0.5 的 Tauri、Rust、localService、桌面路线已废弃
-- 仍不做云同步、账号、AI API / BYOK、Boss 自动化
+## 为什么不接 AI API
 
-## 核心闭环
+当前版本采用 Manual / Semi-manual AI Loop：用户复制 Prompt 到外部 AI，再把 AI 返回结果粘贴回系统。
 
-```
-简历/偏好配置  →  录入岗位 JD + 公司与机会补充  →  生成 One-Shot Prompt  →  复制给外部 AI
-      →  把 AI 完整结果（Markdown + OFFER_FLOW_JSON）粘贴回岗位  →  自动解析机会雷达 / 公司画像 / 话术
-      →  维护 8 态沟通状态与跟进事实  →  派生策略建议 / 下一步动作 / 推荐话术 / 止损判断
-      →  在详情页和列表决策台筛选排序，回看完整岗位
-```
+这样做是有意收敛范围：
 
-## v0.3.0 新增能力
+- 优先验证 AI 输出结构化承接、解析、校验、人工确认和状态流转能力。
+- 避免 API Key、费用、模型差异、网络失败和权限问题干扰核心工程目标。
+- 避免从“AI 辅助决策”滑向“系统自动替用户决策”。
+- 保持 Boss 求职场景中的人工确认边界，不自动打招呼、不自动投递。
 
-1. **8 态沟通状态**：`communicationStatus` 替换旧 `contactStatus`，覆盖未沟通、已打招呼（未读）、已读未回、已回复、面试推进中、暂停观察、已结束、已拒绝。
-2. **跟进事实字段**：新增并只保存 `lastGreetedAt`、`followupCount`、`lastFollowupAt`、`lastCommunicationNote`、`highValueSignal`、`strategyOverride`、`draftMessageText`。
-3. **只存事实，不存决策**：`strategy`、`nextAction`、`stopLoss`、`scenario`、`companyWarning` 均实时派生，不写入 `JobRecord` 或 localStorage。
-4. **决策纯函数**：`deriveDecision(record, allJobs?)` 派生策略建议、下一步动作、止损判断、话术场景和公司级只读预警。
-5. **详情页跟进决策面板**：展示派生结果，允许维护影响决策的事实字段，刷新后重新计算。
-6. **推荐话术模板与复制**：覆盖 6 类 `MessageScenario`，支持安全变量填充、一键复制、填入草稿和保存草稿。
-7. **列表页决策台模式**：列表行展示策略 / 下一步动作 / 止损提示，支持待打招呼、可跟进、待止损、等回复筛选和决策优先级排序。
-8. **公司级只读预警**：仅从现有 `JobRecord[]` 派生同公司预警，不新增 Company 实体，不写入公司聚合数据。
+后续是否进入 AI API / BYOK Adapter 必须重新拍板，不属于当前求职冲刺主线。
 
-## v0.2.0 新增能力
+## AI 协作工具状态
 
-1. **公司与机会补充**：公司规模、人员规模、公司类型、融资阶段、通勤时间/方式、公司备注、机会备注，随岗位保存。
-2. **One-Shot Prompt**：把简历/偏好、岗位、公司补充一次性拼成 Prompt，要求外部 AI 输出 Markdown 报告 + 固定 `OFFER_FLOW_JSON` 数据块。
-3. **OFFER_FLOW_JSON 自动解析**：保存 AI 原文时尽力解析，回填综合匹配度、公司画像、机会分、6 维机会雷达、风险等级、投递建议、面试关注点、Boss 话术；失败 / 部分缺失按 no-clobber 处理，并给出解析状态反馈。
-4. **机会雷达卡**：主战场展示机会分、综合匹配度、公司画像标签、风险/投递建议、决策摘要、面试关注点，以及自研 SVG 6 维机会雷达图（不引入图表库）。
-5. **列表升级**：新增公司规模、机会分列；支持按城市 / 公司规模 / 沟通状态 / 机会分下限筛选，按更新时间 / 机会分 / 匹配度排序（仅前端展示，不改持久化）。
-6. **浅色高级科技感视觉**：引入 Naive UI 作为唯一 UI 组件库，并折入真实页面 —— 列表为「机会资产池」卡片、主战场为「单岗位机会简报」（机会雷达主视觉）、表单卡片化，整体类 Linear / Vercel / 飞书多维表格的清爽感；不引入图标库 / 路由 / 状态管理 / 图表库。
+- 当前主执行工具：Codex。
+- 当前主 AI 协作规则：`AGENTS.md`。
+- Claude Code 当前暂不可用。
+- `CLAUDE.md` 保留为 Claude Code 恢复后的备用协作上下文，不代表当前正在使用 Claude Code 开发。
+
+## Demo 路径
+
+面试时可以按下面路径演示最小闭环：
+
+1. 启动项目：`npm run dev`。
+2. 新增或选择一个岗位。
+3. 填入岗位 JD、公司规模、公司类型、通勤、机会备注等补充信息。
+4. 生成 One-Shot Prompt。
+5. 复制 Prompt 到外部 AI。
+6. 将外部 AI 返回的 Markdown + `OFFER_FLOW_JSON` 粘贴回岗位详情。
+7. 保存 AI 原文。
+8. 查看解析状态，确认结构化字段已回填。
+9. 查看机会雷达、匹配度、风险等级、面试关注点和 Boss 话术。
+10. 查看 `deriveDecision` 生成的下一步建议、策略和止损提示。
+11. 修改 `communicationStatus`，观察跟进决策变化。
+12. 运行 `npm.cmd run selftest` 验证存储、JSON 解析、目标画像评分、决策规则。
+
+更详细的 Demo 检查清单见 `docs/demo-ai-workflow.md`。
 
 ## 本地运行
 
 要求 Node 18+。
 
 ```bash
-# 安装依赖
 npm install
+npm run dev
+```
 
-# 启动后端 + 前端
+常用命令：
+
+```bash
+# 同时启动 Fastify 后端和 Vite 前端
 npm run dev
 
-# 仅后端 / 仅前端
+# 仅启动后端 / 仅启动前端
 npm run server
 npm run web
 
@@ -89,77 +120,70 @@ npm run db:init
 # 导入浏览器 localStorage JSON 备份
 npm run import:backup -- path/to/offerflow-web-backup.json
 
-# TypeScript 类型检查（strict，期望 0 error）
+# 导入 personal-os 推来的 JD draft
+npm run import:jd-drafts
+
+# 类型检查
 npm run typecheck
 
-# 自测（存储层 + OFFER_FLOW_JSON 解析器；期望全部通过）
-npm run selftest
+# OFFER_FLOW_JSON Eval
+npm.cmd run eval:offerflow-json
+
+# 自测
+npm.cmd run selftest
 
 # 生产构建
 npm run build
 ```
 
-v0.4 起主存储为项目内 SQLite 文件 `data/offerflow.sqlite3`。浏览器 localStorage 仅作为 legacy 数据来源，可通过 JSON 备份导入；导入不会删除原 JSON 或浏览器 localStorage。
+说明：Windows PowerShell 可能拦截 `npm.ps1`，可以使用 `npm.cmd run selftest`。
 
-## 功能清单（v0.3.0 累计）
+## 项目边界
 
-1. 简历 / 偏好全局配置（覆盖式保存，刷新回显）
-2. 岗位台账列表：公司规模、匹配度、机会分、策略、下一步动作等列，城市 / 公司规模 / 沟通状态 / 机会分 / 决策 chips 筛选与排序
-3. 岗位主战场基础信息录入与保存（新建 / 编辑）
-4. 公司与机会补充表单（8 字段，随岗位保存、回显、旧岗位兼容）
-5. One-Shot 分析 Prompt 生成 + 一键复制
-6. 外部 AI 结果原文承接（原文必存、粘贴时间、解析状态）
-7. OFFER_FLOW_JSON 自动解析与回填（综合匹配度 / 公司画像 / 机会雷达 / 话术；失败不清空）
-8. 机会雷达卡 + 自研 SVG 6 维雷达图 + 空状态
-9. 分析报告原文展示 + Boss 打招呼话术编辑 / 保存 / 复制
-10. 沟通状态流转（8 态 `communicationStatus`）
-11. 跟进决策面板：策略建议 + 下一步动作 + 推荐话术 + 止损判断
-12. 推荐话术模板：6 类场景，支持复制、填入草稿、编辑和保存
-13. 列表决策台：行动徽章、决策 chips、决策优先级排序
-14. 公司级只读预警：基于同公司其他岗位派生，不新增公司实体
-15. 列表 ↔ 详情回看闭环，全字段回显
-16. 全本地存储（localStorage），刷新不丢
+当前不做：
 
-## 当前能力边界（v0.3.0 不做）
+- 不接 AI API。
+- 不做 BYOK。
+- 不爬 Boss。
+- 不自动打招呼。
+- 不自动投递。
+- 不做完整 CRM。
+- 不做复杂多 Agent 平台。
+- 不做真实招聘平台替代品。
+- 不替用户做最终求职决策。
+- 不把 `strategy`、`nextAction`、`stopLoss`、`scenario`、`companyWarning` 等派生结果持久化为事实。
 
-1. 不接 OpenAI / Claude / Gemini API，也不接任何后端 API
-2. 不做 BYOK
-3. 不做后端，不做后端 SaaS
-4. 不做登录注册
-5. 不爬 Boss，不自动检测 Boss 已读 / 未读
-6. 不自动发送消息，不定时发送，不做模拟点击
-7. 不自动投递
-8. 不做 Boss 自动化工具
-9. 不做 CRM，不做联系人管理，不做多渠道聚合
-10. 不做提醒系统
-11. 不做完整 AI Chat
-12. 不做完整沟通日志，不做 append-only message log
-13. 不做批量操作
-14. 不做漏斗转化率大看板，不做用户自定义规则引擎
-15. 不联网查公司，不做公司数据库
-16. 不做浏览器插件
-17. 不做 PDF / Word 简历解析
-18. 不做云端同步
-19. 不新增 Company / Contact / Message / JobStatusLog / FollowupLog / Reminder 实体
-20. 不持久化 `strategy` / `nextAction` / `stopLoss` / `scenario` / `companyWarning`
+## 工程证据
 
-> v0.3.0 是半自动求职跟进决策台：会基于用户手动维护的事实给出策略建议、下一步动作、推荐话术和止损判断，但绝不自动调用 AI、自动操作 Boss 或替用户发送消息。
+能力证据清单见 `docs/ai-workflow-evidence.md`。
 
-## 版本路线
+已存在的关键文件：
 
-- v0.1：Manual Mode，不接 API，验证求职工作流（已封版 v0.1.0）
-- v0.2：One-Shot Opportunity Radar，固定 JSON 解析 + 机会雷达 + Naive UI 浅色壳（已封版 v0.2.0，仍不接 API）
-- v0.3：Semi-manual Follow-up Decision Desk，半自动求职跟进决策台（已封版 v0.3.0，仍不接 AI API、不自动操作 Boss、不做 CRM）
-- v0.4：Backend + Project SQLite，本地 Node Fastify 后端与项目内 SQLite 数据库（当前 v0.4.0）
-- 后续：是否进入 BYOK / 正式 AI Adapter 必须由用户另行明确拍板，不属于 v0.3 待办项
+- `src/app/prompt.ts`
+- `src/app/offerFlowJson.ts`
+- `src/decision/deriveDecision.ts`
+- `src/storage/types.ts`
+- `src/pages/BattlefieldPage.vue`
+- `src/pages/JobListPage.vue`
+- `server/db.ts`
+- `server/schema.ts`
+- `scripts/offerFlowJson.selftest.ts`
+- `scripts/decision.selftest.ts`
+- `docs/v0.5/spec-guard.md`
+- `spec-lab/traces/2026-06-30-derive-decision-001.json`
 
-## Release Notes
+## 面试讲法
 
-- v0.4.0：本地后端与项目 SQLite 数据库。详见 [docs/release/v0.4.0.md](docs/release/v0.4.0.md)。
-- v0.3.0：半自动求职跟进决策台。详见 [docs/release/v0.3.0.md](docs/release/v0.3.0.md)。
-- v0.2.0：One-Shot Opportunity Radar。详见 [docs/release/v0.2.0.md](docs/release/v0.2.0.md)。
-- v0.1.0：P0 manual-mode 闭环完成。详见 [docs/release/v0.1.0.md](docs/release/v0.1.0.md)。
+90 秒版本：
 
-## 开发纪律
+> OfferFlow 是我做的一个本地优先 AI 求职工作流与机会决策台。它不是简单调用大模型，也不是自动投递工具，而是把 JD 分析和求职跟进拆成一个可控的 AI Workflow。用户先录入 JD 和公司补充信息，系统生成结构化 One-Shot Prompt，外部 AI 返回 Markdown 报告和固定 `OFFER_FLOW_JSON`，系统保存完整原文，再尽力解析结构化字段，展示机会雷达、风险点和匹配度。后续沟通不让 AI 自动代替用户操作，而是由用户维护 `communicationStatus`，系统通过 `deriveDecision` 纯函数派生下一步建议、跟进策略和止损判断。这个项目的重点不是接了哪个模型，而是验证 AI 输出如何被协议约束、如何解析失败不丢数据、如何保留 Human-in-the-loop、如何通过 selftest 和 Spec Guard 防止规则漂移。真实业务里 AI 不应该直接替人做决策，所以我采用 workflow-first，而不是一开始做全自动 Agent。
 
-> 配置存一份，岗位分条存，原文先落盘；先建能存能列，再做进料回流，最后收状态与认知。P0 之外，一个都不碰。
+## 版本说明
+
+- v0.1：Manual Mode，验证本地求职台账和 AI 原文承接。
+- v0.2：One-Shot Prompt + `OFFER_FLOW_JSON` + 机会雷达。
+- v0.3：`communicationStatus` 8 态 + `deriveDecision` 半自动跟进决策。
+- v0.4：Node Fastify + SQLite，本地后端和项目内数据库。
+- v0.5：轻量 Spec Guard，针对高风险规则保留规则卡、测试、差分门禁和 trace 样本。
+
+当前求职冲刺主线：收口 Demo 证据、Workflow Trace、`deriveDecision` selftest、Human-in-the-loop review 闭环。`OFFER_FLOW_JSON` Eval 样本已补齐在 `eval/offer-flow-json/`。

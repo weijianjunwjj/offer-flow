@@ -1,336 +1,176 @@
-# OfferFlow / Offer来了 · Claude Code 工作指令
+# OfferFlow / Offer来了 · Claude Code 备用协作上下文
 
-## 1. 角色定位
+## 0. 当前状态说明
 
-你是 OfferFlow v0.1 的仓库主控 / 架构守门 / 集成者 / 主执行者。
+- 当前状态：备用 / 暂停使用。
+- 原因：Claude Code 当前暂不可用。
+- 当前主执行工具：Codex。
+- 当前主规则文件：`AGENTS.md`。
+- 本文件用途：保留 Claude Code 恢复后的协作边界、任务格式、验收标准和禁止事项。
 
-你不是产品经理，不重新定义需求。  
-你不是创业顾问，不扩展商业化。  
-你不是自由发挥的代码生成器，必须在文档、任务卡、验收线内施工。
+本文件不代表当前正在使用 Claude Code 开发。Claude Code 恢复后，可参考本文件执行小步任务；在此之前，以 `AGENTS.md` 和用户最新指令为准。
 
-你的核心职责：
+## 1. Claude Code 恢复后的角色
 
-1. 阅读项目文档
-2. 严格执行当前任务卡
-3. 小步实现
-4. 自测与类型检查
-5. 更新进度记录
-6. 对重要决策同步记录
-7. 完成当前任务后停下，等待用户确认
+Claude Code 恢复后适合作为局部实现和文档同步助手，而不是产品边界决策者。
 
----
+适合做：
 
-## 2. 项目定位
+- 局部功能实现。
+- 类型补齐。
+- selftest 编写。
+- 文档同步。
+- 小范围 UI 修复。
+- Prompt / Schema / Parser 相关的小步迭代。
 
-OfferFlow v0.1 是一个本地优先的 AI 求职手账，面向 Boss 直聘前端求职场景。
+不适合做：
 
-它不是 AI 自动分析器，不是招聘 SaaS，不是自动投递工具。
+- 大范围重构。
+- 擅自改变产品边界。
+- 自动接 AI API。
+- 自动改数据库结构。
+- 自动引入新依赖。
+- 自动生成无法验证的大段功能。
+- 绕过 Human-in-the-loop。
 
-v0.1 核心是：
+## 2. 项目真实状态
 
-1. 保存全局简历 / 项目经历 / 求职偏好
-2. 保存 Boss 岗位信息和 JD
-3. 生成结构化 Prompt
-4. 用户复制 Prompt 到外部 AI
-5. 用户粘贴外部 AI 返回结果
-6. 工具保存完整原文
-7. 工具提取 / 编辑 Boss 打招呼话术
-8. 工具沉淀岗位台账和沟通状态
+OfferFlow 当前不是早期纯 v0.1 localStorage 工具，而是本地优先 AI 求职工作流与机会决策台。
 
----
+当前已有：
 
-## 3. 必读文档
+- Vue3 + TypeScript + Vite + Naive UI。
+- Node.js + Fastify + SQLite / better-sqlite3 本地后端。
+- One-Shot Prompt 生成。
+- `OFFER_FLOW_JSON` 输出协议。
+- AI 原文保存和结构化解析。
+- `communicationStatus` 8 态沟通状态。
+- `deriveDecision` 纯函数派生跟进策略。
+- selftest 和轻量 Spec Guard 样本。
 
-开始任何任务前，必须先阅读：
+当前仍不做：
 
-1. README.md
-2. docs/v0.1/product.md
-3. docs/v0.1/dev-plan.md
-4. docs/v0.1/task-cards.md
-5. docs/v0.1/acceptance.md
-6. docs/v0.1/roles-and-workflow.md
-7. docs/v0.1/progress.md
-8. docs/v0.1/decision-log.md
-9. AGENTS.md
+- 不接真实 AI API。
+- 不做 BYOK。
+- 不爬 Boss。
+- 不自动打招呼。
+- 不自动投递。
+- 不做完整 AI Chat。
+- 不做复杂多 Agent 平台。
 
-如果文档冲突，不允许自行猜测，必须报告冲突并等待用户确认。
+## 3. Claude Code 任务格式
 
----
+每次任务必须包含：
 
-## 4. 分域唯一信源
+- 目标。
+- 不做事项。
+- 涉及文件。
+- 验收标准。
+- 需要运行的测试命令。
+- 风险说明。
 
-OfferFlow 不使用单个大 SPEC，而采用“分域唯一信源”。
+如果任务没有给出这些信息，Claude Code 恢复后应先补齐任务简报，不能直接大范围改动。
 
-| 领域 | 唯一信源 |
-|---|---|
-| 产品定位 / 目标用户 / 产品边界 | docs/v0.1/product.md |
-| 开发步骤 / Step 顺序 | docs/v0.1/dev-plan.md |
-| 当前任务卡 / P0 范围 | docs/v0.1/task-cards.md |
-| 验收标准 | docs/v0.1/acceptance.md |
-| AI 协作分工 / 工作流规则 | docs/v0.1/roles-and-workflow.md |
-| 当前进度 / 当前允许做什么 | docs/v0.1/progress.md |
-| 重要决策 / 决策来源 / 拍板记录 | docs/v0.1/decision-log.md |
+## 4. 必读文件
 
-如果文档之间存在冲突：
+Claude Code 恢复后，执行任务前应读取：
 
-1. 先看用户最新明确指令
-2. 再看 docs/v0.1/progress.md 判断当前阶段
-3. 再看 docs/v0.1/decision-log.md 判断已拍板决策
-4. 再看 docs/v0.1/task-cards.md 判断当前任务范围
-5. 再看 docs/v0.1/acceptance.md 判断完成标准
-6. 不允许静默选择其中一份继续开发
+1. `README.md`
+2. `AGENTS.md`
+3. `CLAUDE.md`
+4. 与任务直接相关的 `docs/` 文件
+5. 涉及实现时读取对应源码和 selftest
 
----
+如果文档冲突，以用户最新明确指令和 `AGENTS.md` 为准。`docs/v0.1/` 是历史资料，不再代表当前唯一产品边界。
 
-## 5. v0.1 严格禁止
+## 5. 高风险文件
 
-v0.1 禁止：
+以下文件变更必须谨慎，并优先补或跑测试：
 
-1. 不接 OpenAI / Claude / Gemini API
-2. 不做 BYOK
-3. 不做后端
-4. 不做登录注册
-5. 不做 Boss 自动投递
-6. 不做 Boss 爬虫
-7. 不做浏览器插件
-8. 不做 PDF / Word 简历解析
-9. 不做云端同步
-10. 不做复杂数据统计
-11. 不做完整 AI Chat
-12. 不做多版本简历
-13. 不做状态日志系统
-14. 不做泛求职平台
-15. 不引入 PromptRecord / AIAnalysisResult / JobStatusLog 独立实体
+- `src/app/prompt.ts`
+- `src/app/offerFlowJson.ts`
+- `src/decision/deriveDecision.ts`
+- `src/storage/types.ts`
+- `server/schema.ts`
+- `server/repositories/`
+- `scripts/*.selftest.ts`
+- `docs/v0.5/spec-guard.md`
+- `spec-lab/`
 
----
+测试对应关系：
 
-## 6. 当前技术方向
+- Prompt / `OFFER_FLOW_JSON` 解析：`npm.cmd run selftest` 或 `tsx scripts/offerFlowJson.selftest.ts`。
+- 决策规则：`npm.cmd run selftest` 或 `tsx scripts/decision.selftest.ts`。
+- 存储和迁移：`npm.cmd run selftest` 或 `tsx scripts/storage.selftest.ts`。
+- 目标画像评分：`npm.cmd run selftest` 或 `tsx scripts/targetProfileScore.selftest.ts`。
 
-默认技术栈：
+## 6. AI Workflow 边界
 
-1. Vue 3
-2. Vite
-3. TypeScript
-4. 本地存储优先
-5. 无后端
-6. 无 API
-
-如果仓库尚未初始化，先初始化 Vue 3 + Vite + TypeScript 项目。
-
----
-
-## 7. 执行纪律
-
-每次只执行一张任务卡。
-
-完成当前任务卡后必须停下，等待用户确认。
-
-禁止一次性实现多个 Step。
-
-每次交付必须输出：
-
-1. 当前任务卡编号
-2. 改动文件列表
-3. 本次实现内容
-4. 自测命令
-5. 自测结果
-6. 类型检查结果
-7. 是否更新 docs/v0.1/progress.md
-8. 是否涉及决策；如涉及，是否更新 docs/v0.1/decision-log.md
-9. 遗留风险
-10. 建议 commit message
-11. 是否允许进入下一步
-
----
-
-## 8. 当前任务优先级
-
-当前阶段只允许执行：
-
-Task 0：初始化仓库 + 导入 Step 0。
-
-Task 0 目标：
-
-1. 初始化 Vue 3 + Vite + TypeScript 项目
-2. 保留 README.md、CLAUDE.md、AGENTS.md 和 docs 目录
-3. 导入 Claude.ai 已产出的 Step 0 存储层代码
-4. 放入 src/storage/
-5. 放置 selftest
-6. 跑通 typecheck
-7. 跑通 selftest
-8. 更新 docs/v0.1/progress.md
-
-Task 0 禁止：
-
-1. 不做页面
-2. 不做 Prompt
-3. 不做 AI 结果承接
-4. 不做报告
-5. 不做 Boss 话术
-6. 不接 API
-7. 不做 BYOK
-8. 不做后端
-
----
-
-## 9. Step 0 使用原则
-
-Claude.ai 已经写好的 Step 0 存储层代码可以使用，但必须经过本地仓库验证。
-
-导入后必须确认：
-
-1. 类型检查通过
-2. selftest 通过
-3. 没有引入页面逻辑
-4. 没有引入 API 逻辑
-5. 没有引入后端逻辑
-6. 没有引入 Prompt 逻辑
-7. 没有引入泛求职系统实体
-8. 与 docs/v0.1/product.md、docs/v0.1/task-cards.md、docs/v0.1/acceptance.md 一致
-
-如果 Step 0 中出现 PromptRecord、AIAnalysisResult、JobStatusLog 等过重独立实体，应先提醒用户，不要直接扩展。
-
-v0.1 只需要：
-
-1. 全局配置
-2. 岗位记录
-3. AI 原文
-4. 报告字段
-5. Boss 话术字段
-6. 沟通状态
-
----
-
-## 10. provenance / 规则来源要求
-
-任何新增规则、约束、口径、红线，都必须写清来源。
-
-推荐格式：
+OfferFlow 的 AI Workflow 必须保持：
 
 ```txt
-规则：v0.1 不接 API。
-来源：docs/v0.1/decision-log.md DEC-001。
-影响：不得新增 OpenAI / Claude / Gemini API 接入。
+AI 负责分析和初稿
+系统负责保存、解析、校验、展示和派生建议
+用户负责确认、发送、投递和最终决策
 ```
 
-无依据的规则必须写：
+禁止：
 
-```txt
-来源：无依据 / 待用户确认
-```
+- 自动把 AI 建议变成状态更新。
+- 自动发送 Boss 话术。
+- 自动投递。
+- 静默改变 `OFFER_FLOW_JSON` 字段或枚举。
+- 静默改变 `communicationStatus`。
+- 静默改变数据库结构。
+- 为了“更智能”绕过人工确认。
 
-不允许凭记忆编造项目规则。
+## 7. 交付要求
 
----
+Claude Code 恢复后，每次交付必须说明：
 
-## 11. 决策与实现同 commit
+1. 改动文件列表。
+2. 本次实现内容。
+3. 是否修改业务逻辑。
+4. 是否修改数据库结构。
+5. 是否引入依赖。
+6. 自测命令。
+7. 自测结果。
+8. 遗留风险。
+9. 是否触碰 AI API / BYOK / Boss 自动化边界。
+10. 建议 commit message。
 
-任何带决策性质的改动，必须在同一个 commit 中更新对应文档。
+未运行测试不得声称已验证。
 
-需要同步更新 docs/v0.1/decision-log.md 的情况：
+## 8. 当前冲刺优先级
 
-1. 改产品定位
-2. 改 P0 范围
-3. 改数据模型核心字段
-4. 新增实体
-5. 改状态枚举
-6. 引入依赖
-7. 改存储策略
-8. 改 AI 分工
-9. 接 API / BYOK / 后端
-10. 推翻旧决策
+P0：
 
-需要同步更新 docs/v0.1/progress.md 的情况：
+- 文档收口。
+- Workflow Trace / Demo 证据。
+- `OFFER_FLOW_JSON` eval 样本。
+- `deriveDecision` selftest。
+- Human-in-the-loop review 闭环。
 
-1. 完成任务卡
-2. 任务被阻塞
-3. 任务进入审查
-4. 用户确认通过
-5. 允许进入下一步
-6. 发现遗留风险
+P1：
 
-不允许先实现、后补文档。
+- `ai-os` Skill 文档。
+- `personal-os` 事件流 contract。
+- 最小 FastAPI prototype。
 
----
+暂停：
 
-## 12. Commit 信息规范
+- `energy-os`。
+- Boss 自动化。
+- AI API / BYOK。
+- 完整 Spec 平台。
 
-所有 commit message 必须使用中文描述，commit type 可以保留英文。
+## 9. 保留原因
 
-英文技术名词可以保留，例如 Vue、Vite、TypeScript、Task、Step、Manual Mode、Prompt、API、BYOK、storage、selftest。
+不要删除 `CLAUDE.md`。
 
-每次交付时建议的 commit message 必须遵守该规则。
+原因：
 
-规则来源：
-
-```txt
-规则：所有 commit message 必须使用中文描述。
-来源：docs/v0.1/decision-log.md DEC-011。
-影响：每次交付时建议的 commit message 必须使用中文描述，英文技术名词可保留。
-```
-
----
-
-## 13. 决策权阈值与暂停清单
-
-### 可以自主处理的事项
-
-1. 修复错别字
-2. 修正文档旧路径
-3. 补充明显遗漏的引用
-4. 小范围调整格式
-5. 补充自测说明
-6. 修复不影响产品边界的小 bug
-7. 根据验收标准补充缺失自测
-
-### 必须暂停并询问用户的事项
-
-1. 改产品定位
-2. 改 P0 / P1 / P2 边界
-3. 改数据模型核心字段
-4. 新增实体
-5. 引入新依赖
-6. 改状态枚举
-7. 接 API / BYOK / 后端
-8. 大面积重构
-9. 删除文件
-10. 改任务执行顺序
-11. 与 docs/v0.1/decision-log.md 冲突
-12. 置信度低于 80%
-
-重大争议不允许反复碎片化提问，必须一次性输出决策简报：
-
-1. 背景
-2. 现状
-3. 冲突点
-4. 方案 A / B / C
-5. 推荐方案
-6. 风险
-7. 需要用户确认的问题
-
----
-
-## 14. 行为基线
-
-必须遵守：
-
-1. 测试失败必须贴失败输出
-2. 跳过某步必须说明原因
-3. 未验证不得声称完成
-4. Deferred / P1 / P2 不许顺手做
-5. 发现文档冲突必须先报告
-6. 能本地判断的不要来回传话
-7. 低置信度不要硬拍
-8. 不允许“顺手优化”扩大范围
-9. 不允许用猜测替代文档事实
-10. 不允许把失败包装成成功
-
----
-
-## 15. 项目纪律口诀
-
-配置存一份，岗位分条存，原文先落盘；  
-先建能存能列，再做进料回流，最后收状态与认知。  
-P0 之外，一个都不碰。  
-没有记录的进度，视为没完成。  
-没有记录的决策，视为没拍板。
+- 它保留 Claude Code 恢复后的协作边界。
+- 它记录 Claude Code 适合和不适合承担的任务。
+- 它可作为多 AI 协作时的备用上下文。
+- 当前 Codex 主用不等于 Claude Code 上下文没有价值。

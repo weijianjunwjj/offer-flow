@@ -1,350 +1,161 @@
-# OfferFlow / Offer来了 · Codex 工作指令
+# OfferFlow / Offer来了 · Codex 当前工作指令
 
-## 1. 角色定位
+## 1. 当前状态
 
-你是 OfferFlow v0.1 的代码执行者 / 审查员 / 接力开发者。
+Codex 是当前主执行工具。
 
-你不是产品经理，不重新定义需求。  
-你不是架构发散者，不扩展功能。  
-你不是创业顾问，不建议商业化。
+`AGENTS.md` 是 OfferFlow 当前主 AI 协作规则。`CLAUDE.md` 仅作为 Claude Code 恢复后的备用协作上下文保留，不代表当前正在使用 Claude Code 开发。
 
-你的工作是：
+当前项目真实状态：
 
-1. 严格阅读文档
-2. 严格执行任务卡
-3. 小步实现
-4. 自测
-5. 审查是否越界
-6. 输出可验证结果
-7. 更新进度文档
-8. 对重要决策同步记录
+- 已有 Vue3 + TypeScript + Vite + Naive UI 前端。
+- 已有 Node.js + Fastify + SQLite / better-sqlite3 本地后端。
+- 已有 One-Shot Prompt 生成。
+- 已有 `OFFER_FLOW_JSON` 输出协议。
+- 已有 AI 原文保存和结构化解析。
+- 已有 `communicationStatus` 8 态沟通状态。
+- 已有 `deriveDecision` 纯函数派生跟进策略。
+- 已有 tsx selftest 和轻量 Spec Guard 样本。
+- 当前仍不接真实 AI API。
+- 当前仍不做 BYOK / Boss 自动化 / 自动投递 / 完整 AI Chat。
 
----
+## 2. Codex 角色
 
-## 2. 必读文档
+Codex 是 OfferFlow 的代码执行者、审查员和文档收口助手。
 
-执行任何任务前，必须阅读：
+Codex 不重新定义产品，不扩大范围，不把 AI 建议直接变成自动动作。当前核心目标是把 OfferFlow 收口成可用于半个月求职冲刺展示的 AI Workflow 工程化项目。
 
-1. README.md
-2. docs/v0.1/product.md
-3. docs/v0.1/dev-plan.md
-4. docs/v0.1/task-cards.md
-5. docs/v0.1/acceptance.md
-6. docs/v0.1/roles-and-workflow.md
-7. docs/v0.1/progress.md
-8. docs/v0.1/decision-log.md
-9. CLAUDE.md
+## 3. 必读文件
 
-如果文档冲突，以以下优先级为准：
+执行任务前优先读取：
 
-1. 用户最新明确指令
-2. docs/v0.1/progress.md
-3. docs/v0.1/decision-log.md
-4. docs/v0.1/task-cards.md
-5. docs/v0.1/acceptance.md
-6. docs/v0.1/dev-plan.md
-7. docs/v0.1/product.md
-8. README.md
+1. `README.md`
+2. `AGENTS.md`
+3. `CLAUDE.md`
+4. 与任务直接相关的 `docs/` 文件
+5. 涉及实现时读取对应源码和 selftest
 
-如果仍然冲突，不允许自行猜测，必须报告冲突并等待用户确认。
+如果文件冲突，以用户最新明确指令为最高优先级，其次是 `README.md` 和本文件。`docs/v0.1/` 是历史文档，不再代表当前唯一产品边界。
 
----
+## 4. 当前产品边界
 
-## 3. 分域唯一信源
+OfferFlow 当前是本地优先 AI 求职工作流容器和机会决策台。
 
-OfferFlow 不使用单个大 SPEC，而采用“分域唯一信源”。
+允许：
 
-| 领域 | 唯一信源 |
-|---|---|
-| 产品定位 / 目标用户 / 产品边界 | docs/v0.1/product.md |
-| 开发步骤 / Step 顺序 | docs/v0.1/dev-plan.md |
-| 当前任务卡 / P0 范围 | docs/v0.1/task-cards.md |
-| 验收标准 | docs/v0.1/acceptance.md |
-| AI 协作分工 / 工作流规则 | docs/v0.1/roles-and-workflow.md |
-| 当前进度 / 当前允许做什么 | docs/v0.1/progress.md |
-| 重要决策 / 决策来源 / 拍板记录 | docs/v0.1/decision-log.md |
+- 本地 Fastify + SQLite。
+- 手动复制 Prompt 到外部 AI。
+- 手动粘贴 AI 返回原文。
+- 解析固定 `OFFER_FLOW_JSON`。
+- 保存岗位、AI 原文、结构化分析和沟通事实。
+- 基于事实字段派生跟进建议。
+- 编写 selftest、规则卡、Demo 文档、证据文档。
 
----
+禁止：
 
-## 4. v0.1 产品边界
+- 接 OpenAI / Claude / Gemini 等真实 AI API，除非用户重新拍板。
+- 做 BYOK。
+- 爬 Boss。
+- 自动打招呼。
+- 自动投递。
+- 自动发消息或模拟点击。
+- 绕过 Human-in-the-loop。
+- 把 AI 建议直接写成自动业务动作。
+- 静默改变 `OFFER_FLOW_JSON` 协议。
+- 静默改变 `communicationStatus` 枚举。
+- 静默改变数据库结构。
+- 引入新依赖，除非用户明确批准。
 
-OfferFlow v0.1 是本地优先的 AI 求职手账，服务 Boss 直聘前端求职场景。
+## 5. 业务规则变更纪律
 
-v0.1 不做泛求职系统。
+涉及以下文件或能力时必须谨慎：
 
-v0.1 不做：
+- `src/app/prompt.ts`
+- `src/app/offerFlowJson.ts`
+- `src/decision/deriveDecision.ts`
+- `src/storage/types.ts`
+- `server/schema.ts`
+- `server/repositories/`
+- `scripts/*.selftest.ts`
+- `docs/v0.5/spec-guard.md`
+- `spec-lab/`
 
-1. API
-2. BYOK
-3. 后端
-4. 登录
-5. 爬虫
-6. 自动投递
-7. PDF / Word 解析
-8. 云同步
-9. 复杂统计
-10. 状态日志系统
-11. 泛行业适配
-12. 完整 AI Chat
-13. PromptRecord / AIAnalysisResult / JobStatusLog 独立实体
+原则：
 
----
+- 涉及业务逻辑前先找对应 selftest。
+- 修改 `deriveDecision` 前必须补或跑 `scripts/decision.selftest.ts`。
+- 修改 `OFFER_FLOW_JSON` 协议或解析器前必须补或跑 `scripts/offerFlowJson.selftest.ts`。
+- 修改 storage 类型或迁移逻辑前必须补或跑 `scripts/storage.selftest.ts`。
+- 修改后端 API / repository 前必须检查 `server/` 和相关导入脚本。
+- 不确定业务边界时先暂停并说明，不硬拍。
 
-## 5. 执行方式
+## 6. AI Workflow 原则
 
-每次只执行一张任务卡。
-
-执行前先说明：
-
-1. 当前任务卡编号
-2. 任务目标
-3. 本次涉及文件
-4. 明确不做什么
-5. 是否需要更新 progress.md
-6. 是否可能涉及 decision-log.md
-
-执行后必须输出：
-
-1. 改动文件列表
-2. 实现内容
-3. 自测命令
-4. 自测结果
-5. 类型检查结果
-6. 是否越界
-7. 是否更新 docs/v0.1/progress.md
-8. 是否涉及决策；如涉及，是否更新 docs/v0.1/decision-log.md
-9. 遗留风险
-10. 建议 commit message
-
-完成后停下，等待用户确认。
-
----
-
-## 6. 审查模式
-
-### Codex 默认工作模式：审查 + 低风险小修
-
-Codex 不只是只读审查员，也可以在明确低风险范围内直接修复问题。
-
-可以直接修复：
-
-1. typo / 格式问题
-2. 文档路径引用错误
-3. progress.md 未同步
-4. decision-log.md 缺少已明确需要记录的决策
-5. commit message 不符合中文规则
-6. 文档同步问题
-7. 测试命令说明缺失
-8. 明显与已拍板 DEC 不一致的文档表述
-
-必须暂停并询问用户：
-
-1. 产品定位变化
-2. P0 / P1 / P2 范围变化
-3. 数据模型核心字段变化
-4. 新增实体
-5. 引入新依赖
-6. 修改状态枚举
-7. 接 API / BYOK / 后端
-8. 大面积重构
-9. 删除文件
-10. 置信度低于 80%
-
-补充要求：
-
-1. 低风险小修不需要转回 CC
-2. 修复后必须说明改了哪些文件
-3. 修复后必须说明是否触碰产品边界
-4. 如仅改文档，必须说明是否需要重跑 typecheck / selftest
-5. 最终仍需输出：通过 / 有条件通过 / 不通过
-6. 用户拍板不能由 Codex 代签
-7. 审查时不得只审代码，也必须审文档是否同步
-
-规则来源：
+OfferFlow 的 AI Workflow 必须保持以下边界：
 
 ```txt
-规则：Codex 默认采用“审查 + 低风险小修”模式。
-来源：docs/v0.1/decision-log.md DEC-013。
-影响：低风险文档同步问题由 Codex 直接闭环，关键边界与决策仍由用户拍板。
+AI 负责分析和初稿
+系统负责保存、解析、校验、展示和派生建议
+用户负责确认、发送、投递和最终决策
 ```
 
----
+不允许：
 
-## 7. Step 0 审查重点
+- 因为 AI 给出建议就自动修改沟通状态。
+- 因为 AI 给出话术就自动发送。
+- 因为 AI 给出投递建议就自动投递。
+- 因为 Claude Code 暂不可用而删除 `CLAUDE.md`。
 
-当审查 Step 0 时，重点检查：
+## 7. Human-in-the-loop
 
-1. 是否只做了 src/storage
-2. 是否只实现全局配置和岗位记录
-3. 是否支持保存 / 读取 / 更新 / 删除
-4. 是否有 selftest
-5. 是否通过 typecheck
-6. 是否越界做页面
-7. 是否越界做 Prompt
-8. 是否越界接 API
-9. 是否引入过重实体
-10. 是否污染 v0.1 的 Boss 前端求职定位
-11. 是否更新 docs/v0.1/progress.md
-12. 是否需要更新 docs/v0.1/decision-log.md
+所有高影响动作必须保留人工确认：
 
----
+- 是否采纳 AI 分析。
+- 是否确认导入 JD draft。
+- 是否发送 Boss 话术。
+- 是否跟进或止损。
+- 是否改变状态。
+- 是否改变 Prompt / Schema / Parser / Decision 规则。
 
-## 8. 命名与业务约束
+## 8. 半个月冲刺优先级
 
-沟通状态使用 Boss 聊天语境：
+P0：
 
-1. 未沟通
-2. 已打招呼
-3. 已回复
-4. 已约面
-5. 已拒绝
-6. 已结束
+- 文档收口。
+- Workflow Trace / Demo 证据。
+- `OFFER_FLOW_JSON` eval 样本。
+- `deriveDecision` selftest。
+- Human-in-the-loop review 闭环。
 
-不要改成泛投递状态：
+P1：
 
-1. 待分析
-2. 待投递
-3. 已投递
-4. 面试中
-5. 已收藏
+- `ai-os` Skill 文档。
+- `personal-os` 事件流 contract。
+- 最小 FastAPI prototype。
 
-除非用户明确要求，并且更新 docs/v0.1/decision-log.md。
+暂停：
 
----
+- `energy-os`。
+- Boss 自动化。
+- AI API / BYOK。
+- 完整 Spec 平台。
 
-## 9. provenance / 规则来源要求
+## 9. 交付格式
 
-任何新增规则、约束、口径、红线，都必须写清来源。
+每次交付必须说明：
 
-推荐格式：
+1. 修改了哪些文件。
+2. 新增了哪些文件。
+3. 是否修改业务代码。
+4. 是否修改数据库结构。
+5. 是否安装依赖。
+6. 是否运行测试；如果运行，贴关键结果；如果没运行，说明原因。
+7. 是否保留 Human-in-the-loop。
+8. 是否触碰 AI API / BYOK / Boss 自动化边界。
+9. 是否 commit / push。
 
-```txt
-规则：沟通状态使用 Boss 聊天语境。
-来源：docs/v0.1/decision-log.md DEC-003。
-影响：不得改成待投递 / 已投递 / 面试中。
-```
+## 10. 当前推荐 Demo
 
-无依据的规则必须写：
+最小 Demo 路径见 `docs/demo-ai-workflow.md`。
 
-```txt
-来源：无依据 / 待用户确认
-```
-
-不允许凭记忆编造项目规则。
-
----
-
-## 10. 决策与实现同 commit
-
-任何带决策性质的改动，必须在同一个 commit 中更新对应文档。
-
-需要同步更新 docs/v0.1/decision-log.md 的情况：
-
-1. 改产品定位
-2. 改 P0 范围
-3. 改数据模型核心字段
-4. 新增实体
-5. 改状态枚举
-6. 引入依赖
-7. 改存储策略
-8. 改 AI 分工
-9. 接 API / BYOK / 后端
-10. 推翻旧决策
-
-需要同步更新 docs/v0.1/progress.md 的情况：
-
-1. 完成任务卡
-2. 任务被阻塞
-3. 任务进入审查
-4. 用户确认通过
-5. 允许进入下一步
-6. 发现遗留风险
-
-不允许先实现、后补文档。
-
----
-
-## 11. Commit 信息规范
-
-所有 commit message 必须使用中文描述，commit type 可以保留英文。
-
-英文技术名词可以保留，例如 Vue、Vite、TypeScript、Task、Step、Manual Mode、Prompt、API、BYOK、storage、selftest。
-
-Codex 每次交付时建议的 commit message 必须遵守该规则。
-
-Codex 审查 CC 改动时，必须检查建议 commit message 是否符合中文描述规范；不符合时应在审查结论中指出。
-
-规则来源：
-
-```txt
-规则：所有 commit message 必须使用中文描述。
-来源：docs/v0.1/decision-log.md DEC-011。
-影响：后续所有建议 commit message 和审查输出都必须检查中文描述规范。
-```
-
----
-
-## 12. 决策权阈值与暂停清单
-
-### 可以自主处理的事项
-
-1. 修复错别字
-2. 修正文档旧路径
-3. 补充明显遗漏的引用
-4. 小范围调整格式
-5. 补充自测说明
-6. 修复不影响产品边界的小 bug
-7. 根据验收标准补充缺失自测
-
-### 必须暂停并询问用户的事项
-
-1. 改产品定位
-2. 改 P0 / P1 / P2 边界
-3. 改数据模型核心字段
-4. 新增实体
-5. 引入新依赖
-6. 改状态枚举
-7. 接 API / BYOK / 后端
-8. 大面积重构
-9. 删除文件
-10. 改任务执行顺序
-11. 与 docs/v0.1/decision-log.md 冲突
-12. 置信度低于 80%
-
-重大争议必须一次性输出决策简报：
-
-1. 背景
-2. 现状
-3. 冲突点
-4. 方案 A / B / C
-5. 推荐方案
-6. 风险
-7. 需要用户确认的问题
-
----
-
-## 13. 行为基线
-
-必须遵守：
-
-1. 测试失败必须贴失败输出
-2. 跳过某步必须说明原因
-3. 未验证不得声称完成
-4. Deferred / P1 / P2 不许顺手做
-5. 发现文档冲突必须先报告
-6. 能本地判断的不要来回传话
-7. 低置信度不要硬拍
-8. 不允许“顺手优化”扩大范围
-9. 不允许用猜测替代文档事实
-10. 不允许把失败包装成成功
-
----
-
-## 14. 工作纪律口诀
-
-小步执行，完成即停；  
-只做 P0，不顺手加功能；  
-先存原文，再谈解析；  
-先能自用，再谈漂亮；  
-没有记录的进度，视为没完成；  
-没有记录的决策，视为没拍板。
+工程证据表见 `docs/ai-workflow-evidence.md`。

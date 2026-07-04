@@ -1,4 +1,5 @@
 import type { ApplyAdvice, JobRecord, StrategyType } from '../storage';
+import { isPendingReview } from '../review/reviewWorkflow';
 
 export type NextActionType =
   | 'send_greeting'
@@ -8,7 +9,8 @@ export type NextActionType =
   | 'close_opportunity'
   | 'continue_conversation'
   | 'prepare_interview'
-  | 'pause_watch';
+  | 'pause_watch'
+  | 'manual_review';
 
 export type MessageScenario =
   | 'first_greeting'
@@ -97,6 +99,33 @@ export function deriveCompanyWarning(
 }
 
 function deriveBaseDecision(record: JobRecord): DerivedDecision {
+  if (isPendingReview(record)) {
+    return {
+      strategy: 'cautious_watch',
+      nextAction: 'manual_review',
+      stopLoss: false,
+      scenario: 'first_greeting',
+    };
+  }
+
+  if (record.reviewStatus === 'deferred') {
+    return {
+      strategy: 'cautious_watch',
+      nextAction: 'pause_watch',
+      stopLoss: false,
+      scenario: 'first_greeting',
+    };
+  }
+
+  if (record.reviewStatus === 'rejected') {
+    return {
+      strategy: 'cut_loss',
+      nextAction: null,
+      stopLoss: false,
+      scenario: 'premium_but_cold_closing',
+    };
+  }
+
   switch (record.communicationStatus) {
     case 'closed':
     case 'rejected':
