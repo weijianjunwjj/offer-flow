@@ -44,6 +44,7 @@ OfferFlow 的目标不是替用户自动投递，也不是把 AI 直接接成黑
 - Review 决策门禁：`pending_review` 不会直接触发主动跟进建议，`deriveDecision` 会优先派生 `manual_review` / 先人工确认。
 - 人工处理结果：`confirmed` / `deferred` / `rejected` 会影响后续 `deriveDecision`，但不会把 AI 建议直接变成自动动作。
 - Human-in-the-loop 人工确认边界：AI 只给分析和建议，用户手动粘贴、确认、修改状态、决定是否发送。
+- v0.5.1 JD 输入体验增强：新建岗位默认苏州 / 自研业务 / 未融资或不明确，岗位 JD 输入区支持直接粘贴多张截图、预览、删除，并通过手动“转换文字”按钮调用跨端 OCR adapter。
 - 本地 Fastify + SQLite 持久化：`server/index.ts`、`server/db.ts`、`server/schema.ts`、`server/routes/`。
 - OFFER_FLOW_JSON Eval 样本：`eval/offer-flow-json/` 覆盖真实 AI 返回噪音、异常和降级路径。
 - selftest / Spec Guard 证据：`scripts/*.selftest.ts`、`docs/v0.5/spec-guard.md`、`spec-lab/`。
@@ -149,6 +150,8 @@ npm run build
 - 不爬 Boss。
 - 不自动打招呼。
 - 不自动投递。
+- 不因 JD 截图粘贴或 OCR 自动生成 Prompt、自动分析或自动解析 `OFFER_FLOW_JSON`。
+- 不持久化 JD 截图。
 - AI / import 结果不会绕过人工确认。
 - 系统不会把 AI 建议直接变成动作。
 - 不做完整 CRM。
@@ -168,6 +171,7 @@ npm run build
 - `src/decision/deriveDecision.ts`
 - `src/storage/types.ts`
 - `src/review/reviewWorkflow.ts`
+- `src/ocr/jdImageOcr.ts`
 - `src/pages/BattlefieldPage.vue`
 - `src/pages/JobListPage.vue`
 - `server/db.ts`
@@ -175,6 +179,7 @@ npm run build
 - `scripts/offerFlowJson.selftest.ts`
 - `scripts/decision.selftest.ts`
 - `scripts/reviewWorkflow.selftest.ts`
+- `scripts/jdImageOcr.selftest.ts`
 - `docs/v0.5/spec-guard.md`
 - `spec-lab/traces/2026-06-30-derive-decision-001.json`
 
@@ -183,6 +188,7 @@ npm run build
 - `scripts/reviewWorkflow.selftest.ts` 覆盖 `confirm` / `defer` / `reject` 状态流转，并约束拒绝后保留 `aiRawResult` / `importedDraft` / `parseStatus`。
 - `scripts/decision.selftest.ts` 覆盖 `pending_review` 不直接派生 `send_greeting` 或 `main_attack`，而是先进入 `manual_review`。
 - `npm.cmd run eval:offerflow-json` 覆盖 AI 输出样本稳定性，验证 Markdown 噪音、代码块兜底、缺字段、非法 JSON、异常枚举和无结构化输出等路径。
+- `scripts/jdImageOcr.selftest.ts` 覆盖 OCR adapter 未配置时必须显式失败，避免页面误以为已完成识别。
 
 ## 面试讲法
 
@@ -197,5 +203,6 @@ npm run build
 - v0.3：`communicationStatus` 8 态 + `deriveDecision` 半自动跟进决策。
 - v0.4：Node Fastify + SQLite，本地后端和项目内数据库。
 - v0.5：轻量 Spec Guard，针对高风险规则保留规则卡、测试、差分门禁和 trace 样本。
+- v0.5.1：JD 输入体验增强，支持截图粘贴、预览和跨端 OCR adapter 入口；当前不内置真实 OCR 引擎。
 
 当前求职冲刺主线：收口 Demo 证据、Workflow Trace、`deriveDecision` selftest、Human-in-the-loop review 闭环。`OFFER_FLOW_JSON` Eval 样本已补齐在 `eval/offer-flow-json/`。

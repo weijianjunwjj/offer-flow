@@ -13,7 +13,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts && tsx scripts/reviewWorkflow.selftest.ts",
+    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts && tsx scripts/reviewWorkflow.selftest.ts && tsx scripts/jdImageOcr.selftest.ts",
     "eval:offerflow-json": "tsx scripts/offerFlowJson.eval.ts"
   },
   "dependencies": {

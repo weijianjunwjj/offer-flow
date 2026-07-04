@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Task 3 - Task 6：保存岗位、生成 Prompt、承接外部 AI 原文，并展示报告原文 + 编辑/复制 Boss 话术。
 // 不接 AI API，不做复杂解析，不做完整评分系统 / 多版本话术 / 风险标签系统。
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { NDatePicker, NSelect, NInput } from 'naive-ui';
 import type {
   CommunicationStatus,
@@ -54,6 +54,7 @@ import {
   isPendingReview,
 } from '../review/reviewWorkflow';
 import type { ReviewAction } from '../review/reviewWorkflow';
+import { performJdImageOcr } from '../ocr/jdImageOcr';
 
 const props = defineProps<{
   jobId: string | null;
@@ -73,15 +74,31 @@ interface JobBasicForm {
 }
 
 function emptyForm(): JobBasicForm {
-  return { company: '', role: '', city: '', salaryRange: '', jdText: '' };
+  return { company: '', role: '', city: '苏州', salaryRange: '', jdText: '' };
+}
+
+type JdImageOcrStatus = 'pending' | 'processing' | 'done' | 'failed';
+
+interface PendingJdImage {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: JdImageOcrStatus;
+  error?: string;
+  ocrText?: string;
 }
 
 const form = reactive<JobBasicForm>(emptyForm());
 // Task 4：公司与机会补充（v0.2）。与基础信息一起由「保存岗位」持久化，新建 / 编辑 / 旧岗位均适用。
 const companyForm = reactive<CompanyInput>(emptyCompanyInput());
+companyForm.companyType = '自研业务';
+companyForm.financingStage = '未融资 / 不明确';
 const loadError = ref('');
 const currentJob = ref<JobRecord | null>(null);
 const allJobs = ref<JobRecord[]>([]);
+const pendingJdImages = ref<PendingJdImage[]>([]);
+const jdImagePasteNotice = ref('');
+let jdImageIdSeed = 0;
 
 const isEdit = computed(() => props.jobId !== null);
 const modeLabel = computed(() => (isEdit.value ? '查看 / 编辑岗位' : '新建岗位'));
@@ -118,6 +135,10 @@ const aiSaveError = ref('');
 const aiExtractedMatch = ref('');
 const canSaveAiResult = computed(
   () => props.jobId !== null && aiRawResult.value.trim() !== '',
+);
+const hasJdImages = computed(() => pendingJdImages.value.length > 0);
+const canConvertJdImages = computed(() =>
+  pendingJdImages.value.some((image) => image.status === 'pending' || image.status === 'failed'),
 );
 
 // Task 7：OFFER_FLOW_JSON 自动解析结果（仅状态/反馈用，雷达展示在 Task 8）。
@@ -201,6 +222,122 @@ function emptyReport(): JobReport {
     greetingMessage: '',
   };
 }
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 KB';
+  }
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function jdImageStatusLabel(status: JdImageOcrStatus): string {
+  switch (status) {
+    case 'pending':
+      return '待转换';
+    case 'processing':
+      return '转换中';
+    case 'done':
+      return '已转换';
+    case 'failed':
+      return '转换失败';
+    default: {
+      const exhaustive: never = status;
+      return exhaustive;
+    }
+  }
+}
+
+function addPendingJdImages(files: File[]): void {
+  if (files.length === 0) {
+    return;
+  }
+
+  const nextImages = files.map((file) => ({
+    id: `jd-image-${Date.now()}-${jdImageIdSeed += 1}`,
+    file,
+    previewUrl: URL.createObjectURL(file),
+    status: 'pending' as const,
+  }));
+  pendingJdImages.value = [...pendingJdImages.value, ...nextImages];
+  jdImagePasteNotice.value = `已加入 ${files.length} 张截图，点击“转换文字”后才会 OCR。`;
+}
+
+function handleJdPaste(event: ClipboardEvent): void {
+  const items = Array.from(event.clipboardData?.items ?? []);
+  const imageFiles = items
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
+
+  if (imageFiles.length === 0) {
+    return;
+  }
+
+  event.preventDefault();
+  addPendingJdImages(imageFiles);
+}
+
+function removePendingJdImage(imageId: string): void {
+  const image = pendingJdImages.value.find((item) => item.id === imageId);
+  if (image !== undefined) {
+    URL.revokeObjectURL(image.previewUrl);
+  }
+  pendingJdImages.value = pendingJdImages.value.filter((item) => item.id !== imageId);
+}
+
+function appendOcrTextToJd(texts: string[]): void {
+  const merged = texts.map((text) => text.trim()).filter((text) => text !== '').join('\n\n');
+  if (merged === '') {
+    return;
+  }
+
+  const separator = '--- OCR 识别结果 ---';
+  form.jdText =
+    form.jdText.trim() === ''
+      ? `${separator}\n${merged}`
+      : `${form.jdText.trimEnd()}\n\n${separator}\n${merged}`;
+}
+
+async function convertPendingJdImages(): Promise<void> {
+  const targets = pendingJdImages.value.filter(
+    (image) => image.status === 'pending' || image.status === 'failed',
+  );
+  if (targets.length === 0) {
+    return;
+  }
+
+  jdImagePasteNotice.value = '';
+  const recognizedTexts: string[] = [];
+  for (const image of targets) {
+    image.status = 'processing';
+    image.error = undefined;
+    try {
+      const text = await performJdImageOcr(image.file);
+      image.ocrText = text;
+      if (text.trim() === '') {
+        image.status = 'failed';
+        image.error = 'OCR 未识别到文字';
+      } else {
+        image.status = 'done';
+        recognizedTexts.push(text);
+      }
+    } catch (error) {
+      image.status = 'failed';
+      image.error = (error as Error).message;
+    }
+  }
+
+  appendOcrTextToJd(recognizedTexts);
+}
+
+onBeforeUnmount(() => {
+  for (const image of pendingJdImages.value) {
+    URL.revokeObjectURL(image.previewUrl);
+  }
+});
 
 // Prompt 内容变化（编辑表单等）后，复制反馈失效，重置为初始态。
 watch(generatedPrompt, () => {
@@ -1178,9 +1315,47 @@ async function saveAiResult(): Promise<void> {
         <textarea
           v-model="form.jdText"
           rows="8"
-          placeholder="粘贴 Boss 岗位 JD 原文"
+          placeholder="粘贴 Boss 岗位 JD 原文，或直接粘贴 JD 截图后手动转换文字"
+          @paste="handleJdPaste"
         ></textarea>
       </label>
+
+      <div v-if="hasJdImages" class="jd-image-panel">
+        <div class="jd-image-head">
+          <div>
+            <strong>待转换 JD 截图</strong>
+            <p>图片只保存在当前编辑会话，点击转换文字后才会 OCR，不会自动生成 Prompt 或分析。</p>
+          </div>
+          <button
+            type="button"
+            class="jd-convert-btn"
+            :disabled="!canConvertJdImages"
+            @click="convertPendingJdImages"
+          >
+            转换文字
+          </button>
+        </div>
+        <p v-if="jdImagePasteNotice" class="jd-image-notice">{{ jdImagePasteNotice }}</p>
+        <div class="jd-image-list">
+          <article
+            v-for="(image, index) in pendingJdImages"
+            :key="image.id"
+            class="jd-image-item"
+            :data-status="image.status"
+          >
+            <img :src="image.previewUrl" :alt="`JD 截图 ${index + 1}`" />
+            <div class="jd-image-meta">
+              <strong>截图 {{ index + 1 }}</strong>
+              <span>{{ formatFileSize(image.file.size) }}</span>
+              <span class="jd-image-status">{{ jdImageStatusLabel(image.status) }}</span>
+              <small v-if="image.error">{{ image.error }}</small>
+            </div>
+            <button type="button" class="jd-image-remove" @click="removePendingJdImage(image.id)">
+              删除
+            </button>
+          </article>
+        </div>
+      </div>
 
       <div class="company-extra">
         <h2>公司与机会补充</h2>
@@ -2099,6 +2274,114 @@ textarea:focus {
 }
 textarea {
   resize: vertical;
+}
+.jd-image-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dbe5f4;
+  border-radius: var(--of-radius);
+  background: #f8fbff;
+}
+.jd-image-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.jd-image-head strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 14px;
+}
+.jd-image-head p,
+.jd-image-notice {
+  margin: 0;
+  color: #647084;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.jd-convert-btn,
+.jd-image-remove {
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: #fff;
+  color: #2563eb;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.jd-convert-btn {
+  flex: none;
+  padding: 8px 12px;
+  font-weight: 600;
+}
+.jd-convert-btn:disabled {
+  color: #94a3b8;
+  border-color: #dbe3ef;
+  cursor: not-allowed;
+}
+.jd-image-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.jd-image-item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+.jd-image-item img {
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.jd-image-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #647084;
+  font-size: 12px;
+}
+.jd-image-meta strong {
+  color: #1f2933;
+  font-size: 13px;
+}
+.jd-image-meta small {
+  color: #b42318;
+  overflow-wrap: anywhere;
+}
+.jd-image-status {
+  width: fit-content;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+}
+.jd-image-item[data-status='processing'] .jd-image-status {
+  background: #fff7ed;
+  color: #9a3412;
+}
+.jd-image-item[data-status='done'] .jd-image-status {
+  background: #ecfdf3;
+  color: #027a48;
+}
+.jd-image-item[data-status='failed'] .jd-image-status {
+  background: #fef3f2;
+  color: #b42318;
+}
+.jd-image-remove {
+  padding: 6px 9px;
 }
 .company-extra {
   display: flex;

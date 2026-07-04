@@ -74,6 +74,7 @@ OfferFlow 当前是本地优先 AI 求职工作流容器和机会决策台。
 - `src/app/offerFlowJson.ts`
 - `src/decision/deriveDecision.ts`
 - `src/review/reviewWorkflow.ts`
+- `src/ocr/`
 - `src/storage/types.ts`
 - `server/schema.ts`
 - `server/repositories/`
@@ -90,6 +91,7 @@ OfferFlow 当前是本地优先 AI 求职工作流容器和机会决策台。
 - 修改后端 API / repository 前必须检查 `server/` 和相关导入脚本。
 - 修改 `reviewWorkflow`、`reviewStatus`、`importStatus`、`deriveDecision`、`communicationStatus`、storage types 时必须运行 `npm.cmd run selftest`。
 - 修改 `OFFER_FLOW_JSON` parser / prompt / eval 时必须运行 `npm.cmd run eval:offerflow-json` 和 `npm.cmd run selftest`。
+- 修改 JD 图片粘贴 / OCR adapter 时必须运行 `npm.cmd run selftest`。如果影响 Prompt 输入链路，还必须运行 `npm.cmd run eval:offerflow-json`。
 - 不确定业务边界时先暂停并说明，不硬拍。
 
 ## 6. AI Workflow 原则
@@ -111,6 +113,10 @@ AI 负责分析和初稿
 - 删除 `aiRawResult` / `importedDraft` / `parseStatus` 来“清理数据”。
 - 为了 UI 方便新增复杂审批系统。
 - 自动接 AI API / BYOK / Boss 自动化。
+- OCR 或图片粘贴后自动生成 Prompt、自动分析、自动解析 `OFFER_FLOW_JSON` 或自动改变求职状态。
+- 持久化 JD 截图，除非用户另行批准。
+- 未经确认新增 OCR 依赖。
+- 使用 macOS-only OCR、Windows-only OCR、AppleScript、PowerShell、系统截图 OCR、本地 App OCR 或任何单一操作系统能力。
 - 因为 Claude Code 暂不可用而删除 `CLAUDE.md`。
 
 ## 7. Human-in-the-loop
@@ -123,6 +129,7 @@ AI 负责分析和初稿
 - 是否跟进或止损。
 - 是否改变状态。
 - 是否改变 Prompt / Schema / Parser / Decision 规则。
+- 是否将 JD 截图 OCR 结果写入岗位 JD 文本。
 
 ## 8. 半个月冲刺优先级
 
