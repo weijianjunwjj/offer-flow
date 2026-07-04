@@ -364,7 +364,7 @@ const reviewParseStatusText = computed(() => {
 
 function formatReviewConfidence(value: number | null | undefined): string {
   return typeof value === 'number' && Number.isFinite(value)
-    ? ${Math.round(value * 100)}%
+    ? `${Math.round(value * 100)}%`
     : '';
 }
 

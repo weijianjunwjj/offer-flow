@@ -73,6 +73,7 @@ OfferFlow 当前是本地优先 AI 求职工作流容器和机会决策台。
 - `src/app/prompt.ts`
 - `src/app/offerFlowJson.ts`
 - `src/decision/deriveDecision.ts`
+- `src/review/reviewWorkflow.ts`
 - `src/storage/types.ts`
 - `server/schema.ts`
 - `server/repositories/`
@@ -87,6 +88,8 @@ OfferFlow 当前是本地优先 AI 求职工作流容器和机会决策台。
 - 修改 `OFFER_FLOW_JSON` 协议或解析器前必须补或跑 `scripts/offerFlowJson.selftest.ts`。
 - 修改 storage 类型或迁移逻辑前必须补或跑 `scripts/storage.selftest.ts`。
 - 修改后端 API / repository 前必须检查 `server/` 和相关导入脚本。
+- 修改 `reviewWorkflow`、`reviewStatus`、`importStatus`、`deriveDecision`、`communicationStatus`、storage types 时必须运行 `npm.cmd run selftest`。
+- 修改 `OFFER_FLOW_JSON` parser / prompt / eval 时必须运行 `npm.cmd run eval:offerflow-json` 和 `npm.cmd run selftest`。
 - 不确定业务边界时先暂停并说明，不硬拍。
 
 ## 6. AI Workflow 原则
@@ -104,6 +107,10 @@ AI 负责分析和初稿
 - 因为 AI 给出建议就自动修改沟通状态。
 - 因为 AI 给出话术就自动发送。
 - 因为 AI 给出投递建议就自动投递。
+- 绕过 `pending_review` 直接派生 `send_greeting`。
+- 删除 `aiRawResult` / `importedDraft` / `parseStatus` 来“清理数据”。
+- 为了 UI 方便新增复杂审批系统。
+- 自动接 AI API / BYOK / Boss 自动化。
 - 因为 Claude Code 暂不可用而删除 `CLAUDE.md`。
 
 ## 7. Human-in-the-loop

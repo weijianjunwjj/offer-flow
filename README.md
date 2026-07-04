@@ -10,7 +10,7 @@ JD / 岗位输入
 -> 外部 AI 返回 Markdown + OFFER_FLOW_JSON
 -> 保存 AI 原文
 -> 解析结构化结果
--> 人工确认
+-> pending_review 人工确认
 -> communicationStatus 状态流转
 -> deriveDecision 决策面板
 -> selftest / Spec Guard 兜底
@@ -40,6 +40,9 @@ OfferFlow 的目标不是替用户自动投递，也不是把 AI 直接接成黑
 - 机会雷达 / 匹配分析展示：`src/pages/BattlefieldPage.vue` 和 `src/components/OpportunityRadarChart.vue`。
 - `communicationStatus` 8 态沟通状态：未沟通、已打招呼未读、已读未回、已回复、面试推进中、暂停观察、已结束、已拒绝。
 - `deriveDecision` 跟进策略派生：`src/decision/deriveDecision.ts` 根据事实字段派生策略、下一步动作、止损判断和话术场景。
+- Human-in-the-loop Review：`importedDraft` / AI 解析结果进入 `pending_review` 后，必须由用户确认、暂缓或拒绝。
+- Review 决策门禁：`pending_review` 不会直接触发主动跟进建议，`deriveDecision` 会优先派生 `manual_review` / 先人工确认。
+- 人工处理结果：`confirmed` / `deferred` / `rejected` 会影响后续 `deriveDecision`，但不会把 AI 建议直接变成自动动作。
 - Human-in-the-loop 人工确认边界：AI 只给分析和建议，用户手动粘贴、确认、修改状态、决定是否发送。
 - 本地 Fastify + SQLite 持久化：`server/index.ts`、`server/db.ts`、`server/schema.ts`、`server/routes/`。
 - OFFER_FLOW_JSON Eval 样本：`eval/offer-flow-json/` 覆盖真实 AI 返回噪音、异常和降级路径。
@@ -81,17 +84,16 @@ OfferFlow 的目标不是替用户自动投递，也不是把 AI 直接接成黑
 面试时可以按下面路径演示最小闭环：
 
 1. 启动项目：`npm run dev`。
-2. 新增或选择一个岗位。
+2. 新增岗位 / 导入 JD draft。
 3. 填入岗位 JD、公司规模、公司类型、通勤、机会备注等补充信息。
 4. 生成 One-Shot Prompt。
 5. 复制 Prompt 到外部 AI。
 6. 将外部 AI 返回的 Markdown + `OFFER_FLOW_JSON` 粘贴回岗位详情。
-7. 保存 AI 原文。
-8. 查看解析状态，确认结构化字段已回填。
-9. 查看机会雷达、匹配度、风险等级、面试关注点和 Boss 话术。
-10. 查看 `deriveDecision` 生成的下一步建议、策略和止损提示。
-11. 修改 `communicationStatus`，观察跟进决策变化。
-12. 运行 `npm.cmd run selftest` 验证存储、JSON 解析、目标画像评分、决策规则。
+7. 保存 AI 原文并解析结构化字段。
+8. 进入 `pending_review`，由用户确认 / 暂缓 / 拒绝。
+9. 查看 `deriveDecision` 生成的下一步建议、策略和止损提示。
+10. 修改 `communicationStatus`，观察跟进决策变化。
+11. 运行 `npm.cmd run selftest` 与 `npm.cmd run eval:offerflow-json` 验证自测和 Eval 样本。
 
 更详细的 Demo 检查清单见 `docs/demo-ai-workflow.md`。
 
@@ -147,6 +149,8 @@ npm run build
 - 不爬 Boss。
 - 不自动打招呼。
 - 不自动投递。
+- AI / import 结果不会绕过人工确认。
+- 系统不会把 AI 建议直接变成动作。
 - 不做完整 CRM。
 - 不做复杂多 Agent 平台。
 - 不做真实招聘平台替代品。
@@ -163,14 +167,22 @@ npm run build
 - `src/app/offerFlowJson.ts`
 - `src/decision/deriveDecision.ts`
 - `src/storage/types.ts`
+- `src/review/reviewWorkflow.ts`
 - `src/pages/BattlefieldPage.vue`
 - `src/pages/JobListPage.vue`
 - `server/db.ts`
 - `server/schema.ts`
 - `scripts/offerFlowJson.selftest.ts`
 - `scripts/decision.selftest.ts`
+- `scripts/reviewWorkflow.selftest.ts`
 - `docs/v0.5/spec-guard.md`
 - `spec-lab/traces/2026-06-30-derive-decision-001.json`
+
+当前验证重点：
+
+- `scripts/reviewWorkflow.selftest.ts` 覆盖 `confirm` / `defer` / `reject` 状态流转，并约束拒绝后保留 `aiRawResult` / `importedDraft` / `parseStatus`。
+- `scripts/decision.selftest.ts` 覆盖 `pending_review` 不直接派生 `send_greeting` 或 `main_attack`，而是先进入 `manual_review`。
+- `npm.cmd run eval:offerflow-json` 覆盖 AI 输出样本稳定性，验证 Markdown 噪音、代码块兜底、缺字段、非法 JSON、异常枚举和无结构化输出等路径。
 
 ## 面试讲法
 
