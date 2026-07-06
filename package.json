@@ -8,6 +8,7 @@
     "web": "vite",
     "server": "tsx server/index.ts",
     "db:init": "tsx server/schema.ts",
+    "db:checkpoint": "tsx scripts/dbCheckpoint.ts",
     "import:backup": "tsx scripts/importBackupToDb.ts",
     "import:jd-drafts": "tsx scripts/importJdDrafts.ts",
     "build": "vue-tsc --noEmit && vite build",

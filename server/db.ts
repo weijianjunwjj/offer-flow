@@ -17,7 +17,8 @@ export function ensureDbDir(dbPath = getDbPath()): void {
 export function openDb(dbPath = getDbPath()): SqliteDatabase {
   ensureDbDir(dbPath);
   const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  // Keep the project DB as a single Git-trackable file. WAL sidecars are ignored.
+  db.pragma('journal_mode = DELETE');
   db.pragma('foreign_keys = ON');
   return db;
 }

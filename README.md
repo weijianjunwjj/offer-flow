@@ -120,6 +120,9 @@ npm run web
 # 初始化项目内 SQLite DB
 npm run db:init
 
+# 提交 / 换机前，先停掉 dev/server，再把历史 WAL 合并回主 DB
+npm run db:checkpoint
+
 # 导入浏览器 localStorage JSON 备份
 npm run import:backup -- path/to/offerflow-web-backup.json
 

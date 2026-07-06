@@ -27,6 +27,14 @@ data/*.sqlite3-wal
 data/*.sqlite3-shm
 ```
 
+当前运行时默认使用 `journal_mode = DELETE`，保持 `data/offerflow.sqlite3` 作为可提交的单文件数据资产。若历史运行产生过 WAL sidecar，提交或换机前先停掉 `npm run dev` / `npm run server`，再执行：
+
+```bash
+npm run db:checkpoint
+```
+
+该命令会执行 `wal_checkpoint(TRUNCATE)` 并切回单文件 journal 模式，避免岗位数据只存在于被 Git 忽略的 `*.sqlite3-wal` 中。
+
 schema 采用最小表设计：
 
 - `app_meta`：保存 `schema_version=1`
