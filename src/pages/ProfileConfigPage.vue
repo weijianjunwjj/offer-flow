@@ -5,6 +5,7 @@
 import { onMounted, reactive, ref } from 'vue';
 import type { JobSeekerProfile, JobSearchFocus } from '../storage';
 import { profileApi } from '../api/profileApi';
+import SyncCenter from '../components/SyncCenter.vue';
 
 function emptyProfile(): JobSeekerProfile {
   return {
@@ -155,6 +156,8 @@ function formatTime(ts: number): string {
         </span>
       </div>
     </form>
+
+    <SyncCenter />
   </main>
 </template>
 

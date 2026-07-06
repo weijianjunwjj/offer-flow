@@ -16,7 +16,7 @@ JD / 岗位输入
 -> selftest / Spec Guard 兜底
 ```
 
-当前版本已经从早期 v0.1 localStorage 手账演进为 v0.4 本地后端版本：前端使用 Vue3 / TypeScript / Vite / Naive UI，后端使用 Node.js / Fastify / SQLite / better-sqlite3，数据默认写入 `data/offerflow.sqlite3`。
+当前版本已经从早期 v0.1 localStorage 手账演进为 v0.4 本地后端版本：前端使用 Vue3 / TypeScript / Vite / Naive UI，后端使用 Node.js / Fastify / SQLite / better-sqlite3，数据默认写入本机运行库 `data/offerflow.sqlite3`，跨设备同步使用 `sync/offerflow.snapshot.json`。
 
 ## 项目定位
 
@@ -120,8 +120,18 @@ npm run web
 # 初始化项目内 SQLite DB
 npm run db:init
 
-# 提交 / 换机前，先停掉 dev/server，再把历史 WAL 合并回主 DB
-npm run db:checkpoint
+# 检查本机 SQLite 健康
+npm run db:doctor
+
+# 一键同步：doctor -> merge snapshot -> export snapshot -> backup
+npm run db:sync
+
+# 单独导出 / 合并 JSON 快照
+npm run db:export
+npm run db:import
+
+# 生成安全备份（VACUUM INTO + snapshot 备份）
+npm run db:backup
 
 # 导入浏览器 localStorage JSON 备份
 npm run import:backup -- path/to/offerflow-web-backup.json
@@ -143,6 +153,18 @@ npm run build
 ```
 
 说明：Windows PowerShell 可能拦截 `npm.ps1`，可以使用 `npm.cmd run selftest`。
+
+## 本地数据同步
+
+OfferFlow 不再把 `data/offerflow.sqlite3` 当作跨 Windows / Mac 的同步对象。SQLite 文件只作为每台机器的本地运行库；跨机器同步的是稳定 JSON 快照：
+
+- `data/offerflow.sqlite3`：本机运行库，已从 Git 跟踪中移除。
+- `sync/offerflow.snapshot.json`：可同步的数据快照。
+- `sync/offerflow.manifest.json`：快照元信息与 SHA-256 hash。
+- `backups/`：本机备份目录，不入库。
+- `data/corrupted/`：坏库隔离目录，不入库。
+
+启动后端时会先检查本机 SQLite。如果数据库健康且存在 snapshot，会自动做一次保守合并；如果数据库损坏，会把坏库和 sidecar 文件隔离到 `data/corrupted/`，再尝试从 snapshot 恢复。关闭后端时会自动导出最新 snapshot。
 
 ## 项目边界
 

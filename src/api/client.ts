@@ -13,7 +13,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 export async function apiSend<T>(path: string, method: string, body?: unknown): Promise<T> {
   return apiRequest<T>(path, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-07-06T05:24:12.514Z",
+  "deviceId": "69e49a07-f56a-496b-9c32-8f524bc593eb",
+  "appVersion": "0.1.0",
+  "snapshotHash": "ebf4a2acb7f13fa4c3116f3fddbd374a9fec3893df3dc0be8db5d3cb524456c2",
+  "tableCounts": {
+    "app_meta": 1,
+    "profiles": 1,
+    "jobs": 9,
+    "import_logs": 1
+  }
+}
