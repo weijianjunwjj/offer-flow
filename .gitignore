@@ -57,3 +57,8 @@ sync/*.lock
 
 # Claude Code 本机权限配置（不入库）
 .claude/settings.local.json
+
+
+.env
+.env.*
+!.env.example
