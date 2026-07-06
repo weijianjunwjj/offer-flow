@@ -13,6 +13,8 @@
     "db:backup": "tsx scripts/dbBackup.ts",
     "db:export": "tsx scripts/dbExport.ts",
     "db:import": "tsx scripts/dbImport.ts",
+    "db:publish": "tsx scripts/dbPublishSnapshot.ts",
+    "db:pull": "tsx scripts/dbPullSnapshot.ts",
     "db:checkpoint": "tsx scripts/dbCheckpoint.ts",
     "import:backup": "tsx scripts/importBackupToDb.ts",
     "import:jd-drafts": "tsx scripts/importJdDrafts.ts",

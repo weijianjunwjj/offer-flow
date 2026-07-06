@@ -126,6 +126,13 @@ npm run db:doctor
 # 一键同步：doctor -> merge snapshot -> export snapshot -> backup
 npm run db:sync
 
+# Mac/Windows 之间用 Git 传快照时：
+# 有新数据的机器执行：导出 snapshot -> commit -> push
+npm run db:publish
+
+# 另一台机器执行：git pull -> merge snapshot -> doctor
+npm run db:pull
+
 # 单独导出 / 合并 JSON 快照
 npm run db:export
 npm run db:import
