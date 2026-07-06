@@ -22,6 +22,7 @@ const { ensureInitializedDatabase } = await import('../server/sync/database');
 const { doctorDatabase } = await import('../server/sync/doctor');
 const { exportSnapshot } = await import('../server/sync/exportSnapshot');
 const { importSnapshot } = await import('../server/sync/importSnapshot');
+const { runStartupSync } = await import('../server/sync/bootstrap');
 const { runSync } = await import('../server/sync/syncRunner');
 const { getSyncPaths } = await import('../server/sync/paths');
 const { sha256Hex, toStableJson, atomicWriteJson } = await import('../server/sync/hash');
@@ -148,6 +149,12 @@ try {
   await assert.rejects(async () => {
     importSnapshot(dbPath);
   }, /hash mismatch/);
+  const startupWithBadSnapshot = runStartupSync(dbPath);
+  assert.equal(startupWithBadSnapshot.importResult, null);
+  assert.equal(
+    startupWithBadSnapshot.warnings.some((warning) => warning.includes('hash mismatch')),
+    true,
+  );
   exportSnapshot(dbPath);
 
   fs.rmSync(dbPath, { force: true });

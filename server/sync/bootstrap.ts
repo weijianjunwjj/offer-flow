@@ -15,6 +15,10 @@ export interface BootstrapSyncResult {
   warnings: string[];
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function moveIfExists(sourcePath: string, targetDir: string, stamp: string): void {
   if (!fs.existsSync(sourcePath)) {
     return;
@@ -70,12 +74,17 @@ export function runStartupSync(dbPath = getDbPath()): BootstrapSyncResult {
   }
 
   if (snapshotExists) {
-    const importResult = importSnapshot(dbPath, { backupBeforeImport: true });
+    let importResult: ImportSnapshotResult | null = null;
+    try {
+      importResult = importSnapshot(dbPath, { backupBeforeImport: true });
+    } catch (error) {
+      warnings.push(`snapshot import skipped during startup: ${errorMessage(error)}`);
+    }
     return {
       doctor,
       importResult,
       recoveredFromCorruption,
-      warnings: [...warnings, ...doctor.warnings, ...importResult.warnings],
+      warnings: [...warnings, ...doctor.warnings, ...(importResult?.warnings ?? [])],
     };
   }
 
