@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "exportedAt": "2026-07-06T05:41:09.573Z",
-  "deviceId": "aba8f51a-1227-43df-a143-5e7ecbffda6d",
+  "exportedAt": "2026-07-06T05:43:15.353Z",
+  "deviceId": "69e49a07-f56a-496b-9c32-8f524bc593eb",
   "appVersion": "0.1.0",
-  "snapshotHash": "d947c6b850e8bd14991aaf184f392913656385ff2bb565084e58b71de6560a4f",
+  "snapshotHash": "be22d3a61ba8ad4a2e34dac6fca6e8b925c1098215f66764879cf3f2999d7f05",
   "tableCounts": {
     "app_meta": 1,
     "profiles": 1,
-    "jobs": 11,
+    "jobs": 12,
     "import_logs": 1
   }
 }
