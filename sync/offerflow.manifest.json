@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "exportedAt": "2026-07-06T05:34:08.318Z",
+  "exportedAt": "2026-07-06T05:41:09.573Z",
   "deviceId": "aba8f51a-1227-43df-a143-5e7ecbffda6d",
   "appVersion": "0.1.0",
-  "snapshotHash": "14705fd7f8bf449f2c6765d060e33af46d62249a7abf7c80fc8e4697d8e0ec45",
+  "snapshotHash": "d947c6b850e8bd14991aaf184f392913656385ff2bb565084e58b71de6560a4f",
   "tableCounts": {
     "app_meta": 1,
     "profiles": 1,

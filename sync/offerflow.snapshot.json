@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "exportedAt": "2026-07-06T05:34:08.318Z",
+  "exportedAt": "2026-07-06T05:41:09.573Z",
   "deviceId": "aba8f51a-1227-43df-a143-5e7ecbffda6d",
   "appVersion": "0.1.0",
   "tables": {
@@ -17,7 +17,7 @@
         {
           "key": "schema_version",
           "value": "1",
-          "updated_at": 1783316048307
+          "updated_at": 1783316469563
         }
       ]
     },
