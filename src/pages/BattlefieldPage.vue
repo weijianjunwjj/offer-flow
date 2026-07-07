@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Task 3 - Task 6：保存岗位、生成 Prompt、承接外部 AI 原文，并展示报告原文 + 编辑/复制 Boss 话术。
-// 不接 AI API，不做复杂解析，不做完整评分系统 / 多版本话术 / 风险标签系统。
+// Task 3 - Task 6：保存岗位、生成 Prompt、承接 AI 原文，并展示报告原文 + 编辑/复制 Boss 话术。
+// v0.5：已接入 OfferFlow 自有 LLM 调用链路，同时保留手动粘贴外部 AI 结果的备用路径。
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { NDatePicker, NSelect, NInput } from 'naive-ui';
 import type {
@@ -55,6 +55,7 @@ import {
 } from '../review/reviewWorkflow';
 import type { ReviewAction } from '../review/reviewWorkflow';
 import { performJdImageOcr } from '../ocr/jdImageOcr';
+import { llmApi, type AnalyzeJobResponse } from '../api/llmApi';
 
 const props = defineProps<{
   jobId: string | null;
@@ -132,6 +133,9 @@ const aiPastedAt = ref<number | null>(null);
 const parseStatus = ref<ParseStatus>('none');
 const aiSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const aiSaveError = ref('');
+const llmAnalyzing = ref(false);
+const llmError = ref('');
+const llmResult = ref<AnalyzeJobResponse | null>(null);
 const aiExtractedMatch = ref('');
 const canSaveAiResult = computed(
   () => props.jobId !== null && aiRawResult.value.trim() !== '',
@@ -412,6 +416,7 @@ const followupSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const followupSaveError = ref('');
 const recommendedMessageCopyState = ref<'idle' | 'done' | 'fail'>('idle');
 const recommendedMessageFillState = ref<'idle' | 'done'>('idle');
+const showPrompt = ref(false);
 
 const reviewSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const reviewSaveError = ref('');
@@ -936,6 +941,31 @@ async function saveAiResult(): Promise<void> {
     aiSaveError.value = `保存 AI 原文失败：${(error as Error).message}`;
   }
 }
+
+async function analyzeWithLlm(): Promise<void> {
+  if (props.jobId === null) {
+    return;
+  }
+
+  llmAnalyzing.value = true;
+  llmError.value = '';
+  llmResult.value = null;
+
+  try {
+    const result = await llmApi.analyzeJob({ jobId: props.jobId });
+    llmResult.value = result;
+
+    if (result.error) {
+      llmError.value = result.error;
+    } else {
+      aiRawResult.value = result.rawText;
+    }
+  } catch (error) {
+    llmError.value = `AI 分析请求失败：${(error as Error).message}`;
+  } finally {
+    llmAnalyzing.value = false;
+  }
+}
 </script>
 
 <template>
@@ -1419,7 +1449,7 @@ async function saveAiResult(): Promise<void> {
       </div>
     </form>
 
-    <section class="prompt-block">
+    <section class="prompt-block" v-if="showPrompt">
       <div class="prompt-head">
         <h2>分析 Prompt</h2>
         <button type="button" class="copy-btn" @click="copyPrompt">
@@ -1437,8 +1467,8 @@ async function saveAiResult(): Promise<void> {
         </span>
       </div>
       <p class="prompt-hint">
-        本工具不接入任何 AI API。请复制下方 Prompt，粘贴到 ChatGPT / Claude /
-        Gemini 等外部 AI，再把返回结果完整贴回下方文本框。
+        OfferFlow 已内置 LLM 分析能力，可在下方「AI 分析结果」区点击按钮自动分析。
+        以下 Prompt 供手动复制到外部 AI 参考使用。
       </p>
       <textarea
         class="prompt-text"
@@ -1449,16 +1479,62 @@ async function saveAiResult(): Promise<void> {
     </section>
 
     <section class="ai-result-block">
-      <h2>外部 AI 结果原文</h2>
+      <h2>AI 分析结果</h2>
       <p class="ai-result-hint">
-        粘贴 ChatGPT、Claude、Gemini 等外部 AI 返回的完整内容（含 OFFER_FLOW_JSON）。保存时会尽力解析机会雷达；解析失败或未找到 JSON 也会照常保存原文，不会清空已有结构化数据。
+        点击下方「AI 分析 JD」由 OfferFlow 自动调用 LLM 分析，也可手动粘贴 ChatGPT / Claude / Gemini 等外部 AI 返回结果作为备用。AI 结果不会自动写入机会雷达，请检查后点击「确认并保存分析结果」。
       </p>
+
+      <div v-if="isEdit" class="llm-action-bar">
+        <button
+          type="button"
+          class="llm-btn"
+          :disabled="llmAnalyzing"
+          @click="analyzeWithLlm"
+        >
+          {{ llmAnalyzing ? 'AI 分析中...' : (llmResult && !llmResult.error ? '重新分析 JD' : 'AI 分析 JD') }}
+        </button>
+        <span v-if="llmAnalyzing" class="llm-loading">正在调用 LLM 分析岗位 JD，请稍候...</span>
+        <span v-else-if="llmError" class="llm-error" role="alert">{{ llmError }}</span>
+        <span v-else-if="llmResult && !llmResult.error" class="llm-done" role="status">
+          AI 分析完成（模型：{{ llmResult.model }}），请检查结果后点击「确认并保存分析结果」。
+        </span>
+      </div>
+
+      <div v-if="llmResult && llmResult.parsed" class="llm-preview">
+        <div class="llm-preview-head">
+          <span>AI 分析预览</span>
+          <span class="llm-preview-status" :class="llmResult.parseStatus">
+            {{ llmResult.parseStatus === 'success' ? '解析成功' : llmResult.parseStatus === 'partial' ? '部分解析' : llmResult.parseStatus === 'not_found' ? '未找到 JSON' : llmResult.parseStatus === 'invalid_json' ? 'JSON 非法' : '解析异常' }}
+          </span>
+        </div>
+        <div class="llm-preview-grid">
+          <div class="llm-preview-item">
+            <span class="llm-preview-label">综合匹配度</span>
+            <strong>{{ llmResult.parsed.matchScore || '—' }}</strong>
+          </div>
+          <div class="llm-preview-item">
+            <span class="llm-preview-label">公司画像</span>
+            <strong>{{ llmResult.parsed.companyAssessment ? '✓ 已解析' : '✗ 缺失' }}</strong>
+          </div>
+          <div class="llm-preview-item">
+            <span class="llm-preview-label">机会分析</span>
+            <strong>{{ llmResult.parsed.opportunityAnalysis ? '✓ 已解析' : '✗ 缺失' }}</strong>
+          </div>
+        </div>
+        <ul v-if="llmResult.parsed.warnings.length > 0" class="llm-preview-warnings">
+          <li v-for="(w, i) in llmResult.parsed.warnings.slice(0, 3)" :key="i">{{ w }}</li>
+          <li v-if="llmResult.parsed.warnings.length > 3" class="more">
+            …等共 {{ llmResult.parsed.warnings.length }} 条提示
+          </li>
+        </ul>
+      </div>
+
       <textarea
         v-model="aiRawResult"
         class="ai-result-text"
         rows="16"
         :disabled="jobId === null"
-        placeholder="在这里粘贴外部 AI 返回的完整原文"
+        placeholder="点击 AI 分析 JD 后会自动填入分析原文，也可以手动粘贴外部 AI 返回内容"
       ></textarea>
       <div class="ai-result-actions">
         <button
@@ -1467,7 +1543,7 @@ async function saveAiResult(): Promise<void> {
           :disabled="!canSaveAiResult"
           @click="saveAiResult"
         >
-          保存 AI 原文
+          确认并保存分析结果
         </button>
         <span v-if="jobId === null" class="save-hint">
           请先保存岗位，再录入 AI 结果
@@ -1528,7 +1604,7 @@ async function saveAiResult(): Promise<void> {
       <h2>机会雷达</h2>
 
       <p v-if="!hasOpportunity" class="radar-empty">
-        还没有机会雷达。粘贴 AI 分析结果后，这里会亮起来。
+        还没有机会雷达。AI 分析完成后点击「确认并保存分析结果」，这里会亮起来。
       </p>
 
       <div v-else class="radar-grid">
@@ -1658,7 +1734,7 @@ async function saveAiResult(): Promise<void> {
         rows="14"
       ></textarea>
       <p v-else class="report-empty">
-        暂无报告原文。请先在上方「外部 AI 结果原文」中粘贴并保存 AI 返回内容。
+        暂无报告原文。请先在上方「AI 分析结果」中粘贴并保存 AI 返回内容。
       </p>
 
       <div class="greeting-head">
@@ -2775,6 +2851,113 @@ textarea {
   color: #647084;
   font-size: 12px;
   line-height: 1.6;
+}
+.llm-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.llm-btn {
+  padding: 8px 16px;
+  border: 1px solid #4f6ef7;
+  border-radius: 8px;
+  background: #4f6ef7;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.llm-btn:hover:not(:disabled) {
+  background: #3b5de7;
+}
+.llm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.llm-loading {
+  font-size: 13px;
+  color: #4f6ef7;
+}
+.llm-error {
+  font-size: 13px;
+  color: #a4262c;
+}
+.llm-done {
+  font-size: 13px;
+  color: #1a7f37;
+}
+.llm-preview {
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid #d6e4ff;
+  border-radius: 10px;
+  background: #f5f9ff;
+}
+.llm-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2933;
+}
+.llm-preview-status {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.llm-preview-status.success {
+  background: #dcfce7;
+  color: #166534;
+}
+.llm-preview-status.partial {
+  background: #fef9c3;
+  color: #854d0e;
+}
+.llm-preview-status.not_found,
+.llm-preview-status.invalid_json,
+.llm-preview-status.error {
+  background: #fdecec;
+  color: #991b1b;
+}
+.llm-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.llm-preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e5eaf2;
+}
+.llm-preview-label {
+  font-size: 11px;
+  color: #647084;
+}
+.llm-preview-item strong {
+  font-size: 13px;
+  color: #1f2933;
+}
+.llm-preview-warnings {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #92400e;
+  line-height: 1.6;
+}
+.llm-preview-warnings .more {
+  color: #647084;
+  font-style: italic;
 }
 .ai-result-text:disabled {
   background: #f3f4f6;

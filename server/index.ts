@@ -1,3 +1,6 @@
+import { loadProjectEnv } from './config/loadEnv';
+loadProjectEnv();
+
 import { pathToFileURL } from 'node:url';
 import Fastify from 'fastify';
 import { getDbPath, openDb, type SqliteDatabase } from './db';
@@ -6,6 +9,7 @@ import { registerProfileRoutes } from './routes/profile';
 import { registerJobRoutes } from './routes/jobs';
 import { registerImportRoutes } from './routes/import';
 import { registerSyncRoutes } from './routes/sync';
+import { registerLlmRoutes } from './routes/llm';
 import { createShutdownSnapshotExporter, runStartupSync } from './sync/bootstrap';
 
 declare module 'fastify' {
@@ -55,6 +59,7 @@ export function buildServer(dbPath = getDbPath()): ReturnType<typeof Fastify> {
   registerJobRoutes(app);
   registerImportRoutes(app);
   registerSyncRoutes(app, dbPath);
+  registerLlmRoutes(app);
   return app;
 }
 
