@@ -1,4 +1,8 @@
-const API_BASE = 'http://127.0.0.1:17365';
+export const API_BASE = 'http://127.0.0.1:17365';
+
+export function buildApiUrl(path: string): string {
+  return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
+}
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -19,7 +23,7 @@ export async function apiSend<T>(path: string, method: string, body?: unknown): 
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, init);
+  const response = await fetch(buildApiUrl(path), init);
   if (!response.ok) {
     throw new ApiError(`HTTP ${response.status}: ${await response.text()}`, response.status);
   }

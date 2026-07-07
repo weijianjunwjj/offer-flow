@@ -950,15 +950,26 @@ async function analyzeWithLlm(): Promise<void> {
   llmAnalyzing.value = true;
   llmError.value = '';
   llmResult.value = null;
+  aiRawResult.value = '';
 
   try {
-    const result = await llmApi.analyzeJob({ jobId: props.jobId });
-    llmResult.value = result;
+    const stream = llmApi.analyzeJobStream({ jobId: props.jobId });
+    let result = await stream.next();
 
-    if (result.error) {
-      llmError.value = result.error;
-    } else {
-      aiRawResult.value = result.rawText;
+    while (!result.done) {
+      const event = result.value;
+      if (event && event.type === 'chunk' && event.content) {
+        aiRawResult.value += event.content;
+      }
+      result = await stream.next();
+    }
+
+    llmResult.value = result.value;
+
+    if (llmResult.value?.error) {
+      llmError.value = llmResult.value.error;
+    } else if (aiRawResult.value === '') {
+      aiRawResult.value = llmResult.value?.rawText ?? '';
     }
   } catch (error) {
     llmError.value = `AI 分析请求失败：${(error as Error).message}`;

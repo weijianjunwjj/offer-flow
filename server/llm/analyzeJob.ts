@@ -26,15 +26,14 @@ export interface AnalyzeJobOutput {
   createdAt: number;
 }
 
-const SYSTEM_PROMPT = `你是一位资深求职顾问，擅长分析技术岗位 JD 并为求职者提供决策建议。
-
-请严格按照以下要求输出：
-1. 先用 Markdown 写一份给人看的分析报告
-2. 然后在报告末尾，用 ---OFFER_FLOW_JSON_START--- 和 ---OFFER_FLOW_JSON_END--- 包裹一个 JSON 数据块
-3. JSON 格式参考示例中的字段结构
-4. 所有分数为 0-100 整数
-5. 枚举值必须使用示例中指定的合法值
-6. 不要编造不存在的字段`;
+const SYSTEM_PROMPT = `你是 OfferFlow 的岗位分析助手。请基于用户提供的求职背景和 JD，输出一份简洁岗位分析。
+输出要求：
+1. 先输出 Markdown 简报，最多 5 段，每段不超过 3 行。
+2. 然后输出 OFFER_FLOW_JSON 数据块，必须使用 ---OFFER_FLOW_JSON_START--- 和 ---OFFER_FLOW_JSON_END--- 包裹。
+3. JSON 字段必须兼容现有 OfferFlow 解析器。
+4. 分数使用 0-100 整数。
+5. 不要输出与岗位无关的长篇建议。
+6. 不要编造 JD 中没有的信息。`;
 
 export async function analyzeJob(input: AnalyzeJobInput): Promise<AnalyzeJobOutput> {
   const createdAt = Date.now();
