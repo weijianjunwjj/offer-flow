@@ -237,5 +237,7 @@ OfferFlow 不再把 `data/offerflow.sqlite3` 当作跨 Windows / Mac 的同步�
 - v0.5：轻量 Spec Guard，针对高风险规则保留规则卡、测试、差分门禁和 trace 样本。
 - v0.5.1：JD 输入体验增强，支持截图粘贴、预览和跨端 OCR adapter 入口；当前不内置真实 OCR 引擎。
 - v0.5.2：Tesseract.js OCR POC 已在 macOS Chrome 验证通过；方案理论上跨端，Windows 端待补测。
+- v0.6.0：LLM 基础接入，支持后端调用 OpenAI-compatible LLM，对岗位 JD 生成结构化分析，并复用 `OFFER_FLOW_JSON` 解析与人工确认保存流程。
+- v0.6.1：LLM SSE 流式分析体验，支持岗位分析结果打字机式渲染，复用统一 `API_BASE`，补齐 SSE CORS，本地分析体验由约 17s 静默等待优化为约 10s 首屏可见并持续流式输出。
 
-当前求职冲刺主线：收口 Demo 证据、Workflow Trace、`deriveDecision` selftest、Human-in-the-loop review 闭环。`OFFER_FLOW_JSON` Eval 样本已补齐在 `eval/offer-flow-json/`。
+当前求职冲刺主线：收口 Demo 证据、Workflow Trace、`deriveDecision` selftest、Human-in-the-loop review 闭环、`OFFER_FLOW_JSON` Eval 样本，以及 v0.6 LLM / SSE 流式分析链路。
