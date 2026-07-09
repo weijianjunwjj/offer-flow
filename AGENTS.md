@@ -1,12 +1,8 @@
-# OfferFlow / Offer来了 · Codex 当前工作指令
+# OfferFlow / Offer来了 · AI 协作规则
 
 ## 1. 当前状态
 
-Codex 是当前主执行工具。
-
-`AGENTS.md` 是 OfferFlow 当前主 AI 协作规则。`CLAUDE.md` 仅作为 Claude Code 恢复后的备用协作上下文保留，不代表当前正在使用 Claude Code 开发。
-
-当前项目真实状态：
+OfferFlow 是本地优先的 AI 求职机会决策台。
 
 - 已有 Vue3 + TypeScript + Vite + Naive UI 前端。
 - 已有 Node.js + Fastify + SQLite / better-sqlite3 本地后端。
@@ -15,45 +11,68 @@ Codex 是当前主执行工具。
 - 已有 AI 原文保存和结构化解析。
 - 已有 `communicationStatus` 8 态沟通状态。
 - 已有 `deriveDecision` 纯函数派生跟进策略。
+- 已有 Human-in-the-loop 人工确认流。
 - 已有 tsx selftest 和轻量 Spec Guard 样本。
-- 当前仍不接真实 AI API。
-- 当前仍不做 BYOK / Boss 自动化 / 自动投递 / 完整 AI Chat。
+- v0.6 起已接入真实 DeepSeek LLM API（`server/llm/`）。
+- v0.6.1 起支持 SSE 流式分析。
+- SSE stream 路径 prompt 输入已完成修复，stream / non-stream 使用统一输入构造逻辑（`resolveAnalyzeJobInput` / `buildAnalyzeJobPrompt`）。
+- 手动粘贴外部 AI 结果仍保留为备用路径。
+- 已有 `docs/llm-eval.md` 说明 Prompt / Schema / Eval / 容错解析 / Human-in-the-loop 链路。
+- 已有 `docs/resume-offerflow.md` 作为唯一正式的简历与面试表达材料。
 
-## 2. Codex 角色
+当前仍不做：
 
-Codex 是 OfferFlow 的代码执行者、审查员和文档收口助手。
+- 不接 DeepSeek 之外的其他真实 AI API（如 OpenAI / Claude / Gemini 官方 API），除非用户重新拍板。
+- 不做 BYOK（不支持用户自带其他厂商 API Key）。
+- 不做 Boss 自动化 / 自动投递 / 完整 AI Chat / 复杂多 Agent 平台。
 
-Codex 不重新定义产品，不扩大范围，不把 AI 建议直接变成自动动作。当前核心目标是把 OfferFlow 收口成可用于半个月求职冲刺展示的 AI Workflow 工程化项目。
+## 2. 当前阶段
 
-## 3. 必读文件
+OfferFlow 已完成核心链路收口，进入：
+
+- 简历更新
+- Demo 录屏
+- 面试项目讲法准备
+- 投递沟通
+
+阶段。除非用户重新拍板，不再继续扩展新技术栈或新增大功能。
+
+## 3. AI 工具协作原则
+
+- `AGENTS.md` 是 OfferFlow 唯一完整的 AI 协作规则源。
+- Codex、Claude、Claude Code 或其他 AI 工具执行本项目任务时，都应优先读取并遵守本文件。
+- `CLAUDE.md` 只作为 Claude 工具的入口说明，不再维护第二份完整规则。
+- 如 `CLAUDE.md` 与 `AGENTS.md` 冲突，以用户最新明确指令和 `AGENTS.md` 为准。
+- AI 工具不是产品经理，不重新定义产品，不扩大范围，不把 AI 建议直接变成自动动作。
+
+## 4. 必读文件
 
 执行任务前优先读取：
 
 1. `README.md`
 2. `AGENTS.md`
-3. `CLAUDE.md`
-4. 与任务直接相关的 `docs/` 文件
-5. 涉及实现时读取对应源码和 selftest
+3. 与任务直接相关的 `docs/` 文件
+4. `docs/llm-eval.md`
+5. `docs/resume-offerflow.md`
+6. 涉及实现时读取对应源码和 selftest
 
-如果文件冲突，以用户最新明确指令为最高优先级，其次是 `README.md` 和本文件。`docs/v0.1/` 是历史文档，不再代表当前唯一产品边界。
+如果文件冲突，以用户最新明确指令为最高优先级，其次是 `AGENTS.md` 和 `README.md`。`docs/v0.1/`、`docs/v0.2/`、`docs/v0.5/` 等历史目录只代表当时版本，不再代表当前唯一产品边界。
 
-## 4. 当前产品边界
-
-OfferFlow 当前是本地优先 AI 求职工作流容器和机会决策台。
+## 5. 当前产品边界
 
 允许：
 
 - 本地 Fastify + SQLite。
-- 手动复制 Prompt 到外部 AI。
-- 手动粘贴 AI 返回原文。
+- 当前已接入的 DeepSeek LLM API 调用（`server/llm/provider.ts`），及其 SSE 流式分析。
+- 手动复制 Prompt 到外部 AI、手动粘贴 AI 返回原文作为备用路径。
 - 解析固定 `OFFER_FLOW_JSON`。
 - 保存岗位、AI 原文、结构化分析和沟通事实。
 - 基于事实字段派生跟进建议。
-- 编写 selftest、规则卡、Demo 文档、证据文档。
+- 编写 selftest、规则卡、Demo 文档、证据文档、简历材料。
 
 禁止：
 
-- 接 OpenAI / Claude / Gemini 等真实 AI API，除非用户重新拍板。
+- 接入 DeepSeek 之外的其他真实 AI API，除非用户重新拍板。
 - 做 BYOK。
 - 爬 Boss。
 - 自动打招呼。
@@ -65,34 +84,7 @@ OfferFlow 当前是本地优先 AI 求职工作流容器和机会决策台。
 - 静默改变 `communicationStatus` 枚举。
 - 静默改变数据库结构。
 - 引入新依赖，除非用户明确批准。
-
-## 5. 业务规则变更纪律
-
-涉及以下文件或能力时必须谨慎：
-
-- `src/app/prompt.ts`
-- `src/app/offerFlowJson.ts`
-- `src/decision/deriveDecision.ts`
-- `src/review/reviewWorkflow.ts`
-- `src/ocr/`
-- `src/storage/types.ts`
-- `server/schema.ts`
-- `server/repositories/`
-- `scripts/*.selftest.ts`
-- `docs/v0.5/spec-guard.md`
-- `spec-lab/`
-
-原则：
-
-- 涉及业务逻辑前先找对应 selftest。
-- 修改 `deriveDecision` 前必须补或跑 `scripts/decision.selftest.ts`。
-- 修改 `OFFER_FLOW_JSON` 协议或解析器前必须补或跑 `scripts/offerFlowJson.selftest.ts`。
-- 修改 storage 类型或迁移逻辑前必须补或跑 `scripts/storage.selftest.ts`。
-- 修改后端 API / repository 前必须检查 `server/` 和相关导入脚本。
-- 修改 `reviewWorkflow`、`reviewStatus`、`importStatus`、`deriveDecision`、`communicationStatus`、storage types 时必须运行 `npm.cmd run selftest`。
-- 修改 `OFFER_FLOW_JSON` parser / prompt / eval 时必须运行 `npm.cmd run eval:offerflow-json` 和 `npm.cmd run selftest`。
-- 修改 JD 图片粘贴 / OCR adapter 时必须运行 `npm.cmd run selftest`。如果影响 Prompt 输入链路，还必须运行 `npm.cmd run eval:offerflow-json`。
-- 不确定业务边界时先暂停并说明，不硬拍。
+- 为了堆技术栈引入 FastAPI / RAG / LangGraph / CrewAI / AutoGen / K8s / Redis / MySQL / Postgres。
 
 ## 6. AI Workflow 原则
 
@@ -109,15 +101,12 @@ AI 负责分析和初稿
 - 因为 AI 给出建议就自动修改沟通状态。
 - 因为 AI 给出话术就自动发送。
 - 因为 AI 给出投递建议就自动投递。
-- 绕过 `pending_review` 直接派生 `send_greeting`。
-- 删除 `aiRawResult` / `importedDraft` / `parseStatus` 来“清理数据”。
-- 为了 UI 方便新增复杂审批系统。
-- 自动接 AI API / BYOK / Boss 自动化。
+- 绕过 `pending_review` 直接派生外部动作。
+- 删除 `aiRawResult` / `importedDraft` / `parseStatus` 来"清理数据"。
 - OCR 或图片粘贴后自动生成 Prompt、自动分析、自动解析 `OFFER_FLOW_JSON` 或自动改变求职状态。
 - 持久化 JD 截图，除非用户另行批准。
 - 未经确认新增 OCR 依赖。
 - 使用 macOS-only OCR、Windows-only OCR、AppleScript、PowerShell、系统截图 OCR、本地 App OCR 或任何单一操作系统能力。
-- 因为 Claude Code 暂不可用而删除 `CLAUDE.md`。
 
 ## 7. Human-in-the-loop
 
@@ -131,45 +120,88 @@ AI 负责分析和初稿
 - 是否改变 Prompt / Schema / Parser / Decision 规则。
 - 是否将 JD 截图 OCR 结果写入岗位 JD 文本。
 
-## 8. 半个月冲刺优先级
+## 8. 高风险文件与测试纪律
+
+涉及以下文件或能力时必须谨慎：
+
+- `src/app/prompt.ts`
+- `src/app/offerFlowJson.ts`
+- `src/decision/deriveDecision.ts`
+- `src/review/reviewWorkflow.ts`
+- `src/ocr/`
+- `src/storage/types.ts`
+- `server/schema.ts`
+- `server/repositories/`
+- `server/llm/`
+- `server/routes/llm.ts`
+- `scripts/*.selftest.ts`
+- `eval/offer-flow-json/`
+- `docs/v0.5/spec-guard.md`
+- `spec-lab/`
+- `docs/llm-eval.md`
+- `docs/resume-offerflow.md`
+
+测试纪律：
+
+- 涉及业务逻辑前先找对应 selftest。
+- 修改 `deriveDecision` 前必须补或跑 `scripts/decision.selftest.ts`。
+- 修改 `OFFER_FLOW_JSON` 协议或解析器前必须补或跑 `scripts/offerFlowJson.selftest.ts`。
+- 修改 storage 类型或迁移逻辑前必须补或跑 `scripts/storage.selftest.ts`。
+- 修改后端 API / repository 前必须检查 `server/` 和相关导入脚本。
+- 修改 `reviewWorkflow`、`reviewStatus`、`importStatus`、`deriveDecision`、`communicationStatus`、storage types 时必须运行 `npm.cmd run selftest`。
+- 修改 `OFFER_FLOW_JSON` parser / prompt / eval 时必须运行 `npm.cmd run eval:offerflow-json` 和 `npm.cmd run selftest`。
+- 修改 JD 图片粘贴 / OCR adapter 时必须运行 `npm.cmd run selftest`。
+- 修改 LLM / SSE / prompt 输入构造时，必须至少跑相关 selftest、eval 或手动验证，并在报告中说明验证方式。
+- 未运行测试不得声称已验证。
+- 不确定业务边界时先暂停并说明，不硬拍。
+
+## 9. 当前优先级
 
 P0：
 
-- 文档收口。
-- Workflow Trace / Demo 证据。
-- `OFFER_FLOW_JSON` eval 样本。
-- `deriveDecision` selftest。
-- Human-in-the-loop review 闭环。
+- 更新简历。
+- 录制 3-5 分钟 OfferFlow Demo。
+- 准备面试项目讲法。
+- 开始投递 / 沟通。
 
 P1：
 
-- `ai-os` Skill 文档。
-- `personal-os` 事件流 contract。
-- 最小 FastAPI prototype。
+- 仅在真实面试反馈需要时，小范围补文档或修 Demo 体验问题。
+- 仅修影响 Demo 或简历事实一致性的 bug。
 
 暂停：
 
-- `energy-os`。
+- Python FastAPI sidecar。
+- RAG / Embedding / 向量数据库。
+- LangGraph / CrewAI / AutoGen。
+- Docker / K8s / Redis / MySQL / Postgres。
 - Boss 自动化。
-- AI API / BYOK。
+- 接入 DeepSeek 之外的新 AI API / BYOK。
 - 完整 Spec 平台。
+- `energy-os` / `ai-os` / `personal-os` 非必要联动。
+- 继续扩 OfferFlow 大功能。
 
-## 9. 交付格式
+## 10. 交付格式
 
 每次交付必须说明：
 
 1. 修改了哪些文件。
 2. 新增了哪些文件。
-3. 是否修改业务代码。
-4. 是否修改数据库结构。
-5. 是否安装依赖。
-6. 是否运行测试；如果运行，贴关键结果；如果没运行，说明原因。
-7. 是否保留 Human-in-the-loop。
-8. 是否触碰 AI API / BYOK / Boss 自动化边界。
-9. 是否 commit / push。
+3. 删除了哪些文件。
+4. 是否修改业务代码。
+5. 是否修改数据库结构。
+6. 是否安装依赖。
+7. 是否运行测试；如果运行，贴关键结果；如果没运行，说明原因。
+8. 是否保留 Human-in-the-loop。
+9. 是否触碰 AI API / BYOK / Boss 自动化边界。
+10. 是否 commit / push。
+11. 遗留风险和下一步建议。
 
-## 10. 当前推荐 Demo
+## 11. 当前推荐 Demo 与材料入口
 
-最小 Demo 路径见 `docs/demo-ai-workflow.md`。
+- 简历与面试表达材料：`docs/resume-offerflow.md`
+- LLM / Prompt / Schema / Eval 工程化说明：`docs/llm-eval.md`
+- 最小 Demo 路径：`docs/demo-ai-workflow.md`
+- 工程证据表：`docs/ai-workflow-evidence.md`
 
-工程证据表见 `docs/ai-workflow-evidence.md`。
+如果其他面试文档与 `docs/resume-offerflow.md` 冲突，以 `docs/resume-offerflow.md` 为准。

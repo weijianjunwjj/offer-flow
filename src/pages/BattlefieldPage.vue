@@ -1735,7 +1735,7 @@ async function analyzeWithLlm(): Promise<void> {
         </span>
       </div>
       <p class="report-hint">
-        v0.1 不自动结构化解析，下方直接展示外部 AI 返回的报告原文，可阅读与复制。
+        下方直接展示 AI 返回的报告原文（无论来自内置 LLM 分析还是手动粘贴），可阅读与复制；结构化字段的解析结果见上方「AI 分析结果」区。
       </p>
       <textarea
         v-if="hasReportContent"

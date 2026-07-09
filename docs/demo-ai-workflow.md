@@ -1,16 +1,18 @@
 # OfferFlow Demo：AI Workflow 工程化闭环
 
+> 当前正式简历与面试表达材料以 `docs/resume-offerflow.md` 为准，本文档聚焦最小 Demo 演示链路和面试官技术追问，不重复维护简历 bullet 或整体项目讲法。
+
 ## 1. Demo 目标
 
 这个 Demo 用来证明 OfferFlow 不是普通岗位台账，而是一个 AI Workflow 工程化样板。
 
 核心证明点：OfferFlow 能把 AI 输出从“自然语言建议”变成“可解析、可确认、可追踪、可验证”的工作流。
 
-演示重点不是“调用了哪个模型”，而是：
+演示重点不是”调用了哪个模型”，而是：
 
 - 如何把 JD 分析拆成结构化输入。
 - 如何用截图粘贴和手动 OCR 入口降低 JD 录入成本，但不自动触发后续 AI Workflow。
-- 如何约束外部 AI 输出 Markdown + `OFFER_FLOW_JSON`。
+- 如何约束 LLM 输出 Markdown + `OFFER_FLOW_JSON`，并通过 SSE 流式返回。
 - 如何保存 AI 原文并做结构化解析。
 - 如何在解析失败时保留旧数据和人工判断空间。
 - 如何让 AI / 导入结果先进入 `pending_review`，再由用户确认、暂缓或拒绝。
@@ -22,9 +24,9 @@
 ```txt
 JD 输入 / 截图粘贴 / 导入
 -> 用户手动点击转换文字（可选）
--> Prompt 生成
--> 外部 AI 分析
--> AI 原文粘贴
+-> 点击”AI 分析 JD”，调用内置 DeepSeek LLM
+-> SSE 流式返回 Markdown + OFFER_FLOW_JSON
+-> 保存 AI 原文
 -> OFFER_FLOW_JSON 解析
 -> pending_review 待人工确认
 -> 用户选择确认 / 暂缓 / 拒绝
@@ -38,18 +40,16 @@ JD 输入 / 截图粘贴 / 导入
 2. 在岗位列表中新建或选择一个岗位。
 3. 填入 JD、公司规模、公司类型、融资阶段、通勤、机会备注；新建岗位默认城市为苏州，公司类型为自研业务，融资阶段为未融资 / 不明确。
 4. 可直接在岗位 JD 输入区粘贴一张或多张 Boss JD 截图，确认截图进入待转换列表。
-5. 点击“转换文字”后才调用 OCR adapter；截图粘贴本身不会自动生成 Prompt 或分析。
-6. 在详情页生成 One-Shot Prompt。
-7. 复制 Prompt 到外部 AI。
-8. 要求外部 AI 返回 Markdown 报告和 `---OFFER_FLOW_JSON_START--- ... ---OFFER_FLOW_JSON_END---`。
-9. 将完整返回粘贴回“外部 AI 结果原文”区域。
-10. 保存 AI 原文。
-11. 查看 `OFFER_FLOW_JSON` 解析状态、机会雷达、匹配度、风险等级、面试关注点和 Boss 话术。
-12. 查看 `pending_review` 待人工确认标识和 Review 面板。
-13. 选择确认进入机会 / 暂缓观察 / 拒绝关闭。
-14. 在跟进决策面板查看 `deriveDecision` 如何根据 `reviewStatus` 和 `communicationStatus` 输出策略、下一步动作、话术场景和止损提示。
-15. 修改 `communicationStatus`，观察下一步建议变化。
-16. 运行 `npm.cmd run selftest` 和 `npm.cmd run eval:offerflow-json`，验证存储、解析、评分、决策、Review 状态流转和 AI 输出样本稳定性。
+5. 点击”转换文字”后才调用 OCR adapter；截图粘贴本身不会自动生成 Prompt 或分析。
+6. 在详情页点击”AI 分析 JD”，由 OfferFlow 自动调用 DeepSeek LLM 分析（若未配置 LLM，可改为手动复制 Prompt 粘贴到外部 AI 作为备用路径）。
+7. 观察 SSE 流式返回，分析结果打字机式渐进渲染。
+8. 检查分析结果，点击”确认并保存分析结果”，保存 AI 原文。
+9. 查看 `OFFER_FLOW_JSON` 解析状态、机会雷达、匹配度、风险等级、面试关注点和 Boss 话术。
+10. 查看 `pending_review` 待人工确认标识和 Review 面板。
+11. 选择确认进入机会 / 暂缓观察 / 拒绝关闭。
+12. 在跟进决策面板查看 `deriveDecision` 如何根据 `reviewStatus` 和 `communicationStatus` 输出策略、下一步动作、话术场景和止损提示。
+13. 修改 `communicationStatus`，观察下一步建议变化。
+14. 运行 `npm.cmd run selftest` 和 `npm.cmd run eval:offerflow-json`，验证存储、解析、评分、决策、Review 状态流转和 AI 输出样本稳定性。
 
 ## 3. Demo 检查清单
 
@@ -80,9 +80,9 @@ JD 输入 / 截图粘贴 / 导入
 
 ## 4. 面试官可能追问
 
-### 1. 为什么不接 AI API？
+### 1. 为什么先做手动粘贴模式，后来才接 LLM API？
 
-当前目标是验证 AI 输出的结构化承接、解析、校验、人工确认和状态流转。先不接 API 可以避开 Key、费用、网络、模型差异和权限问题，把工程重点放在 Workflow 稳定性上。
+v0.1-v0.5 先做手动粘贴模式，是为了在不引入 API Key、费用、网络、模型差异等变量的情况下，优先验证 AI 输出的结构化承接、解析、校验、人工确认和状态流转是否稳定。v0.6 起这套协议和解析器验证稳定后，才接入真实 DeepSeek LLM API 和 SSE 流式返回，手动粘贴模式仍作为备用路径保留（例如本地未配置 LLM Key 时）。
 
 ### 2. 为什么不做全自动 Agent？
 
@@ -118,7 +118,7 @@ AI 和导入器擅长提取信息、生成初稿和给出建议，但是否采�
 
 ### 10. 怎么保证 AI 输出可靠？
 
-Prompt 要求固定 `OFFER_FLOW_JSON` 协议；解析器做标记提取、json 代码块兜底、枚举归一、分数归一和 warnings；关键规则有 selftest 和 Spec Guard。
+Prompt 要求固定 `OFFER_FLOW_JSON` 协议；解析器做标记提取、json 代码块兜底、枚举归一、分数归一和 warnings；关键规则有 selftest 和 Spec Guard，完整说明见 `docs/llm-eval.md`。
 
 ### 11. 解析失败怎么办？
 

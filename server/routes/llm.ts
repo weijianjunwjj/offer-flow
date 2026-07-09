@@ -1,17 +1,24 @@
 import type { FastifyInstance } from 'fastify';
 import { JobRepository } from '../repositories/jobRepository.js';
-import { analyzeJob, type AnalyzeJobOutput } from '../llm/analyzeJob.js';
+import { ProfileRepository } from '../repositories/profileRepository.js';
+import {
+  analyzeJob,
+  buildAnalyzeJobPrompt,
+  ANALYZE_JOB_SYSTEM_PROMPT,
+  type AnalyzeJobInput,
+  type AnalyzeJobOutput,
+} from '../llm/analyzeJob.js';
 import {
   isLlmConfigured,
   getMissingLlmConfigFields,
   chatCompletionStream,
 } from '../llm/provider.js';
-import { buildAnalysisPrompt } from '../../src/app/prompt.js';
 import {
   extractOfferFlowJson,
   parseOfferFlowJson,
   type ParsedOfferFlowResult,
 } from '../../src/app/offerFlowJson.js';
+import type { CompanyInput } from '../../src/storage/index.js';
 
 interface AnalyzeJobRequest {
   jobId?: string;
@@ -20,6 +27,53 @@ interface AnalyzeJobRequest {
   city?: string;
   salaryRange?: string;
   jdText?: string;
+  companyInput?: CompanyInput;
+}
+
+/**
+ * jobId 存在时以数据库中的岗位记录（含 companyInput）为准，否则用请求体里的临时字段兜底。
+ * profile 始终读取本地已保存的求职者画像，非流式与流式路径共用同一份输入。
+ */
+function resolveAnalyzeJobInput(
+  app: FastifyInstance,
+  body: AnalyzeJobRequest,
+): { input: AnalyzeJobInput } | { errorCode: number; error: string } {
+  let company = '';
+  let role = '';
+  let city = '';
+  let salaryRange = '';
+  let jdText = '';
+  let companyInput: CompanyInput | undefined = body.companyInput;
+
+  if (body.jobId) {
+    const repo = new JobRepository(app.db);
+    const job = repo.get(body.jobId);
+    if (!job) {
+      return { errorCode: 404, error: `岗位不存在: ${body.jobId}` };
+    }
+    company = job.company;
+    role = job.role;
+    city = job.city;
+    salaryRange = job.salaryRange;
+    jdText = job.jdText;
+    companyInput = job.companyInput;
+  } else {
+    company = body.company ?? '';
+    role = body.role ?? '';
+    city = body.city ?? '';
+    salaryRange = body.salaryRange ?? '';
+    jdText = body.jdText ?? '';
+  }
+
+  if (jdText.trim() === '') {
+    return { errorCode: 400, error: 'JD 文本为空，无法分析' };
+  }
+
+  const profile = new ProfileRepository(app.db).get();
+
+  return {
+    input: { company, role, city, salaryRange, jdText, companyInput, profile },
+  };
 }
 
 export function registerLlmRoutes(app: FastifyInstance): void {
@@ -40,56 +94,19 @@ export function registerLlmRoutes(app: FastifyInstance): void {
         } satisfies AnalyzeJobOutput);
       }
 
-      let company = '';
-      let role = '';
-      let city = '';
-      let salaryRange = '';
-      let jdText = '';
-
-      if (body.jobId) {
-        const repo = new JobRepository(app.db);
-        const job = repo.get(body.jobId);
-        if (!job) {
-          return reply.code(404).send({
-            rawText: '',
-            parsed: null,
-            parseStatus: 'error',
-            error: `岗位不存在: ${body.jobId}`,
-            model: 'unknown',
-            createdAt: Date.now(),
-          } satisfies AnalyzeJobOutput);
-        }
-        company = job.company;
-        role = job.role;
-        city = job.city;
-        salaryRange = job.salaryRange;
-        jdText = job.jdText;
-      } else {
-        company = body.company ?? '';
-        role = body.role ?? '';
-        city = body.city ?? '';
-        salaryRange = body.salaryRange ?? '';
-        jdText = body.jdText ?? '';
-      }
-
-      if (jdText.trim() === '') {
-        return reply.code(400).send({
+      const resolved = resolveAnalyzeJobInput(app, body);
+      if ('errorCode' in resolved) {
+        return reply.code(resolved.errorCode).send({
           rawText: '',
           parsed: null,
           parseStatus: 'error',
-          error: 'JD 文本为空，无法分析',
+          error: resolved.error,
           model: 'unknown',
           createdAt: Date.now(),
         } satisfies AnalyzeJobOutput);
       }
 
-      const result = await analyzeJob({
-        company,
-        role,
-        city,
-        salaryRange,
-        jdText,
-      });
+      const result = await analyzeJob(resolved.input);
 
       return result;
     },
@@ -110,72 +127,19 @@ export function registerLlmRoutes(app: FastifyInstance): void {
       } satisfies AnalyzeJobOutput);
     }
 
-    let company = '';
-    let role = '';
-    let city = '';
-    let salaryRange = '';
-    let jdText = '';
-
-    if (body.jobId) {
-      const repo = new JobRepository(app.db);
-      const job = repo.get(body.jobId);
-      if (!job) {
-        return reply.code(404).send({
-          rawText: '',
-          parsed: null,
-          parseStatus: 'error',
-          error: `岗位不存在: ${body.jobId}`,
-          model: 'unknown',
-          createdAt: Date.now(),
-        } satisfies AnalyzeJobOutput);
-      }
-      company = job.company;
-      role = job.role;
-      city = job.city;
-      salaryRange = job.salaryRange;
-      jdText = job.jdText;
-    } else {
-      company = body.company ?? '';
-      role = body.role ?? '';
-      city = body.city ?? '';
-      salaryRange = body.salaryRange ?? '';
-      jdText = body.jdText ?? '';
-    }
-
-    if (jdText.trim() === '') {
-      return reply.code(400).send({
+    const resolved = resolveAnalyzeJobInput(app, body);
+    if ('errorCode' in resolved) {
+      return reply.code(resolved.errorCode).send({
         rawText: '',
         parsed: null,
         parseStatus: 'error',
-        error: 'JD 文本为空，无法分析',
+        error: resolved.error,
         model: 'unknown',
         createdAt: Date.now(),
       } satisfies AnalyzeJobOutput);
     }
 
-    const SYSTEM_PROMPT = `你是 OfferFlow 的岗位分析助手。请基于用户提供的求职背景和 JD，输出一份简洁岗位分析。
-输出要求：
-1. 先输出 Markdown 简报，最多 5 段，每段不超过 3 行。
-2. 然后输出 OFFER_FLOW_JSON 数据块，必须使用 ---OFFER_FLOW_JSON_START--- 和 ---OFFER_FLOW_JSON_END--- 包裹。
-3. JSON 字段必须兼容现有 OfferFlow 解析器。
-4. 分数使用 0-100 整数。
-5. 不要输出与岗位无关的长篇建议。
-6. 不要编造 JD 中没有的信息。`;
-
-    const userMessage = buildAnalysisPrompt(
-      null,
-      { company, role, city, salaryRange, jdText },
-      {
-        sizeTier: 'unknown',
-        staffRange: '',
-        companyType: '',
-        financingStage: '',
-        commuteTime: '',
-        commuteWay: '',
-        companyNote: '',
-        opportunityNote: '',
-      },
-    );
+    const userMessage = buildAnalyzeJobPrompt(resolved.input);
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -192,7 +156,7 @@ export function registerLlmRoutes(app: FastifyInstance): void {
     let fullText = '';
 
     try {
-      const stream = chatCompletionStream(SYSTEM_PROMPT, userMessage);
+      const stream = chatCompletionStream(ANALYZE_JOB_SYSTEM_PROMPT, userMessage);
       let result = await stream.next();
 
       while (!result.done) {

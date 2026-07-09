@@ -1,6 +1,8 @@
-// Task 5：One-Shot 分析 Prompt 生成（纯函数，无副作用、不接任何 API）。
+// Task 5：One-Shot 分析 Prompt 生成（纯函数，无副作用，不直接调用网络）。
 // 由全局配置 + 岗位基础信息 + 公司与机会补充（companyInput）拼接出 One-Shot Prompt，
-// 要求外部 AI 一次性返回：①给人看的 Markdown 报告；②给机器解析的 OFFER_FLOW_JSON 数据块（DEC-016）。
+// 要求 AI 一次性返回：①给人看的 Markdown 报告；②给机器解析的 OFFER_FLOW_JSON 数据块（DEC-016）。
+// v0.6 起该 Prompt 同时被 server/llm/analyzeJob.ts 用于真实 DeepSeek LLM 调用；
+// 也仍支持手动复制到外部 AI 粘贴回结果作为备用路径（见 BattlefieldPage.vue）。
 // 本文件只生成 Prompt 文本，不做解析、不写结构化字段（解析见 Task 6/7）。
 // 约束：输出中不得残留 {{}} 模板占位符（acceptance Task 4 #2）。
 import type { JobSeekerProfile, JobSearchFocus, CompanyInput } from '../storage';
@@ -163,7 +165,5 @@ export function buildAnalysisPrompt(
     '5. 不知道、JD 未提及或无法判断的信息，请标低置信度，不要乱猜、不要硬编数字。',
     '6. companyAssessment 与 opportunityAnalysis 的字段结构必须稳定，键名、层级与示例保持一致，不要增删键。',
     '7. version 固定为 "0.2.0"。',
-    '',
-    '本工具不接入任何 AI API。请把以上内容整体复制给 ChatGPT / Claude / Gemini 等外部 AI，再把它返回的完整结果（含 Markdown 与 OFFER_FLOW_JSON）粘贴回工具。',
   ].join('\n');
 }

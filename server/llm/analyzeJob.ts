@@ -26,7 +26,7 @@ export interface AnalyzeJobOutput {
   createdAt: number;
 }
 
-const SYSTEM_PROMPT = `你是 OfferFlow 的岗位分析助手。请基于用户提供的求职背景和 JD，输出一份简洁岗位分析。
+export const ANALYZE_JOB_SYSTEM_PROMPT = `你是 OfferFlow 的岗位分析助手。请基于用户提供的求职背景和 JD，输出一份简洁岗位分析。
 输出要求：
 1. 先输出 Markdown 简报，最多 5 段，每段不超过 3 行。
 2. 然后输出 OFFER_FLOW_JSON 数据块，必须使用 ---OFFER_FLOW_JSON_START--- 和 ---OFFER_FLOW_JSON_END--- 包裹。
@@ -34,6 +34,34 @@ const SYSTEM_PROMPT = `你是 OfferFlow 的岗位分析助手。请基于用户�
 4. 分数使用 0-100 整数。
 5. 不要输出与岗位无关的长篇建议。
 6. 不要编造 JD 中没有的信息。`;
+
+const EMPTY_COMPANY_INPUT: CompanyInput = {
+  sizeTier: 'unknown',
+  staffRange: '',
+  companyType: '',
+  financingStage: '',
+  commuteTime: '',
+  commuteWay: '',
+  companyNote: '',
+  opportunityNote: '',
+};
+
+/**
+ * 由 analyze-job 的非流式和流式路由共用，保证两条路径使用同一套 profile / companyInput 构造逻辑。
+ */
+export function buildAnalyzeJobPrompt(input: AnalyzeJobInput): string {
+  return buildAnalysisPrompt(
+    input.profile ?? null,
+    {
+      company: input.company,
+      role: input.role,
+      city: input.city,
+      salaryRange: input.salaryRange,
+      jdText: input.jdText,
+    },
+    input.companyInput ?? EMPTY_COMPANY_INPUT,
+  );
+}
 
 export async function analyzeJob(input: AnalyzeJobInput): Promise<AnalyzeJobOutput> {
   const createdAt = Date.now();
@@ -50,28 +78,9 @@ export async function analyzeJob(input: AnalyzeJobInput): Promise<AnalyzeJobOutp
     };
   }
 
-  const userMessage = buildAnalysisPrompt(
-    input.profile ?? null,
-    {
-      company: input.company,
-      role: input.role,
-      city: input.city,
-      salaryRange: input.salaryRange,
-      jdText: input.jdText,
-    },
-    input.companyInput ?? {
-      sizeTier: 'unknown',
-      staffRange: '',
-      companyType: '',
-      financingStage: '',
-      commuteTime: '',
-      commuteWay: '',
-      companyNote: '',
-      opportunityNote: '',
-    },
-  );
+  const userMessage = buildAnalyzeJobPrompt(input);
 
-  const result = await chatCompletion(SYSTEM_PROMPT, userMessage);
+  const result = await chatCompletion(ANALYZE_JOB_SYSTEM_PROMPT, userMessage);
 
   if (result.error) {
     return {
