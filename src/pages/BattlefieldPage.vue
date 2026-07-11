@@ -996,7 +996,7 @@ async function analyzeWithLlm(): Promise<void> {
       <div class="review-head">
         <div>
           <h2>人工确认</h2>
-          <p class="review-sub">AI / 导入结果仅作为草稿，确认后才进入正式机会流转。</p>
+          <p class="review-sub">外部导入草稿需人工确认，确认后才进入正式机会流转。</p>
         </div>
         <span class="review-pill">{{ reviewStatusLabel }}</span>
       </div>

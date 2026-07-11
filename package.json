@@ -1,7 +1,7 @@
 {
   "name": "offerflow",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.6.2",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm:server\" \"npm:web\"",
@@ -21,8 +21,12 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
+    "migration:selftest": "tsx scripts/migrations.selftest.ts",
+    "snapshot:check": "tsx scripts/snapshotConsistency.ts",
+    "snapshot:roundtrip": "tsx scripts/snapshotRoundtrip.ts",
+    "snapshot:selftest": "tsx scripts/snapshotConsistency.selftest.ts",
     "sync:selftest": "tsx scripts/sync.selftest.ts",
-    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts && tsx scripts/reviewWorkflow.selftest.ts && tsx scripts/jdImageOcr.selftest.ts && tsx scripts/sync.selftest.ts",
+    "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts && tsx scripts/reviewWorkflow.selftest.ts && tsx scripts/jdImageOcr.selftest.ts && tsx scripts/migrations.selftest.ts && tsx scripts/sync.selftest.ts && tsx scripts/snapshotConsistency.selftest.ts",
     "eval:offerflow-json": "tsx scripts/offerFlowJson.eval.ts"
   },
   "dependencies": {

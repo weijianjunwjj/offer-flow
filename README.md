@@ -1,6 +1,6 @@
 # OfferFlow | AI 求职工作流与机会决策台
 
-OfferFlow 是一个用于验证 AI Workflow 工程化能力的求职工具。它不是普通求职台账，也不是全自动招聘平台；它把 JD 分析和 Boss 跟进拆成一条可控、可追踪、可复盘的半自动工作流，覆盖 LLM 分析、`OFFER_FLOW_JSON` 结构化承接、Human-in-the-loop Review、`communicationStatus` 状态流转、`deriveDecision` 决策派生，以及 SSE 流式分析体验。
+OfferFlow 是一个用于验证 AI Workflow 工程化能力的求职工具。它不是普通求职台账，也不是全自动招聘平台；它把 JD 分析和 Boss 跟进拆成一条可控、可追踪、可复盘的半自动工作流，覆盖 LLM 分析、`OFFER_FLOW_JSON` 结构化承接、Human-in-the-loop 门禁、`communicationStatus` 状态流转、`deriveDecision` 决策派生，以及 SSE 流式分析体验。
 
 核心链路：
 
@@ -9,17 +9,18 @@ JD / 岗位输入
 -> LLM 分析 / One-Shot Prompt
 -> Markdown + OFFER_FLOW_JSON
 -> SSE 流式返回
--> 保存 AI 原文
--> 解析结构化结果
--> pending_review 人工确认
+-> 展示 AI 原文和解析结果
+-> 用户确认并保存分析结果
 -> communicationStatus 状态流转
 -> deriveDecision 决策面板
 -> selftest / Eval / Spec Guard 兜底
 ```
 
+外部 JD 导入草稿走另一条 Review 路径：`importedDraft -> pending_review -> confirmed / deferred / rejected`。两条路径都保留人工门禁，但普通 LLM 分析不会自动进入 `pending_review`。
+
 早期外部 AI 粘贴模式曾用于验证协议与承接流程，当前主流程以 LLM / SSE 为准。
 
-当前版本已演进到 v0.6.1：前端使用 Vue3 / TypeScript / Vite / Naive UI，后端使用 Node.js / Fastify / SQLite / better-sqlite3，并新增 DeepSeek LLM 分析与 SSE 流式返回链路。数据默认写入本机运行库 `data/offerflow.sqlite3`，跨设备同步使用 `sync/offerflow.snapshot.json`。
+当前版本为 v0.6.2：前端使用 Vue3 / TypeScript / Vite / Naive UI，后端使用 Node.js / Fastify / SQLite / better-sqlite3；在保留 DeepSeek LLM 与 SSE 流式分析链路的基础上，补齐 SQLite migration baseline、snapshot 一致性验证和版本收口。数据默认写入本机运行库 `data/offerflow.sqlite3`，跨设备同步使用 `sync/offerflow.snapshot.json`。
 
 ## 项目定位
 
@@ -43,9 +44,10 @@ OfferFlow 的目标不是替用户自动投递，也不是把 AI 直接接成黑
 - 机会雷达 / 匹配分析展示：`src/pages/BattlefieldPage.vue` 和 `src/components/OpportunityRadarChart.vue`。
 - `communicationStatus` 8 态沟通状态：未沟通、已打招呼未读、已读未回、已回复、面试推进中、暂停观察、已结束、已拒绝。
 - `deriveDecision` 跟进策略派生：`src/decision/deriveDecision.ts` 根据事实字段派生策略、下一步动作、止损判断和话术场景。
-- Human-in-the-loop Review：`importedDraft` / AI 解析结果进入 `pending_review` 后，必须由用户确认、暂缓或拒绝。
+- 普通 LLM 人工保存门禁：AI 原文和解析结果先展示，用户点击“确认并保存分析结果”后才写入岗位记录；该路径当前不设置 `reviewStatus=pending_review`。
+- JD 导入草稿 Review：`importedDraft` 进入 `pending_review` 后，必须由用户确认、暂缓或拒绝。
 - Review 决策门禁：`pending_review` 不会直接触发主动跟进建议，`deriveDecision` 会优先派生 `manual_review` / 先人工确认。
-- 人工处理结果：`confirmed` / `deferred` / `rejected` 会影响后续 `deriveDecision`，但不会把 AI 建议直接变成自动动作。
+- 人工处理结果：`confirmed` / `deferred` / `rejected` 当前保存导入草稿的最终状态并影响后续 `deriveDecision`，但尚无正式 `ReviewRecord` 历史，也不会把 AI 建议直接变成自动动作。
 - Human-in-the-loop 人工确认边界：AI 只给分析和建议，用户手动确认、调整状态、决定是否跟进或发送。
 - v0.5.1 JD 输入体验增强：新建岗位默认苏州 / 自研业务 / 未融资或不明确，岗位 JD 输入区支持直接粘贴多张截图、预览、删除，并通过手动“转换文字”按钮调用跨端 OCR adapter。
 - 本地 Fastify + SQLite 持久化：`server/index.ts`、`server/db.ts`、`server/schema.ts`、`server/routes/`。
@@ -70,12 +72,13 @@ OfferFlow 的目标不是替用户自动投递，也不是把 AI 直接接成黑
 
 早期版本采用 Manual / Semi-manual AI Loop：用户复制 Prompt 到外部 AI，再把 AI 返回结果粘贴回系统。这样做是有意收敛范围，先验证 AI 输出结构化承接、解析、校验、人工确认和状态流转能力，避免过早引入 API Key、费用、模型差异、网络失败等问题干扰核心工程目标。
 
-v0.6 起已接入 DeepSeek API，采用 Chat Completions 兼容格式接入。后端通过 `server/llm/provider.ts` 的 provider adapter 调用模型，`server/llm/analyzeJob.ts` 负责组装请求和解析响应，`server/routes/llm.ts` 提供 SSE 流式分析接口。模型输出仍然复用既有的 `OFFER_FLOW_JSON` 协议、解析器、人工确认和保存流程，没有另起一套通路。
+v0.6 起已接入 DeepSeek API，采用 Chat Completions 兼容格式接入。后端通过 `server/llm/provider.ts` 的 provider adapter 调用模型，`server/llm/analyzeJob.ts` 负责组装请求和解析响应，`server/routes/llm.ts` 提供 SSE 流式分析接口。模型输出仍然复用既有的 `OFFER_FLOW_JSON` 协议、解析器和人工保存门禁，没有另起一套通路。
 
 无论是早期外部 AI 粘贴还是当前内置 DeepSeek 分析，都遵守同一个边界：
 
 - AI 只负责分析和生成建议，不直接执行投递、打招呼、跟进等真实动作。
-- AI 输出必须经过 `pending_review` 人工确认，才会影响后续状态和决策。
+- 普通 LLM 输出必须由用户检查并点击“确认并保存分析结果”后才写入岗位记录，但不会自动进入 `pending_review`。
+- 外部 JD 导入草稿才进入 `pending_review`，由用户 confirm / defer / reject；确认记录当前仅保留最终状态。
 
 ## AI 协作与工程治理
 
@@ -90,14 +93,14 @@ v0.6 起已接入 DeepSeek API，采用 Chat Completions 兼容格式接入。�
 3. 填入岗位 JD、公司规模、公司类型、通勤、机会备注等补充信息。
 4. 触发 LLM 分析。
 5. 观察 SSE 流式返回，分析结果打字机式渐进渲染。
-6. 保存 AI 原文并解析 `OFFER_FLOW_JSON`。
-7. 进入 `pending_review`，由用户确认 / 暂缓 / 拒绝。
-8. 查看机会雷达、匹配度、风险点和话术建议。
-9. 修改 `communicationStatus`，观察跟进决策变化。
-10. 查看 `deriveDecision` 生成的下一步建议、策略和止损提示。
+6. 检查 AI 原文和解析预览，点击“确认并保存分析结果”。
+7. 查看机会雷达、匹配度、风险点和话术建议。
+8. 修改 `communicationStatus`，观察跟进决策变化。
+9. 查看 `deriveDecision` 生成的下一步建议、策略和止损提示。
+10. 如需演示导入 Review，另选一条 `importedDraft`，展示 `pending_review -> confirmed / deferred / rejected`。
 11. 运行 `npm.cmd run selftest` 与 `npm.cmd run eval:offerflow-json` 验证自测和 Eval 样本。
 
-早期外部 AI 粘贴模式（生成 One-Shot Prompt，复制到 ChatGPT / Claude / Gemini 等外部 AI，再把返回结果粘贴回岗位详情）曾用于验证协议与承接流程，当前 Demo 以上述 v0.6.1 LLM / SSE 链路为准。
+早期外部 AI 粘贴模式（生成 One-Shot Prompt，复制到 ChatGPT / Claude / Gemini 等外部 AI，再把返回结果粘贴回岗位详情）曾用于验证协议与承接流程，当前 Demo 以上述 v0.6.2 LLM / SSE 链路为准。
 
 更详细的 Demo 检查清单见 `docs/demo-ai-workflow.md`。
 
@@ -227,13 +230,13 @@ OfferFlow 默认本地数据优先，不再把 `data/offerflow.sqlite3` 当作�
 
 90 秒版本：
 
-> OfferFlow 是我做的一个 AI 求职工作流与机会决策台。它不是简单调用大模型，也不是自动投递工具，而是把 JD 分析和求职跟进拆成一个可控的 AI Workflow。用户先录入 JD 和公司补充信息，系统触发 LLM 分析，通过 SSE 流式返回 Markdown 报告和固定 `OFFER_FLOW_JSON`，系统保存完整原文，再通过容错解析提取结构化字段，展示机会雷达、风险点和匹配度。早期通过外部 AI 粘贴验证协议设计，后来演进为内置 DeepSeek LLM 与 SSE。后续不会让 AI 自动替用户打招呼或投递，而是先进入 `pending_review`，由用户确认、暂缓或拒绝；沟通状态再通过 `communicationStatus` 维护，系统通过 `deriveDecision` 纯函数派生下一步建议、跟进策略和止损判断。这个项目的重点不是接了哪个模型，而是验证 AI 输出如何被协议约束、如何解析失败不丢数据、如何保留 Human-in-the-loop、如何通过 selftest 和 Spec Guard 防止规则漂移。真实业务里 AI 不应该直接替人做决策，所以我采用 workflow-first，而不是一开始做全自动 Agent。
+> OfferFlow 是我做的一个 AI 求职工作流与机会决策台。它不是简单调用大模型，也不是自动投递工具，而是把 JD 分析和求职跟进拆成一个可控的 AI Workflow。用户先录入 JD 和公司补充信息，系统触发 LLM 分析，通过 SSE 流式返回 Markdown 报告和固定 `OFFER_FLOW_JSON`；前端先展示原文和解析预览，用户点击确认保存后才写入岗位记录。早期通过外部 AI 粘贴验证协议设计，后来演进为内置 DeepSeek LLM 与 SSE。外部 JD 导入草稿则走独立的 `pending_review` 状态机，由用户确认、暂缓或拒绝；沟通状态再通过 `communicationStatus` 维护，系统通过 `deriveDecision` 纯函数派生下一步建议、跟进策略和止损判断。两条路径都保留 Human-in-the-loop，但实现机制不同，且系统不会自动替用户打招呼或投递。
 
 ## Roadmap
 
 短期：
 
-- 收口 v0.6.1 Demo 证据链。
+- 收口 v0.6.2 Demo 证据链。
 - 完善 LLM / SSE 异常处理和降级路径。
 - 补充 Windows 端 OCR 测试。
 - 优化 Workflow Trace 与面试演示路径。
@@ -257,5 +260,6 @@ OfferFlow 默认本地数据优先，不再把 `data/offerflow.sqlite3` 当作�
 - v0.5.2：Tesseract.js OCR POC 已在 macOS Chrome 验证通过；方案理论上跨端，Windows 端待补测。
 - v0.6.0：DeepSeek LLM 基础接入，基于 Chat Completions 兼容格式实现后端模型调用，对岗位 JD 生成结构化分析，并复用 `OFFER_FLOW_JSON` 解析与人工确认保存流程。
 - v0.6.1：DeepSeek LLM SSE 流式分析体验，支持岗位分析结果打字机式渲染，复用统一 `API_BASE`，补齐 SSE CORS，本地分析体验由约 17s 静默等待优化为约 10s 首屏可见并持续流式输出。
+- v0.6.2：v0.7 前置稳定性收口，建立 SQLite migration baseline，修复本地 SQLite 与 tracked snapshot 一致性，统一 App 版本并校正普通 LLM 保存与 JD 导入 Review 的文档边界。
 
-当前求职冲刺主线：收口 Demo 证据、Workflow Trace、`deriveDecision` selftest、Human-in-the-loop review 闭环、`OFFER_FLOW_JSON` Eval 样本，以及 v0.6 LLM / SSE 流式分析链路的异常处理和降级路径。
+当前求职冲刺主线：使用 v0.6.2 版本准备 Demo、面试表达与投递沟通；不在本轮扩展 v0.7 功能。

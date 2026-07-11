@@ -1,6 +1,6 @@
 # LLM 分析链路：Prompt / Schema / Eval 工程化说明
 
-本文档说明 OfferFlow 的 LLM 分析链路是如何工程化的：Prompt 如何构造、输出如何约束、解析如何容错、如何用固定样本集验证链路没有退化，以及 AI 输出最终如何被人工确认流接住。
+本文档说明 OfferFlow 的 LLM 分析链路是如何工程化的：Prompt 如何构造、输出如何约束、解析如何容错、如何用固定样本集验证链路没有退化，以及 AI 输出最终如何经过人工保存门禁。
 
 ## 1. 链路目标与边界
 
@@ -10,7 +10,7 @@ OfferFlow 的 LLM 分析链路只做一件事：对 JD、公司信息、求职�
 - 不自动发送 Boss 话术、不自动投递。
 - 不在解析失败时静默丢弃或伪造数据。
 
-链路的产出永远先落在 `aiRawResult` / `parsed` 字段上，再由人工确认流（见第 6 节）决定是否采信。
+链路产出先在前端展示为 AI 原文和 `parsed` 预览；只有用户点击“确认并保存分析结果”，`aiRawResult`、解析状态和可用结构化字段才写入岗位记录（见第 6 节）。
 
 ## 2. Prompt 模板设计
 
@@ -96,21 +96,21 @@ failed: 0
 passRate: 100.00%
 ```
 
-除了这套面向 `OFFER_FLOW_JSON` 协议的 eval，项目还有一套更基础的单元自测（`npm run selftest`），链式跑 `storage` / `offerFlowJson` / `targetProfileScore` / `decision` / `reviewWorkflow` / `jdImageOcr` / `sync` 七个 selftest 脚本，当前共 227 条断言全部通过，用来判断结构化输出链路和决策链路是否退化。
+除了这套面向 `OFFER_FLOW_JSON` 协议的 eval，项目还有一套更基础的单元自测（`npm run selftest`），链式跑 storage、解析、评分、决策、Review、OCR adapter、migration 和 snapshot/sync 相关 selftest，用来判断结构化输出链路、决策链路与本地数据基础设施是否退化。
 
 ## 6. Human-in-the-loop 边界
 
-AI 分析结果不会直接改变机会状态。这条边界由两层机制共同保证：
+当前有两条都遵守 Human-in-the-loop、但实现机制不同的路径：
 
-1. **`ReviewStatus` 状态机**（`src/review/reviewWorkflow.ts`）：`isPendingReview()` 判断一个机会是否处于待人工确认状态；`applyReviewAction()` 是唯一的状态转移函数，只接受 `confirm` / `defer` / `reject` 三种动作，分别对应"确认采信并恢复正常沟通状态"、"暂缓观察（强制转为 paused）"、"拒绝（强制转为 rejected，但不删除 `aiRawResult` / `parseStatus`，保留可追溯性）"。
-2. **`deriveDecision` 决策函数对 `pending_review` 的强制优先级**（`src/decision/deriveDecision.ts`）：只要机会处于 `pending_review`，`deriveDecision` 会无条件返回 `manual_review` 分支，跳过所有基于 AI 分析结果的跟进策略计算——也就是说，即便 AI 给出了"强烈建议沟通"的结论，只要人工还没确认，系统不会生成任何"应该发消息"的建议。
+1. **普通 LLM 岗位分析**：AI 生成结果后，前端先展示原文和解析预览；用户点击“确认并保存分析结果”后，结果才写入岗位记录。该按钮是人工保存门禁，不会设置 `reviewStatus=pending_review`，也不会自动覆盖 JD 原始事实、发送消息、投递或联系 HR。当前没有这条路径的正式 `ReviewRecord` 历史。
+2. **JD 导入草稿 Review**：外部草稿以 `importedDraft` 进入 `reviewStatus=pending_review`；`src/review/reviewWorkflow.ts` 只接受 `confirm` / `defer` / `reject` 三种动作。`deriveDecision` 对这类 pending review 优先派生 `manual_review`，确认前不会给出主动跟进动作。当前主要保存最终 `reviewStatus`，同样没有完整 `ReviewRecord` 历史。
 
-这套边界的验证由 `scripts/reviewWorkflow.selftest.ts`（22 条断言）和 `scripts/decision.selftest.ts` 中的 Human review gating 分组（8 条断言）覆盖，包括"pending_review 阻止直接问候"、"reject 不删除 aiRawResult"等具体场景。
+Review 状态机边界由 `scripts/reviewWorkflow.selftest.ts` 和 `scripts/decision.selftest.ts` 覆盖，包括“pending_review 阻止直接问候”和“reject 不删除 aiRawResult / importedDraft / parseStatus”等场景。v0.7 计划让画像变更和策略建议采用正式提案审核记录，但 v0.6.2 不开发该能力。
 
 ## 7. 面试表达口径
 
 这条链路可以概括为：
 
-> 真实 LLM API 接入（DeepSeek，OpenAI 兼容协议）+ SSE 流式分析 + 结构化输出协议（OFFER_FLOW_JSON）+ 容错解析（标记提取 → 代码块兜底 → 字段校验 → 分数归一 → 状态降级）+ Eval 回归样本（10 个 case，100% 通过）+ 人工确认流（pending_review 强制优先于任何 AI 建议）。
+> 真实 LLM API 接入（DeepSeek，OpenAI 兼容协议）+ SSE 流式分析 + 结构化输出协议（OFFER_FLOW_JSON）+ 容错解析（标记提取 → 代码块兜底 → 字段校验 → 分数归一 → 状态降级）+ Eval 回归样本（10 个 case，100% 通过）+ 普通分析人工保存门禁；外部 JD 导入草稿另走 pending_review Review。
 
 这套链路要表达的核心工程判断是：LLM 输出不可信任、不可假设格式稳定，所以在"解析"和"状态变更"之间必须插入确定性的校验层和人工确认层——AI 负责分析和初稿，系统负责保存、解析、校验、展示和派生建议，用户负责确认、发送、投递和最终决策。

@@ -72,7 +72,7 @@ const contentStyle =
             <div class="brand-text">
               <div class="brand-line">
                 <strong class="brand">OfferFlow · Offer来了</strong>
-                <span class="brand-ver">v0.6.1</span>
+                <span class="brand-ver">v0.6.2</span>
               </div>
               <span class="tagline">
                 Backend + SQLite · DeepSeek LLM / SSE 流式分析 · 人工确认，不做 Boss 自动化

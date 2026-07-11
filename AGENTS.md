@@ -16,9 +16,9 @@ OfferFlow 是本地优先的 AI 求职机会决策台。
 - v0.6 起已接入真实 DeepSeek LLM API（`server/llm/`）。
 - v0.6.1 起支持 SSE 流式分析。
 - SSE stream 路径 prompt 输入已完成修复，stream / non-stream 使用统一输入构造逻辑（`resolveAnalyzeJobInput` / `buildAnalyzeJobPrompt`）。
+- v0.6.2 已建立 SQLite migration baseline、修复 tracked snapshot 一致性并统一 App 版本口径。
 - 手动粘贴外部 AI 结果仍保留为备用路径。
 - 已有 `docs/llm-eval.md` 说明 Prompt / Schema / Eval / 容错解析 / Human-in-the-loop 链路。
-- 已有 `docs/resume-offerflow.md` 作为唯一正式的简历与面试表达材料。
 
 当前仍不做：
 
@@ -53,8 +53,7 @@ OfferFlow 已完成核心链路收口，进入：
 2. `AGENTS.md`
 3. 与任务直接相关的 `docs/` 文件
 4. `docs/llm-eval.md`
-5. `docs/resume-offerflow.md`
-6. 涉及实现时读取对应源码和 selftest
+5. 涉及实现时读取对应源码和 selftest
 
 如果文件冲突，以用户最新明确指令为最高优先级，其次是 `AGENTS.md` 和 `README.md`。`docs/v0.1/`、`docs/v0.2/`、`docs/v0.5/` 等历史目录只代表当时版本，不再代表当前唯一产品边界。
 
@@ -101,7 +100,7 @@ AI 负责分析和初稿
 - 因为 AI 给出建议就自动修改沟通状态。
 - 因为 AI 给出话术就自动发送。
 - 因为 AI 给出投递建议就自动投递。
-- 绕过 `pending_review` 直接派生外部动作。
+- 绕过 JD 导入草稿的 `pending_review` 直接派生外部动作。
 - 删除 `aiRawResult` / `importedDraft` / `parseStatus` 来"清理数据"。
 - OCR 或图片粘贴后自动生成 Prompt、自动分析、自动解析 `OFFER_FLOW_JSON` 或自动改变求职状态。
 - 持久化 JD 截图，除非用户另行批准。
@@ -139,7 +138,6 @@ AI 负责分析和初稿
 - `docs/v0.5/spec-guard.md`
 - `spec-lab/`
 - `docs/llm-eval.md`
-- `docs/resume-offerflow.md`
 
 测试纪律：
 
@@ -199,9 +197,6 @@ P1：
 
 ## 11. 当前推荐 Demo 与材料入口
 
-- 简历与面试表达材料：`docs/resume-offerflow.md`
 - LLM / Prompt / Schema / Eval 工程化说明：`docs/llm-eval.md`
 - 最小 Demo 路径：`docs/demo-ai-workflow.md`
 - 工程证据表：`docs/ai-workflow-evidence.md`
-
-如果其他面试文档与 `docs/resume-offerflow.md` 冲突，以 `docs/resume-offerflow.md` 为准。

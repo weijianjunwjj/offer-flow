@@ -447,17 +447,10 @@ async function run() {
     await settle(page, 500);
     await shot(mode === 'real' ? '04-real-analysis-result' : '04-mock-analysis-result');
 
-    // 确认并保存分析结果 -> 进入人工确认面板
+    // 普通 LLM 分析由这个按钮完成人工保存，不会进入 importedDraft Review 状态机。
     await clickButtonByText(page, '确认并保存分析结果');
     await settle(page, 800);
-    await waitForText(page, '人工确认', { timeout: 15000 }).catch(() => {});
-    await shot('05-pending-review');
-
-    // 人工确认：点击「确认进入机会」
-    await clickButtonByText(page, '确认进入机会').catch(() => {
-      console.warn('[demo] 未找到「确认进入机会」按钮，可能审核面板文案已变化，跳过该步骤。');
-    });
-    await settle(page, 800);
+    await shot('05-analysis-saved');
 
     // 06 - 决策面板
     await waitForText(page, '跟进决策', { timeout: 15000 }).catch(() => {});

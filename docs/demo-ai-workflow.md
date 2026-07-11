@@ -1,6 +1,6 @@
 # OfferFlow Demo：AI Workflow 工程化闭环
 
-> 当前正式简历与面试表达材料以 `docs/resume-offerflow.md` 为准，本文档聚焦最小 Demo 演示链路和面试官技术追问，不重复维护简历 bullet 或整体项目讲法。
+> 本文档聚焦当前 tracked 的最小 Demo 演示链路和面试官技术追问。
 
 ## 1. Demo 目标
 
@@ -15,7 +15,8 @@
 - 如何约束 LLM 输出 Markdown + `OFFER_FLOW_JSON`，并通过 SSE 流式返回。
 - 如何保存 AI 原文并做结构化解析。
 - 如何在解析失败时保留旧数据和人工判断空间。
-- 如何让 AI / 导入结果先进入 `pending_review`，再由用户确认、暂缓或拒绝。
+- 如何让普通 LLM 结果先预览、再由用户确认保存。
+- 如何让外部 JD 导入草稿进入 `pending_review`，再由用户确认、暂缓或拒绝。
 - 如何用 `deriveDecision` 派生下一步跟进建议。
 - 如何用 selftest / Eval / Spec Guard 证明规则没有随意漂移。
 
@@ -26,13 +27,13 @@ JD 输入 / 截图粘贴 / 导入
 -> 用户手动点击转换文字（可选）
 -> 点击”AI 分析 JD”，调用内置 DeepSeek LLM
 -> SSE 流式返回 Markdown + OFFER_FLOW_JSON
--> 保存 AI 原文
--> OFFER_FLOW_JSON 解析
--> pending_review 待人工确认
--> 用户选择确认 / 暂缓 / 拒绝
--> deriveDecision 根据 reviewStatus 和 communicationStatus 派生建议
+-> 展示 AI 原文和 OFFER_FLOW_JSON 解析预览
+-> 用户点击“确认并保存分析结果”
+-> deriveDecision 根据岗位事实和 communicationStatus 派生建议
 -> selftest / eval 验证
 ```
+
+导入草稿 Review 是独立链路：`外部草稿导入 -> reviewStatus=pending_review -> confirmed / deferred / rejected`。普通 LLM 的确认保存按钮不会进入这套状态机。
 
 推荐演示步骤：
 
@@ -43,13 +44,12 @@ JD 输入 / 截图粘贴 / 导入
 5. 点击”转换文字”后才调用 OCR adapter；截图粘贴本身不会自动生成 Prompt 或分析。
 6. 在详情页点击”AI 分析 JD”，由 OfferFlow 自动调用 DeepSeek LLM 分析（若未配置 LLM，可改为手动复制 Prompt 粘贴到外部 AI 作为备用路径）。
 7. 观察 SSE 流式返回，分析结果打字机式渐进渲染。
-8. 检查分析结果，点击”确认并保存分析结果”，保存 AI 原文。
+8. 检查分析结果，点击“确认并保存分析结果”，将 AI 原文和可用解析结果写入岗位记录。
 9. 查看 `OFFER_FLOW_JSON` 解析状态、机会雷达、匹配度、风险等级、面试关注点和 Boss 话术。
-10. 查看 `pending_review` 待人工确认标识和 Review 面板。
-11. 选择确认进入机会 / 暂缓观察 / 拒绝关闭。
-12. 在跟进决策面板查看 `deriveDecision` 如何根据 `reviewStatus` 和 `communicationStatus` 输出策略、下一步动作、话术场景和止损提示。
-13. 修改 `communicationStatus`，观察下一步建议变化。
-14. 运行 `npm.cmd run selftest` 和 `npm.cmd run eval:offerflow-json`，验证存储、解析、评分、决策、Review 状态流转和 AI 输出样本稳定性。
+10. 在跟进决策面板查看 `deriveDecision` 如何根据岗位事实和 `communicationStatus` 输出策略、下一步动作、话术场景和止损提示。
+11. 修改 `communicationStatus`，观察下一步建议变化。
+12. 如需演示导入 Review，另选一条已有 `importedDraft`：查看 `pending_review` 标识，选择确认进入机会 / 暂缓观察 / 拒绝关闭。
+13. 运行 `npm.cmd run selftest` 和 `npm.cmd run eval:offerflow-json`，验证存储、解析、评分、决策、Review 状态流转和 AI 输出样本稳定性。
 
 ## 3. Demo 检查清单
 
@@ -62,13 +62,16 @@ JD 输入 / 截图粘贴 / 导入
 - [ ] 是否能保存 AI 原文。
 - [ ] 是否能解析 `OFFER_FLOW_JSON`。
 - [ ] 是否解析失败不覆盖旧数据。
-- [ ] 是否能识别 `pending_review`。
-- [ ] 是否能展示 Review 面板。
-- [ ] 是否能确认进入机会。
-- [ ] 是否能暂缓观察。
-- [ ] 是否能拒绝关闭。
-- [ ] 是否确认前不会自动建议主动跟进。
-- [ ] 是否 reject 后保留 `aiRawResult` / `importedDraft` / `parseStatus`。
+- [ ] 普通 LLM 确认保存后是否未自动设置 `pending_review`。
+- [ ] 是否不会自动发送、投递或联系 HR。
+- [ ] 如演示导入草稿 Review：
+  - [ ] 是否能识别 `pending_review`。
+  - [ ] 是否能展示 Review 面板。
+  - [ ] 是否能确认进入机会。
+  - [ ] 是否能暂缓观察。
+  - [ ] 是否能拒绝关闭。
+  - [ ] 是否确认前不会自动建议主动跟进。
+  - [ ] 是否 reject 后保留 `aiRawResult` / `importedDraft` / `parseStatus`。
 - [ ] 是否能显示机会雷达。
 - [ ] 是否能显示匹配度、风险点和面试关注点。
 - [ ] 是否能显示跟进建议。
@@ -102,11 +105,11 @@ OCR 依赖可能带来包体积、首次加载、中文 traineddata、识别质�
 
 ### 6. 为什么要做 Human-in-the-loop？
 
-AI 和导入器擅长提取信息、生成初稿和给出建议，但是否采纳、是否沟通、是否关闭机会属于高影响动作。OfferFlow 把 AI 结果先放进 `pending_review`，让用户确认、暂缓或拒绝，避免模型输出绕过人直接改变业务状态。
+AI 和导入器擅长提取信息、生成初稿和给出建议，但是否采纳、是否沟通、是否关闭机会属于高影响动作。普通 LLM 分析通过“确认并保存分析结果”按钮保留人工保存门禁；外部 JD 导入草稿通过 `pending_review` 的 confirm / defer / reject 状态机保留人工审核。两者机制不同，都不会自动发送或投递。
 
 ### 7. pending_review 为什么不能直接 send_greeting？
 
-`pending_review` 代表这条机会还只是草稿或待确认事实。即使 AI 判断“值得主攻”，系统也只能派生 `manual_review` / 先人工确认，不能直接变成 `send_greeting`，否则就把建议变成了自动动作。
+`pending_review` 代表外部导入草稿还未被用户确认。即使草稿附带的分析判断“值得主攻”，系统也只能派生 `manual_review` / 先人工确认，不能直接变成 `send_greeting`，否则就把建议变成了自动动作。
 
 ### 8. confirm / defer / reject 分别影响什么？
 
@@ -115,6 +118,8 @@ AI 和导入器擅长提取信息、生成初稿和给出建议，但是否采�
 ### 9. 如何证明人工确认状态不会乱跳？
 
 `src/review/reviewWorkflow.ts` 是纯函数，`scripts/reviewWorkflow.selftest.ts` 覆盖待确认识别、可用动作、确认、暂缓、拒绝、终态保护和原文保留；`scripts/decision.selftest.ts` 额外覆盖 `pending_review` 不会直接进入主动跟进。
+
+当前 confirm / defer / reject 主要保存最终状态，没有完整 `ReviewRecord` 历史。v0.7 计划让画像变更和策略建议采用正式提案审核记录，本版不开发该能力。
 
 ### 10. 怎么保证 AI 输出可靠？
 

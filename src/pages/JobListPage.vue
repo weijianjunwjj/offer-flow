@@ -327,7 +327,7 @@ function formatTime(ts: number): string {
         <li>录入 Boss 岗位信息与 JD</li>
         <li>点击「AI 分析 JD」调用 LLM 分析（也可手动粘贴外部 AI 结果作为备用）</li>
         <li>检查 AI 分析结果，确认后保存</li>
-        <li>人工确认（confirm / defer / reject）后才进入正常跟进流程</li>
+        <li>若是外部导入草稿，再通过 confirm / defer / reject 完成 Review</li>
         <li>维护沟通状态，面试前随时回看</li>
       </ol>
       <button class="new-btn" @click="emit('create')">+ 新建岗位</button>
