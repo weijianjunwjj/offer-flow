@@ -38,7 +38,7 @@ function returnToJobs(): void {
   <main v-else-if="isLoading || !scope?.$source.bundle" class="invalid-job" role="status">
     <p>正在加载岗位详情…</p>
   </main>
-  <BattlefieldPage v-else :job-id="props.jobId" @back="returnToJobs" @saved="returnToJobs" />
+  <BattlefieldPage v-else :job-id="props.jobId" scope-required @back="returnToJobs" @saved="returnToJobs" />
 </template>
 
 <style scoped>

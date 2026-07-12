@@ -67,6 +67,7 @@ import JobDecisionSection from './job-detail/JobDecisionSection.vue';
 
 const props = defineProps<{
   jobId: string | null;
+  scopeRequired?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -74,7 +75,7 @@ const emit = defineEmits<{
   saved: [];
 }>();
 
-const pageScope = injectJobDetailScope();
+const pageScope = props.scopeRequired ? injectJobDetailScope() : null;
 let ownerMounted = true;
 let ocrGeneration = 0;
 let streamRunId = 0;
@@ -428,7 +429,9 @@ async function saveGreeting(): Promise<void> {
       ...(report.value ?? emptyReport()),
       greetingMessage: greeting.value,
     };
-    const updated = await jobsApi.patch(props.jobId, { report: nextReport });
+    const updated = pageScope
+      ? await pageScope.saveGreeting({ report: nextReport })
+      : await jobsApi.patch(props.jobId, { report: nextReport });
     await rememberJob(updated);
     report.value = nextReport;
     greetingSaveState.value = 'done';
@@ -751,10 +754,13 @@ async function handleReviewAction(action: ReviewAction): Promise<void> {
   reviewSaveError.value = '';
   try {
     const next = applyReviewAction(currentJob.value, action, new Date().toISOString());
-    const updated = await jobsApi.patch(props.jobId, {
+    const reviewPatch = {
       reviewStatus: next.reviewStatus,
       communicationStatus: next.communicationStatus,
-    });
+    };
+    const updated = pageScope
+      ? await pageScope.submitImportReview(reviewPatch)
+      : await jobsApi.patch(props.jobId, reviewPatch);
     await rememberJob(updated);
     syncFollowupFacts(updated);
     reviewSaveState.value = 'done';
@@ -773,9 +779,9 @@ async function changeCommunicationStatus(next: CommunicationStatus): Promise<voi
   statusSaveState.value = 'idle';
   statusSaveError.value = '';
   try {
-    const updated = await jobsApi.patch(props.jobId, {
-      communicationStatus: next,
-    });
+    const updated = pageScope
+      ? await pageScope.updateCommunication({ communicationStatus: next })
+      : await jobsApi.patch(props.jobId, { communicationStatus: next });
     await rememberJob(updated);
     statusSaveState.value = 'done';
   } catch (error) {
@@ -793,7 +799,7 @@ async function saveFollowupFacts(): Promise<void> {
   followupSaveState.value = 'idle';
   followupSaveError.value = '';
   try {
-    const updated = await jobsApi.patch(props.jobId, {
+    const communicationPatch = {
       communicationStatus: communicationStatus.value,
       followupCount: normalizedFollowupCount.value,
       lastCommunicationNote:
@@ -802,7 +808,10 @@ async function saveFollowupFacts(): Promise<void> {
       draftMessageText: draftMessageText.value.trim() === '' ? undefined : draftMessageText.value,
       lastGreetedAt: lastGreetedAtValue.value ?? undefined,
       lastFollowupAt: lastFollowupAtValue.value ?? undefined,
-    });
+    };
+    const updated = pageScope
+      ? await pageScope.updateCommunication(communicationPatch)
+      : await jobsApi.patch(props.jobId, communicationPatch);
     await rememberJob(updated);
     syncFollowupFacts(updated);
     followupSaveState.value = 'done';
@@ -833,7 +842,9 @@ async function saveMatchScore(): Promise<void> {
   matchSaveError.value = '';
   try {
     const normalized = normalizeMatchScore(matchScore.value);
-    const updated = await jobsApi.patch(props.jobId, { matchScore: normalized });
+    const updated = pageScope
+      ? await pageScope.saveMatchScore(normalized)
+      : await jobsApi.patch(props.jobId, { matchScore: normalized });
     await rememberJob(updated);
     matchScore.value = normalized;
     matchSaveState.value = 'done';
@@ -912,8 +923,14 @@ async function handleSave(): Promise<void> {
     if (props.jobId === null) {
       await jobsApi.create({ ...payload, companyInput });
     } else {
-      const updated = await jobsApi.patch(props.jobId, { ...payload, companyInput });
-      await rememberJob(updated);
+      if (pageScope) {
+        pageScope.jobDraft = { ...payload, companyInput };
+        const updated = await pageScope.saveJobDraft();
+        if (updated) await rememberJob(updated);
+      } else {
+        const updated = await jobsApi.patch(props.jobId, { ...payload, companyInput });
+        await rememberJob(updated);
+      }
     }
     baselineFingerprint.value = editableFingerprint();
     emit('saved');
@@ -994,7 +1011,9 @@ async function saveAiResult(): Promise<void> {
     // 写了结构化数据视为已解析；否则保持「未解析（原文已保存）」。
     patch.parseStatus = wroteStructured ? 'parsed' : 'unparsed';
 
-    const updated = await jobsApi.patch(props.jobId, patch);
+    const updated = pageScope
+      ? await pageScope.confirmAnalysis(patch)
+      : await jobsApi.patch(props.jobId, patch);
     await rememberJob(updated);
 
     // 同步本地状态（仅同步实际写入的字段）。
