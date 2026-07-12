@@ -63,6 +63,7 @@ function makeJob(id: string): JobRecord {
 }
 
 async function runRace(respectAbort: boolean): Promise<void> {
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   apiMocks.respectAbort = respectAbort;
   const router = createRouter({
     history: createMemoryHistory(),
@@ -100,13 +101,15 @@ async function runRace(respectAbort: boolean): Promise<void> {
   expect(wrapper.get('[data-current-job]').text()).toBe('C');
   expect(scopeRegistry.size).toBe(1);
   expect(scopeRegistry.get('job-detail')?.$source.bundle.job.id).toBe('C');
-  expect(scopeRegistry.get('job-detail')?.$loading.loadDirect).toBe(false);
+  expect(scopeRegistry.get('job-detail')?.$loading.loadJobBundle).toBe(false);
   expect(apiMocks.patch).not.toHaveBeenCalled();
+  expect(errorSpy).not.toHaveBeenCalled();
 
   await router.push('/jobs');
   await flushPromises();
   expect(scopeRegistry.size).toBe(0);
   wrapper.unmount();
+  errorSpy.mockRestore();
 }
 
 beforeEach(() => {
