@@ -5,13 +5,22 @@ import BattlefieldPage from './BattlefieldPage.vue';
 import { jobsApi } from '../api/jobsApi';
 import { profileApi } from '../api/profileApi';
 import { useJobDetailScope } from '../page-scopes/jobDetailScope';
+import { features } from '../config/features';
 
 const props = defineProps<{ jobId: string | null }>();
 const router = useRouter();
 const scope = props.jobId === null
   ? null
-  : useJobDetailScope({ jobId: props.jobId, api: { jobs: jobsApi, profile: profileApi } });
-const isLoading = computed(() => scope?.$loading.loadDirect === true);
+  : useJobDetailScope({
+      jobId: props.jobId,
+      api: { jobs: jobsApi, profile: profileApi },
+      runtimeEnabled: features.runtimeJobBundleEnabled,
+    });
+const isLoading = computed(() => scope
+  ? scope.runtimeEnabled === true
+    ? scope.$loading.loadJobBundle === true
+    : scope.$loading.loadDirect === true
+  : false);
 
 function returnToJobs(): void {
   void router.push({ name: 'jobs' });
@@ -32,7 +41,7 @@ function returnToJobs(): void {
   <main v-else-if="scope?.loadError" class="invalid-job" role="alert">
     <h1>岗位加载失败</h1>
     <p>{{ scope.loadError.message }}</p>
-    <button type="button" @click="scope.loadDirect()">重试</button>
+    <button type="button" @click="scope.reloadJobBundle()">重试</button>
     <button type="button" @click="returnToJobs">返回岗位台账</button>
   </main>
   <main v-else-if="isLoading || !scope?.$source.bundle" class="invalid-job" role="status">

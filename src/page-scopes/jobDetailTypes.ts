@@ -49,6 +49,7 @@ export interface JobDetailApiPorts {
 export interface JobDetailScopeInjection {
   jobId: string;
   api: JobDetailApiPorts;
+  runtimeEnabled?: boolean;
 }
 
 export interface AcceptUpdatedJobOptions {

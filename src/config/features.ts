@@ -1,4 +1,4 @@
 export const features = Object.freeze({
-  // vue-page-runtime 当前无法在 Vue 3 依赖树中正常安装；保持 direct loader。
-  runtimeJobBundleEnabled: false,
+  // Runtime Gate 1 已通过；保留 direct loader 作为短期回滚路径。
+  runtimeJobBundleEnabled: true,
 });

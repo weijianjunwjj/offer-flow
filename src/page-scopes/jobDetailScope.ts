@@ -1,6 +1,8 @@
 import { injectPageScope, definePageScope, type PageScope } from 'vue-page-scope';
+import type { RuntimeTaskMap } from 'vue-page-runtime';
 import { ApiError } from '../api/client';
 import type { JobRecord } from '../storage';
+import './registerPageRuntime';
 import type {
   AcceptUpdatedJobOptions,
   JobDetailBundle,
@@ -27,6 +29,7 @@ interface JobDetailActions {
   acceptBundle(bundle: JobDetailBundle): void;
   acceptUpdatedJob(updatedJob: JobRecord, options?: AcceptUpdatedJobOptions): void;
   loadDirect(): Promise<void>;
+  reloadJobBundle(): Promise<void>;
   patchJob(patch: JobPatch, options?: AcceptUpdatedJobOptions): Promise<JobRecord>;
   saveJobDraft(): Promise<JobRecord | null>;
   confirmAnalysis(patch: JobPatch): Promise<JobRecord>;
@@ -38,7 +41,95 @@ interface JobDetailActions {
   discardDraftAndReload(): Promise<void>;
 }
 
+type JobDetailScopeHost = PageScope<
+  JobDetailState,
+  JobDetailSource,
+  JobDetailGetters,
+  JobDetailActions,
+  JobDetailScopeInjection
+>;
+
 const loadRuntime = new WeakMap<object, LoadRuntime>();
+
+function runtimeFor(scope: object): LoadRuntime {
+  const current = loadRuntime.get(scope);
+  if (current) return current;
+  const created = {
+    generation: 0,
+    controller: null,
+    ownerToken: Symbol('job-detail-owner'),
+  };
+  loadRuntime.set(scope, created);
+  return created;
+}
+
+export async function fetchJobBundle(
+  api: JobDetailScopeInjection['api'],
+  jobId: string,
+  signal: AbortSignal,
+): Promise<JobDetailBundle> {
+  const [job, profile, allJobs] = await Promise.all([
+    api.jobs.get(jobId, { signal }),
+    api.profile.get({ signal }),
+    api.jobs.list({ signal }),
+  ]);
+  return { jobId, job, profile, allJobs };
+}
+
+function clearTaskReadState(scope: JobDetailScopeHost): void {
+  const runtime = runtimeFor(scope);
+  runtime.generation += 1;
+  runtime.controller?.abort();
+  runtime.controller = null;
+  scope.$source.bundle = null;
+  scope.jobDraft = null;
+  scope.baselineFingerprint = '';
+  scope.loadError = null;
+}
+
+async function executeBundleLoad(scope: JobDetailScopeHost, signal: AbortSignal): Promise<void> {
+  const runtime = runtimeFor(scope);
+  const runId = ++runtime.generation;
+  const requestedJobId = scope.jobId;
+  const ownerToken = runtime.ownerToken;
+  scope.loadError = null;
+  try {
+    const candidate = await fetchJobBundle(scope.api, requestedJobId, signal);
+    if (signal.aborted || scope.$disposed) return;
+    if (runId !== runtime.generation || ownerToken !== runtime.ownerToken) return;
+    if (requestedJobId !== scope.jobId) return;
+    scope.acceptBundle(candidate);
+  } catch (error) {
+    if (signal.aborted || scope.$disposed || (error as Error).name === 'AbortError') return;
+    if (runId !== runtime.generation || ownerToken !== runtime.ownerToken) return;
+    if (requestedJobId !== scope.jobId) return;
+    scope.loadError = error instanceof ApiError && error.status === 404
+      ? { kind: 'not-found', message: '岗位不存在或已被删除。' }
+      : { kind: 'error', message: (error as Error).message };
+  }
+}
+
+export const jobDetailTasks = {
+  loadJobBundle: {
+    trigger: 'enter',
+    canRun(this: JobDetailScopeHost): boolean {
+      return this.runtimeEnabled === true
+        && !this.$disposed
+        && this.$status.active
+        && typeof this.jobId === 'string'
+        && this.jobId.trim() !== '';
+    },
+    reset(this: JobDetailScopeHost): void {
+      // flag=false 代表 direct fallback；Runtime skip 不得清理正在读取的 direct 状态。
+      if (this.runtimeEnabled !== true) return;
+      clearTaskReadState(this);
+    },
+    async run(this: JobDetailScopeHost, { signal }: { signal: AbortSignal | null }): Promise<void> {
+      if (signal === null) return;
+      await executeBundleLoad(this, signal);
+    },
+  },
+} satisfies RuntimeTaskMap<JobDetailScopeHost>;
 
 export function createJobDraft(job: JobRecord): JobEditDraft {
   return {
@@ -122,35 +213,19 @@ export const useJobDetailScope = definePageScope<
       }
     },
     async loadDirect(): Promise<void> {
-      const runtime = loadRuntime.get(this) ?? {
-        generation: 0,
-        controller: null,
-        ownerToken: Symbol('job-detail-owner'),
-      };
-      loadRuntime.set(this, runtime);
+      const runtime = runtimeFor(this);
       runtime.controller?.abort();
       const controller = new AbortController();
       runtime.controller = controller;
-      const runId = ++runtime.generation;
-      const requestedJobId = this.jobId;
-      const ownerToken = runtime.ownerToken;
-      this.loadError = null;
-      try {
-        const [job, profile, allJobs] = await Promise.all([
-          this.api.jobs.get(requestedJobId, { signal: controller.signal }),
-          this.api.profile.get({ signal: controller.signal }),
-          this.api.jobs.list({ signal: controller.signal }),
-        ]);
-        if (controller.signal.aborted || this.$disposed) return;
-        if (runId !== runtime.generation || ownerToken !== runtime.ownerToken) return;
-        if (requestedJobId !== this.jobId) return;
-        this.acceptBundle({ jobId: requestedJobId, job, profile, allJobs });
-      } catch (error) {
-        if (controller.signal.aborted || this.$disposed || (error as Error).name === 'AbortError') return;
-        this.loadError = error instanceof ApiError && error.status === 404
-          ? { kind: 'not-found', message: '岗位不存在或已被删除。' }
-          : { kind: 'error', message: (error as Error).message };
+      await executeBundleLoad(this, controller.signal);
+      if (runtime.controller === controller) runtime.controller = null;
+    },
+    async reloadJobBundle(): Promise<void> {
+      if (this.runtimeEnabled === true) {
+        await this.$task.run('loadJobBundle');
+        return;
       }
+      await this.loadDirect();
     },
     async patchJob(patch: JobPatch, options: AcceptUpdatedJobOptions = {}): Promise<JobRecord> {
       const updated = await this.api.jobs.patch(this.jobId, patch);
@@ -184,11 +259,12 @@ export const useJobDetailScope = definePageScope<
         : `${this.jobDraft.jdText.trimEnd()}\n\n${separator}\n${text.trim()}`;
     },
     async discardDraftAndReload(): Promise<void> {
-      await this.loadDirect();
+      await this.reloadJobBundle();
     },
   },
+  tasks: jobDetailTasks,
   enter() {
-    void this.loadDirect();
+    if (this.runtimeEnabled !== true) void this.loadDirect();
   },
   leave() {
     const runtime = loadRuntime.get(this);
