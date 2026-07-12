@@ -21,7 +21,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:router": "playwright test tests/router-navigation.spec.ts",
+    "test:router": "node scripts/runRouterSmoke.mjs",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "migration:selftest": "tsx scripts/migrations.selftest.ts",
