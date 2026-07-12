@@ -2,6 +2,7 @@
 // Task 3 - Task 6：保存岗位、生成 Prompt、承接 AI 原文，并展示报告原文 + 编辑/复制 Boss 话术。
 // v0.5：已接入 OfferFlow 自有 LLM 调用链路，同时保留手动粘贴外部 AI 结果的备用路径。
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { onBeforeRouteLeave } from 'vue-router';
 import { NDatePicker, NSelect, NInput } from 'naive-ui';
 import type {
   CommunicationStatus,
@@ -57,6 +58,12 @@ import type { ReviewAction } from '../review/reviewWorkflow';
 import { performJdImageOcr } from '../ocr/jdImageOcr';
 import { llmApi, type AnalyzeJobResponse } from '../api/llmApi';
 import { injectJobDetailScope } from '../page-scopes/jobDetailScope';
+import { navigationConfirm } from '../router/confirmNavigation';
+import JobBasicInfoSection from './job-detail/JobBasicInfoSection.vue';
+import JdInputSection from './job-detail/JdInputSection.vue';
+import ImportReviewSection from './job-detail/ImportReviewSection.vue';
+import CommunicationSection from './job-detail/CommunicationSection.vue';
+import JobDecisionSection from './job-detail/JobDecisionSection.vue';
 
 const props = defineProps<{
   jobId: string | null;
@@ -68,6 +75,11 @@ const emit = defineEmits<{
 }>();
 
 const pageScope = injectJobDetailScope();
+let ownerMounted = true;
+let ocrGeneration = 0;
+let streamRunId = 0;
+let streamController: AbortController | null = null;
+const saveInFlight = ref(false);
 
 interface JobBasicForm {
   company: string;
@@ -97,6 +109,11 @@ const form = reactive<JobBasicForm>(emptyForm());
 const companyForm = reactive<CompanyInput>(emptyCompanyInput());
 companyForm.companyType = '自研业务';
 companyForm.financingStage = '未融资 / 不明确';
+function editableFingerprint(): string {
+  return JSON.stringify({ ...form, companyInput: { ...companyForm } });
+}
+const baselineFingerprint = ref(editableFingerprint());
+const isDirty = computed(() => editableFingerprint() !== baselineFingerprint.value);
 const loadError = ref('');
 const currentJob = ref<JobRecord | null>(null);
 const allJobs = ref<JobRecord[]>([]);
@@ -309,6 +326,8 @@ function appendOcrTextToJd(texts: string[]): void {
 }
 
 async function convertPendingJdImages(): Promise<void> {
+  const runId = ++ocrGeneration;
+  const requestedJobId = props.jobId;
   const targets = pendingJdImages.value.filter(
     (image) => image.status === 'pending' || image.status === 'failed',
   );
@@ -323,6 +342,12 @@ async function convertPendingJdImages(): Promise<void> {
     image.error = undefined;
     try {
       const text = await performJdImageOcr(image.file);
+      if (!ownerMounted || runId !== ocrGeneration || requestedJobId !== props.jobId) {
+        return;
+      }
+      if (!pendingJdImages.value.some((candidate) => candidate.id === image.id)) {
+        continue;
+      }
       image.ocrText = text;
       if (text.trim() === '') {
         image.status = 'failed';
@@ -332,18 +357,30 @@ async function convertPendingJdImages(): Promise<void> {
         recognizedTexts.push(text);
       }
     } catch (error) {
+      if (!ownerMounted || runId !== ocrGeneration || requestedJobId !== props.jobId) {
+        return;
+      }
       image.status = 'failed';
       image.error = (error as Error).message;
     }
   }
 
-  appendOcrTextToJd(recognizedTexts);
+  if (ownerMounted && runId === ocrGeneration && requestedJobId === props.jobId) {
+    appendOcrTextToJd(recognizedTexts);
+  }
 }
 
 onBeforeUnmount(() => {
+  ownerMounted = false;
+  ocrGeneration += 1;
+  streamRunId += 1;
+  streamController?.abort();
+  streamController = null;
   for (const image of pendingJdImages.value) {
     URL.revokeObjectURL(image.previewUrl);
   }
+  pendingJdImages.value = [];
+  window.removeEventListener('beforeunload', handleBeforeUnload);
 });
 
 // Prompt 内容变化（编辑表单等）后，复制反馈失效，重置为初始态。
@@ -827,6 +864,7 @@ function hydrateJob(job: JobRecord): void {
     companyAssessment.value = job.companyAssessment;
     opportunityAnalysis.value = job.opportunityAnalysis;
     syncFollowupFacts(job);
+    baselineFingerprint.value = editableFingerprint();
 }
 
 onMounted(async () => {
@@ -857,9 +895,10 @@ onMounted(async () => {
 });
 
 async function handleSave(): Promise<void> {
-  if (!canSave.value) {
+  if (!canSave.value || saveInFlight.value) {
     return;
   }
+  saveInFlight.value = true;
   loadError.value = '';
   try {
     const payload = {
@@ -876,11 +915,30 @@ async function handleSave(): Promise<void> {
       const updated = await jobsApi.patch(props.jobId, { ...payload, companyInput });
       await rememberJob(updated);
     }
+    baselineFingerprint.value = editableFingerprint();
     emit('saved');
   } catch (error) {
     loadError.value = `保存岗位失败：${(error as Error).message}`;
+  } finally {
+    saveInFlight.value = false;
   }
 }
+
+function confirmLeave(): boolean {
+  if (!isDirty.value && !saveInFlight.value) return true;
+  return navigationConfirm.confirmDiscardChanges(
+    saveInFlight.value ? '岗位正在保存，确定仍要离开吗？' : '存在未保存的岗位编辑，确定要离开吗？',
+  );
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!isDirty.value && !saveInFlight.value) return;
+  event.preventDefault();
+  event.returnValue = '';
+}
+
+window.addEventListener('beforeunload', handleBeforeUnload);
+onBeforeRouteLeave(() => confirmLeave());
 
 async function saveAiResult(): Promise<void> {
   if (props.jobId === null || !canSaveAiResult.value) {
@@ -970,23 +1028,44 @@ async function analyzeWithLlm(): Promise<void> {
     return;
   }
 
+  streamController?.abort();
+  const controller = new AbortController();
+  streamController = controller;
+  const runId = ++streamRunId;
+  const requestedJobId = props.jobId;
   llmAnalyzing.value = true;
   llmError.value = '';
   llmResult.value = null;
   aiRawResult.value = '';
 
   try {
-    const stream = llmApi.analyzeJobStream({ jobId: props.jobId });
+    const stream = llmApi.analyzeJobStream({ jobId: requestedJobId }, { signal: controller.signal });
     let result = await stream.next();
 
     while (!result.done) {
       const event = result.value;
-      if (event && event.type === 'chunk' && event.content) {
+      if (
+        event &&
+        event.type === 'chunk' &&
+        event.content &&
+        !controller.signal.aborted &&
+        ownerMounted &&
+        requestedJobId === props.jobId &&
+        runId === streamRunId
+      ) {
         aiRawResult.value += event.content;
       }
       result = await stream.next();
     }
 
+    if (
+      controller.signal.aborted ||
+      !ownerMounted ||
+      requestedJobId !== props.jobId ||
+      runId !== streamRunId
+    ) {
+      return;
+    }
     llmResult.value = result.value;
 
     if (llmResult.value?.error) {
@@ -995,9 +1074,14 @@ async function analyzeWithLlm(): Promise<void> {
       aiRawResult.value = llmResult.value?.rawText ?? '';
     }
   } catch (error) {
-    llmError.value = `AI 分析请求失败：${(error as Error).message}`;
+    if ((error as Error).name !== 'AbortError' && ownerMounted && runId === streamRunId) {
+      llmError.value = `AI 分析请求失败：${(error as Error).message}`;
+    }
   } finally {
-    llmAnalyzing.value = false;
+    if (runId === streamRunId) {
+      llmAnalyzing.value = false;
+      if (streamController === controller) streamController = null;
+    }
   }
 }
 </script>
@@ -1015,7 +1099,7 @@ async function analyzeWithLlm(): Promise<void> {
       {{ loadError }}
     </p>
 
-    <section v-if="showReviewPanel" class="review-panel" :data-review-status="currentJob?.reviewStatus ?? 'none'">
+    <ImportReviewSection v-if="showReviewPanel" :scope-required="isEdit" class="review-panel" :data-review-status="currentJob?.reviewStatus ?? 'none'">
       <div class="review-head">
         <div>
           <h2>人工确认</h2>
@@ -1066,9 +1150,9 @@ async function analyzeWithLlm(): Promise<void> {
           {{ reviewSaveError }}
         </span>
       </p>
-    </section>
+    </ImportReviewSection>
 
-    <section v-if="isEdit" class="followup-panel">
+    <CommunicationSection v-if="isEdit" :scope-required="isEdit" class="followup-panel">
       <div class="followup-head">
         <div>
           <h2>跟进决策</h2>
@@ -1313,9 +1397,9 @@ async function analyzeWithLlm(): Promise<void> {
           </span>
         </div>
       </div>
-    </section>
+    </CommunicationSection>
 
-    <section v-if="isEdit" class="match-block">
+    <JobDecisionSection v-if="isEdit" :scope-required="isEdit" class="match-block">
       <h2>人岗匹配</h2>
       <div class="match-row">
         <input
@@ -1348,9 +1432,9 @@ async function analyzeWithLlm(): Promise<void> {
           matchScorePreview === '' ? '（空）' : matchScorePreview
         }}</strong>
       </p>
-    </section>
+    </JobDecisionSection>
 
-    <form class="form" @submit.prevent="handleSave">
+    <JobBasicInfoSection :scope-required="isEdit" class="form" @submit="handleSave">
       <div class="grid">
         <label class="field">
           <span class="label">公司名</span>
@@ -1374,6 +1458,7 @@ async function analyzeWithLlm(): Promise<void> {
         </label>
       </div>
 
+      <JdInputSection :scope-required="isEdit">
       <label class="field">
         <span class="label">岗位 JD</span>
         <textarea
@@ -1420,6 +1505,7 @@ async function analyzeWithLlm(): Promise<void> {
           </article>
         </div>
       </div>
+      </JdInputSection>
 
       <div class="company-extra">
         <h2>公司与机会补充</h2>
@@ -1481,7 +1567,7 @@ async function analyzeWithLlm(): Promise<void> {
         </button>
         <span v-if="!canSave" class="save-hint">至少填写一个字段后才能保存</span>
       </div>
-    </form>
+    </JobBasicInfoSection>
 
     <section class="prompt-block" v-if="showPrompt">
       <div class="prompt-head">
