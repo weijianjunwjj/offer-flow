@@ -56,6 +56,7 @@ import {
 import type { ReviewAction } from '../review/reviewWorkflow';
 import { performJdImageOcr } from '../ocr/jdImageOcr';
 import { llmApi, type AnalyzeJobResponse } from '../api/llmApi';
+import { injectJobDetailScope } from '../page-scopes/jobDetailScope';
 
 const props = defineProps<{
   jobId: string | null;
@@ -65,6 +66,8 @@ const emit = defineEmits<{
   back: [];
   saved: [];
 }>();
+
+const pageScope = injectJobDetailScope();
 
 interface JobBasicForm {
   company: string;
@@ -388,7 +391,8 @@ async function saveGreeting(): Promise<void> {
       ...(report.value ?? emptyReport()),
       greetingMessage: greeting.value,
     };
-    await jobsApi.patch(props.jobId, { report: nextReport });
+    const updated = await jobsApi.patch(props.jobId, { report: nextReport });
+    await rememberJob(updated);
     report.value = nextReport;
     greetingSaveState.value = 'done';
   } catch (error) {
@@ -694,6 +698,11 @@ function syncFollowupFacts(job: JobRecord): void {
 
 async function rememberJob(job: JobRecord): Promise<void> {
   currentJob.value = job;
+  if (pageScope !== null) {
+    pageScope.acceptUpdatedJob(job);
+    allJobs.value = [...(pageScope.$source.bundle?.allJobs ?? [])];
+    return;
+  }
   allJobs.value = await jobsApi.list();
 }
 
@@ -787,7 +796,8 @@ async function saveMatchScore(): Promise<void> {
   matchSaveError.value = '';
   try {
     const normalized = normalizeMatchScore(matchScore.value);
-    await jobsApi.patch(props.jobId, { matchScore: normalized });
+    const updated = await jobsApi.patch(props.jobId, { matchScore: normalized });
+    await rememberJob(updated);
     matchScore.value = normalized;
     matchSaveState.value = 'done';
   } catch (error) {
@@ -800,19 +810,7 @@ function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
 }
 
-onMounted(async () => {
-  try {
-    profile.value = await profileApi.get();
-  } catch {
-    // 配置读取失败不阻断主战场；Prompt 中对应字段以「（未填写）」兜底。
-    profile.value = null;
-  }
-
-  if (props.jobId === null) {
-    return;
-  }
-  try {
-    const job = await jobsApi.get(props.jobId);
+function hydrateJob(job: JobRecord): void {
     form.company = job.company;
     form.role = job.role;
     form.city = job.city;
@@ -828,8 +826,31 @@ onMounted(async () => {
     matchScore.value = job.matchScore;
     companyAssessment.value = job.companyAssessment;
     opportunityAnalysis.value = job.opportunityAnalysis;
-    await rememberJob(job);
     syncFollowupFacts(job);
+}
+
+onMounted(async () => {
+  if (pageScope?.$source.bundle) {
+    const bundle = pageScope.$source.bundle;
+    profile.value = bundle.profile;
+    currentJob.value = bundle.job;
+    allJobs.value = [...bundle.allJobs];
+    hydrateJob(bundle.job);
+    return;
+  }
+
+  try {
+    profile.value = await profileApi.get();
+  } catch {
+    // 配置读取失败不阻断主战场；Prompt 中对应字段以「（未填写）」兜底。
+    profile.value = null;
+  }
+
+  if (props.jobId === null) return;
+  try {
+    const job = await jobsApi.get(props.jobId);
+    hydrateJob(job);
+    await rememberJob(job);
   } catch (error) {
     loadError.value = (error as Error).message;
   }
@@ -852,7 +873,8 @@ async function handleSave(): Promise<void> {
     if (props.jobId === null) {
       await jobsApi.create({ ...payload, companyInput });
     } else {
-      await jobsApi.patch(props.jobId, { ...payload, companyInput });
+      const updated = await jobsApi.patch(props.jobId, { ...payload, companyInput });
+      await rememberJob(updated);
     }
     emit('saved');
   } catch (error) {
@@ -914,7 +936,8 @@ async function saveAiResult(): Promise<void> {
     // 写了结构化数据视为已解析；否则保持「未解析（原文已保存）」。
     patch.parseStatus = wroteStructured ? 'parsed' : 'unparsed';
 
-    await jobsApi.patch(props.jobId, patch);
+    const updated = await jobsApi.patch(props.jobId, patch);
+    await rememberJob(updated);
 
     // 同步本地状态（仅同步实际写入的字段）。
     aiPastedAt.value = pastedAt;
