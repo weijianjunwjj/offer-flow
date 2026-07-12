@@ -6,6 +6,7 @@ import { emptyCompanyInput, type JobRecord } from '../storage';
 import { jobDetailTasks, type JobDetailScope, useJobDetailScope } from './jobDetailScope';
 import type { JobDetailApiPorts } from './jobDetailTypes';
 import { registerPageRuntime } from './registerPageRuntime';
+import { ApiError } from '../api/client';
 
 function makeJob(id: string, updatedAt = 1): JobRecord {
   return {
@@ -56,6 +57,7 @@ describe('Runtime loadJobBundle Gate 1', () => {
     await flushPromises();
     expect(typeof currentScope().$task.run).toBe('function');
     expect(typeof currentScope().$task.abort).toBe('function');
+    expect(jobDetailTasks.loadJobBundle.trigger).toBe('enter');
     expect('deps' in jobDetailTasks.loadJobBundle).toBe(false);
     wrapper.unmount();
   });
@@ -100,6 +102,17 @@ describe('Runtime loadJobBundle Gate 1', () => {
     expect(currentScope().loadError).toEqual({ kind: 'error', message: 'network down' });
     expect(currentScope().$loading.loadJobBundle).toBe(false);
     expect(errorSpy).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('404 映射为岗位不存在，loading 正常恢复', async () => {
+    const api = fixedApi(makeJob('missing'));
+    vi.mocked(api.jobs.get).mockRejectedValueOnce(new ApiError('missing', 404));
+    const wrapper = mountOwner('missing', api, true);
+    await flushPromises();
+    expect(currentScope().loadError).toEqual({ kind: 'not-found', message: '岗位不存在或已被删除。' });
+    expect(currentScope().$source.bundle).toBeNull();
+    expect(currentScope().$loading.loadJobBundle).toBe(false);
     wrapper.unmount();
   });
 
