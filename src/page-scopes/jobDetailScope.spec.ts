@@ -76,6 +76,8 @@ describe('岗位详情 Page Scope', () => {
     expect(scope?.$source.bundle.job.id).toBe('A');
     expect(scope?.$state.jobDraft.company).toBe('公司-A');
     expect(scope?.$state.baselineFingerprint).not.toBe('');
+    scope!.jobDraft.company = '未保存公司';
+    expect((scope as ReturnType<typeof useJobDetailScope>).isDirty).toBe(true);
     wrapper.unmount();
     expect(scopeRegistry.has('job-detail')).toBe(false);
   });

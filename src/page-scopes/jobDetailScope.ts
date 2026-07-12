@@ -129,23 +129,24 @@ export const useJobDetailScope = definePageScope<
       };
       loadRuntime.set(this, runtime);
       runtime.controller?.abort();
-      runtime.controller = new AbortController();
+      const controller = new AbortController();
+      runtime.controller = controller;
       const runId = ++runtime.generation;
       const requestedJobId = this.jobId;
       const ownerToken = runtime.ownerToken;
       this.loadError = null;
       try {
         const [job, profile, allJobs] = await Promise.all([
-          this.api.jobs.get(requestedJobId, { signal: runtime.controller.signal }),
-          this.api.profile.get({ signal: runtime.controller.signal }),
-          this.api.jobs.list({ signal: runtime.controller.signal }),
+          this.api.jobs.get(requestedJobId, { signal: controller.signal }),
+          this.api.profile.get({ signal: controller.signal }),
+          this.api.jobs.list({ signal: controller.signal }),
         ]);
-        if (runtime.controller.signal.aborted || this.$disposed) return;
+        if (controller.signal.aborted || this.$disposed) return;
         if (runId !== runtime.generation || ownerToken !== runtime.ownerToken) return;
         if (requestedJobId !== this.jobId) return;
         this.acceptBundle({ jobId: requestedJobId, job, profile, allJobs });
       } catch (error) {
-        if ((error as Error).name === 'AbortError') return;
+        if (controller.signal.aborted || this.$disposed || (error as Error).name === 'AbortError') return;
         this.loadError = error instanceof ApiError && error.status === 404
           ? { kind: 'not-found', message: '岗位不存在或已被删除。' }
           : { kind: 'error', message: (error as Error).message };
