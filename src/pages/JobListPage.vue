@@ -5,6 +5,7 @@
 // 指标分层（DEC-019）：机会分为唯一主指标（大数字 + 默认排序）；目标画像为「是否我的菜」辅助徽章；
 // 人岗匹配（综合匹配度）不在列表常驻，收进主战场雷达卡。
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { NSelect } from 'naive-ui';
 import type {
   JobRecord,
@@ -31,10 +32,15 @@ import { getOpportunityScoreLevel } from '../app/opportunityScore';
 import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
 import OpportunityMiniBars from '../components/OpportunityMiniBars.vue';
 
-const emit = defineEmits<{
-  create: [];
-  open: [jobId: string];
-}>();
+const router = useRouter();
+
+function createJob(): void {
+  void router.push({ name: 'job-new' });
+}
+
+function openJob(jobId: string): void {
+  void router.push({ name: 'job-detail', params: { jobId } });
+}
 
 const jobs = ref<JobRecord[]>([]);
 const loadError = ref('');
@@ -311,7 +317,7 @@ function formatTime(ts: number): string {
         <h1>岗位台账</h1>
         <p class="hint">统一管理已分析岗位，点击任一岗位进入主战场。</p>
       </div>
-      <button class="new-btn" @click="emit('create')">+ 新建岗位</button>
+      <button class="new-btn" @click="createJob">+ 新建岗位</button>
     </header>
 
     <p v-if="loadError" class="banner banner-error" role="alert">
@@ -330,7 +336,7 @@ function formatTime(ts: number): string {
         <li>若是外部导入草稿，再通过 confirm / defer / reject 完成 Review</li>
         <li>维护沟通状态，面试前随时回看</li>
       </ol>
-      <button class="new-btn" @click="emit('create')">+ 新建岗位</button>
+      <button class="new-btn" @click="createJob">+ 新建岗位</button>
     </section>
 
     <template v-else>
@@ -386,7 +392,7 @@ function formatTime(ts: number): string {
           v-for="job in filteredJobs"
           :key="job.id"
           class="asset-card"
-          @click="emit('open', job.id)"
+          @click="openJob(job.id)"
         >
           <div
             class="ac-score"

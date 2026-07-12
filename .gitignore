@@ -4,6 +4,8 @@ node_modules/
 # 构建产物
 dist/
 dist-ssr/
+test-results/
+playwright-report/
 
 # 本地缓存
 .vite/

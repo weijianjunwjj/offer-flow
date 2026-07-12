@@ -19,6 +19,9 @@
     "import:backup": "tsx scripts/importBackupToDb.ts",
     "import:jd-drafts": "tsx scripts/importJdDrafts.ts",
     "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:router": "node scripts/runRouterSmoke.mjs",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "migration:selftest": "tsx scripts/migrations.selftest.ts",
@@ -35,6 +38,9 @@
     "nanoid": "^5.1.16",
     "tesseract.js": "^7.0.0",
     "vue": "^3.5.13",
+    "vue-page-runtime": "0.2.0-alpha.5",
+    "vue-page-scope": "^0.2.0",
+    "vue-router": "^4.6.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -42,10 +48,13 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.5",
     "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.11",
     "concurrently": "^10.0.3",
+    "happy-dom": "^20.10.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
+    "vitest": "^4.1.10",
     "vue-tsc": "^2.2.0"
   },
   "optionalDependencies": {

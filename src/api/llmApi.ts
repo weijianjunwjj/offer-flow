@@ -30,16 +30,24 @@ export interface StreamEvent {
   createdAt?: number;
 }
 
+export interface StreamOptions {
+  signal?: AbortSignal;
+}
+
 export const llmApi = {
   analyzeJob(input: AnalyzeJobRequest): Promise<AnalyzeJobResponse> {
     return apiSend<AnalyzeJobResponse>('/api/llm/analyze-job', 'POST', input);
   },
 
-  async *analyzeJobStream(input: AnalyzeJobRequest): AsyncGenerator<StreamEvent, AnalyzeJobResponse> {
+  async *analyzeJobStream(
+    input: AnalyzeJobRequest,
+    options: StreamOptions = {},
+  ): AsyncGenerator<StreamEvent, AnalyzeJobResponse> {
     const response = await fetch(buildApiUrl('/api/llm/analyze-job-stream'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
+      signal: options.signal,
     });
 
     if (!response.ok) {
@@ -72,46 +80,51 @@ export const llmApi = {
     let buffer = '';
     let finalResult: AnalyzeJobResponse | null = null;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('data: ')) continue;
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
 
-        const data = trimmed.slice(6);
-        try {
-          const event = JSON.parse(data) as StreamEvent & AnalyzeJobResponse;
-          if (event.type === 'chunk') {
-            yield event;
-          } else if (event.type === 'done') {
-            finalResult = {
-              rawText: event.rawText ?? '',
-              parsed: event.parsed ?? null,
-              parseStatus: (event.parseStatus as AnalyzeJobResponse['parseStatus']) ?? 'not_found',
-              error: event.error ?? '',
-              model: event.model ?? 'unknown',
-              createdAt: event.createdAt ?? Date.now(),
-            };
-          } else if (event.type === 'error') {
-            finalResult = {
-              rawText: event.rawText ?? '',
-              parsed: event.parsed ?? null,
-              parseStatus: (event.parseStatus as AnalyzeJobResponse['parseStatus']) ?? 'error',
-              error: event.error ?? '',
-              model: event.model ?? 'unknown',
-              createdAt: event.createdAt ?? Date.now(),
-            };
+          const data = trimmed.slice(6);
+          try {
+            const event = JSON.parse(data) as StreamEvent & AnalyzeJobResponse;
+            if (event.type === 'chunk') {
+              yield event;
+            } else if (event.type === 'done') {
+              finalResult = {
+                rawText: event.rawText ?? '',
+                parsed: event.parsed ?? null,
+                parseStatus: (event.parseStatus as AnalyzeJobResponse['parseStatus']) ?? 'not_found',
+                error: event.error ?? '',
+                model: event.model ?? 'unknown',
+                createdAt: event.createdAt ?? Date.now(),
+              };
+            } else if (event.type === 'error') {
+              finalResult = {
+                rawText: event.rawText ?? '',
+                parsed: event.parsed ?? null,
+                parseStatus: (event.parseStatus as AnalyzeJobResponse['parseStatus']) ?? 'error',
+                error: event.error ?? '',
+                model: event.model ?? 'unknown',
+                createdAt: event.createdAt ?? Date.now(),
+              };
+            }
+          } catch {
+            // skip unparseable lines
           }
-        } catch {
-          // skip unparseable lines
         }
       }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
     }
 
     if (finalResult) {

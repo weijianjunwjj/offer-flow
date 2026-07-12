@@ -2,8 +2,9 @@
 // 应用根组件 + 最小导航壳。
 // Task 2 引入 Naive UI 基础壳：n-config-provider（默认浅色主题）+ n-message-provider，建立浅色高级科技感外壳。
 // 视觉方向：浅色、干净、高级，类 Linear / Vercel / 飞书多维表格的清爽感，不做暗黑驾驶舱。
-// 仍不引入 vue-router / 状态管理 / 图标库 / 图表库；导航沿用 App 级视图切换（DEC-012 / DEC-017）。
-import { ref } from 'vue';
+// v0.7.0-A：页面身份由 URL 与 Vue Router 管理，App 只保留全局 provider 和导航壳。
+import { computed } from 'vue';
+import { RouterView, useRoute, useRouter } from 'vue-router';
 import type { GlobalThemeOverrides } from 'naive-ui';
 import {
   NConfigProvider,
@@ -14,16 +15,9 @@ import {
   NButton,
   NSpace,
 } from 'naive-ui';
-import ProfileConfigPage from './pages/ProfileConfigPage.vue';
-import JobListPage from './pages/JobListPage.vue';
-import BattlefieldPage from './pages/BattlefieldPage.vue';
-
-type Section = 'profile' | 'jobs';
-type JobsView = 'list' | 'battlefield';
-
-const section = ref<Section>('jobs');
-const jobsView = ref<JobsView>('list');
-const activeJobId = ref<string | null>(null);
+const route = useRoute();
+const router = useRouter();
+const activeSection = computed(() => (route.name === 'profile' ? 'profile' : 'jobs'));
 
 // 浅色高级科技感主题微调：蓝 / 青蓝主色，浅色底，深灰黑文字，圆角克制。
 const themeOverrides: GlobalThemeOverrides = {
@@ -40,21 +34,18 @@ const themeOverrides: GlobalThemeOverrides = {
 };
 
 function goProfile(): void {
-  section.value = 'profile';
+  void router.push({ name: 'profile' });
 }
 
 function goJobs(): void {
-  section.value = 'jobs';
-  jobsView.value = 'list';
+  void router.push({ name: 'jobs' });
 }
 
-function openBattlefield(jobId: string | null): void {
-  activeJobId.value = jobId;
-  jobsView.value = 'battlefield';
-}
-
-function backToList(): void {
-  jobsView.value = 'list';
+function routeViewKey(): string {
+  if (route.name === 'job-detail') {
+    return `job-detail:${String(route.params.jobId ?? '')}`;
+  }
+  return String(route.name ?? route.fullPath);
 }
 
 // content 内边距与最大宽度，最大宽度由全局设计令牌统一控制。
@@ -81,16 +72,16 @@ const contentStyle =
           </div>
           <n-space :size="8">
             <n-button
-              :type="section === 'profile' ? 'primary' : 'tertiary'"
-              :ghost="section === 'profile'"
+              :type="activeSection === 'profile' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'profile'"
               size="small"
               @click="goProfile"
             >
               简历配置
             </n-button>
             <n-button
-              :type="section === 'jobs' ? 'primary' : 'tertiary'"
-              :ghost="section === 'jobs'"
+              :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'jobs'"
               size="small"
               @click="goJobs"
             >
@@ -100,21 +91,9 @@ const contentStyle =
         </n-layout-header>
 
         <n-layout-content class="app-content" :content-style="contentStyle">
-          <ProfileConfigPage v-if="section === 'profile'" />
-
-          <template v-else>
-            <JobListPage
-              v-if="jobsView === 'list'"
-              @create="openBattlefield(null)"
-              @open="openBattlefield"
-            />
-            <BattlefieldPage
-              v-else
-              :job-id="activeJobId"
-              @back="backToList"
-              @saved="backToList"
-            />
-          </template>
+          <RouterView v-slot="{ Component }">
+            <component :is="Component" :key="routeViewKey()" />
+          </RouterView>
         </n-layout-content>
       </n-layout>
     </n-message-provider>
