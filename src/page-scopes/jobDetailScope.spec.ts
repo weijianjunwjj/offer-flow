@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emptyCompanyInput, type JobRecord } from '../storage';
 import { injectJobDetailScope, useJobDetailScope } from './jobDetailScope';
 import type { JobDetailApiPorts } from './jobDetailTypes';
+import JobBasicInfoSection from '../pages/job-detail/JobBasicInfoSection.vue';
+import JdInputSection from '../pages/job-detail/JdInputSection.vue';
+import ImportReviewSection from '../pages/job-detail/ImportReviewSection.vue';
+import CommunicationSection from '../pages/job-detail/CommunicationSection.vue';
+import JobDecisionSection from '../pages/job-detail/JobDecisionSection.vue';
 
 function makeJob(id: string, updatedAt = 1): JobRecord {
   return {
@@ -73,6 +78,25 @@ describe('岗位详情 Page Scope', () => {
     expect(scope?.$state.baselineFingerprint).not.toBe('');
     wrapper.unmount();
     expect(scopeRegistry.has('job-detail')).toBe(false);
+  });
+
+  it('五个稳定 Section 都注入 owner 的同一实例', async () => {
+    const SectionOwner = defineComponent({
+      setup() {
+        useJobDetailScope({ jobId: 'A', api: apiFor('A') });
+        const props = { scopeRequired: true };
+        return () => h('div', [
+          h(JobBasicInfoSection, props), h(JdInputSection, props), h(ImportReviewSection, props),
+          h(CommunicationSection, props), h(JobDecisionSection, props),
+        ]);
+      },
+    });
+    const wrapper = mount(SectionOwner);
+    await flushPromises();
+    const sections = wrapper.findAll('[data-scope-id="job-detail"]');
+    expect(sections).toHaveLength(5);
+    wrapper.unmount();
+    expect(scopeRegistry.size).toBe(0);
   });
 
   it('acceptUpdatedJob 同步 job 与 allJobs，且非确认写不清理分析草稿', async () => {
