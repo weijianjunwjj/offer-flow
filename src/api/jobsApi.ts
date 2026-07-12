@@ -1,15 +1,15 @@
 import type { JobCreateInput, JobRecord } from '../storage';
-import { apiGet, apiSend } from './client';
+import { apiGet, apiSend, type ReadOptions } from './client';
 
 export const jobsApi = {
-  list(): Promise<JobRecord[]> {
-    return apiGet<JobRecord[]>('/jobs');
+  list(options?: ReadOptions): Promise<JobRecord[]> {
+    return apiGet<JobRecord[]>('/jobs', options);
   },
   create(input: JobCreateInput & Partial<JobRecord>): Promise<JobRecord> {
     return apiSend<JobRecord>('/jobs', 'POST', input);
   },
-  get(id: string): Promise<JobRecord> {
-    return apiGet<JobRecord>(`/jobs/${encodeURIComponent(id)}`);
+  get(id: string, options?: ReadOptions): Promise<JobRecord> {
+    return apiGet<JobRecord>(`/jobs/${encodeURIComponent(id)}`, options);
   },
   replace(id: string, job: Partial<JobRecord>): Promise<JobRecord> {
     return apiSend<JobRecord>(`/jobs/${encodeURIComponent(id)}`, 'PUT', job);

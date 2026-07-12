@@ -10,8 +10,12 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  return apiRequest<T>(path);
+export interface ReadOptions {
+  signal?: AbortSignal;
+}
+
+export async function apiGet<T>(path: string, options: ReadOptions = {}): Promise<T> {
+  return apiRequest<T>(path, { signal: options.signal });
 }
 
 export async function apiSend<T>(path: string, method: string, body?: unknown): Promise<T> {
