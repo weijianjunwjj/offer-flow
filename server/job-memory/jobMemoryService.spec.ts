@@ -96,6 +96,14 @@ function applicationRequest(
   };
 }
 
+function appendEventRequest(
+  idempotencyKey: string,
+  expectedApplicationVersion: number,
+  event: UserFeedbackEventInput,
+) {
+  return { idempotencyKey, expectedApplicationVersion, ...event };
+}
+
 function captureJobMemoryError(run: () => unknown): JobMemoryError {
   try {
     run();
@@ -269,11 +277,11 @@ describe('JobMemoryService Application transaction', () => {
       const application = created.applications[0]?.record;
       expect(application).toBeDefined();
       if (application === undefined) return;
-      service.appendFeedbackEvent(application.id, {
-        idempotencyKey: `application:${application.id}:metadata:3`,
-        expectedApplicationVersion: 1,
-        event: eventInput('greeting_sent'),
-      });
+      service.appendFeedbackEvent(application.id, appendEventRequest(
+        `application:${application.id}:metadata:3`,
+        1,
+        eventInput('greeting_sent'),
+      ));
       expect(captureJobMemoryError(() => service.updateApplicationMetadata(application.id, {
         expectedVersion: 2,
         reason: '触发审计键冲突',
@@ -320,11 +328,11 @@ describe('JobMemoryService Application transaction', () => {
       const application = created.applications[0]?.record;
       expect(application).toBeDefined();
       if (application === undefined) return;
-      service.appendFeedbackEvent(application.id, {
-        idempotencyKey: `application:${application.id}:void:3`,
-        expectedApplicationVersion: 1,
-        event: eventInput('greeting_sent'),
-      });
+      service.appendFeedbackEvent(application.id, appendEventRequest(
+        `application:${application.id}:void:3`,
+        1,
+        eventInput('greeting_sent'),
+      ));
       expect(captureJobMemoryError(() => service.voidApplication(application.id, {
         expectedVersion: 2,
         reason: '触发审计键冲突',
@@ -342,24 +350,19 @@ describe('JobMemoryService FeedbackEvent', () => {
       const application = created.applications[0]?.record;
       expect(application).toBeDefined();
       if (application === undefined) return;
-      const request = {
-        idempotencyKey: 'event-key',
-        expectedApplicationVersion: 1,
-        event: eventInput('greeting_sent'),
-      };
+      const request = appendEventRequest('event-key', 1, eventInput('greeting_sent'));
       const appended = service.appendFeedbackEvent(application.id, request);
       expect(appended.applications[0]?.record.rowVersion).toBe(2);
       expect(appended.applications[0]?.projection.communicationStatus).toBe('greeted_unread');
       expect(service.appendFeedbackEvent(application.id, request).applications[0]?.events).toHaveLength(2);
       expect(captureJobMemoryError(() => service.appendFeedbackEvent(application.id, {
         ...request,
-        event: eventInput('hr_replied'),
+        ...eventInput('hr_replied'),
       })).body.code).toBe('IDEMPOTENCY_KEY_REUSED');
-      expect(captureJobMemoryError(() => service.appendFeedbackEvent(application.id, {
-        idempotencyKey: 'stale-event',
-        expectedApplicationVersion: 1,
-        event: eventInput('hr_replied'),
-      })).body).toMatchObject({ code: 'VERSION_CONFLICT', currentVersion: 2 });
+      expect(captureJobMemoryError(() => service.appendFeedbackEvent(
+        application.id,
+        appendEventRequest('stale-event', 1, eventInput('hr_replied')),
+      )).body).toMatchObject({ code: 'VERSION_CONFLICT', currentVersion: 2 });
     });
   });
 
@@ -370,9 +373,8 @@ describe('JobMemoryService FeedbackEvent', () => {
       expect(application).toBeDefined();
       if (application === undefined) return;
       const error = captureJobMemoryError(() => service.appendFeedbackEvent(application.id, {
-        idempotencyKey: 'audit-key',
-        expectedApplicationVersion: 1,
-        event: { ...eventInput('applied'), eventType: 'event_voided' },
+        ...appendEventRequest('audit-key', 1, eventInput('applied')),
+        eventType: 'event_voided',
       }));
       expect(error.body.code).toBe('AUDIT_EVENT_NOT_USER_CREATABLE');
     });
@@ -384,11 +386,10 @@ describe('JobMemoryService FeedbackEvent', () => {
       const application = created.applications[0]?.record;
       expect(application).toBeDefined();
       if (application === undefined) return;
-      const appended = service.appendFeedbackEvent(application.id, {
-        idempotencyKey: 'greeting-key',
-        expectedApplicationVersion: 1,
-        event: eventInput('greeting_sent'),
-      });
+      const appended = service.appendFeedbackEvent(
+        application.id,
+        appendEventRequest('greeting-key', 1, eventInput('greeting_sent')),
+      );
       const target = appended.applications[0]?.events.find((event) => event.eventType === 'greeting_sent');
       expect(target).toBeDefined();
       if (target === undefined) return;
@@ -422,21 +423,19 @@ describe('JobMemoryService FeedbackEvent', () => {
       const application = created.applications[0]?.record;
       expect(application).toBeDefined();
       if (application === undefined) return;
-      const targetBundle = service.appendFeedbackEvent(application.id, {
-        idempotencyKey: 'rollback-target',
-        expectedApplicationVersion: 1,
-        event: eventInput('greeting_sent'),
-      });
+      const targetBundle = service.appendFeedbackEvent(
+        application.id,
+        appendEventRequest('rollback-target', 1, eventInput('greeting_sent')),
+      );
       const target = targetBundle.applications[0]?.events.find(
         (event) => event.eventType === 'greeting_sent',
       );
       expect(target).toBeDefined();
       if (target === undefined) return;
-      service.appendFeedbackEvent(application.id, {
-        idempotencyKey: 'rollback-void:replacement',
-        expectedApplicationVersion: 2,
-        event: eventInput('message_viewed'),
-      });
+      service.appendFeedbackEvent(
+        application.id,
+        appendEventRequest('rollback-void:replacement', 2, eventInput('message_viewed')),
+      );
       expect(captureJobMemoryError(() => service.voidFeedbackEvent(target.id, {
         idempotencyKey: 'rollback-void',
         expectedApplicationVersion: 3,
@@ -457,11 +456,10 @@ describe('JobMemoryService FeedbackEvent', () => {
       expect(application).toBeDefined();
       if (application === undefined) return;
       service.voidApplication(application.id, { expectedVersion: 1, reason: '误录' });
-      expect(captureJobMemoryError(() => service.appendFeedbackEvent(application.id, {
-        idempotencyKey: 'after-void',
-        expectedApplicationVersion: 2,
-        event: eventInput('hr_replied'),
-      })).body.code).toBe('APPLICATION_ALREADY_VOIDED');
+      expect(captureJobMemoryError(() => service.appendFeedbackEvent(
+        application.id,
+        appendEventRequest('after-void', 2, eventInput('hr_replied')),
+      )).body.code).toBe('APPLICATION_ALREADY_VOIDED');
     });
   });
 
@@ -472,11 +470,10 @@ describe('JobMemoryService FeedbackEvent', () => {
       const application = created.applications[0]?.record;
       expect(application).toBeDefined();
       if (application === undefined) return;
-      service.appendFeedbackEvent(application.id, {
-        idempotencyKey: 'summary-event',
-        expectedApplicationVersion: 1,
-        event: eventInput('interview_scheduled'),
-      });
+      service.appendFeedbackEvent(
+        application.id,
+        appendEventRequest('summary-event', 1, eventInput('interview_scheduled')),
+      );
       const summaries = service.getJobSummaries();
       expect(summaries[0]).toMatchObject({
         applicationCount: 1,

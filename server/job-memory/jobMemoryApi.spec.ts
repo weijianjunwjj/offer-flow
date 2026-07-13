@@ -222,7 +222,7 @@ describe('Job Memory HTTP API', () => {
       payload: {
         idempotencyKey: 'http-event',
         expectedApplicationVersion: 2,
-        event: feedbackEvent('greeting_sent'),
+        ...feedbackEvent('greeting_sent'),
       },
     });
     const appended = appendResponse.json();

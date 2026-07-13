@@ -177,11 +177,48 @@ export const VoidApplicationRequestSchema = z.strictObject({
   supersededByApplicationId: nullableNonBlankString.optional().default(null),
 });
 
-export const AppendFeedbackEventRequestSchema = z.strictObject({
+const FlatAppendFeedbackEventRequestSchema = z.strictObject({
   idempotencyKey: nonBlankString,
   expectedApplicationVersion: positiveInteger,
-  event: UserFeedbackEventInputSchema,
+  eventType: z.unknown(),
+  eventAt: z.unknown(),
+  timePrecision: z.unknown(),
+  actor: z.unknown(),
+  sourceConfidence: z.unknown(),
+  evidenceLevel: z.unknown(),
+  channel: z.unknown(),
+  note: z.unknown(),
+  reasonCode: z.unknown(),
+  payload: z.unknown(),
 });
+
+export const AppendFeedbackEventRequestSchema = FlatAppendFeedbackEventRequestSchema.transform(
+  (request, context) => {
+    const eventResult = UserFeedbackEventInputSchema.safeParse({
+      eventType: request.eventType,
+      eventAt: request.eventAt,
+      timePrecision: request.timePrecision,
+      actor: request.actor,
+      sourceConfidence: request.sourceConfidence,
+      evidenceLevel: request.evidenceLevel,
+      channel: request.channel,
+      note: request.note,
+      reasonCode: request.reasonCode,
+      payload: request.payload,
+    });
+    if (!eventResult.success) {
+      for (const issue of eventResult.error.issues) {
+        context.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+      }
+      return z.NEVER;
+    }
+    return {
+      idempotencyKey: request.idempotencyKey,
+      expectedApplicationVersion: request.expectedApplicationVersion,
+      event: eventResult.data,
+    };
+  },
+);
 
 export const VoidFeedbackEventRequestSchema = z.strictObject({
   idempotencyKey: nonBlankString,

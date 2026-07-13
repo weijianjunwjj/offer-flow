@@ -463,7 +463,7 @@ export class JobMemoryService {
   }
 
   appendFeedbackEvent(applicationId: string, value: unknown): JobMemoryBundle {
-    rejectAuditOnlyEvent(nestedValue(value, 'event'));
+    rejectAuditOnlyEvent(value);
     const request = parseDto(AppendFeedbackEventRequestSchema, value);
     const requestHash = sha256RequestHash({ applicationId, ...request });
     const jobId = this.transact(() => {
