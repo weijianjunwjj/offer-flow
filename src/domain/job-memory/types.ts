@@ -85,6 +85,16 @@ export interface ResumeVersionRecord {
   rowVersion: number;
 }
 
+export interface ResumeVersionListResponse {
+  resumeVersions: ResumeVersionRecord[];
+  activeResumeVersionId: string | null;
+}
+
+export interface ActiveResumeVersionResult {
+  resumeVersion: ResumeVersionRecord;
+  activeResumeVersionId: string | null;
+}
+
 export const FEEDBACK_EVENT_TYPES = [
   'application_created',
   'applied',

@@ -17,7 +17,10 @@ import {
 } from 'naive-ui';
 const route = useRoute();
 const router = useRouter();
-const activeSection = computed(() => (route.name === 'profile' ? 'profile' : 'jobs'));
+const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
+const activeSection = computed(() => (
+  route.name === 'profile' || route.name === 'profile-versions' ? 'profile' : 'jobs'
+));
 
 // 浅色高级科技感主题微调：蓝 / 青蓝主色，浅色底，深灰黑文字，圆角克制。
 const themeOverrides: GlobalThemeOverrides = {
@@ -39,6 +42,10 @@ function goProfile(): void {
 
 function goJobs(): void {
   void router.push({ name: 'jobs' });
+}
+
+function goProfileVersions(): void {
+  void router.push({ name: 'profile-versions' });
 }
 
 function routeViewKey(): string {
@@ -78,6 +85,15 @@ const contentStyle =
               @click="goProfile"
             >
               简历配置
+            </n-button>
+            <n-button
+              v-if="resumeVersionNavigationEnabled"
+              :type="route.name === 'profile-versions' ? 'primary' : 'tertiary'"
+              :ghost="route.name === 'profile-versions'"
+              size="small"
+              @click="goProfileVersions"
+            >
+              简历版本
             </n-button>
             <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"

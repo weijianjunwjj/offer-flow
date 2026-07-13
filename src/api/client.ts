@@ -5,7 +5,11 @@ export function buildApiUrl(path: string): string {
 }
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body?: unknown,
+  ) {
     super(message);
   }
 }
@@ -29,7 +33,20 @@ export async function apiSend<T>(path: string, method: string, body?: unknown): 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(buildApiUrl(path), init);
   if (!response.ok) {
-    throw new ApiError(`HTTP ${response.status}: ${await response.text()}`, response.status);
+    const responseText = await response.text();
+    let body: unknown;
+    try {
+      body = responseText === '' ? undefined : JSON.parse(responseText);
+    } catch {
+      body = responseText;
+    }
+    const message = (
+      body !== null
+      && typeof body === 'object'
+      && 'message' in body
+      && typeof body.message === 'string'
+    ) ? body.message : `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, body);
   }
   if (response.status === 204) {
     return undefined as T;

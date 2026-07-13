@@ -8,6 +8,8 @@ import type {
   OrdinaryFeedbackEventType,
   ProjectionErrorCode,
   ProjectionWarningCode,
+  ActiveResumeVersionResult,
+  ResumeVersionListResponse,
   ResumeVersionRecord,
 } from './types';
 
@@ -121,6 +123,16 @@ export const ResumeVersionRecordSchema: z.ZodType<ResumeVersionRecord> = z.stric
   if (resumeVersion.archivedAt !== null && resumeVersion.archivedAt < resumeVersion.createdAt) {
     context.addIssue({ code: 'custom', path: ['archivedAt'], message: 'archivedAt 不得早于 createdAt' });
   }
+});
+
+export const ResumeVersionListResponseSchema: z.ZodType<ResumeVersionListResponse> = z.strictObject({
+  resumeVersions: z.array(ResumeVersionRecordSchema),
+  activeResumeVersionId: nullableNonBlankString,
+});
+
+export const ActiveResumeVersionResultSchema: z.ZodType<ActiveResumeVersionResult> = z.strictObject({
+  resumeVersion: ResumeVersionRecordSchema,
+  activeResumeVersionId: nullableNonBlankString,
 });
 
 const ApplicationCorrectableFieldSchema = z.enum([

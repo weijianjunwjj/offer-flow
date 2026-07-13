@@ -1,6 +1,7 @@
 import type {
   ApplicationProjection,
   ApplicationRecord,
+  ActiveResumeVersionResult,
   FeedbackEventRecord,
   ResumeVersionRecord,
 } from '../../src/domain/job-memory';
@@ -44,7 +45,4 @@ export interface JobDetailBundleV2 {
   memory: JobMemoryBundle;
 }
 
-export interface ActiveResumeResult {
-  resumeVersion: ResumeVersionRecord;
-  activeResumeVersionId: string | null;
-}
+export type ActiveResumeResult = ActiveResumeVersionResult;
