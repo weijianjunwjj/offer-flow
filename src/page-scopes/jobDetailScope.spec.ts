@@ -4,12 +4,15 @@ import { scopeRegistry } from 'vue-page-scope';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emptyCompanyInput, type JobRecord } from '../storage';
 import { injectJobDetailScope, useJobDetailScope } from './jobDetailScope';
-import type { JobDetailApiPorts } from './jobDetailTypes';
+import { isJobDetailBundleV2, type JobDetailApiPorts } from './jobDetailTypes';
 import JobBasicInfoSection from '../pages/job-detail/JobBasicInfoSection.vue';
 import JdInputSection from '../pages/job-detail/JdInputSection.vue';
 import ImportReviewSection from '../pages/job-detail/ImportReviewSection.vue';
 import CommunicationSection from '../pages/job-detail/CommunicationSection.vue';
 import JobDecisionSection from '../pages/job-detail/JobDecisionSection.vue';
+import ApplicationSection from '../pages/job-detail/ApplicationSection.vue';
+import { makeApplication, makeEvent } from '../domain/job-memory/testFixtures';
+import { projectApplication } from '../domain/job-memory';
 
 function makeJob(id: string, updatedAt = 1): JobRecord {
   return {
@@ -62,6 +65,18 @@ const Owner = defineComponent({
   },
 });
 
+function mountOwnerForApi(api: JobDetailApiPorts) {
+  const ApiOwner = defineComponent({
+    setup() {
+      const scope = useJobDetailScope({
+        jobId: 'A', api, runtimeEnabled: true, jobMemoryV2Enabled: true,
+      });
+      return () => h('b', scope.$source.bundle?.job.id ?? 'loading');
+    },
+  });
+  return mount(ApiOwner);
+}
+
 afterEach(() => {
   scopeRegistry.get('job-detail')?.$destroy();
 });
@@ -99,6 +114,69 @@ describe('岗位详情 Page Scope', () => {
     expect(sections).toHaveLength(5);
     wrapper.unmount();
     expect(scopeRegistry.size).toBe(0);
+  });
+
+  it('v2 ApplicationSection 作为第六个边界只注入现有 owner，不创建第二个 Scope', async () => {
+    const job = makeJob('A');
+    const api = apiFor('A');
+    api.jobMemory = {
+      getJobDetailBundle: vi.fn().mockResolvedValue({
+        jobId: 'A', job, profile: null, allJobs: [job],
+        applicationSummariesByJob: { A: [] },
+        memory: { applications: [], resumeVersions: [], activeResumeVersionId: null },
+      }),
+      getJobSummaries: vi.fn(), createApplication: vi.fn(), updateApplication: vi.fn(), voidApplication: vi.fn(),
+    };
+    const SectionOwner = defineComponent({
+      setup() {
+        useJobDetailScope({ jobId: 'A', api, runtimeEnabled: true, jobMemoryV2Enabled: true });
+        return () => h(ApplicationSection, { scopeRequired: true });
+      },
+    });
+    const wrapper = mount(SectionOwner);
+    await flushPromises();
+    expect(wrapper.get('[data-scope-id="job-detail"]')).toBeTruthy();
+    expect(scopeRegistry.size).toBe(1);
+    wrapper.unmount();
+  });
+
+  it('写成功后原子替换 memory，保留合法手动选择，作废所选项后按共享规则重选', async () => {
+    const firstRecord = makeApplication({ id: 'first', jobId: 'A', createdAt: 1, updatedAt: 1 });
+    const secondRecord = makeApplication({ id: 'second', jobId: 'A', createdAt: 2, updatedAt: 2 });
+    const firstEvents = [makeEvent('application_created', { applicationId: 'first', createdAt: 1 })];
+    const secondEvents = [makeEvent('application_created', { applicationId: 'second', createdAt: 2 })];
+    const first = { record: firstRecord, events: firstEvents, projection: projectApplication(firstRecord, firstEvents) };
+    const second = { record: secondRecord, events: secondEvents, projection: projectApplication(secondRecord, secondEvents) };
+    const job = makeJob('A');
+    const api = apiFor('A');
+    api.jobMemory = {
+      getJobDetailBundle: vi.fn().mockResolvedValue({
+        jobId: 'A', job, profile: null, allJobs: [job],
+        applicationSummariesByJob: { A: [{ record: first.record, projection: first.projection }, { record: second.record, projection: second.projection }] },
+        memory: { applications: [first, second], resumeVersions: [], activeResumeVersionId: null },
+      }),
+      getJobSummaries: vi.fn(), createApplication: vi.fn(), updateApplication: vi.fn(), voidApplication: vi.fn(),
+    };
+    const wrapper = mountOwnerForApi(api);
+    await flushPromises();
+    const detailScope = scopeRegistry.get('job-detail') as ReturnType<typeof useJobDetailScope>;
+    detailScope.selectedApplicationId = 'first';
+    const voidedRecord = { ...firstRecord, voidedAt: 3, voidReason: '误录', updatedAt: 3, rowVersion: 2 };
+    const voidedFirst = {
+      ...first,
+      record: voidedRecord,
+      projection: projectApplication(voidedRecord, firstEvents),
+    };
+    detailScope.acceptMemoryBundle({
+      applications: [voidedFirst, second], resumeVersions: [], activeResumeVersionId: null,
+    });
+    expect(
+      isJobDetailBundleV2(detailScope.$source.bundle!)
+        ? detailScope.$source.bundle.memory.applications.map(({ record }) => record.id)
+        : [],
+    ).toEqual(['first', 'second']);
+    expect(detailScope.selectedApplicationId).toBe('second');
+    wrapper.unmount();
   });
 
   it('acceptUpdatedJob 同步 job 与 allJobs，且非确认写不清理分析草稿', async () => {

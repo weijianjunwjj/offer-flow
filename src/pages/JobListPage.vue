@@ -4,7 +4,7 @@
 // 排序：更新时间 / 机会分 / 目标画像。筛选排序仅影响前端展示，不改持久化数据。
 // 指标分层（DEC-019）：机会分为唯一主指标（大数字 + 默认排序）；目标画像为「是否我的菜」辅助徽章；
 // 人岗匹配（综合匹配度）不在列表常驻，收进主战场雷达卡。
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { NSelect } from 'naive-ui';
 import type {
@@ -31,6 +31,9 @@ import { calculateTargetProfileScore, getTargetProfileLevel } from '../app/targe
 import { getOpportunityScoreLevel } from '../app/opportunityScore';
 import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
 import OpportunityMiniBars from '../components/OpportunityMiniBars.vue';
+import { features } from '../config/features';
+import { jobMemoryApi } from '../api/jobMemoryApi';
+import type { ApplicationChannel, JobSummary } from '../domain/job-memory';
 
 const router = useRouter();
 
@@ -44,6 +47,13 @@ function openJob(jobId: string): void {
 
 const jobs = ref<JobRecord[]>([]);
 const loadError = ref('');
+const summaries = ref<JobSummary[]>([]);
+const summaryLoadError = ref('');
+const summaryLoading = ref(false);
+let jobsLoadGeneration = 0;
+let summariesLoadGeneration = 0;
+let jobsController: AbortController | null = null;
+let summariesController: AbortController | null = null;
 
 // 筛选 / 排序状态（仅前端展示，空串 / 0 表示不筛选）。
 const cityFilter = ref<string>('');
@@ -56,14 +66,74 @@ const sortKey = ref<SortKey>('opportunity');
 const decisionFilter = ref<DecisionFilter>('');
 
 async function load(): Promise<void> {
+  const runId = ++jobsLoadGeneration;
+  jobsController?.abort();
+  const controller = new AbortController();
+  jobsController = controller;
+  loadError.value = '';
+  const summaryPromise = features.jobMemoryV2Enabled ? loadSummaries() : Promise.resolve();
   try {
-    jobs.value = await jobsApi.list();
+    const candidate = await jobsApi.list({ signal: controller.signal });
+    if (!controller.signal.aborted && runId === jobsLoadGeneration) jobs.value = candidate;
   } catch (error) {
-    loadError.value = (error as Error).message;
+    if ((error as Error).name !== 'AbortError' && runId === jobsLoadGeneration) {
+      loadError.value = (error as Error).message;
+    }
+  } finally {
+    if (jobsController === controller) jobsController = null;
   }
+  await summaryPromise;
 }
 
 onMounted(load);
+onBeforeUnmount(() => {
+  jobsLoadGeneration += 1;
+  summariesLoadGeneration += 1;
+  jobsController?.abort();
+  summariesController?.abort();
+});
+
+async function loadSummaries(): Promise<void> {
+  if (!features.jobMemoryV2Enabled) return;
+  const runId = ++summariesLoadGeneration;
+  summariesController?.abort();
+  const controller = new AbortController();
+  summariesController = controller;
+  summaryLoading.value = true;
+  summaryLoadError.value = '';
+  try {
+    const candidate = await jobMemoryApi.getJobSummaries({ signal: controller.signal });
+    if (!controller.signal.aborted && runId === summariesLoadGeneration) summaries.value = candidate;
+  } catch (error) {
+    if ((error as Error).name !== 'AbortError' && runId === summariesLoadGeneration) {
+      summaryLoadError.value = (error as Error).message;
+    }
+  } finally {
+    if (runId === summariesLoadGeneration) summaryLoading.value = false;
+    if (summariesController === controller) summariesController = null;
+  }
+}
+
+const summaryByJobId = computed(() => new Map(summaries.value.map((summary) => [summary.job.id, summary])));
+
+function summaryFor(jobId: string): JobSummary | null {
+  return summaryByJobId.value.get(jobId) ?? null;
+}
+
+function applicationChannelLabel(channel: ApplicationChannel, other: string | null): string {
+  const labels: Record<ApplicationChannel, string> = {
+    boss: 'Boss 直聘', official_site: '官网', referral: '内推', headhunter: '猎头',
+    email: '邮件', wechat: '微信', other: other ?? '其他', unknown: '未知渠道',
+  };
+  return labels[channel];
+}
+
+function summaryStatus(summary: JobSummary): string {
+  if (summary.applicationCount === 0) return '未记录流程';
+  if (summary.defaultApplication === null) return '流程投影不可用';
+  const projection = summary.defaultApplication.projection;
+  return `${projection.stage} / ${projection.outcome ?? '无结果'}`;
+}
 
 function isImportedDraft(job: JobRecord): boolean {
   return job.importStatus === 'imported_draft' || job.importedDraft !== undefined;
@@ -323,6 +393,10 @@ function formatTime(ts: number): string {
     <p v-if="loadError" class="banner banner-error" role="alert">
       读取岗位列表失败：{{ loadError }}
     </p>
+    <p v-if="features.jobMemoryV2Enabled && summaryLoadError" class="banner banner-error" role="alert">
+      求职流程摘要读取失败，岗位列表仍可使用：{{ summaryLoadError }}
+      <button type="button" class="link-btn" @click="loadSummaries">重试摘要</button>
+    </p>
 
     <section v-if="jobs.length === 0" class="empty" role="status">
       <p class="empty-title">还没有岗位记录</p>
@@ -466,6 +540,26 @@ function formatTime(ts: number): string {
               </span>
             </div>
             <div class="ac-context">{{ contextLine(job) }}</div>
+            <div v-if="features.jobMemoryV2Enabled" class="application-summary" data-application-summary>
+              <span v-if="summaryLoading && !summaryFor(job.id)">流程摘要读取中…</span>
+              <template v-else v-for="summary in [summaryFor(job.id)]" :key="job.id">
+                <template v-if="summary">
+                  <strong>{{ summaryStatus(summary) }}</strong>
+                  <span v-if="summary.applicationCount > 0">
+                    共 {{ summary.applicationCount }} 次流程 · {{ summary.activeApplicationCount }} 次进行中
+                  </span>
+                  <span v-if="summary.defaultApplication">
+                    {{ applicationChannelLabel(summary.defaultApplication.record.channel, summary.defaultApplication.record.channelOtherLabel) }}
+                    · {{ summary.defaultResumeVersionName ?? '未知历史简历' }}
+                    · 最近事实 {{ formatTime(summary.defaultApplication.projection.lastMeaningfulEventAt ?? summary.defaultApplication.record.createdAt) }}
+                  </span>
+                  <span v-if="summary.projectionDiagnostics.length" class="summary-warning">
+                    {{ summary.projectionDiagnostics.length }} 条流程存在投影警告/错误
+                  </span>
+                </template>
+                <span v-else-if="summaryLoadError">流程摘要暂不可用</span>
+              </template>
+            </div>
             <div v-if="isImportedDraft(job)" class="ac-import-note">
               <span class="import-chip">{{ importCategoryLabel(job) }}</span>
               <span class="import-chip">置信度 {{ importConfidenceLabel(job) }}</span>
@@ -843,6 +937,19 @@ function formatTime(ts: number): string {
   font-size: 12px;
   color: var(--of-muted);
 }
+.application-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+}
+.application-summary strong { color: #0f172a; }
+.summary-warning { color: #b45309; }
 .ac-import-note {
   display: flex;
   flex-wrap: wrap;

@@ -29,10 +29,34 @@ function fixedApi(job: JobRecord): JobDetailApiPorts {
   };
 }
 
-function mountOwner(jobId: string, api: JobDetailApiPorts, runtimeEnabled: boolean) {
+function v2Api(job: JobRecord): JobDetailApiPorts {
+  const api = fixedApi(job);
+  api.jobMemory = {
+    getJobDetailBundle: vi.fn().mockResolvedValue({
+      jobId: job.id,
+      job,
+      profile: null,
+      allJobs: [job],
+      applicationSummariesByJob: { [job.id]: [] },
+      memory: { applications: [], resumeVersions: [], activeResumeVersionId: null },
+    }),
+    getJobSummaries: vi.fn(),
+    createApplication: vi.fn(),
+    updateApplication: vi.fn(),
+    voidApplication: vi.fn(),
+  };
+  return api;
+}
+
+function mountOwner(
+  jobId: string,
+  api: JobDetailApiPorts,
+  runtimeEnabled: boolean,
+  jobMemoryV2Enabled = false,
+) {
   const Owner = defineComponent({
     setup() {
-      const scope = useJobDetailScope({ jobId, api, runtimeEnabled });
+      const scope = useJobDetailScope({ jobId, api, runtimeEnabled, jobMemoryV2Enabled });
       return () => h('p', scope.$source.bundle?.job.id ?? 'empty');
     },
   });
@@ -182,5 +206,32 @@ describe('Runtime loadJobBundle Gate 1', () => {
     expect(runtimeSnapshot).toBe(directSnapshot);
     expect(runtimeApi.jobs.patch).not.toHaveBeenCalled();
     runtimeWrapper.unmount();
+  });
+
+  it.each([true, false])('Job Memory v2 在 Runtime=%s 时只读聚合 Bundle', async (runtimeEnabled) => {
+    const api = v2Api(makeJob('A'));
+    const wrapper = mountOwner('A', api, runtimeEnabled, true);
+    await flushPromises();
+    expect(api.jobMemory?.getJobDetailBundle).toHaveBeenCalledTimes(1);
+    expect(api.jobs.get).not.toHaveBeenCalled();
+    expect(api.jobs.list).not.toHaveBeenCalled();
+    expect(api.profile.get).not.toHaveBeenCalled();
+    expect(currentScope().$source.bundle).toMatchObject({
+      jobId: 'A',
+      memory: { applications: [] },
+    });
+    wrapper.unmount();
+  });
+
+  it('v1 capability 关闭时严格保留 job/profile/allJobs 三读取且不碰 v2 API', async () => {
+    const api = v2Api(makeJob('A'));
+    const wrapper = mountOwner('A', api, true, false);
+    await flushPromises();
+    expect(api.jobs.get).toHaveBeenCalledTimes(1);
+    expect(api.jobs.list).toHaveBeenCalledTimes(1);
+    expect(api.profile.get).toHaveBeenCalledTimes(1);
+    expect(api.jobMemory?.getJobDetailBundle).not.toHaveBeenCalled();
+    expect(currentScope().$source.bundle).not.toHaveProperty('memory');
+    wrapper.unmount();
   });
 });

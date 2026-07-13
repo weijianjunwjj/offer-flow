@@ -477,6 +477,8 @@ describe('JobMemoryService FeedbackEvent', () => {
       const summaries = service.getJobSummaries();
       expect(summaries[0]).toMatchObject({
         applicationCount: 1,
+        activeApplicationCount: 1,
+        defaultResumeVersionName: null,
         defaultApplication: { projection: { stage: 'interviewing' } },
       });
       const detail = service.getJobDetailBundle('job-1');

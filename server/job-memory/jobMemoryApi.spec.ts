@@ -249,7 +249,12 @@ describe('Job Memory HTTP API', () => {
     });
 
     expect((await app.inject({ method: 'GET', url: '/jobs/summaries' })).json()[0])
-      .toMatchObject({ applicationCount: 1, defaultApplication: { record: { id: applicationId } } });
+      .toMatchObject({
+        applicationCount: 1,
+        activeApplicationCount: 1,
+        defaultResumeVersionName: 'API 简历',
+        defaultApplication: { record: { id: applicationId } },
+      });
     expect((await app.inject({ method: 'GET', url: '/jobs/job-1/bundle' })).json())
       .toMatchObject({ jobId: 'job-1', memory: { activeResumeVersionId: resumeId } });
 
