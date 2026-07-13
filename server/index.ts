@@ -4,6 +4,9 @@ loadProjectEnv();
 import { pathToFileURL } from 'node:url';
 import Fastify from 'fastify';
 import { getDbPath, openDb, type SqliteDatabase } from './db';
+import type { JobMemoryServiceDeps } from './job-memory/jobMemoryService';
+import { registerJobMemoryRoutes } from './job-memory/routes';
+import { getDatabaseSchemaVersion } from './migrations';
 import { initSchema } from './schema';
 import { registerProfileRoutes } from './routes/profile';
 import { registerJobRoutes } from './routes/jobs';
@@ -18,8 +21,28 @@ declare module 'fastify' {
   }
 }
 
-export function buildServer(dbPath = getDbPath()): ReturnType<typeof Fastify> {
-  const shouldRunLifecycleSync = dbPath === getDbPath();
+export interface JobMemoryV2Capability {
+  enabled: boolean;
+  serviceDeps?: JobMemoryServiceDeps;
+}
+
+export interface BuildServerOptions {
+  dbPath?: string;
+  db?: SqliteDatabase;
+  jobMemoryV2?: JobMemoryV2Capability;
+}
+
+function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
+  return typeof input === 'string' ? { dbPath: input } : input;
+}
+
+export function buildServer(
+  input: string | BuildServerOptions = {},
+): ReturnType<typeof Fastify> {
+  const options = normalizeBuildOptions(input);
+  const dbPath = options.dbPath ?? (options.db === undefined ? getDbPath() : ':injected:');
+  const jobMemoryV2 = options.jobMemoryV2 ?? { enabled: false };
+  const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
     if (bootstrap.warnings.length > 0) {
@@ -28,8 +51,19 @@ export function buildServer(dbPath = getDbPath()): ReturnType<typeof Fastify> {
   }
 
   const app = Fastify({ logger: false });
-  const db = openDb(dbPath);
-  initSchema(db);
+  const db = options.db ?? openDb(dbPath);
+  const ownsDb = options.db === undefined;
+  if (jobMemoryV2.enabled) {
+    const schemaVersion = getDatabaseSchemaVersion(db);
+    if (schemaVersion < 2) {
+      if (ownsDb) db.close();
+      throw new Error(
+        `Job Memory v2 capability requires schema version 2 or newer; current version is ${schemaVersion}`,
+      );
+    }
+  } else {
+    initSchema(db);
+  }
   app.decorate('db', db);
   const exportOnClose = createShutdownSnapshotExporter(dbPath);
 
@@ -50,7 +84,7 @@ export function buildServer(dbPath = getDbPath()): ReturnType<typeof Fastify> {
   });
 
   app.addHook('onClose', async () => {
-    db.close();
+    if (ownsDb) db.close();
   });
 
   app.get('/health', async () => ({ ok: true }));
@@ -60,6 +94,9 @@ export function buildServer(dbPath = getDbPath()): ReturnType<typeof Fastify> {
   registerImportRoutes(app);
   registerSyncRoutes(app, dbPath);
   registerLlmRoutes(app);
+  if (jobMemoryV2.enabled) {
+    registerJobMemoryRoutes(app, { serviceDeps: jobMemoryV2.serviceDeps });
+  }
   return app;
 }
 

@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态**：已确认，B0 已完成，B1 实施中
+- **状态**：已确认，B0/B1/B2 已完成，B3 待开始
 - **日期**：2026-07-13
 - **产品输入**：`docs/prd/offerflow-v0.7.md` Draft 0.4
 - **实施状态输入**：`docs/handoffs/offerflow-v0.7-stage-handoff-2026-07-13.md`
@@ -10,6 +10,7 @@
 - **设计基线**：main `8484d10a91d9e79bb973ded9dfac1c40270ba42a`
 - **App 版本**：`0.6.2`
 - **本轮输出**：技术设计，不包含业务代码、migration、schema、snapshot 或版本修改
+- **B2 启用边界**：Job Memory repositories 和 API 已实现，但默认 Server 不启用 v2 capability；B2 测试只通过显式 Server option 和显式 schema target v2 的临时数据库启用，真实数据库正式启用仍留到 B7
 
 正式 PRD 决定产品范围，阶段交接决定实际完成状态。A 技术设计仍保留实施前的 Draft 和历史依赖事实；B 以 main 中已经完成的 Hash Router、Page Scope、Runtime Gate 1 与生命周期保护为真实基线，不将 A 文档中的历史“待安装”状态解释为当前事实。
 

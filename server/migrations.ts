@@ -150,6 +150,16 @@ function validateAppliedMigrations(
   }
 }
 
+export function getDatabaseSchemaVersion(db: SqliteDatabase): number {
+  const migrationTable = db
+    .prepare("SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = 'schema_migrations'")
+    .get() as { present: number } | undefined;
+  if (migrationTable === undefined) return 0;
+  const applied = readAppliedMigrations(db);
+  validateAppliedMigrations(applied, SCHEMA_MIGRATIONS);
+  return applied.at(-1)?.version ?? 0;
+}
+
 export function runMigrations(
   db: SqliteDatabase,
   options: MigrationRunOptions = {},
