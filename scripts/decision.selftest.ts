@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import {
-  deriveDecision,
-  deriveCompanyWarning,
+  deriveLegacyDecision as deriveDecision,
+  deriveLegacyCompanyWarning as deriveCompanyWarning,
   FOLLOWUP_COOLDOWN_DAYS,
   MAX_FOLLOWUPS,
   normalizeCompanyName,

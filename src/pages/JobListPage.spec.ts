@@ -2,6 +2,8 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyCompanyInput, type JobRecord } from '../storage';
+import { makeApplication, makeEvent } from '../domain/job-memory/testFixtures';
+import { projectApplication } from '../domain/job-memory';
 import JobListPage from './JobListPage.vue';
 
 const mocks = vi.hoisted(() => ({
@@ -98,5 +100,46 @@ describe('JobList B4 求职流程摘要', () => {
     wrapper.unmount();
     expect(jobsSignal?.aborted).toBe(true);
     expect(summariesSignal?.aborted).toBe(true);
+  });
+
+  it('v2 列表决策与状态读取 default ApplicationProjection，不读取 Job legacy', async () => {
+    const legacyRejected = job();
+    legacyRejected.communicationStatus = 'rejected';
+    legacyRejected.followupCount = 9;
+    const record = makeApplication({ id: 'app-1', jobId: legacyRejected.id });
+    const events = [makeEvent('hr_replied', { applicationId: record.id })];
+    const projection = projectApplication(record, events);
+    mocks.list.mockResolvedValue([legacyRejected]);
+    mocks.summaries.mockResolvedValue([{
+      job: legacyRejected, applicationCount: 1, activeApplicationCount: 1,
+      defaultApplication: { record, projection }, defaultResumeVersionName: null,
+      projectionDiagnostics: [],
+    }]);
+    const wrapper = await mountPage();
+    await flushPromises();
+    expect(wrapper.get('.ac-status').text()).toBe('已回复');
+    expect(wrapper.get('.ac-badge.action').text()).toBe('继续沟通');
+    expect(wrapper.text()).not.toContain('已结束');
+    wrapper.unmount();
+  });
+
+  it('v2 有流程但 default projection 不可用时不回退 legacy 生成正常建议', async () => {
+    const legacyReplied = job();
+    legacyReplied.communicationStatus = 'replied';
+    mocks.list.mockResolvedValue([legacyReplied]);
+    mocks.summaries.mockResolvedValue([{
+      job: legacyReplied, applicationCount: 1, activeApplicationCount: 1,
+      defaultApplication: null, defaultResumeVersionName: null,
+      projectionDiagnostics: [{
+        applicationId: 'invalid-app', projectionStatus: 'invalid', warnings: [],
+        errors: [{ code: 'INVALID_PROJECTION_OUTPUT', message: 'broken' }],
+      }],
+    }]);
+    const wrapper = await mountPage();
+    await flushPromises();
+    expect(wrapper.get('.ac-status').text()).toBe('流程状态不可用');
+    expect(wrapper.get('.ac-badge.action').text()).toBe('先人工确认');
+    expect(wrapper.text()).not.toContain('继续沟通');
+    wrapper.unmount();
   });
 });

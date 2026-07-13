@@ -14,6 +14,8 @@ import {
   ResumeVersionListResponseSchema,
 } from '../src/domain/job-memory';
 import type { JobSeekerProfile } from '../src/storage';
+import type { JobRecord } from '../src/storage';
+import { deriveDecision, deriveLegacyDecision, resolveDecisionOpportunityFacts } from '../src/decision';
 import { openDb, type SqliteDatabase } from '../server/db';
 import { buildServer } from '../server/index';
 import { getDatabaseSchemaVersion } from '../server/migrations';
@@ -253,6 +255,37 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown> {
   return body;
 }
 
+async function fetchJsonResponse(url: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
+  const response = await fetch(url, init);
+  return { status: response.status, body: await response.json() };
+}
+
+async function runLegacyV1WriteSmoke(): Promise<true> {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-job-memory-v1-'));
+  const dbPath = path.join(tempDir, 'offerflow-v1.sqlite3');
+  const app = buildServer(dbPath);
+  try {
+    const base = await app.listen({ host: DEV_HOST, port: 0 });
+    const created = await fetchJson(`${base}/jobs`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'b6-v1-job', company: 'B6 v1 临时公司', role: '前端' }),
+    }) as JobRecord;
+    const updated = await fetchJson(`${base}/jobs/${created.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ communicationStatus: 'replied' }),
+    }) as JobRecord;
+    if (
+      updated.communicationStatus !== 'replied'
+      || deriveLegacyDecision(updated).nextAction !== 'continue_conversation'
+    ) throw new Error('B6 smoke capability=false 未保持 legacy 写入或决策行为');
+  } finally {
+    await app.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+  if (fs.existsSync(tempDir)) throw new Error('B6 v1 smoke 临时目录未清理');
+  return true;
+}
+
 export interface JobMemoryV2SmokeReport {
   schemaVersion: 2;
   routeEnabled: true;
@@ -262,8 +295,11 @@ export interface JobMemoryV2SmokeReport {
   createdResumeVersionId: string;
   createdApplicationCount: 2;
   jobSummaryCount: 2;
-  correctedApplicationRowVersion: 4;
+  correctedApplicationRowVersion: 5;
   voidReplacementVerified: true;
+  decisionProjectionVerified: true;
+  legacyWriteGuardVerified: true;
+  legacyV1WriteVerified: true;
   tempDirRemoved: true;
 }
 
@@ -273,8 +309,10 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
   let createdResumeVersionId = '';
   let createdApplicationCount: 2 = 2;
   let jobSummaryCount: 2 = 2;
-  let correctedApplicationRowVersion: 4 = 4;
+  let correctedApplicationRowVersion: 5 = 5;
   let voidReplacementVerified: true = true;
+  let decisionProjectionVerified: true = true;
+  let legacyWriteGuardVerified: true = true;
   try {
     const metadata = await fetchJson(`${session.apiUrl}/meta/db-path`);
     if (
@@ -337,11 +375,17 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     if (!eventApplication || eventApplication.record.rowVersion !== 1) {
       throw new Error('B5 smoke 缺少可追加事件的初始 Application');
     }
-    const eventInput = (eventType: 'greeting_sent' | 'rejected' | 'hr_replied') => ({
+    const smokeEventBaseAt = Date.now() + 1_000;
+    const eventInput = (eventType: 'greeting_sent' | 'follow_up_sent' | 'rejected' | 'hr_replied') => ({
       eventType,
-      eventAt: null,
-      timePrecision: 'unknown',
-      actor: eventType === 'greeting_sent' ? 'user' : 'hr',
+      eventAt: {
+        greeting_sent: smokeEventBaseAt,
+        follow_up_sent: smokeEventBaseAt + 1_000,
+        rejected: smokeEventBaseAt + 2_000,
+        hr_replied: smokeEventBaseAt + 3_000,
+      }[eventType],
+      timePrecision: 'exact',
+      actor: eventType === 'greeting_sent' || eventType === 'follow_up_sent' ? 'user' : 'hr',
       sourceConfidence: 'exact',
       evidenceLevel: 'medium',
       channel: 'boss',
@@ -367,6 +411,59 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     ) {
       throw new Error('B5 smoke 追加事件后 rowVersion 未递增一次');
     }
+    const afterFollowUp = JobMemoryBundleSchema.parse(await fetchJson(
+      `${session.apiUrl}/applications/${eventApplication.record.id}/events`,
+      {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey: 'b6-smoke-follow-up', expectedApplicationVersion: 2,
+          ...eventInput('follow_up_sent'),
+        }),
+      },
+    ));
+    const followUpMemory = afterFollowUp.applications.find(
+      ({ record }) => record.id === eventApplication.record.id,
+    );
+    if (
+      !followUpMemory
+      || followUpMemory.record.rowVersion !== 3
+      || followUpMemory.projection.followUpCount !== 1
+      || followUpMemory.projection.nextAllowedFollowUpAt === null
+    ) throw new Error('B6 smoke follow-up 投影未提供计数或 cooldown');
+    const decisionBundle = JobDetailBundleV2Schema.parse(
+      await fetchJson(`${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}/bundle`),
+    );
+    const decisionFacts = resolveDecisionOpportunityFacts({
+      job: decisionBundle.job,
+      selectedApplication: followUpMemory,
+      defaultApplication: followUpMemory,
+      availableApplications: decisionBundle.memory.applications,
+      jobMemoryV2Enabled: true,
+    });
+    const projectedDecision = deriveDecision(decisionFacts, {
+      now: followUpMemory.projection.nextAllowedFollowUpAt,
+    });
+    if (
+      decisionFacts.source !== 'application_projection'
+      || projectedDecision.nextAction !== 'follow_up_with_new_angle'
+    ) throw new Error(
+      `B6 smoke 决策未读取 ApplicationProjection 的 follow-up/cooldown：${decisionFacts.source}/${projectedDecision.nextAction}/${followUpMemory.projection.communicationStatus}/${followUpMemory.projection.followUpCount}/${followUpMemory.projection.nextAllowedFollowUpAt}`,
+    );
+    decisionProjectionVerified = true;
+
+    const legacyBefore = await fetchJson(`${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}`) as JobRecord;
+    const blockedLegacy = await fetchJsonResponse(`${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ communicationStatus: 'replied' }),
+    });
+    const blockedBody = blockedLegacy.body as { code?: unknown };
+    const legacyAfter = await fetchJson(`${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}`) as JobRecord;
+    if (
+      blockedLegacy.status !== 422
+      || blockedBody.code !== 'LEGACY_COMMUNICATION_WRITE_DISABLED'
+      || legacyAfter.communicationStatus !== legacyBefore.communicationStatus
+    ) throw new Error('B6 smoke v2 legacy 写入门禁或原值保护失败');
+    legacyWriteGuardVerified = true;
     const afterRejected = JobMemoryBundleSchema.parse(await fetchJson(
       `${session.apiUrl}/applications/${eventApplication.record.id}/events`,
       {
@@ -374,7 +471,7 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idempotencyKey: 'b5-smoke-rejected',
-          expectedApplicationVersion: 2,
+          expectedApplicationVersion: 3,
           ...eventInput('rejected'),
         }),
       },
@@ -385,11 +482,19 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     const rejectedEvent = rejectedMemory?.events.find(({ eventType }) => eventType === 'rejected');
     if (
       !rejectedMemory
-      || rejectedMemory.record.rowVersion !== 3
+      || rejectedMemory.record.rowVersion !== 4
       || rejectedMemory.projection.outcome !== 'rejected'
       || !rejectedEvent
     ) {
       throw new Error('B5 smoke 第二条事件未关闭投影或版本不正确');
+    }
+    const rejectedFacts = resolveDecisionOpportunityFacts({
+      job: decisionBundle.job, selectedApplication: rejectedMemory,
+      defaultApplication: rejectedMemory, availableApplications: [rejectedMemory],
+      jobMemoryV2Enabled: true,
+    });
+    if (deriveDecision(rejectedFacts).flowNotice?.includes('拒绝') !== true) {
+      throw new Error('B6 smoke rejected Projection 未切换为停止跟进');
     }
     const bundleBeforeVoid = JobDetailBundleV2Schema.parse(
       await fetchJson(`${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}/bundle`),
@@ -407,7 +512,7 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idempotencyKey: 'b5-smoke-correct-rejected',
-          expectedApplicationVersion: 3,
+          expectedApplicationVersion: 4,
           reason: '【B5 临时联调测试数据】误录为拒绝',
           replacementEvent: eventInput('hr_replied'),
         }),
@@ -424,7 +529,7 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     );
     if (
       !correctedMemory
-      || correctedMemory.record.rowVersion !== 4
+      || correctedMemory.record.rowVersion !== 5
       || correctedMemory.projection.stage !== 'contacted'
       || correctedMemory.projection.outcome !== null
       || !correctedMemory.events.some(({ id }) => id === rejectedEvent.id)
@@ -433,7 +538,20 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     ) {
       throw new Error('B5 smoke void + replacement 未原子保留历史或重算投影');
     }
-    correctedApplicationRowVersion = correctedMemory.record.rowVersion as 4;
+    const correctedFacts = resolveDecisionOpportunityFacts({
+      job: decisionBundle.job, selectedApplication: correctedMemory,
+      defaultApplication: correctedMemory, availableApplications: [correctedMemory],
+      jobMemoryV2Enabled: true,
+    });
+    if (deriveDecision(correctedFacts).nextAction !== 'continue_conversation') {
+      throw new Error('B6 smoke void + replacement 后决策未按新 Projection 重算');
+    }
+    if (
+      'stage' in correctedMemory.record
+      || 'outcome' in correctedMemory.record
+      || 'communicationStatus' in correctedMemory.record
+    ) throw new Error('B6 smoke 禁止将 Projection 字段持久化到 Application');
+    correctedApplicationRowVersion = correctedMemory.record.rowVersion as 5;
     voidReplacementVerified = true;
     const summaries = JobSummariesResponseSchema.parse(
       await fetchJson(`${session.apiUrl}/jobs/summaries`),
@@ -466,6 +584,7 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
   if (fs.existsSync(tempDir)) {
     throw new Error('临时联调退出后仍残留 SQLite 临时目录');
   }
+  const legacyV1WriteVerified = await runLegacyV1WriteSmoke();
   return {
     schemaVersion: 2,
     routeEnabled: true,
@@ -477,6 +596,9 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     jobSummaryCount,
     correctedApplicationRowVersion,
     voidReplacementVerified,
+    decisionProjectionVerified,
+    legacyWriteGuardVerified,
+    legacyV1WriteVerified,
     tempDirRemoved: true,
   };
 }

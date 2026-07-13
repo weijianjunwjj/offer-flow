@@ -357,6 +357,152 @@ describe('岗位详情 Page Scope', () => {
     wrapper.unmount();
   });
 
+  it('decision getters 随 selected Application 和服务端 Event Bundle 自动重算，不读取 Job legacy', async () => {
+    const repliedRecord = makeApplication({ id: 'replied-app', jobId: 'A', createdAt: 1 });
+    const repliedEvents = [makeEvent('hr_replied', {
+      id: 'replied-event', applicationId: repliedRecord.id, idempotencyKey: 'replied-key', createdAt: 1,
+    })];
+    const coldRecord = makeApplication({ id: 'cold-app', jobId: 'A', createdAt: 2 });
+    const coldEvents = [makeEvent('greeting_sent', {
+      id: 'cold-event', applicationId: coldRecord.id, idempotencyKey: 'cold-key', createdAt: 2,
+    })];
+    const replied = { record: repliedRecord, events: repliedEvents, projection: projectApplication(repliedRecord, repliedEvents) };
+    const cold = { record: coldRecord, events: coldEvents, projection: projectApplication(coldRecord, coldEvents) };
+    const job = makeJob('A');
+    job.communicationStatus = 'rejected';
+    job.followupCount = 99;
+    const api = apiFor('A');
+    api.jobMemory = {
+      getJobDetailBundle: vi.fn().mockResolvedValue({
+        jobId: 'A', job, profile: null, allJobs: [job],
+        applicationSummariesByJob: { A: [replied, cold].map(({ record, projection }) => ({ record, projection })) },
+        memory: { applications: [replied, cold], resumeVersions: [], activeResumeVersionId: null },
+      }),
+      getJobSummaries: vi.fn(), createApplication: vi.fn(), updateApplication: vi.fn(), voidApplication: vi.fn(),
+      appendFeedbackEvent: vi.fn(), voidFeedbackEvent: vi.fn(),
+    };
+    const wrapper = mountOwnerForApi(api);
+    await flushPromises();
+    const scope = scopeRegistry.get('job-detail') as ReturnType<typeof useJobDetailScope>;
+    expect(scope.decisionFactsSource).toBe('application_projection');
+    expect(scope.decisionFacts?.application?.applicationId).toBe('cold-app');
+    expect(scope.decisionResult?.nextAction).toBe('follow_up_once');
+
+    scope.selectedApplicationId = 'replied-app';
+    await nextTick();
+    expect(scope.decisionFacts?.application?.applicationId).toBe('replied-app');
+    expect(scope.decisionResult?.nextAction).toBe('continue_conversation');
+
+    const rejectedEvent = makeEvent('rejected', {
+      id: 'rejected-event', applicationId: repliedRecord.id, idempotencyKey: 'rejected-key', createdAt: 3,
+    });
+    const rejectedEvents = [...repliedEvents, rejectedEvent];
+    const rejected = {
+      record: { ...repliedRecord, rowVersion: 2 }, rejectedEvents,
+      events: rejectedEvents,
+      projection: projectApplication({ ...repliedRecord, rowVersion: 2 }, rejectedEvents),
+    };
+    scope.acceptMemoryBundle({
+      applications: [{ record: rejected.record, events: rejected.events, projection: rejected.projection }, cold],
+      resumeVersions: [], activeResumeVersionId: null,
+    });
+    expect(scope.decisionResult?.nextAction).toBeNull();
+    expect(scope.decisionResult?.flowNotice).toContain('拒绝');
+    wrapper.unmount();
+  });
+
+  it('v2 零流程区分只读 legacy 与 opportunity-only，invalid 不回退；v1 保持 legacy', async () => {
+    const legacyJob = makeJob('A');
+    legacyJob.communicationStatus = 'replied';
+    const api = apiFor('A');
+    api.jobMemory = {
+      getJobDetailBundle: vi.fn().mockResolvedValue({
+        jobId: 'A', job: legacyJob, profile: null, allJobs: [legacyJob],
+        applicationSummariesByJob: { A: [] },
+        memory: { applications: [], resumeVersions: [], activeResumeVersionId: null },
+      }),
+      getJobSummaries: vi.fn(), createApplication: vi.fn(), updateApplication: vi.fn(), voidApplication: vi.fn(),
+      appendFeedbackEvent: vi.fn(), voidFeedbackEvent: vi.fn(),
+    };
+    const wrapper = mountOwnerForApi(api);
+    await flushPromises();
+    const scope = scopeRegistry.get('job-detail') as ReturnType<typeof useJobDetailScope>;
+    expect(scope.decisionFactsSource).toBe('legacy_job_fallback');
+    expect(scope.decisionCompatibilityWarning).toContain('历史兼容状态');
+    wrapper.unmount();
+
+    const opportunityJob = makeJob('A');
+    api.jobMemory.getJobDetailBundle = vi.fn().mockResolvedValue({
+      jobId: 'A', job: opportunityJob, profile: null, allJobs: [opportunityJob],
+      applicationSummariesByJob: { A: [] },
+      memory: { applications: [], resumeVersions: [], activeResumeVersionId: null },
+    });
+    const opportunityWrapper = mountOwnerForApi(api);
+    await flushPromises();
+    const opportunityScope = scopeRegistry.get('job-detail') as ReturnType<typeof useJobDetailScope>;
+    expect(opportunityScope.decisionFactsSource).toBe('opportunity_only');
+    expect(opportunityScope.decisionCompatibilityWarning).toBeNull();
+    opportunityWrapper.unmount();
+
+    const invalidRecord = makeApplication({ id: 'invalid-app', jobId: 'A' });
+    const invalidEvents = [makeEvent('hr_replied', { applicationId: invalidRecord.id })];
+    const invalidProjection = {
+      ...projectApplication(invalidRecord, invalidEvents), projectionStatus: 'invalid' as const,
+      errors: [{ code: 'INVALID_PROJECTION_OUTPUT' as const, message: 'broken' }],
+    };
+    legacyJob.communicationStatus = 'interviewing';
+    api.jobMemory.getJobDetailBundle = vi.fn().mockResolvedValue({
+      jobId: 'A', job: legacyJob, profile: null, allJobs: [legacyJob],
+      applicationSummariesByJob: { A: [{ record: invalidRecord, projection: invalidProjection }] },
+      memory: {
+        applications: [{ record: invalidRecord, events: invalidEvents, projection: invalidProjection }],
+        resumeVersions: [], activeResumeVersionId: null,
+      },
+    });
+    const invalidWrapper = mountOwnerForApi(api);
+    await flushPromises();
+    const invalidScope = scopeRegistry.get('job-detail') as ReturnType<typeof useJobDetailScope>;
+    expect(invalidScope.decisionFactsSource).toBe('application_projection');
+    expect(invalidScope.decisionResult?.nextAction).toBe('manual_review');
+    invalidWrapper.unmount();
+
+    const v1Wrapper = mount(Owner, { props: { jobId: 'A' } });
+    await flushPromises();
+    const v1Scope = scopeRegistry.get('job-detail') as ReturnType<typeof useJobDetailScope>;
+    expect(v1Scope.decisionFactsSource).toBe('legacy_job_fallback');
+    v1Wrapper.unmount();
+  });
+
+  it('v2 Scope 拒绝 legacy patch 和有 Application 时的 Job draft，岗位事实 PATCH 仍允许', async () => {
+    const record = makeApplication({ id: 'app-1', jobId: 'A' });
+    const events = [makeEvent('application_created', { applicationId: record.id })];
+    const current = { record, events, projection: projectApplication(record, events) };
+    const job = makeJob('A');
+    const api = apiFor('A');
+    api.jobMemory = {
+      getJobDetailBundle: vi.fn().mockResolvedValue({
+        jobId: 'A', job, profile: null, allJobs: [job],
+        applicationSummariesByJob: { A: [{ record, projection: current.projection }] },
+        memory: { applications: [current], resumeVersions: [], activeResumeVersionId: null },
+      }),
+      getJobSummaries: vi.fn(), createApplication: vi.fn(), updateApplication: vi.fn(), voidApplication: vi.fn(),
+      appendFeedbackEvent: vi.fn(), voidFeedbackEvent: vi.fn(),
+    };
+    const wrapper = mountOwnerForApi(api);
+    await flushPromises();
+    const scope = scopeRegistry.get('job-detail') as ReturnType<typeof useJobDetailScope>;
+    await expect(scope.updateCommunication({ communicationStatus: 'replied' })).rejects.toMatchObject({
+      status: 422, body: { code: 'LEGACY_COMMUNICATION_WRITE_DISABLED' },
+    });
+    await expect(scope.updateCommunication({ draftMessageText: 'Job 旁路' })).rejects.toMatchObject({
+      status: 422,
+    });
+    expect(api.jobs.patch).not.toHaveBeenCalled();
+    await scope.updateCommunication({ highValueSignal: true });
+    expect(api.jobs.patch).toHaveBeenCalledWith('A', { highValueSignal: true });
+    wrapper.unmount();
+  });
+
   it('真实 keyed 组件 A→B→C 不重叠注册，最终只保留当前 owner', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const warningSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

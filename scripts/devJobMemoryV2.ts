@@ -13,10 +13,10 @@ async function runDev(): Promise<void> {
   });
   try {
     session = await startJobMemoryV2DevSession({ withVite: true });
-    console.log('[B5 临时联调] 仅使用系统临时 schema v2 SQLite；退出会清理全部临时数据。');
-    console.log(`[B5 临时联调] API: ${session.apiUrl}`);
-    console.log(`[B5 临时联调] Web: ${session.webUrl}/#/jobs`);
-    console.log(`[B5 临时联调] Temp DB: ${session.dbPath}`);
+    console.log('[B6 临时联调] 仅使用系统临时 schema v2 SQLite；退出会清理全部临时数据。');
+    console.log(`[B6 临时联调] API: ${session.apiUrl}`);
+    console.log(`[B6 临时联调] Web: ${session.webUrl}/#/jobs`);
+    console.log(`[B6 临时联调] Temp DB: ${session.dbPath}`);
     process.exitCode = await shutdown.wait();
   } catch (error) {
     await shutdown.requestShutdown(1, error);
@@ -29,7 +29,7 @@ async function runDev(): Promise<void> {
 async function main(): Promise<void> {
   if (process.argv.includes('--smoke')) {
     const report = await runJobMemoryV2Smoke();
-    console.log('[B5 临时联调 smoke] PASS', JSON.stringify(report));
+    console.log('[B6 临时联调 smoke] PASS', JSON.stringify(report));
     return;
   }
   await runDev();

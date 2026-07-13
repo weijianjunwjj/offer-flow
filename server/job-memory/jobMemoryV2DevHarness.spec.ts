@@ -39,7 +39,7 @@ function currentHarnessDirs(): Set<string> {
   return new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('offerflow-job-memory-v2-')));
 }
 
-describe('B5 临时 v2 联调安全门禁', () => {
+describe('B6 临时 v2 联调安全门禁', () => {
   it('拒绝默认真实库、仓库 data、临时目录外和已有文件', () => {
     const { tempDir, dbPath } = tempHarnessPath();
     expect(() => assertSafeTemporaryDbPath(
@@ -155,8 +155,11 @@ describe('B5 临时 v2 联调安全门禁', () => {
       syntheticProfileOnly: true,
       createdApplicationCount: 2,
       jobSummaryCount: 2,
-      correctedApplicationRowVersion: 4,
+      correctedApplicationRowVersion: 5,
       voidReplacementVerified: true,
+      decisionProjectionVerified: true,
+      legacyWriteGuardVerified: true,
+      legacyV1WriteVerified: true,
       tempDirRemoved: true,
     });
   });
