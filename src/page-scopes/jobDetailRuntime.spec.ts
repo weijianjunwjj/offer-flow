@@ -44,6 +44,8 @@ function v2Api(job: JobRecord): JobDetailApiPorts {
     createApplication: vi.fn(),
     updateApplication: vi.fn(),
     voidApplication: vi.fn(),
+    appendFeedbackEvent: vi.fn(),
+    voidFeedbackEvent: vi.fn(),
   };
   return api;
 }
@@ -231,6 +233,8 @@ describe('Runtime loadJobBundle Gate 1', () => {
     expect(api.jobs.list).toHaveBeenCalledTimes(1);
     expect(api.profile.get).toHaveBeenCalledTimes(1);
     expect(api.jobMemory?.getJobDetailBundle).not.toHaveBeenCalled();
+    expect(api.jobMemory?.appendFeedbackEvent).not.toHaveBeenCalled();
+    expect(api.jobMemory?.voidFeedbackEvent).not.toHaveBeenCalled();
     expect(currentScope().$source.bundle).not.toHaveProperty('memory');
     wrapper.unmount();
   });

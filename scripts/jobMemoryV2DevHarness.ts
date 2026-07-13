@@ -262,6 +262,8 @@ export interface JobMemoryV2SmokeReport {
   createdResumeVersionId: string;
   createdApplicationCount: 2;
   jobSummaryCount: 2;
+  correctedApplicationRowVersion: 4;
+  voidReplacementVerified: true;
   tempDirRemoved: true;
 }
 
@@ -271,6 +273,8 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
   let createdResumeVersionId = '';
   let createdApplicationCount: 2 = 2;
   let jobSummaryCount: 2 = 2;
+  let correctedApplicationRowVersion: 4 = 4;
+  let voidReplacementVerified: true = true;
   try {
     const metadata = await fetchJson(`${session.apiUrl}/meta/db-path`);
     if (
@@ -329,6 +333,108 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     if (memoryAfterRepeat.applications.length !== 2) {
       throw new Error('临时联调未能为同一岗位保存两次独立 Application');
     }
+    const eventApplication = memoryAfterRepeat.applications.find(({ record }) => record.channel === 'boss');
+    if (!eventApplication || eventApplication.record.rowVersion !== 1) {
+      throw new Error('B5 smoke 缺少可追加事件的初始 Application');
+    }
+    const eventInput = (eventType: 'greeting_sent' | 'rejected' | 'hr_replied') => ({
+      eventType,
+      eventAt: null,
+      timePrecision: 'unknown',
+      actor: eventType === 'greeting_sent' ? 'user' : 'hr',
+      sourceConfidence: 'exact',
+      evidenceLevel: 'medium',
+      channel: 'boss',
+      note: `【B5 临时联调测试数据】${eventType}`,
+      reasonCode: eventType === 'rejected' ? 'skills' : null,
+      payload: {},
+    });
+    const afterGreeting = JobMemoryBundleSchema.parse(await fetchJson(
+      `${session.apiUrl}/applications/${eventApplication.record.id}/events`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey: 'b5-smoke-greeting',
+          expectedApplicationVersion: 1,
+          ...eventInput('greeting_sent'),
+        }),
+      },
+    ));
+    if (
+      afterGreeting.applications.find(({ record }) => record.id === eventApplication.record.id)
+        ?.record.rowVersion !== 2
+    ) {
+      throw new Error('B5 smoke 追加事件后 rowVersion 未递增一次');
+    }
+    const afterRejected = JobMemoryBundleSchema.parse(await fetchJson(
+      `${session.apiUrl}/applications/${eventApplication.record.id}/events`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey: 'b5-smoke-rejected',
+          expectedApplicationVersion: 2,
+          ...eventInput('rejected'),
+        }),
+      },
+    ));
+    const rejectedMemory = afterRejected.applications.find(
+      ({ record }) => record.id === eventApplication.record.id,
+    );
+    const rejectedEvent = rejectedMemory?.events.find(({ eventType }) => eventType === 'rejected');
+    if (
+      !rejectedMemory
+      || rejectedMemory.record.rowVersion !== 3
+      || rejectedMemory.projection.outcome !== 'rejected'
+      || !rejectedEvent
+    ) {
+      throw new Error('B5 smoke 第二条事件未关闭投影或版本不正确');
+    }
+    const bundleBeforeVoid = JobDetailBundleV2Schema.parse(
+      await fetchJson(`${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}/bundle`),
+    );
+    if (
+      bundleBeforeVoid.memory.applications.find(({ record }) => record.id === eventApplication.record.id)
+        ?.projection.outcome !== 'rejected'
+    ) {
+      throw new Error('B5 smoke Bundle 未读回事件投影');
+    }
+    const afterCorrection = JobMemoryBundleSchema.parse(await fetchJson(
+      `${session.apiUrl}/feedback-events/${rejectedEvent.id}/void`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey: 'b5-smoke-correct-rejected',
+          expectedApplicationVersion: 3,
+          reason: '【B5 临时联调测试数据】误录为拒绝',
+          replacementEvent: eventInput('hr_replied'),
+        }),
+      },
+    ));
+    const correctedMemory = afterCorrection.applications.find(
+      ({ record }) => record.id === eventApplication.record.id,
+    );
+    const voidAudit = correctedMemory?.events.find((event) => (
+      event.eventType === 'event_voided' && event.targetEventId === rejectedEvent.id
+    ));
+    const replacement = correctedMemory?.events.find(
+      ({ idempotencyKey }) => idempotencyKey === 'b5-smoke-correct-rejected:replacement',
+    );
+    if (
+      !correctedMemory
+      || correctedMemory.record.rowVersion !== 4
+      || correctedMemory.projection.stage !== 'contacted'
+      || correctedMemory.projection.outcome !== null
+      || !correctedMemory.events.some(({ id }) => id === rejectedEvent.id)
+      || !voidAudit
+      || replacement?.eventType !== 'hr_replied'
+    ) {
+      throw new Error('B5 smoke void + replacement 未原子保留历史或重算投影');
+    }
+    correctedApplicationRowVersion = correctedMemory.record.rowVersion as 4;
+    voidReplacementVerified = true;
     const summaries = JobSummariesResponseSchema.parse(
       await fetchJson(`${session.apiUrl}/jobs/summaries`),
     );
@@ -338,6 +444,7 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
       || targetSummary?.applicationCount !== 2
       || targetSummary.activeApplicationCount !== 2
       || targetSummary.defaultApplication === null
+      || targetSummary.defaultApplication.projection.stage !== 'contacted'
     ) {
       throw new Error('临时联调岗位摘要未反映重复投递');
     }
@@ -368,6 +475,8 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     createdResumeVersionId,
     createdApplicationCount,
     jobSummaryCount,
+    correctedApplicationRowVersion,
+    voidReplacementVerified,
     tempDirRemoved: true,
   };
 }

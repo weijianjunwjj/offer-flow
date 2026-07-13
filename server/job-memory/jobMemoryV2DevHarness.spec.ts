@@ -39,7 +39,7 @@ function currentHarnessDirs(): Set<string> {
   return new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('offerflow-job-memory-v2-')));
 }
 
-describe('B4 临时 v2 联调安全门禁', () => {
+describe('B5 临时 v2 联调安全门禁', () => {
   it('拒绝默认真实库、仓库 data、临时目录外和已有文件', () => {
     const { tempDir, dbPath } = tempHarnessPath();
     expect(() => assertSafeTemporaryDbPath(
@@ -146,7 +146,7 @@ describe('B4 临时 v2 联调安全门禁', () => {
     controller.dispose();
   });
 
-  it('smoke 通过 HTTP 创建两次 Application 并读回 Bundle/摘要，退出后清理', async () => {
+  it('smoke 通过 HTTP 创建流程、追加事件、void + replacement 并读回摘要，退出后清理', async () => {
     await expect(runJobMemoryV2Smoke()).resolves.toMatchObject({
       schemaVersion: 2,
       routeEnabled: true,
@@ -155,6 +155,8 @@ describe('B4 临时 v2 联调安全门禁', () => {
       syntheticProfileOnly: true,
       createdApplicationCount: 2,
       jobSummaryCount: 2,
+      correctedApplicationRowVersion: 4,
+      voidReplacementVerified: true,
       tempDirRemoved: true,
     });
   });

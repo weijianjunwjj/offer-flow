@@ -380,6 +380,20 @@ describe('JobMemoryService FeedbackEvent', () => {
     });
   });
 
+  it('unknown 时间必须显式为 null，不接受用记录时间冒充发生时间', () => {
+    withHarness(({ service }) => {
+      const application = service.createApplication('job-1', applicationRequest()).applications[0]?.record;
+      expect(application).toBeDefined();
+      if (!application) return;
+      const error = captureJobMemoryError(() => service.appendFeedbackEvent(application.id, {
+        ...appendEventRequest('unknown-with-time', 1, eventInput('applied')),
+        timePrecision: 'unknown',
+      }));
+      expect(error.body.code).toBe('VALIDATION_ERROR');
+      expect(service.getApplication(application.id).record.rowVersion).toBe(1);
+    });
+  });
+
   it('event void 与 replacement 同事务且 Application 版本只增加一次', () => {
     withHarness(({ service }) => {
       const created = service.createApplication('job-1', applicationRequest());

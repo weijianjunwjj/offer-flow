@@ -67,7 +67,7 @@ describe('Job Memory 运行时 Schema', () => {
     expect(ResumeVersionRecordSchema.safeParse({ ...valid, rowVersion: -1 }).success).toBe(false);
   });
 
-  it('eventAt=null 仅允许 unknown 时间精度', () => {
+  it('eventAt 与 unknown 时间精度必须双向一致', () => {
     expect(FeedbackEventRecordSchema.safeParse(makeEvent('applied', {
       eventAt: null,
       timePrecision: 'unknown',
@@ -75,6 +75,10 @@ describe('Job Memory 运行时 Schema', () => {
     expect(FeedbackEventRecordSchema.safeParse(makeEvent('applied', {
       eventAt: null,
       timePrecision: 'exact',
+    })).success).toBe(false);
+    expect(FeedbackEventRecordSchema.safeParse(makeEvent('applied', {
+      eventAt: 100,
+      timePrecision: 'unknown',
     })).success).toBe(false);
   });
 

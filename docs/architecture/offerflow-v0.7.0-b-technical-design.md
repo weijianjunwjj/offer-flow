@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态**：已确认，B0/B1/B2/B3/B4 已完成，B5 待开始
+- **状态**：已确认，B0/B1/B2/B3/B4/B5 已完成，B6 待开始
 - **日期**：2026-07-13
 - **产品输入**：`docs/prd/offerflow-v0.7.md` Draft 0.4
 - **实施状态输入**：`docs/handoffs/offerflow-v0.7-stage-handoff-2026-07-13.md`
@@ -13,7 +13,8 @@
 - **B2 启用边界**：Job Memory repositories 和 API 已实现，但默认 Server 不启用 v2 capability；B2 测试只通过显式 Server option 和显式 schema target v2 的临时数据库启用，真实数据库正式启用仍留到 B7
 - **B3 启用边界**：ResumeVersion 页面与前端 API adapter 已实现，但默认生产前端入口保持关闭；只有专用临时联调命令会在系统临时目录新建 schema v2 SQLite，并同时显式开启后端 capability 与前端 flag。真实数据库和生产入口仍留到 B7。
 - **B4 完成边界**：统一的 Job Memory v2 前端 capability、JobDetail 聚合 Bundle、ApplicationSection、同岗位多次 Application、上下文纠正与作废、JobList 最小流程摘要和临时库 smoke 已完成。B4 只消费后端投影并保留事件 source，不展示 FeedbackTimeline，也不提供普通事件录入、事件纠错或事件作废 UI。
-- **B5/B6 未完成边界**：B5 FeedbackEvent 时间线、手工事件录入及纠错/作废尚未开始；B6 `deriveDecision` 仍读取 legacy Job 沟通字段，旧沟通 PATCH 仍保留，尚未切换 Application projection。
+- **B5 完成边界**：FeedbackEvent 时间线、手工事实录入、事件作废和可选替代事件已完成。正式事实继续由用户确认后写入，历史事件不原地覆盖。
+- **B6 未完成边界**：`deriveDecision` 仍未切换到事件投影，旧 `communicationStatus` 写入仍未禁用。
 
 正式 PRD 决定产品范围，阶段交接决定实际完成状态。A 技术设计仍保留实施前的 Draft 和历史依赖事实；B 以 main 中已经完成的 Hash Router、Page Scope、Runtime Gate 1 与生命周期保护为真实基线，不将 A 文档中的历史“待安装”状态解释为当前事实。
 
