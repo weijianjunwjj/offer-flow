@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态**：待人工审阅
+- **状态**：已确认，B0 实施中
 - **日期**：2026-07-13
 - **产品输入**：`docs/prd/offerflow-v0.7.md` Draft 0.4
 - **实施状态输入**：`docs/handoffs/offerflow-v0.7-stage-handoff-2026-07-13.md`
@@ -226,6 +226,10 @@ Application 不设置业务自然唯一键。合法重复投递必须被允许�
 - 如果误录实际属于另一条 Application，可设置 `supersededByApplicationId`；这不是自动合并，旧记录仍可审计。
 - Job/JD 相似、名称相似或 AI 去重建议只显示提示，用户确认前不合并、不覆盖。
 - Job 有 Application 后，Job 删除返回 409；先处理或作废关联流程，仍不级联删除历史。
+
+作废事实源不变量：`Application.voidedAt/voidReason` 是生命周期当前正式事实；`application_voided` 是修改该事实时同一事务追加的审计事件，不能独立决定作废状态。投影以 Application 行为准：行已作废但缺少审计事件，或只有审计事件但行未作废，都输出 degraded warning。B2 必须在同一 SQLite transaction 中同时更新 Application 行并追加审计事件。
+
+元数据纠正不变量：Application 行保存当前正式上下文；`application_metadata_corrected` 只记录修改审计，不是第二套当前值来源。投影不得根据 correction event 覆盖 Application 当前字段。
 
 ### 6.5 去重与招聘主体裁定
 
