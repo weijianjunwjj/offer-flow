@@ -65,6 +65,7 @@ import ImportReviewSection from './job-detail/ImportReviewSection.vue';
 import CommunicationSection from './job-detail/CommunicationSection.vue';
 import JobDecisionSection from './job-detail/JobDecisionSection.vue';
 import ApplicationSection from './job-detail/ApplicationSection.vue';
+import FeedbackTimelineSection from './job-detail/FeedbackTimelineSection.vue';
 
 const props = defineProps<{
   jobId: string | null;
@@ -944,7 +945,13 @@ async function handleSave(): Promise<void> {
 
 function confirmLeave(): boolean {
   const applicationBusy = pageScope?.actionStatus.applicationWrite === 'loading';
-  if (!isDirty.value && !pageScope?.isApplicationDirty && !saveInFlight.value && !applicationBusy) return true;
+  if (
+    !isDirty.value
+    && !pageScope?.isApplicationDirty
+    && !pageScope?.isEventDirty
+    && !saveInFlight.value
+    && !applicationBusy
+  ) return true;
   return navigationConfirm.confirmDiscardChanges(
     saveInFlight.value || applicationBusy
       ? '数据正在保存，确定仍要离开吗？'
@@ -956,6 +963,7 @@ function handleBeforeUnload(event: BeforeUnloadEvent): void {
   if (
     !isDirty.value
     && !pageScope?.isApplicationDirty
+    && !pageScope?.isEventDirty
     && !saveInFlight.value
     && pageScope?.actionStatus.applicationWrite !== 'loading'
   ) return;
@@ -1182,7 +1190,15 @@ async function analyzeWithLlm(): Promise<void> {
 
     <ApplicationSection v-if="isEdit" :scope-required="isEdit" />
 
+    <FeedbackTimelineSection
+      v-if="isEdit && pageScope?.jobMemoryV2Enabled === true"
+      :scope-required="isEdit"
+    />
+
     <CommunicationSection v-if="isEdit" :scope-required="isEdit" class="followup-panel">
+      <p v-if="pageScope?.jobMemoryV2Enabled === true" class="legacy-decision-note">
+        事件时间线已经启用，当前决策规则仍处于 legacy 兼容阶段。B6 将单独切换决策输入。
+      </p>
       <div class="followup-head">
         <div>
           <h2>跟进决策</h2>

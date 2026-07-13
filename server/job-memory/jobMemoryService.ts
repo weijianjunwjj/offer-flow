@@ -22,7 +22,6 @@ import {
   UserFeedbackEventInputSchema,
   VoidApplicationRequestSchema,
   VoidFeedbackEventRequestSchema,
-  type AppendFeedbackEventRequest,
   type CreateApplicationRequest,
   type UserFeedbackEventInput,
 } from './dtoSchemas';
@@ -613,4 +612,4 @@ export function parseUserFeedbackEventInput(value: unknown): UserFeedbackEventIn
   return parseDto(UserFeedbackEventInputSchema, value);
 }
 
-export type { AppendFeedbackEventRequest, CreateApplicationRequest };
+export type { CreateApplicationRequest };

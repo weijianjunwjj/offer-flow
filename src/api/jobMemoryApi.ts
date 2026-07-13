@@ -8,8 +8,10 @@ import {
   type JobSummary,
 } from '../domain/job-memory';
 import type {
+  AppendFeedbackEventRequest,
   CreateApplicationRequest,
   UpdateApplicationMetadataRequest,
+  VoidFeedbackEventRequest,
   VoidApplicationRequest,
 } from '../../server/job-memory/dtoSchemas';
 import { ApiError, apiGet, apiSend, type ReadOptions } from './client';
@@ -25,11 +27,15 @@ const ApiErrorBodySchema = z.strictObject({
 export type ApplicationApiErrorCode =
   | 'JOB_NOT_FOUND'
   | 'APPLICATION_NOT_FOUND'
+  | 'FEEDBACK_EVENT_NOT_FOUND'
   | 'RESUME_VERSION_NOT_FOUND'
   | 'ARCHIVED_RESUME_NOT_SELECTABLE'
   | 'VERSION_CONFLICT'
   | 'IDEMPOTENCY_KEY_REUSED'
   | 'APPLICATION_ALREADY_VOIDED'
+  | 'EVENT_ALREADY_VOIDED'
+  | 'AUDIT_EVENT_NOT_USER_CREATABLE'
+  | 'INVALID_REPLACEMENT_EVENT'
   | 'NO_EFFECTIVE_CHANGE'
   | 'VALIDATION_ERROR'
   | 'BUSINESS_RULE_VIOLATION'
@@ -41,11 +47,15 @@ export type ApplicationApiErrorCode =
 const stableCodes = new Set<ApplicationApiErrorCode>([
   'JOB_NOT_FOUND',
   'APPLICATION_NOT_FOUND',
+  'FEEDBACK_EVENT_NOT_FOUND',
   'RESUME_VERSION_NOT_FOUND',
   'ARCHIVED_RESUME_NOT_SELECTABLE',
   'VERSION_CONFLICT',
   'IDEMPOTENCY_KEY_REUSED',
   'APPLICATION_ALREADY_VOIDED',
+  'EVENT_ALREADY_VOIDED',
+  'AUDIT_EVENT_NOT_USER_CREATABLE',
+  'INVALID_REPLACEMENT_EVENT',
   'NO_EFFECTIVE_CHANGE',
   'VALIDATION_ERROR',
   'BUSINESS_RULE_VIOLATION',
@@ -135,6 +145,21 @@ export const jobMemoryApi = {
   voidApplication(applicationId: string, input: VoidApplicationRequest): Promise<JobMemoryBundle> {
     return request(
       () => apiSend<unknown>(`/applications/${encodeURIComponent(applicationId)}/void`, 'POST', input),
+      JobMemoryBundleSchema,
+    );
+  },
+  appendFeedbackEvent(
+    applicationId: string,
+    input: AppendFeedbackEventRequest,
+  ): Promise<JobMemoryBundle> {
+    return request(
+      () => apiSend<unknown>(`/applications/${encodeURIComponent(applicationId)}/events`, 'POST', input),
+      JobMemoryBundleSchema,
+    );
+  },
+  voidFeedbackEvent(eventId: string, input: VoidFeedbackEventRequest): Promise<JobMemoryBundle> {
+    return request(
+      () => apiSend<unknown>(`/feedback-events/${encodeURIComponent(eventId)}/void`, 'POST', input),
       JobMemoryBundleSchema,
     );
   },

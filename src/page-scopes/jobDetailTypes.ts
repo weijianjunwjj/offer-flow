@@ -10,11 +10,18 @@ import type {
 } from '../domain/job-memory';
 import type { ApplicationApiPort } from '../api/jobMemoryApi';
 import type {
+  AppendFeedbackEventRequest,
   CreateApplicationRequest,
   UpdateApplicationMetadataRequest,
+  VoidFeedbackEventRequest,
   VoidApplicationRequest,
 } from '../../server/job-memory/dtoSchemas';
 import type { ApplicationDraftState } from '../pages/job-detail/applicationSectionModel';
+import type {
+  FeedbackEventDraft,
+  FeedbackEventVoidDraft,
+  TimelineUiState,
+} from '../pages/job-detail/feedbackTimelineModel';
 
 export interface JobEditDraft {
   company: string;
@@ -83,6 +90,10 @@ export interface JobDetailState {
   actionStatus: Record<string, 'idle' | 'loading' | 'done' | 'error'>;
   selectedApplicationId: string | null;
   applicationDrafts: ApplicationDraftState;
+  eventDraft: FeedbackEventDraft | null;
+  eventVoidDraft: FeedbackEventVoidDraft | null;
+  eventDraftBaselineFingerprint: string;
+  timelineUi: TimelineUiState;
 }
 
 export interface JobDetailSource {
@@ -101,4 +112,10 @@ export interface ApplicationWriteActions {
     input: UpdateApplicationMetadataRequest,
   ): Promise<JobMemoryBundle>;
   voidApplication(applicationId: string, input: VoidApplicationRequest): Promise<JobMemoryBundle>;
+  appendFeedbackEvent(
+    applicationId: string,
+    input: AppendFeedbackEventRequest,
+  ): Promise<JobMemoryBundle>;
+  voidFeedbackEvent(eventId: string, input: VoidFeedbackEventRequest): Promise<JobMemoryBundle>;
+  resetEventDrafts(): void;
 }

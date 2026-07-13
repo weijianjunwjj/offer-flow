@@ -8,6 +8,7 @@ import {
   fingerprintApplicationDrafts,
   reconcileSelectedApplicationId,
 } from '../pages/job-detail/applicationSectionModel';
+import { fingerprintEventDrafts } from '../pages/job-detail/feedbackTimelineModel';
 import './registerPageRuntime';
 import type {
   AcceptUpdatedJobOptions,
@@ -31,6 +32,7 @@ interface LoadRuntime {
 interface JobDetailGetters {
   isDirty(): boolean;
   isApplicationDirty(): boolean;
+  isEventDirty(): boolean;
   job(): JobRecord | null;
 }
 
@@ -194,6 +196,10 @@ function emptyState(): JobDetailState {
     actionStatus: {},
     selectedApplicationId: null,
     applicationDrafts,
+    eventDraft: null,
+    eventVoidDraft: null,
+    eventDraftBaselineFingerprint: fingerprintEventDrafts(null, null),
+    timelineUi: { composerExpanded: false, focusedEventId: null },
   };
 }
 
@@ -207,6 +213,13 @@ function resetApplicationDrafts(scope: JobDetailScopeHost): void {
   scope.applicationDrafts.baselineFingerprint = fingerprintApplicationDrafts(scope.applicationDrafts);
 }
 
+function resetEventDrafts(scope: JobDetailScopeHost): void {
+  scope.eventDraft = null;
+  scope.eventVoidDraft = null;
+  scope.eventDraftBaselineFingerprint = fingerprintEventDrafts(null, null);
+  scope.timelineUi = { composerExpanded: false, focusedEventId: null };
+}
+
 function memorySummaries(memory: JobMemoryBundle) {
   return memory.applications.map(({ record, projection }) => ({ record, projection }));
 }
@@ -214,6 +227,7 @@ function memorySummaries(memory: JobMemoryBundle) {
 async function executeMemoryWrite(
   scope: JobDetailScopeHost,
   operation: (api: NonNullable<JobDetailScopeInjection['api']['jobMemory']>) => Promise<JobMemoryBundle>,
+  draftOwner: 'application' | 'event',
 ): Promise<JobMemoryBundle> {
   const api = scope.api.jobMemory;
   if (api === undefined || scope.jobMemoryV2Enabled !== true) {
@@ -231,7 +245,8 @@ async function executeMemoryWrite(
       && requestedJobId === scope.jobId
     ) {
       scope.acceptMemoryBundle(memory);
-      resetApplicationDrafts(scope);
+      if (draftOwner === 'application') resetApplicationDrafts(scope);
+      else resetEventDrafts(scope);
       scope.actionStatus.applicationWrite = 'done';
     }
     return memory;
@@ -240,7 +255,11 @@ async function executeMemoryWrite(
       scope.actionStatus.applicationWrite = 'error';
       if (
         error instanceof ApplicationApiError
-        && (error.code === 'NETWORK_ERROR' || error.code === 'VERSION_CONFLICT')
+        && (
+          error.code === 'NETWORK_ERROR'
+          || error.code === 'VERSION_CONFLICT'
+          || error.code === 'EVENT_ALREADY_VOIDED'
+        )
       ) {
         try {
           await scope.reloadJobBundle();
@@ -265,11 +284,16 @@ export const useJobDetailScope = definePageScope<
   getters: {
     isDirty(): boolean {
       return fingerprintJobDraft(this.jobDraft) !== this.baselineFingerprint
-        || this.isApplicationDirty;
+        || this.isApplicationDirty
+        || this.isEventDirty;
     },
     isApplicationDirty(): boolean {
       return fingerprintApplicationDrafts(this.applicationDrafts)
         !== this.applicationDrafts.baselineFingerprint;
+    },
+    isEventDirty(): boolean {
+      return fingerprintEventDrafts(this.eventDraft, this.eventVoidDraft)
+        !== this.eventDraftBaselineFingerprint;
     },
     job(): JobRecord | null {
       return this.$source.bundle?.job ?? null;
@@ -277,6 +301,7 @@ export const useJobDetailScope = definePageScope<
   },
   actions: {
     acceptBundle(bundle: JobDetailBundle): void {
+      const previousSelectedApplicationId = this.selectedApplicationId;
       const draft = createJobDraft(bundle.job);
       this.$source.bundle = {
         ...bundle,
@@ -287,6 +312,7 @@ export const useJobDetailScope = definePageScope<
       this.selectedApplicationId = isJobDetailBundleV2(bundle)
         ? reconcileSelectedApplicationId(bundle.memory.applications, this.selectedApplicationId)
         : null;
+      if (this.selectedApplicationId !== previousSelectedApplicationId) resetEventDrafts(this);
       this.loadError = null;
     },
     acceptMemoryBundle(memory: JobMemoryBundle): void {
@@ -300,10 +326,12 @@ export const useJobDetailScope = definePageScope<
           [bundle.jobId]: memorySummaries(memory),
         },
       };
+      const previousSelectedApplicationId = this.selectedApplicationId;
       this.selectedApplicationId = reconcileSelectedApplicationId(
         memory.applications,
         this.selectedApplicationId,
       );
+      if (this.selectedApplicationId !== previousSelectedApplicationId) resetEventDrafts(this);
     },
     acceptUpdatedJob(updatedJob: JobRecord, options: AcceptUpdatedJobOptions = {}): void {
       const bundle = this.$source.bundle;
@@ -341,13 +369,22 @@ export const useJobDetailScope = definePageScope<
       return updated;
     },
     async createApplication(input): Promise<JobMemoryBundle> {
-      return executeMemoryWrite(this, (api) => api.createApplication(this.jobId, input));
+      return executeMemoryWrite(this, (api) => api.createApplication(this.jobId, input), 'application');
     },
     async updateApplication(applicationId, input): Promise<JobMemoryBundle> {
-      return executeMemoryWrite(this, (api) => api.updateApplication(applicationId, input));
+      return executeMemoryWrite(this, (api) => api.updateApplication(applicationId, input), 'application');
     },
     async voidApplication(applicationId, input): Promise<JobMemoryBundle> {
-      return executeMemoryWrite(this, (api) => api.voidApplication(applicationId, input));
+      return executeMemoryWrite(this, (api) => api.voidApplication(applicationId, input), 'application');
+    },
+    async appendFeedbackEvent(applicationId, input): Promise<JobMemoryBundle> {
+      return executeMemoryWrite(this, (api) => api.appendFeedbackEvent(applicationId, input), 'event');
+    },
+    async voidFeedbackEvent(eventId, input): Promise<JobMemoryBundle> {
+      return executeMemoryWrite(this, (api) => api.voidFeedbackEvent(eventId, input), 'event');
+    },
+    resetEventDrafts(): void {
+      resetEventDrafts(this);
     },
     async saveJobDraft(): Promise<JobRecord | null> {
       if (this.jobDraft === null) return null;

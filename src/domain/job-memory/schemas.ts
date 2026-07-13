@@ -291,6 +291,13 @@ export const FeedbackEventRecordSchema = feedbackEventUnion.superRefine((event, 
       message: 'eventAt 为空时 timePrecision 必须为 unknown',
     });
   }
+  if (event.eventAt !== null && event.timePrecision === 'unknown') {
+    context.addIssue({
+      code: 'custom',
+      path: ['eventAt'],
+      message: 'timePrecision=unknown 时 eventAt 必须为空',
+    });
+  }
   if (event.eventType === 'event_voided' && event.targetEventId !== event.payload.targetEventId) {
     context.addIssue({
       code: 'custom',

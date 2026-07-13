@@ -23,6 +23,7 @@ import {
   sortApplicationMemories,
   type ApplicationCreateDraft,
 } from './applicationSectionModel';
+import { encodeEventTime } from './feedbackEventTime';
 
 const props = defineProps<{ scopeRequired: boolean }>();
 const scope = useInjectedDetailScope(props.scopeRequired);
@@ -187,13 +188,18 @@ function closeDraft(): void {
 }
 
 function setSelected(applicationId: string): void {
-  if (scope) scope.selectedApplicationId = applicationId;
+  if (!scope || applicationId === scope.selectedApplicationId) return;
+  if (
+    scope.isEventDirty
+    && !navigationConfirm.confirmDiscardChanges('切换求职流程会放弃当前反馈事实草稿，是否继续？')
+  ) return;
+  scope.resetEventDrafts();
+  scope.selectedApplicationId = applicationId;
 }
 
 function eventAtFromDraft(draft: ApplicationCreateDraft): number | null {
-  if (draft.initialEventTimePrecision === 'unknown') return null;
-  const parsed = new Date(draft.initialEventAtInput).getTime();
-  return Number.isFinite(parsed) ? parsed : null;
+  const parsed = encodeEventTime(draft.initialEventAtInput, draft.initialEventTimePrecision);
+  return parsed.ok ? parsed.value : null;
 }
 
 function createValidationError(draft: ApplicationCreateDraft): string | null {
@@ -357,7 +363,7 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
 
     <p class="decision-context">
       决策上下文：<strong>{{ selected ? `当前流程 ${selected.record.id}` : '岗位级建议' }}</strong>。
-      B4 仍沿用旧 Job 沟通规则，尚未按事件投影切换 deriveDecision。
+      B5 时间线仅展示事件投影；当前 deriveDecision 仍沿用旧 Job 沟通规则，将在 B6 单独切换。
     </p>
 
     <div v-if="applications.length === 0" class="empty-state">

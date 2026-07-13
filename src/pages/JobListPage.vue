@@ -378,6 +378,9 @@ function dash(value: string): string {
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleString();
 }
+function formatOptionalTime(ts: number | null): string {
+  return ts === null ? '发生时间未知' : formatTime(ts);
+}
 </script>
 
 <template>
@@ -551,7 +554,7 @@ function formatTime(ts: number): string {
                   <span v-if="summary.defaultApplication">
                     {{ applicationChannelLabel(summary.defaultApplication.record.channel, summary.defaultApplication.record.channelOtherLabel) }}
                     · {{ summary.defaultResumeVersionName ?? '未知历史简历' }}
-                    · 最近事实 {{ formatTime(summary.defaultApplication.projection.lastMeaningfulEventAt ?? summary.defaultApplication.record.createdAt) }}
+                    · 最近事实 {{ formatOptionalTime(summary.defaultApplication.projection.lastMeaningfulEventAt) }}
                   </span>
                   <span v-if="summary.projectionDiagnostics.length" class="summary-warning">
                     {{ summary.projectionDiagnostics.length }} 条流程存在投影警告/错误

@@ -116,6 +116,13 @@ export const UserFeedbackEventInputSchema = z.discriminatedUnion('eventType', [
       message: 'eventAt 为空时 timePrecision 必须为 unknown',
     });
   }
+  if (event.eventAt !== null && event.timePrecision === 'unknown') {
+    context.addIssue({
+      code: 'custom',
+      path: ['eventAt'],
+      message: 'timePrecision=unknown 时 eventAt 必须为空',
+    });
+  }
 });
 
 export const CreateApplicationRequestSchema = z.strictObject({
@@ -235,5 +242,9 @@ export type UserFeedbackEventInput = z.infer<typeof UserFeedbackEventInputSchema
 export type CreateApplicationRequest = z.infer<typeof CreateApplicationRequestSchema>;
 export type UpdateApplicationMetadataRequest = z.infer<typeof UpdateApplicationMetadataRequestSchema>;
 export type VoidApplicationRequest = z.infer<typeof VoidApplicationRequestSchema>;
-export type AppendFeedbackEventRequest = z.infer<typeof AppendFeedbackEventRequestSchema>;
+export type AppendFeedbackEventRequest = {
+  idempotencyKey: string;
+  expectedApplicationVersion: number;
+} & UserFeedbackEventInput;
+export type ParsedAppendFeedbackEventRequest = z.infer<typeof AppendFeedbackEventRequestSchema>;
 export type VoidFeedbackEventRequest = z.infer<typeof VoidFeedbackEventRequestSchema>;
