@@ -21,14 +21,14 @@ export function normalizeJobId(value: unknown): string | null {
 }
 
 export interface RouterFeatureOptions {
-  resumeVersionManagementEnabled: boolean;
+  jobMemoryV2Enabled: boolean;
 }
 
 export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
   return [
     { path: '/', redirect: { name: 'jobs' } },
     { path: '/profile', name: 'profile', component: ProfileConfigPage },
-    options.resumeVersionManagementEnabled
+    options.jobMemoryV2Enabled
       ? {
         path: '/profile-versions',
         name: 'profile-versions',

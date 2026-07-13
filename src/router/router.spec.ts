@@ -32,7 +32,7 @@ describe('OfferFlow Router', () => {
 
   it('默认关闭时深链接安全重定向到 Profile，不加载 B3 页面', async () => {
     const router = createOfferFlowRouter(createMemoryHistory(), {
-      resumeVersionManagementEnabled: false,
+      jobMemoryV2Enabled: false,
     });
     await router.push('/profile-versions');
     await router.isReady();
@@ -45,7 +45,7 @@ describe('OfferFlow Router', () => {
 
   it('显式开启时注册 /profile-versions，前进后退保持原路由语义', async () => {
     const router = createOfferFlowRouter(createMemoryHistory(), {
-      resumeVersionManagementEnabled: true,
+      jobMemoryV2Enabled: true,
     });
     await router.push('/profile');
     await router.isReady();

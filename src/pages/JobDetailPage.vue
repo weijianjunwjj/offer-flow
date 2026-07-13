@@ -6,6 +6,7 @@ import { jobsApi } from '../api/jobsApi';
 import { profileApi } from '../api/profileApi';
 import { useJobDetailScope } from '../page-scopes/jobDetailScope';
 import { features } from '../config/features';
+import { jobMemoryApi } from '../api/jobMemoryApi';
 
 const props = defineProps<{ jobId: string | null }>();
 const router = useRouter();
@@ -13,8 +14,9 @@ const scope = props.jobId === null
   ? null
   : useJobDetailScope({
       jobId: props.jobId,
-      api: { jobs: jobsApi, profile: profileApi },
+      api: { jobs: jobsApi, profile: profileApi, jobMemory: jobMemoryApi },
       runtimeEnabled: features.runtimeJobBundleEnabled,
+      jobMemoryV2Enabled: features.jobMemoryV2Enabled,
     });
 const isLoading = computed(() => scope
   ? scope.runtimeEnabled === true

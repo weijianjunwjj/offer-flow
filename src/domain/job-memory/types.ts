@@ -1,4 +1,8 @@
-import type { CommunicationStatus } from '../../storage/types';
+import type {
+  CommunicationStatus,
+  JobRecord,
+  JobSeekerProfile,
+} from '../../storage/types';
 
 export type ApplicationOrigin = 'outbound' | 'inbound' | 'unknown';
 
@@ -315,4 +319,46 @@ export interface ApplicationProjection {
 export interface ApplicationWithProjection {
   application: ApplicationRecord;
   projection: ApplicationProjection;
+}
+
+export interface ApplicationMemory {
+  record: ApplicationRecord;
+  events: FeedbackEventRecord[];
+  projection: ApplicationProjection;
+}
+
+export interface JobMemoryBundle {
+  applications: ApplicationMemory[];
+  resumeVersions: ResumeVersionRecord[];
+  activeResumeVersionId: string | null;
+}
+
+export interface ApplicationSummary {
+  record: ApplicationRecord;
+  projection: ApplicationProjection;
+}
+
+export interface ProjectionDiagnostic {
+  applicationId: string;
+  projectionStatus: ProjectionStatus;
+  warnings: ProjectionWarning[];
+  errors: ProjectionError[];
+}
+
+export interface JobSummary {
+  job: JobRecord;
+  applicationCount: number;
+  activeApplicationCount: number;
+  defaultApplication: ApplicationSummary | null;
+  defaultResumeVersionName: string | null;
+  projectionDiagnostics: ProjectionDiagnostic[];
+}
+
+export interface JobDetailBundleV2 {
+  jobId: string;
+  job: JobRecord;
+  profile: JobSeekerProfile | null;
+  allJobs: JobRecord[];
+  applicationSummariesByJob: Record<string, ApplicationSummary[]>;
+  memory: JobMemoryBundle;
 }

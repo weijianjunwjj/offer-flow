@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_OFFERFLOW_RESUME_VERSION_MANAGEMENT?: string;
+  readonly VITE_OFFERFLOW_JOB_MEMORY_V2?: string;
 }
 
 interface ImportMeta {

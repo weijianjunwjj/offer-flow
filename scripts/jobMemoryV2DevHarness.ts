@@ -8,15 +8,19 @@ import {
   type ViteDevServer,
 } from 'vite';
 import {
+  JobDetailBundleV2Schema,
+  JobMemoryBundleSchema,
+  JobSummariesResponseSchema,
   ResumeVersionListResponseSchema,
-  ResumeVersionRecordSchema,
 } from '../src/domain/job-memory';
 import type { JobSeekerProfile } from '../src/storage';
 import { openDb, type SqliteDatabase } from '../server/db';
 import { buildServer } from '../server/index';
 import { getDatabaseSchemaVersion } from '../server/migrations';
 import { ProfileRepository } from '../server/repositories/profileRepository';
+import { JobRepository } from '../server/repositories/jobRepository';
 import { initSchema } from '../server/schema';
+import { JobMemoryService } from '../server/job-memory/jobMemoryService';
 
 const DEV_HOST = '127.0.0.1';
 const DEV_API_PORT = 17365;
@@ -24,16 +28,57 @@ const DEV_WEB_PORT = 5173;
 const TEMP_PREFIX = 'offerflow-job-memory-v2-';
 
 export const SYNTHETIC_DEV_PROFILE: JobSeekerProfile = Object.freeze({
-  resumeText: '【B3 临时联调测试数据】6 年前端经验，熟悉 Vue 3 与 TypeScript。',
-  projectExperience: '【B3 临时联调测试数据】OfferFlow：本地优先的 AI 求职机会决策台。',
+  resumeText: '【B4 临时联调测试数据】6 年前端经验，熟悉 Vue 3 与 TypeScript。',
+  projectExperience: '【B4 临时联调测试数据】OfferFlow：本地优先的 AI 求职机会决策台。',
   targetCity: '苏州（临时测试）',
   targetRole: '高级前端工程师（临时测试）',
   expectedSalary: '仅测试，不代表真实期望',
   acceptOutsourcing: false,
   acceptOvertime: false,
   jobSearchFocus: 'growth',
-  weaknessNote: 'B3 临时联调合成 Profile；退出后随临时数据库删除。',
+  weaknessNote: 'B4 临时联调合成 Profile；退出后随临时数据库删除。',
 });
+
+export const SYNTHETIC_DEV_JOB_IDS = ['b4-dev-job-frontend', 'b4-dev-job-platform'] as const;
+
+function seedSyntheticJobMemoryData(db: SqliteDatabase): void {
+  const jobs = new JobRepository(db);
+  jobs.create({
+    id: SYNTHETIC_DEV_JOB_IDS[0], company: 'B4 临时甲公司', role: '高级前端工程师',
+    city: '苏州', salaryRange: '20-30K', jdText: 'Vue 3 TypeScript（临时数据）',
+  });
+  jobs.create({
+    id: SYNTHETIC_DEV_JOB_IDS[1], company: 'B4 临时乙公司', role: '前端平台工程师',
+    city: '上海', salaryRange: '25-35K', jdText: '工程化与平台建设（临时数据）',
+  });
+  let id = 0;
+  let now = 1_000;
+  const service = new JobMemoryService(db, {
+    now: () => ++now,
+    createId: () => `b4-dev-resume-${++id}`,
+  });
+  const first = service.createResumeVersion({
+    idempotencyKey: 'b4-dev-resume-key-1',
+    name: 'B4 临时主简历',
+    source: 'profile_snapshot',
+    summary: '前端主简历，仅用于临时联调',
+    contentSnapshot: {
+      resumeText: SYNTHETIC_DEV_PROFILE.resumeText,
+      projectExperience: SYNTHETIC_DEV_PROFILE.projectExperience,
+    },
+  });
+  service.createResumeVersion({
+    idempotencyKey: 'b4-dev-resume-key-2',
+    name: 'B4 临时平台方向简历',
+    source: 'pasted_text',
+    summary: '平台方向，仅用于临时联调',
+    contentSnapshot: {
+      resumeText: `${SYNTHETIC_DEV_PROFILE.resumeText}\n平台工程方向`,
+      projectExperience: SYNTHETIC_DEV_PROFILE.projectExperience,
+    },
+  });
+  service.activateResumeVersion(first.id, { expectedVersion: first.rowVersion });
+}
 
 function isInsidePath(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate);
@@ -79,6 +124,7 @@ export function createTemporaryJobMemoryWorkspace(): TemporaryJobMemoryWorkspace
       throw new Error('临时联调数据库未初始化到 schema v2');
     }
     new ProfileRepository(db).save({ ...SYNTHETIC_DEV_PROFILE });
+    seedSyntheticJobMemoryData(db);
     const openedDb = db;
     return {
       tempDir,
@@ -103,7 +149,7 @@ export function jobMemoryV2ViteConfig(): InlineConfig {
     configFile: path.resolve('vite.config.ts'),
     envFile: false,
     define: {
-      'import.meta.env.VITE_OFFERFLOW_RESUME_VERSION_MANAGEMENT': JSON.stringify('true'),
+      'import.meta.env.VITE_OFFERFLOW_JOB_MEMORY_V2': JSON.stringify('true'),
     },
     server: {
       host: DEV_HOST,
@@ -113,8 +159,8 @@ export function jobMemoryV2ViteConfig(): InlineConfig {
   };
 }
 
-export function hasExplicitFrontendResumeVersionFlag(config: InlineConfig): boolean {
-  return config.define?.['import.meta.env.VITE_OFFERFLOW_RESUME_VERSION_MANAGEMENT']
+export function hasExplicitFrontendJobMemoryV2Flag(config: InlineConfig): boolean {
+  return config.define?.['import.meta.env.VITE_OFFERFLOW_JOB_MEMORY_V2']
     === JSON.stringify('true');
 }
 
@@ -214,6 +260,8 @@ export interface JobMemoryV2SmokeReport {
   injectedDbOnly: true;
   syntheticProfileOnly: true;
   createdResumeVersionId: string;
+  createdApplicationCount: 2;
+  jobSummaryCount: 2;
   tempDirRemoved: true;
 }
 
@@ -221,6 +269,8 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
   const session = await startJobMemoryV2DevSession({ withVite: false, apiPort: 0 });
   const tempDir = session.tempDir;
   let createdResumeVersionId = '';
+  let createdApplicationCount: 2 = 2;
+  let jobSummaryCount: 2 = 2;
   try {
     const metadata = await fetchJson(`${session.apiUrl}/meta/db-path`);
     if (
@@ -234,35 +284,74 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     const listBefore = ResumeVersionListResponseSchema.parse(
       await fetchJson(`${session.apiUrl}/resume-versions`),
     );
-    if (listBefore.resumeVersions.length !== 0) {
-      throw new Error('临时联调数据库不应预置简历版本');
+    if (listBefore.resumeVersions.length !== 2 || listBefore.activeResumeVersionId === null) {
+      throw new Error('临时联调数据库应预置两个简历版本和 active pointer');
     }
-    const created = ResumeVersionRecordSchema.parse(await fetchJson(
-      `${session.apiUrl}/resume-versions`,
+    const [activeResume, alternateResume] = [
+      listBefore.resumeVersions.find(({ id }) => id === listBefore.activeResumeVersionId),
+      listBefore.resumeVersions.find(({ id }) => id !== listBefore.activeResumeVersionId),
+    ];
+    if (!activeResume || !alternateResume) throw new Error('临时联调简历种子不完整');
+    createdResumeVersionId = activeResume.id;
+    const applicationPayload = (key: string, resumeVersionId: string, channel: 'boss' | 'referral') => ({
+      idempotencyKey: key,
+      resumeVersionId,
+      origin: 'outbound',
+      channel,
+      channelOtherLabel: null,
+      recruitingEntity: {
+        kind: 'direct_employer', name: 'B4 临时甲公司', employerGroupKey: null, endClientName: null,
+      },
+      primaryContact: null,
+      cityContext: { jobCity: '苏州', marketCity: '苏州', workMode: 'hybrid' },
+      draftMessageText: null,
+      initialEvent: {
+        eventType: 'applied', eventAt: null, timePrecision: 'unknown', actor: 'user',
+        sourceConfidence: 'exact', evidenceLevel: 'medium', channel, note: null, reasonCode: null, payload: {},
+      },
+    });
+    JobMemoryBundleSchema.parse(await fetchJson(
+      `${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}/applications`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          idempotencyKey: 'b3-smoke-resume-version',
-          name: 'B3 临时联调简历',
-          source: 'profile_snapshot',
-          summary: '仅用于验证临时 v2 路由，退出即删除',
-          contentSnapshot: {
-            resumeText: SYNTHETIC_DEV_PROFILE.resumeText,
-            projectExperience: SYNTHETIC_DEV_PROFILE.projectExperience,
-          },
-        }),
+        body: JSON.stringify(applicationPayload('b4-smoke-application-1', activeResume.id, 'boss')),
       },
     ));
-    createdResumeVersionId = created.id;
-    const listAfter = ResumeVersionListResponseSchema.parse(
-      await fetchJson(`${session.apiUrl}/resume-versions`),
-    );
-    if (listAfter.resumeVersions.length !== 1 || listAfter.resumeVersions[0]?.id !== created.id) {
-      throw new Error('临时联调 ResumeVersion 创建后未能稳定读回');
+    const memoryAfterRepeat = JobMemoryBundleSchema.parse(await fetchJson(
+      `${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}/applications`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(applicationPayload('b4-smoke-application-2', alternateResume.id, 'referral')),
+      },
+    ));
+    if (memoryAfterRepeat.applications.length !== 2) {
+      throw new Error('临时联调未能为同一岗位保存两次独立 Application');
     }
-    if (!hasExplicitFrontendResumeVersionFlag(jobMemoryV2ViteConfig())) {
-      throw new Error('临时联调入口未显式开启前端 ResumeVersion flag');
+    const summaries = JobSummariesResponseSchema.parse(
+      await fetchJson(`${session.apiUrl}/jobs/summaries`),
+    );
+    const targetSummary = summaries.find(({ job }) => job.id === SYNTHETIC_DEV_JOB_IDS[0]);
+    if (
+      summaries.length !== 2
+      || targetSummary?.applicationCount !== 2
+      || targetSummary.activeApplicationCount !== 2
+      || targetSummary.defaultApplication === null
+    ) {
+      throw new Error('临时联调岗位摘要未反映重复投递');
+    }
+    const bundle = JobDetailBundleV2Schema.parse(
+      await fetchJson(`${session.apiUrl}/jobs/${SYNTHETIC_DEV_JOB_IDS[0]}/bundle`),
+    );
+    if (
+      bundle.memory.applications.length !== 2
+      || bundle.applicationSummariesByJob[SYNTHETIC_DEV_JOB_IDS[0]]?.length !== 2
+    ) {
+      throw new Error('临时联调 JobDetail Bundle 未读回完整流程 memory');
+    }
+    if (!hasExplicitFrontendJobMemoryV2Flag(jobMemoryV2ViteConfig())) {
+      throw new Error('临时联调入口未显式开启前端 Job Memory v2 flag');
     }
   } finally {
     await session.close();
@@ -277,6 +366,8 @@ export async function runJobMemoryV2Smoke(): Promise<JobMemoryV2SmokeReport> {
     injectedDbOnly: true,
     syntheticProfileOnly: true,
     createdResumeVersionId,
+    createdApplicationCount,
+    jobSummaryCount,
     tempDirRemoved: true,
   };
 }

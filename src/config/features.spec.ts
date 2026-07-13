@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { features, readBooleanFeatureFlag } from './features';
 
-describe('B3 前端 feature gate', () => {
-  it('默认关闭 ResumeVersion 管理入口', () => {
-    expect(features.resumeVersionManagementEnabled).toBe(false);
+describe('B4 前端统一 feature gate', () => {
+  it('默认关闭 Job Memory v2 能力', () => {
+    expect(features.jobMemoryV2Enabled).toBe(false);
   });
 
   it('只把显式 true 解析为开启', () => {

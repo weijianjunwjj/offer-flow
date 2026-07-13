@@ -69,6 +69,9 @@ export class JobMemoryQueries {
   getJobSummaries(): JobSummary[] {
     const jobs = this.jobs.list();
     const summaries = this.applicationSummariesByJob(jobs);
+    const resumeNameById = new Map(
+      this.resumeVersions.listResumeVersions().map((resumeVersion) => [resumeVersion.id, resumeVersion.name]),
+    );
     return jobs.map((job) => {
       const applications = summaries[job.id] ?? [];
       const selected = selectDefaultApplication(applications.map((summary) => ({
@@ -78,9 +81,18 @@ export class JobMemoryQueries {
       return {
         job,
         applicationCount: applications.length,
+        activeApplicationCount: applications.filter((application) => (
+          application.record.voidedAt === null
+          && !application.projection.isVoided
+          && !application.projection.isClosed
+        )).length,
         defaultApplication: selected === null
           ? null
           : applications.find((summary) => summary.record.id === selected.application.id) ?? null,
+        defaultResumeVersionName: selected?.application.resumeVersionId === null
+          || selected?.application.resumeVersionId === undefined
+          ? null
+          : resumeNameById.get(selected.application.resumeVersionId) ?? null,
         projectionDiagnostics: applications
           .filter((summary) => summary.projection.projectionStatus !== 'valid')
           .map((summary) => ({

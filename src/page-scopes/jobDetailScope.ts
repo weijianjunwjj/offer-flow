@@ -1,10 +1,17 @@
 import { injectPageScope, definePageScope, type PageScope } from 'vue-page-scope';
 import type { RuntimeTaskMap } from 'vue-page-runtime';
 import { ApiError } from '../api/client';
+import { ApplicationApiError } from '../api/jobMemoryApi';
+import type { JobMemoryBundle } from '../domain/job-memory';
 import type { JobRecord } from '../storage';
+import {
+  fingerprintApplicationDrafts,
+  reconcileSelectedApplicationId,
+} from '../pages/job-detail/applicationSectionModel';
 import './registerPageRuntime';
 import type {
   AcceptUpdatedJobOptions,
+  ApplicationWriteActions,
   JobDetailBundle,
   JobDetailScopeInjection,
   JobDetailSource,
@@ -13,6 +20,7 @@ import type {
   JobPatch,
   SaveGreetingInput,
 } from './jobDetailTypes';
+import { isJobDetailBundleV2 } from './jobDetailTypes';
 
 interface LoadRuntime {
   generation: number;
@@ -22,10 +30,11 @@ interface LoadRuntime {
 
 interface JobDetailGetters {
   isDirty(): boolean;
+  isApplicationDirty(): boolean;
   job(): JobRecord | null;
 }
 
-interface JobDetailActions {
+interface JobDetailActions extends ApplicationWriteActions {
   acceptBundle(bundle: JobDetailBundle): void;
   acceptUpdatedJob(updatedJob: JobRecord, options?: AcceptUpdatedJobOptions): void;
   loadDirect(): Promise<void>;
@@ -67,7 +76,12 @@ export async function fetchJobBundle(
   api: JobDetailScopeInjection['api'],
   jobId: string,
   signal: AbortSignal,
+  jobMemoryV2Enabled = false,
 ): Promise<JobDetailBundle> {
+  if (jobMemoryV2Enabled) {
+    if (api.jobMemory === undefined) throw new Error('Job Memory v2 API 未配置');
+    return api.jobMemory.getJobDetailBundle(jobId, { signal });
+  }
   const [job, profile, allJobs] = await Promise.all([
     api.jobs.get(jobId, { signal }),
     api.profile.get({ signal }),
@@ -94,7 +108,12 @@ async function executeBundleLoad(scope: JobDetailScopeHost, signal: AbortSignal)
   const ownerToken = runtime.ownerToken;
   scope.loadError = null;
   try {
-    const candidate = await fetchJobBundle(scope.api, requestedJobId, signal);
+    const candidate = await fetchJobBundle(
+      scope.api,
+      requestedJobId,
+      signal,
+      scope.jobMemoryV2Enabled === true,
+    );
     if (signal.aborted || scope.$disposed) return;
     if (runId !== runtime.generation || ownerToken !== runtime.ownerToken) return;
     if (requestedJobId !== scope.jobId) return;
@@ -160,13 +179,78 @@ function sortedWithUpdatedJob(allJobs: JobRecord[], updatedJob: JobRecord): JobR
 }
 
 function emptyState(): JobDetailState {
+  const applicationDrafts = {
+    create: null,
+    edit: null,
+    void: null,
+    baselineFingerprint: '',
+  };
+  applicationDrafts.baselineFingerprint = fingerprintApplicationDrafts(applicationDrafts);
   return {
     jobDraft: null,
     baselineFingerprint: '',
     analysisDraft: { rawText: '', dirty: false, streamRunId: 0, error: '' },
     loadError: null,
     actionStatus: {},
+    selectedApplicationId: null,
+    applicationDrafts,
   };
+}
+
+function resetApplicationDrafts(scope: JobDetailScopeHost): void {
+  scope.applicationDrafts = {
+    create: null,
+    edit: null,
+    void: null,
+    baselineFingerprint: '',
+  };
+  scope.applicationDrafts.baselineFingerprint = fingerprintApplicationDrafts(scope.applicationDrafts);
+}
+
+function memorySummaries(memory: JobMemoryBundle) {
+  return memory.applications.map(({ record, projection }) => ({ record, projection }));
+}
+
+async function executeMemoryWrite(
+  scope: JobDetailScopeHost,
+  operation: (api: NonNullable<JobDetailScopeInjection['api']['jobMemory']>) => Promise<JobMemoryBundle>,
+): Promise<JobMemoryBundle> {
+  const api = scope.api.jobMemory;
+  if (api === undefined || scope.jobMemoryV2Enabled !== true) {
+    throw new ApplicationApiError('HTTP_ERROR', 'Job Memory v2 功能未启用');
+  }
+  const runtime = runtimeFor(scope);
+  const ownerToken = runtime.ownerToken;
+  const requestedJobId = scope.jobId;
+  scope.actionStatus.applicationWrite = 'loading';
+  try {
+    const memory = await operation(api);
+    if (
+      !scope.$disposed
+      && ownerToken === runtime.ownerToken
+      && requestedJobId === scope.jobId
+    ) {
+      scope.acceptMemoryBundle(memory);
+      resetApplicationDrafts(scope);
+      scope.actionStatus.applicationWrite = 'done';
+    }
+    return memory;
+  } catch (error) {
+    if (!scope.$disposed && ownerToken === runtime.ownerToken && requestedJobId === scope.jobId) {
+      scope.actionStatus.applicationWrite = 'error';
+      if (
+        error instanceof ApplicationApiError
+        && (error.code === 'NETWORK_ERROR' || error.code === 'VERSION_CONFLICT')
+      ) {
+        try {
+          await scope.reloadJobBundle();
+        } catch {
+          // 保留原始稳定错误；草稿不清空，用户可再次读取或用同一幂等键重试。
+        }
+      }
+    }
+    throw error;
+  }
 }
 
 export const useJobDetailScope = definePageScope<
@@ -180,7 +264,12 @@ export const useJobDetailScope = definePageScope<
   state: emptyState,
   getters: {
     isDirty(): boolean {
-      return fingerprintJobDraft(this.jobDraft) !== this.baselineFingerprint;
+      return fingerprintJobDraft(this.jobDraft) !== this.baselineFingerprint
+        || this.isApplicationDirty;
+    },
+    isApplicationDirty(): boolean {
+      return fingerprintApplicationDrafts(this.applicationDrafts)
+        !== this.applicationDrafts.baselineFingerprint;
     },
     job(): JobRecord | null {
       return this.$source.bundle?.job ?? null;
@@ -195,7 +284,26 @@ export const useJobDetailScope = definePageScope<
       };
       this.jobDraft = draft;
       this.baselineFingerprint = fingerprintJobDraft(draft);
+      this.selectedApplicationId = isJobDetailBundleV2(bundle)
+        ? reconcileSelectedApplicationId(bundle.memory.applications, this.selectedApplicationId)
+        : null;
       this.loadError = null;
+    },
+    acceptMemoryBundle(memory: JobMemoryBundle): void {
+      const bundle = this.$source.bundle;
+      if (bundle === null || !isJobDetailBundleV2(bundle) || bundle.jobId !== this.jobId) return;
+      this.$source.bundle = {
+        ...bundle,
+        memory,
+        applicationSummariesByJob: {
+          ...bundle.applicationSummariesByJob,
+          [bundle.jobId]: memorySummaries(memory),
+        },
+      };
+      this.selectedApplicationId = reconcileSelectedApplicationId(
+        memory.applications,
+        this.selectedApplicationId,
+      );
     },
     acceptUpdatedJob(updatedJob: JobRecord, options: AcceptUpdatedJobOptions = {}): void {
       const bundle = this.$source.bundle;
@@ -231,6 +339,15 @@ export const useJobDetailScope = definePageScope<
       const updated = await this.api.jobs.patch(this.jobId, patch);
       if (!this.$disposed) this.acceptUpdatedJob(updated, options);
       return updated;
+    },
+    async createApplication(input): Promise<JobMemoryBundle> {
+      return executeMemoryWrite(this, (api) => api.createApplication(this.jobId, input));
+    },
+    async updateApplication(applicationId, input): Promise<JobMemoryBundle> {
+      return executeMemoryWrite(this, (api) => api.updateApplication(applicationId, input));
+    },
+    async voidApplication(applicationId, input): Promise<JobMemoryBundle> {
+      return executeMemoryWrite(this, (api) => api.voidApplication(applicationId, input));
     },
     async saveJobDraft(): Promise<JobRecord | null> {
       if (this.jobDraft === null) return null;

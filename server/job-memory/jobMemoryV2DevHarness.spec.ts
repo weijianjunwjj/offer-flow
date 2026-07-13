@@ -8,14 +8,17 @@ import {
   assertSafeTemporaryDbPath,
   createShutdownController,
   createTemporaryJobMemoryWorkspace,
-  hasExplicitFrontendResumeVersionFlag,
+  hasExplicitFrontendJobMemoryV2Flag,
   jobMemoryV2ViteConfig,
   runJobMemoryV2Smoke,
   startJobMemoryV2DevSession,
   SYNTHETIC_DEV_PROFILE,
+  SYNTHETIC_DEV_JOB_IDS,
 } from '../../scripts/jobMemoryV2DevHarness';
 import { getDatabaseSchemaVersion } from '../migrations';
 import { ProfileRepository } from '../repositories/profileRepository';
+import { JobRepository } from '../repositories/jobRepository';
+import { JobMemoryQueries } from './jobMemoryQueries';
 
 const cleanupPaths: string[] = [];
 
@@ -36,7 +39,7 @@ function currentHarnessDirs(): Set<string> {
   return new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('offerflow-job-memory-v2-')));
 }
 
-describe('B3 临时 v2 联调安全门禁', () => {
+describe('B4 临时 v2 联调安全门禁', () => {
   it('拒绝默认真实库、仓库 data、临时目录外和已有文件', () => {
     const { tempDir, dbPath } = tempHarnessPath();
     expect(() => assertSafeTemporaryDbPath(
@@ -53,13 +56,17 @@ describe('B3 临时 v2 联调安全门禁', () => {
     expect(() => assertSafeTemporaryDbPath(dbPath, tempDir)).toThrow(/拒绝复用已有文件/);
   });
 
-  it('只在新临时库显式初始化 schema v2 和合成 Profile，关闭后删除目录', () => {
+  it('只在新临时库初始化 schema v2、合成 Profile、两岗位与两简历，且不预置 Application', () => {
     const workspace = createTemporaryJobMemoryWorkspace();
     const { tempDir, dbPath, db } = workspace;
     expect(tempDir.startsWith(os.tmpdir())).toBe(true);
     expect(dbPath.startsWith(tempDir)).toBe(true);
     expect(getDatabaseSchemaVersion(db)).toBe(2);
     expect(new ProfileRepository(db).get()).toEqual(SYNTHETIC_DEV_PROFILE);
+    expect(new JobRepository(db).list().map(({ id }) => id).sort()).toEqual([...SYNTHETIC_DEV_JOB_IDS].sort());
+    const queries = new JobMemoryQueries(db);
+    expect(queries.listResumeVersions().resumeVersions).toHaveLength(2);
+    expect(queries.getJobMemoryBundle(SYNTHETIC_DEV_JOB_IDS[0]).applications).toHaveLength(0);
     workspace.close();
     expect(fs.existsSync(tempDir)).toBe(false);
   });
@@ -67,7 +74,7 @@ describe('B3 临时 v2 联调安全门禁', () => {
   it('前端 flag 由专用 Vite 配置显式开启，而不是修改默认源码常量', () => {
     const config = jobMemoryV2ViteConfig();
     expect(config.envFile).toBe(false);
-    expect(hasExplicitFrontendResumeVersionFlag(config)).toBe(true);
+    expect(hasExplicitFrontendJobMemoryV2Flag(config)).toBe(true);
     expect(config.server).toMatchObject({ host: '127.0.0.1', strictPort: true });
   });
 
@@ -139,13 +146,15 @@ describe('B3 临时 v2 联调安全门禁', () => {
     controller.dispose();
   });
 
-  it('smoke 通过 HTTP 创建并读回合成 ResumeVersion，退出后确认临时目录清理', async () => {
+  it('smoke 通过 HTTP 创建两次 Application 并读回 Bundle/摘要，退出后清理', async () => {
     await expect(runJobMemoryV2Smoke()).resolves.toMatchObject({
       schemaVersion: 2,
       routeEnabled: true,
       frontendFlagEnabled: true,
       injectedDbOnly: true,
       syntheticProfileOnly: true,
+      createdApplicationCount: 2,
+      jobSummaryCount: 2,
       tempDirRemoved: true,
     });
   });
