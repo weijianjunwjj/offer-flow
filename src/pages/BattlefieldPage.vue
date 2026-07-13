@@ -64,6 +64,7 @@ import JdInputSection from './job-detail/JdInputSection.vue';
 import ImportReviewSection from './job-detail/ImportReviewSection.vue';
 import CommunicationSection from './job-detail/CommunicationSection.vue';
 import JobDecisionSection from './job-detail/JobDecisionSection.vue';
+import ApplicationSection from './job-detail/ApplicationSection.vue';
 
 const props = defineProps<{
   jobId: string | null;
@@ -942,14 +943,22 @@ async function handleSave(): Promise<void> {
 }
 
 function confirmLeave(): boolean {
-  if (!isDirty.value && !saveInFlight.value) return true;
+  const applicationBusy = pageScope?.actionStatus.applicationWrite === 'loading';
+  if (!isDirty.value && !pageScope?.isApplicationDirty && !saveInFlight.value && !applicationBusy) return true;
   return navigationConfirm.confirmDiscardChanges(
-    saveInFlight.value ? '岗位正在保存，确定仍要离开吗？' : '存在未保存的岗位编辑，确定要离开吗？',
+    saveInFlight.value || applicationBusy
+      ? '数据正在保存，确定仍要离开吗？'
+      : '存在未保存的岗位或求职流程编辑，确定要离开吗？',
   );
 }
 
 function handleBeforeUnload(event: BeforeUnloadEvent): void {
-  if (!isDirty.value && !saveInFlight.value) return;
+  if (
+    !isDirty.value
+    && !pageScope?.isApplicationDirty
+    && !saveInFlight.value
+    && pageScope?.actionStatus.applicationWrite !== 'loading'
+  ) return;
   event.preventDefault();
   event.returnValue = '';
 }
@@ -1170,6 +1179,8 @@ async function analyzeWithLlm(): Promise<void> {
         </span>
       </p>
     </ImportReviewSection>
+
+    <ApplicationSection v-if="isEdit" :scope-required="isEdit" />
 
     <CommunicationSection v-if="isEdit" :scope-required="isEdit" class="followup-panel">
       <div class="followup-head">
