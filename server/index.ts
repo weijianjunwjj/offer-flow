@@ -90,8 +90,9 @@ export function buildServer(
   app.get('/health', async () => ({ ok: true }));
   app.get('/meta/db-path', async () => ({ path: dbPath }));
   registerProfileRoutes(app);
-  registerJobRoutes(app);
-  registerImportRoutes(app);
+  const legacyCommunicationWriteDisabled = jobMemoryV2.enabled;
+  registerJobRoutes(app, { legacyCommunicationWriteDisabled });
+  registerImportRoutes(app, { legacyCommunicationWriteDisabled });
   registerSyncRoutes(app, dbPath);
   registerLlmRoutes(app);
   if (jobMemoryV2.enabled) {
