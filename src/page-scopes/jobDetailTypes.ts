@@ -94,6 +94,7 @@ export interface JobDetailState {
   eventVoidDraft: FeedbackEventVoidDraft | null;
   eventDraftBaselineFingerprint: string;
   timelineUi: TimelineUiState;
+  decisionJobPreview: JobRecord | null;
 }
 
 export interface JobDetailSource {

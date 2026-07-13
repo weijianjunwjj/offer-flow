@@ -2,7 +2,19 @@ import { injectPageScope, definePageScope, type PageScope } from 'vue-page-scope
 import type { RuntimeTaskMap } from 'vue-page-runtime';
 import { ApiError } from '../api/client';
 import { ApplicationApiError } from '../api/jobMemoryApi';
-import type { JobMemoryBundle } from '../domain/job-memory';
+import {
+  selectDefaultApplication,
+  type ApplicationMemory,
+  type ApplicationSummary,
+  type JobMemoryBundle,
+} from '../domain/job-memory';
+import {
+  deriveDecision,
+  resolveDecisionOpportunityFacts,
+  type DecisionFactsSource,
+  type DecisionOpportunityFacts,
+  type DerivedDecision,
+} from '../decision';
 import type { JobRecord } from '../storage';
 import {
   fingerprintApplicationDrafts,
@@ -34,6 +46,11 @@ interface JobDetailGetters {
   isApplicationDirty(): boolean;
   isEventDirty(): boolean;
   job(): JobRecord | null;
+  selectedApplicationMemory(): ApplicationMemory | null;
+  decisionFacts(): DecisionOpportunityFacts | null;
+  decisionFactsSource(): DecisionFactsSource | null;
+  decisionResult(): DerivedDecision | null;
+  decisionCompatibilityWarning(): string | null;
 }
 
 interface JobDetailActions extends ApplicationWriteActions {
@@ -49,6 +66,7 @@ interface JobDetailActions extends ApplicationWriteActions {
   saveMatchScore(matchScore: string): Promise<JobRecord>;
   saveGreeting(input: SaveGreetingInput): Promise<JobRecord>;
   appendOcrText(text: string): void;
+  setDecisionJobPreview(job: JobRecord | null): void;
   discardDraftAndReload(): Promise<void>;
 }
 
@@ -61,6 +79,9 @@ type JobDetailScopeHost = PageScope<
 >;
 
 const loadRuntime = new WeakMap<object, LoadRuntime>();
+const LEGACY_COMMUNICATION_PATCH_FIELDS = new Set<keyof JobRecord>([
+  'communicationStatus', 'followupCount', 'lastGreetedAt', 'lastFollowupAt', 'lastCommunicationNote',
+]);
 
 function runtimeFor(scope: object): LoadRuntime {
   const current = loadRuntime.get(scope);
@@ -200,6 +221,7 @@ function emptyState(): JobDetailState {
     eventVoidDraft: null,
     eventDraftBaselineFingerprint: fingerprintEventDrafts(null, null),
     timelineUi: { composerExpanded: false, focusedEventId: null },
+    decisionJobPreview: null,
   };
 }
 
@@ -222,6 +244,33 @@ function resetEventDrafts(scope: JobDetailScopeHost): void {
 
 function memorySummaries(memory: JobMemoryBundle) {
   return memory.applications.map(({ record, projection }) => ({ record, projection }));
+}
+
+function defaultDecisionApplication(
+  applications: readonly ApplicationSummary[],
+): ApplicationSummary | null {
+  const selected = selectDefaultApplication(applications.map(({ record, projection }) => ({
+    application: record,
+    projection,
+  })));
+  return selected === null
+    ? null
+    : applications.find(({ record }) => record.id === selected.application.id) ?? null;
+}
+
+function decisionFactsForJob(
+  job: JobRecord,
+  applications: readonly ApplicationSummary[],
+  jobMemoryV2Enabled: boolean,
+  selectedApplication: ApplicationSummary | ApplicationMemory | null = null,
+): DecisionOpportunityFacts {
+  return resolveDecisionOpportunityFacts({
+    job,
+    selectedApplication,
+    defaultApplication: defaultDecisionApplication(applications),
+    availableApplications: applications,
+    jobMemoryV2Enabled,
+  });
 }
 
 async function executeMemoryWrite(
@@ -298,6 +347,52 @@ export const useJobDetailScope = definePageScope<
     job(): JobRecord | null {
       return this.$source.bundle?.job ?? null;
     },
+    selectedApplicationMemory(): ApplicationMemory | null {
+      const bundle = this.$source.bundle;
+      if (bundle === null || !isJobDetailBundleV2(bundle)) return null;
+      return bundle.memory.applications.find(
+        ({ record }) => record.id === this.selectedApplicationId,
+      ) ?? null;
+    },
+    decisionFacts(): DecisionOpportunityFacts | null {
+      const bundle = this.$source.bundle;
+      if (bundle === null) return null;
+      const job = this.decisionJobPreview ?? bundle.job;
+      const applications = isJobDetailBundleV2(bundle)
+        ? bundle.applicationSummariesByJob[bundle.jobId] ?? []
+        : [];
+      return decisionFactsForJob(
+        job,
+        applications,
+        this.jobMemoryV2Enabled === true,
+        this.selectedApplicationMemory,
+      );
+    },
+    decisionFactsSource(): DecisionFactsSource | null {
+      return this.decisionFacts?.source ?? null;
+    },
+    decisionResult(): DerivedDecision | null {
+      const bundle = this.$source.bundle;
+      const facts = this.decisionFacts;
+      if (bundle === null || facts === null) return null;
+      const v2 = this.jobMemoryV2Enabled === true && isJobDetailBundleV2(bundle);
+      const companyOpportunities = bundle.allJobs.map((candidate) => decisionFactsForJob(
+        candidate.id === facts.job.id ? facts.job : candidate,
+        v2 ? bundle.applicationSummariesByJob[candidate.id] ?? [] : [],
+        v2,
+        candidate.id === facts.job.id ? this.selectedApplicationMemory : null,
+      ));
+      return deriveDecision(facts, {
+        companyOpportunities,
+        companyWarningMode: v2 ? 'trusted' : 'legacy',
+      });
+    },
+    decisionCompatibilityWarning(): string | null {
+      return this.jobMemoryV2Enabled === true
+        && this.decisionFactsSource === 'legacy_job_fallback'
+        ? '历史兼容状态，尚未迁移为事件事实。旧数据只读，建议建立 Application。'
+        : null;
+    },
   },
   actions: {
     acceptBundle(bundle: JobDetailBundle): void {
@@ -314,6 +409,7 @@ export const useJobDetailScope = definePageScope<
         : null;
       if (this.selectedApplicationId !== previousSelectedApplicationId) resetEventDrafts(this);
       this.loadError = null;
+      this.decisionJobPreview = bundle.job;
     },
     acceptMemoryBundle(memory: JobMemoryBundle): void {
       const bundle = this.$source.bundle;
@@ -347,6 +443,7 @@ export const useJobDetailScope = definePageScope<
       if (options.reason === 'confirmAnalysis') {
         this.analysisDraft = { rawText: '', dirty: false, streamRunId: 0, error: '' };
       }
+      this.decisionJobPreview = updatedJob;
     },
     async loadDirect(): Promise<void> {
       const runtime = runtimeFor(this);
@@ -397,6 +494,19 @@ export const useJobDetailScope = definePageScope<
       return this.patchJob(patch);
     },
     async updateCommunication(patch: JobPatch): Promise<JobRecord> {
+      if (this.jobMemoryV2Enabled === true) {
+        const blocked = Object.keys(patch).filter((key) => (
+          LEGACY_COMMUNICATION_PATCH_FIELDS.has(key as keyof JobRecord)
+          || (key === 'draftMessageText' && this.decisionFactsSource === 'application_projection')
+        ));
+        if (blocked.length > 0) {
+          throw new ApiError(
+            'Job Memory v2 模式下旧沟通事实只读',
+            422,
+            { code: 'LEGACY_COMMUNICATION_WRITE_DISABLED', fields: blocked },
+          );
+        }
+      }
       return this.patchJob(patch);
     },
     async saveMatchScore(matchScore: string): Promise<JobRecord> {
@@ -411,6 +521,9 @@ export const useJobDetailScope = definePageScope<
       this.jobDraft.jdText = this.jobDraft.jdText.trim() === ''
         ? `${separator}\n${text.trim()}`
         : `${this.jobDraft.jdText.trimEnd()}\n\n${separator}\n${text.trim()}`;
+    },
+    setDecisionJobPreview(job: JobRecord | null): void {
+      this.decisionJobPreview = job;
     },
     async discardDraftAndReload(): Promise<void> {
       await this.reloadJobBundle();

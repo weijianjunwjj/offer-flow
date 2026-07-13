@@ -14,7 +14,12 @@ import type {
   ApplyAdvice,
   OpportunityRadar,
 } from '../storage';
-import { deriveDecision, type DerivedDecision } from '../decision';
+import {
+  deriveDecision,
+  resolveDecisionOpportunityFacts,
+  type DecisionOpportunityFacts,
+  type DerivedDecision,
+} from '../decision';
 import { isPendingReview } from '../review/reviewWorkflow';
 import { COMMUNICATION_STATUS_LABELS, COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
@@ -50,6 +55,7 @@ const loadError = ref('');
 const summaries = ref<JobSummary[]>([]);
 const summaryLoadError = ref('');
 const summaryLoading = ref(false);
+const summariesReady = ref(false);
 let jobsLoadGeneration = 0;
 let summariesLoadGeneration = 0;
 let jobsController: AbortController | null = null;
@@ -100,10 +106,14 @@ async function loadSummaries(): Promise<void> {
   const controller = new AbortController();
   summariesController = controller;
   summaryLoading.value = true;
+  summariesReady.value = false;
   summaryLoadError.value = '';
   try {
     const candidate = await jobMemoryApi.getJobSummaries({ signal: controller.signal });
-    if (!controller.signal.aborted && runId === summariesLoadGeneration) summaries.value = candidate;
+    if (!controller.signal.aborted && runId === summariesLoadGeneration) {
+      summaries.value = candidate;
+      summariesReady.value = true;
+    }
   } catch (error) {
     if ((error as Error).name !== 'AbortError' && runId === summariesLoadGeneration) {
       summaryLoadError.value = (error as Error).message;
@@ -130,7 +140,11 @@ function applicationChannelLabel(channel: ApplicationChannel, other: string | nu
 
 function summaryStatus(summary: JobSummary): string {
   if (summary.applicationCount === 0) return '未记录流程';
-  if (summary.defaultApplication === null) return '流程投影不可用';
+  if (summary.defaultApplication === null) {
+    return summary.projectionDiagnostics.some(({ projectionStatus }) => projectionStatus === 'invalid')
+      ? '流程投影不可用'
+      : '无可用流程';
+  }
   const projection = summary.defaultApplication.projection;
   return `${projection.stage} / ${projection.outcome ?? '无结果'}`;
 }
@@ -140,7 +154,8 @@ function isImportedDraft(job: JobRecord): boolean {
 }
 
 function isPendingReviewJob(job: JobRecord): boolean {
-  return isPendingReview(job);
+  const communicationStatus = effectiveCommunicationStatus(job) ?? 'not_contacted';
+  return isPendingReview({ ...job, communicationStatus });
 }
 
 function importCategoryLabel(job: JobRecord): string {
@@ -218,15 +233,66 @@ function adviceToneOf(job: JobRecord): string {
 function adviceLabelOf(job: JobRecord): string {
   return APPLY_ADVICE_LABELS[adviceOf(job)];
 }
+const decisionFactsById = computed(() => {
+  const map = new Map<string, DecisionOpportunityFacts>();
+  for (const job of jobs.value) {
+    if (!features.jobMemoryV2Enabled) {
+      map.set(job.id, resolveDecisionOpportunityFacts({
+        job, selectedApplication: null, defaultApplication: null, jobMemoryV2Enabled: false,
+      }));
+      continue;
+    }
+    const summary = summaryFor(job.id);
+    if (!summariesReady.value || summary === null || hasInvalidDefaultProjection(summary)) {
+      map.set(job.id, { source: 'opportunity_only', job, application: null, legacyCommunication: null });
+      continue;
+    }
+    map.set(job.id, resolveDecisionOpportunityFacts({
+      job,
+      selectedApplication: null,
+      defaultApplication: summary.defaultApplication,
+      availableApplications: summary.defaultApplication === null ? [] : [summary.defaultApplication],
+      jobMemoryV2Enabled: true,
+    }));
+  }
+  return map;
+});
+function decisionUnavailable(job: JobRecord): boolean {
+  if (!features.jobMemoryV2Enabled) return false;
+  const summary = summaryFor(job.id);
+  return !summariesReady.value
+    || summary === null
+    || hasInvalidDefaultProjection(summary);
+}
+function hasInvalidDefaultProjection(summary: JobSummary): boolean {
+  return summary.defaultApplication === null
+    && summary.projectionDiagnostics.some(({ projectionStatus }) => projectionStatus === 'invalid');
+}
 const decisionById = computed(() => {
   const map = new Map<string, DerivedDecision>();
+  const companyOpportunities = [...decisionFactsById.value.values()];
   for (const job of jobs.value) {
-    map.set(job.id, deriveDecision(job, jobs.value));
+    const facts = decisionFactsById.value.get(job.id);
+    if (facts === undefined) continue;
+    if (decisionUnavailable(job)) {
+      map.set(job.id, {
+        strategy: 'cautious_watch', nextAction: 'manual_review', stopLoss: false,
+        scenario: 'first_greeting', flowNotice: '求职流程摘要不可用，暂不生成流程建议。',
+      });
+      continue;
+    }
+    map.set(job.id, deriveDecision(facts, {
+      companyOpportunities,
+      companyWarningMode: features.jobMemoryV2Enabled ? 'trusted' : 'legacy',
+    }));
   }
   return map;
 });
 function decisionOf(job: JobRecord): DerivedDecision {
-  return decisionById.value.get(job.id) ?? deriveDecision(job, jobs.value);
+  return decisionById.value.get(job.id) ?? {
+    strategy: 'cautious_watch', nextAction: 'manual_review', stopLoss: false,
+    scenario: 'first_greeting',
+  };
 }
 function decisionActionLabel(job: JobRecord): string {
   return nextActionLabel(decisionOf(job).nextAction);
@@ -235,14 +301,28 @@ function decisionActionKey(job: JobRecord): string {
   return decisionOf(job).nextAction ?? 'done';
 }
 function isWaitingForReply(job: JobRecord, decision: DerivedDecision): boolean {
+  const status = effectiveCommunicationStatus(job);
   return (
     decision.nextAction === 'wait' &&
     (
-      job.communicationStatus === 'greeted_unread' ||
-      job.communicationStatus === 'greeted_read_no_reply' ||
-      job.communicationStatus === 'paused'
+      status === 'greeted_unread' ||
+      status === 'greeted_read_no_reply' ||
+      status === 'paused'
     )
   );
+}
+function effectiveCommunicationStatus(job: JobRecord): CommunicationStatus | null {
+  if (!features.jobMemoryV2Enabled) return job.communicationStatus;
+  if (decisionUnavailable(job)) return null;
+  const facts = decisionFactsById.value.get(job.id);
+  if (facts?.source === 'application_projection') return facts.application.projection.communicationStatus;
+  if (facts?.source === 'legacy_job_fallback') return facts.legacyCommunication.communicationStatus;
+  return null;
+}
+function effectiveStatusLabel(job: JobRecord): string {
+  const status = effectiveCommunicationStatus(job);
+  if (status !== null) return COMMUNICATION_STATUS_LABELS[status];
+  return decisionUnavailable(job) ? '流程状态不可用' : '尚无流程';
 }
 function matchesDecisionFilter(job: JobRecord): boolean {
   if (decisionFilter.value === '') {
@@ -339,7 +419,7 @@ const filteredJobs = computed(() => {
   const list = jobs.value.filter((j) => {
     if (cityFilter.value !== '' && j.city.trim() !== cityFilter.value) return false;
     if (sizeFilter.value !== '' && effectiveSizeTier(j) !== sizeFilter.value) return false;
-    if (statusFilter.value !== '' && j.communicationStatus !== statusFilter.value) return false;
+    if (statusFilter.value !== '' && effectiveCommunicationStatus(j) !== statusFilter.value) return false;
     if (!matchesDecisionFilter(j)) return false;
     if (minScore.value > 0) {
       const s = opportunityScoreOf(j);
@@ -575,8 +655,8 @@ function formatOptionalTime(ts: number | null): string {
             </div>
           </div>
           <div class="ac-side">
-            <span class="ac-status" :data-status="job.communicationStatus">
-              {{ COMMUNICATION_STATUS_LABELS[job.communicationStatus] }}
+            <span class="ac-status" :data-status="effectiveCommunicationStatus(job) ?? 'none'">
+              {{ effectiveStatusLabel(job) }}
             </span>
             <span class="ac-time">{{ formatTime(job.updatedAt) }}</span>
           </div>

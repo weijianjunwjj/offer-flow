@@ -45,7 +45,6 @@ import {
 import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
 import OpportunityRadarChart from '../components/OpportunityRadarChart.vue';
 import {
-  deriveDecision,
   type MessageScenario,
   type NextActionType,
 } from '../decision';
@@ -463,6 +462,9 @@ const followupSaveError = ref('');
 const recommendedMessageCopyState = ref<'idle' | 'done' | 'fail'>('idle');
 const recommendedMessageFillState = ref<'idle' | 'done'>('idle');
 const showPrompt = ref(false);
+const jobMemoryV2Enabled = computed(() => pageScope?.jobMemoryV2Enabled === true);
+const decisionFacts = computed(() => pageScope?.decisionFacts ?? null);
+const selectedDecisionApplication = computed(() => pageScope?.selectedApplicationMemory ?? null);
 
 const reviewSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const reviewSaveError = ref('');
@@ -475,9 +477,20 @@ const showReviewPanel = computed(() => {
       job.importedDraft !== undefined)
   );
 });
-const pendingReview = computed(() => currentJob.value !== null && isPendingReview(currentJob.value));
+const reviewDecisionJob = computed(() => {
+  const job = currentJob.value;
+  const facts = decisionFacts.value;
+  if (job === null || !jobMemoryV2Enabled.value || facts === null) return job;
+  const communicationStatus = facts.source === 'application_projection'
+    ? facts.application.projection.communicationStatus
+    : facts.source === 'legacy_job_fallback'
+      ? facts.legacyCommunication.communicationStatus
+      : 'not_contacted';
+  return { ...job, communicationStatus };
+});
+const pendingReview = computed(() => reviewDecisionJob.value !== null && isPendingReview(reviewDecisionJob.value));
 const availableReviewActions = computed<ReviewAction[]>(() =>
-  currentJob.value === null ? [] : getAvailableReviewActions(currentJob.value),
+  reviewDecisionJob.value === null ? [] : getAvailableReviewActions(reviewDecisionJob.value),
 );
 const reviewStatusLabel = computed(() => {
   const status = currentJob.value?.reviewStatus;
@@ -676,8 +689,17 @@ const decisionRecord = computed<JobRecord | null>(() => {
   };
 });
 const followupDecision = computed(() =>
-  decisionRecord.value === null ? null : deriveDecision(decisionRecord.value, allJobs.value),
+  pageScope?.decisionResult ?? null,
 );
+const decisionStatusLabel = computed(() => {
+  const facts = decisionFacts.value;
+  if (!jobMemoryV2Enabled.value || facts === null) return currentStatusLabel.value;
+  if (facts.source === 'opportunity_only') return '尚无流程';
+  const status = facts.source === 'application_projection'
+    ? facts.application.projection.communicationStatus
+    : facts.legacyCommunication.communicationStatus;
+  return COMMUNICATION_STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+});
 const highValueSignalNote = computed(() => {
   const advice = decisionReport.value?.applyAdvice ?? '';
   return highValueSignal.value && (advice === 'strongly' || advice === 'ok');
@@ -723,6 +745,7 @@ async function copyRecommendedMessage(): Promise<void> {
 }
 
 function fillDraftMessage(): void {
+  if (jobMemoryV2Enabled.value && decisionFacts.value?.source === 'application_projection') return;
   draftMessageText.value = recommendedMessageText.value;
   recommendedMessageFillState.value = 'done';
   recommendedMessageCopyState.value = 'idle';
@@ -756,10 +779,9 @@ async function handleReviewAction(action: ReviewAction): Promise<void> {
   reviewSaveError.value = '';
   try {
     const next = applyReviewAction(currentJob.value, action, new Date().toISOString());
-    const reviewPatch = {
-      reviewStatus: next.reviewStatus,
-      communicationStatus: next.communicationStatus,
-    };
+    const reviewPatch = jobMemoryV2Enabled.value
+      ? { reviewStatus: next.reviewStatus }
+      : { reviewStatus: next.reviewStatus, communicationStatus: next.communicationStatus };
     const updated = pageScope
       ? await pageScope.submitImportReview(reviewPatch)
       : await jobsApi.patch(props.jobId, reviewPatch);
@@ -773,7 +795,7 @@ async function handleReviewAction(action: ReviewAction): Promise<void> {
 }
 
 async function changeCommunicationStatus(next: CommunicationStatus): Promise<void> {
-  if (props.jobId === null) {
+  if (props.jobId === null || jobMemoryV2Enabled.value) {
     return;
   }
   const previous = communicationStatus.value;
@@ -795,7 +817,7 @@ async function changeCommunicationStatus(next: CommunicationStatus): Promise<voi
 }
 
 async function saveFollowupFacts(): Promise<void> {
-  if (props.jobId === null) {
+  if (props.jobId === null || jobMemoryV2Enabled.value) {
     return;
   }
   followupSaveState.value = 'idle';
@@ -820,6 +842,31 @@ async function saveFollowupFacts(): Promise<void> {
   } catch (error) {
     followupSaveState.value = 'fail';
     followupSaveError.value = `保存跟进事实失败：${(error as Error).message}`;
+  }
+}
+
+async function saveOpportunityDraft(): Promise<void> {
+  if (
+    props.jobId === null
+    || !jobMemoryV2Enabled.value
+    || decisionFacts.value?.source === 'application_projection'
+  ) return;
+  followupSaveState.value = 'idle';
+  followupSaveError.value = '';
+  try {
+    const patch = {
+      highValueSignal: highValueSignal.value,
+      draftMessageText: draftMessageText.value.trim() === '' ? '' : draftMessageText.value,
+    };
+    const updated = pageScope
+      ? await pageScope.updateCommunication(patch)
+      : await jobsApi.patch(props.jobId, patch);
+    await rememberJob(updated);
+    syncFollowupFacts(updated);
+    followupSaveState.value = 'done';
+  } catch (error) {
+    followupSaveState.value = 'fail';
+    followupSaveError.value = `保存岗位级草稿失败：${(error as Error).message}`;
   }
 }
 
@@ -958,6 +1005,10 @@ function confirmLeave(): boolean {
       : '存在未保存的岗位或求职流程编辑，确定要离开吗？',
   );
 }
+
+watch(decisionRecord, (candidate) => {
+  pageScope?.setDecisionJobPreview(candidate);
+}, { immediate: true });
 
 function handleBeforeUnload(event: BeforeUnloadEvent): void {
   if (
@@ -1196,15 +1247,47 @@ async function analyzeWithLlm(): Promise<void> {
     />
 
     <CommunicationSection v-if="isEdit" :scope-required="isEdit" class="followup-panel">
-      <p v-if="pageScope?.jobMemoryV2Enabled === true" class="legacy-decision-note">
-        事件时间线已经启用，当前决策规则仍处于 legacy 兼容阶段。B6 将单独切换决策输入。
-      </p>
       <div class="followup-head">
         <div>
           <h2>跟进决策</h2>
           <p class="followup-sub">基于当前岗位事实实时派生，仅保存下方手动维护的事实字段。</p>
         </div>
-        <span class="status-pill">{{ currentStatusLabel }}</span>
+        <span class="status-pill">{{ decisionStatusLabel }}</span>
+      </div>
+
+      <div v-if="jobMemoryV2Enabled && decisionFacts" class="decision-source" :data-source="decisionFacts.source">
+        <template v-if="decisionFacts.source === 'application_projection'">
+          <strong>决策依据：当前求职流程的事件投影</strong>
+          <p>当前 Application：{{ decisionFacts.application.applicationId }}</p>
+          <p v-if="selectedDecisionApplication">
+            {{ selectedDecisionApplication.record.channel }}
+            · {{ selectedDecisionApplication.record.recruitingEntity.name ?? selectedDecisionApplication.record.recruitingEntity.kind }}
+            · {{ selectedDecisionApplication.record.cityContext.jobCity ?? '城市未知' }}
+          </p>
+          <div class="decision-source-grid">
+            <span>stage：{{ decisionFacts.application.projection.stage }}</span>
+            <span>outcome：{{ decisionFacts.application.projection.outcome ?? '无' }}</span>
+            <span>communicationStatus：{{ decisionFacts.application.projection.communicationStatus }}</span>
+            <span>followUpCount：{{ decisionFacts.application.projection.followUpCount }}</span>
+            <span>nextAllowedFollowUpAt：{{ decisionFacts.application.projection.nextAllowedFollowUpAt === null ? '未计算' : formatTime(decisionFacts.application.projection.nextAllowedFollowUpAt) }}</span>
+            <span>projectionStatus：{{ decisionFacts.application.projection.projectionStatus }}</span>
+          </div>
+          <ul v-if="decisionFacts.application.projection.warnings.length || decisionFacts.application.projection.errors.length" class="projection-issues">
+            <li v-for="issue in [...decisionFacts.application.projection.warnings, ...decisionFacts.application.projection.errors]" :key="`${issue.code}-${issue.eventId ?? ''}`">{{ issue.code }}：{{ issue.message }}</li>
+          </ul>
+          <p>流程事实请在时间线中新增或纠错；话术草稿请在当前 Application 中维护。</p>
+        </template>
+        <template v-else-if="decisionFacts.source === 'legacy_job_fallback'">
+          <strong>决策依据：历史 Job 沟通数据（只读兼容）</strong>
+          <p>{{ pageScope?.decisionCompatibilityWarning }}</p>
+          <p>当前旧状态：{{ decisionFacts.legacyCommunication.communicationStatus }}；跟进 {{ decisionFacts.legacyCommunication.followupCount }} 次。</p>
+          <p>该状态未进入可信事件时间线，也不进入未来市场证据统计。</p>
+        </template>
+        <template v-else>
+          <strong>决策依据：岗位事实与机会分析</strong>
+          <p>尚无已投递或招聘流程事实，不做 follow-up、冷却期或拒绝判断。</p>
+          <p>如真实流程已经发生，请在上方“求职流程”区域人工确认并记录。</p>
+        </template>
       </div>
 
       <div v-if="followupDecision" class="decision-grid">
@@ -1232,11 +1315,14 @@ async function analyzeWithLlm(): Promise<void> {
       <p v-if="followupDecision?.companyWarning" class="company-warning">
         {{ followupDecision.companyWarning }}
       </p>
+      <p v-if="followupDecision?.flowNotice" class="followup-note">
+        {{ followupDecision.flowNotice }}
+      </p>
       <p v-if="highValueSignalNote" class="followup-note">
         当前岗位已是高匹配，高价值信号不会覆盖主攻策略。
       </p>
 
-      <div class="followup-facts">
+      <div v-if="!jobMemoryV2Enabled" class="followup-facts">
         <div class="status-options" role="group" aria-label="沟通状态">
           <button
             v-for="opt in COMMUNICATION_STATUS_OPTIONS"
@@ -1441,6 +1527,35 @@ async function analyzeWithLlm(): Promise<void> {
           >
             {{ followupSaveError }}
           </span>
+        </div>
+      </div>
+      <div v-else-if="decisionFacts" class="v2-communication-panel">
+        <div class="message-template-card">
+          <div class="template-head">
+            <div>
+              <span class="field-label">推荐话术</span>
+              <p class="template-hint">仅生成建议，不会自动发送或写入流程事实。</p>
+            </div>
+            <div class="template-actions">
+              <button type="button" class="mini-btn" :disabled="recommendedMessageText === ''" @click="copyRecommendedMessage">复制推荐话术</button>
+              <button v-if="decisionFacts.source !== 'application_projection'" type="button" class="mini-btn ghost" :disabled="recommendedMessageText === ''" @click="fillDraftMessage">填入岗位级草稿</button>
+            </div>
+          </div>
+          <p class="template-preview">{{ recommendedMessageText }}</p>
+        </div>
+        <div v-if="decisionFacts.source !== 'application_projection'" class="opportunity-draft-card">
+          <label class="fact-toggle-card" :class="{ active: highValueSignal }">
+            <input v-model="highValueSignal" type="checkbox" />
+            <span><strong>高价值信号</strong><small>岗位级判断，不是招聘流程事实</small></span>
+          </label>
+          <label class="field wide">
+            <span class="label">岗位级首次沟通草稿</span>
+            <textarea v-model="draftMessageText" rows="4" placeholder="仅为岗位级草稿，尚未记录流程。"></textarea>
+          </label>
+          <p>保存草稿不会创建 Application、追加 Event 或改变沟通状态。</p>
+          <button type="button" class="save-btn" @click="saveOpportunityDraft">保存岗位级草稿</button>
+          <span v-if="followupSaveState === 'done'" class="save-feedback ok" role="status">已保存 ✓</span>
+          <span v-else-if="followupSaveState === 'fail'" class="save-feedback fail" role="alert">{{ followupSaveError }}</span>
         </div>
       </div>
     </CommunicationSection>
@@ -2149,6 +2264,35 @@ h1 {
   color: #1f2933;
   font-size: 12px;
 }
+.decision-source {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.decision-source[data-source='legacy_job_fallback'] {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+.decision-source[data-source='opportunity_only'] {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+.decision-source p { margin: 5px 0 0; }
+.decision-source-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px 12px;
+  margin-top: 8px;
+}
+.projection-issues { margin: 8px 0 0; padding-left: 18px; color: #b45309; }
+.v2-communication-panel { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--of-line); }
+.opportunity-draft-card { display: grid; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 10px; background: #f8fafc; }
+.opportunity-draft-card p { margin: 0; color: #647084; font-size: 12px; }
 .decision-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

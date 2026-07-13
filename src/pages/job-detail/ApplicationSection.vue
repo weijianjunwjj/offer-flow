@@ -363,7 +363,7 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
 
     <p class="decision-context">
       决策上下文：<strong>{{ selected ? `当前流程 ${selected.record.id}` : '岗位级建议' }}</strong>。
-      B5 时间线仅展示事件投影；当前 deriveDecision 仍沿用旧 Job 沟通规则，将在 B6 单独切换。
+      存在求职流程时，决策只读取当前 Application 的事件投影，不读取 Job 旧沟通字段。
     </p>
 
     <div v-if="applications.length === 0" class="empty-state">
