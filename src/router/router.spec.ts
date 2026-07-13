@@ -29,4 +29,30 @@ describe('OfferFlow Router', () => {
     await router.isReady();
     expect(router.currentRoute.value.name).toBe('not-found');
   });
+
+  it('默认关闭时深链接安全重定向到 Profile，不加载 B3 页面', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      resumeVersionManagementEnabled: false,
+    });
+    await router.push('/profile-versions');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('profile');
+    expect(router.currentRoute.value.query.feature).toBe('resume-versions-disabled');
+    const disabledRecord = router.getRoutes().find((route) => route.path === '/profile-versions');
+    expect(disabledRecord?.components).toBeUndefined();
+    expect(disabledRecord?.redirect).toBeDefined();
+  });
+
+  it('显式开启时注册 /profile-versions，前进后退保持原路由语义', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      resumeVersionManagementEnabled: true,
+    });
+    await router.push('/profile');
+    await router.isReady();
+    await router.push('/profile-versions');
+    expect(router.currentRoute.value.name).toBe('profile-versions');
+    router.back();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(router.currentRoute.value.name).toBe('profile');
+  });
 });

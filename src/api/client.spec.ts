@@ -25,4 +25,19 @@ describe('可取消读取 API', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('missing', { status: 404 })));
     await expect(apiGet('/jobs/missing')).rejects.toMatchObject({ status: 404 } satisfies Partial<ApiError>);
   });
+
+  it('保留结构化错误体供领域适配器按 code 决策', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 'VERSION_CONFLICT',
+      message: '不要解析这段文本',
+      currentVersion: 3,
+    }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+    await expect(apiGet('/resume-versions')).rejects.toMatchObject({
+      status: 409,
+      body: { code: 'VERSION_CONFLICT', currentVersion: 3 },
+    } satisfies Partial<ApiError>);
+  });
 });
