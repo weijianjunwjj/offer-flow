@@ -3,7 +3,7 @@
 - **文档版本**：Draft 0.4
 - **产品版本**：v0.7.x
 - **前置版本**：v0.6.2
-- **状态**：Gemini 反方评审后修订稿，待技术设计
+- **状态**：Draft 0.4；v0.7.0-A 已完成，下一阶段为 v0.7.0-B 技术设计
 - **主题**：可信求职记忆、动态可达岗位画像与主动策略引导
 
 ---
@@ -822,7 +822,7 @@ JobDetailPage.vue
 
 `JobDetailPage` 是页面编排壳，不承载全部业务细节。
 
-> **现状说明**：v0.6.2 尚未引入 Vue Router，当前承担岗位详情职责的是 `src/pages/BattlefieldPage.vue`（约 3100 行，职责过重，通过 `App.vue` 内部状态切换进入）。本节的 `JobDetailPage.vue` 是引入 Router 后对 `BattlefieldPage.vue` 做最小拆分得到的编排壳，不是当前已存在的文件。
+> **实施状态（2026-07-12）**：v0.7.0-A 已引入 Hash Router，并从 `BattlefieldPage.vue` 最小迁移出 `JobDetailPage.vue` 编排壳和五个稳定 Section。详情 Page Scope 由 `JobDetailPage` 唯一持有；更大的业务拆分不属于 A。
 
 ### 14.2 KeepAlive 策略
 
@@ -1040,11 +1040,11 @@ abort 只取消 run 外壳（返回值与 loading），无法回滚 run 函数�
 
 Gate 不通过时不得继续扩大 Runtime 覆盖面。
 
-### 18.1 已知 Peer Dependency 阻塞
+### 18.1 Peer Dependency Gate（v0.7.0-A 已解除）
 
-这是 v0.7.0-A Gate 1 开始前必须解决的阻塞项，不是普通版本差异。
+这是 v0.7.0-A Gate 1 开始前必须解决的阻塞项，不是普通版本差异。以下为 A 技术设计前的公开事实与解决规则。
 
-当前公开事实：
+A 技术设计前的公开事实：
 
 - `vue-page-scope` 当前公开版本：`0.2.0`。
 - `vue-page-runtime` 当前公开版本：`0.2.0-alpha.3`。
@@ -1072,6 +1072,8 @@ Gate 不通过时不得继续扩大 Runtime 覆盖面。
 - 将 `vue-page-runtime` 源码复制进 OfferFlow
 - 在 OfferFlow 内临时篡改 `node_modules`
 
+实施结果（2026-07-12）：兼容性前置验证完成，OfferFlow 精确安装 `vue-page-runtime@0.2.0-alpha.5`，依赖树、类型、生命周期、abort、loading、竞态与销毁验收通过，Runtime Gate 1 已完成。该结论不自动放行 Runtime SSE Gate 2。
+
 ---
 
 ## 19. v0.7.0 内部实施阶段
@@ -1079,6 +1081,8 @@ Gate 不通过时不得继续扩大 Runtime 覆盖面。
 v0.7.0 仍然是一个产品版本，但内部按三个 Gate 实施。
 
 ### 19.1 v0.7.0-A：页面与双库基建
+
+状态：**已完成、已合并 main、已推送**（2026-07-12）。main 合并提交：`9f935dbec65f860bb8d62bb1c1f231128dc900f6`。App 版本仍为 `0.6.2`，未创建 PR、Tag 或 Release。
 
 包含：
 
@@ -1096,6 +1100,8 @@ v0.7.0 仍然是一个产品版本，但内部按三个 Gate 实施。
 - 双库获得真实业务验证
 
 ### 19.2 v0.7.0-B：求职记忆核心
+
+状态：**待技术设计**，不得直接开始代码实施。
 
 包含：
 

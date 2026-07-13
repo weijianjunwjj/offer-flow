@@ -234,12 +234,13 @@ OfferFlow 默认本地数据优先，不再把 `data/offerflow.sqlite3` 当作�
 
 ## Roadmap
 
-短期：
+当前阶段：
 
-- 收口 v0.6.2 Demo 证据链。
-- 完善 LLM / SSE 异常处理和降级路径。
-- 补充 Windows 端 OCR 测试。
-- 优化 Workflow Trace 与面试演示路径。
+- App 版本仍为 v0.6.2。
+- v0.7.0-A 页面与读取基建已完成、合并并推送：Hash Router、JobDetailPage、Page Scope、Runtime Gate 1 与异步竞态/销毁测试均已落地。
+- 下一阶段只进入 v0.7.0-B 范围消歧与技术设计，不直接开始代码实施。
+- v0.7.0-B 聚焦 ResumeVersion、Job / Application 分离、FeedbackEvent、事件时间线与旧数据兼容。
+- 历史补录、基础漏斗和 Runtime SSE Gate 2 属于 v0.7.0-C，不提前实施。
 
 中期可能方向：
 
@@ -262,4 +263,4 @@ OfferFlow 默认本地数据优先，不再把 `data/offerflow.sqlite3` 当作�
 - v0.6.1：DeepSeek LLM SSE 流式分析体验，支持岗位分析结果打字机式渲染，复用统一 `API_BASE`，补齐 SSE CORS，本地分析体验由约 17s 静默等待优化为约 10s 首屏可见并持续流式输出。
 - v0.6.2：v0.7 前置稳定性收口，建立 SQLite migration baseline，修复本地 SQLite 与 tracked snapshot 一致性，统一 App 版本并校正普通 LLM 保存与 JD 导入 Review 的文档边界。
 
-当前求职冲刺主线：使用 v0.6.2 版本准备 Demo、面试表达与投递沟通；不在本轮扩展 v0.7 功能。
+当前项目状态：App 版本仍为 v0.6.2，v0.7.0-A 已作为内部实施阶段完成；下一项工程任务是先完成 v0.7.0-B 技术设计，不直接开始代码实施。
