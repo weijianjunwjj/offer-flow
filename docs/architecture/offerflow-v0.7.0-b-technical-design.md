@@ -377,7 +377,7 @@ B6 完成后 Job PATCH 禁止写 `communicationStatus/followupCount/lastGreetedA
 | hr reply/resume request/phone screen | `replied` |
 | interview scheduled/completed/advanced | `interviewing` |
 | recruitment paused/frozen | `paused` |
-| user withdrew/position closed/marked stale/offer accepted/declined/application voided | `closed` |
+| Application.voidedAt 非空，或 user withdrew/position closed/marked stale/offer accepted/declined | `closed` |
 | rejected | `rejected` |
 | offer received 且未结束 | `replied`，新 UI 以 stage=`offer` 展示，不显示为普通回复 |
 
@@ -439,6 +439,7 @@ interface ApplicationProjection {
   lastFollowUpAt: number | null
   nextAllowedFollowUpAt: number | null
   isClosed: boolean
+  isVoided: boolean
   statusSourceEventId: string | null
   projectionStatus: 'valid' | 'degraded' | 'invalid'
   warnings: string[]
@@ -453,6 +454,7 @@ interface ApplicationProjection {
 | FeedbackEvent | feedback_events 表正式事实 |
 | stage/outcome/communicationStatus/followUpCount/时间 | 查询时纯函数投影 |
 | nextAllowedFollowUpAt/isClosed | 查询时派生 |
+| isVoided | 由 Application.voidedAt 派生；审计事件不单独决定 |
 | statusSourceEventId/warnings | 投影诊断信息 |
 | selectedApplicationId | Page Scope UI 状态 |
 | projection 缓存表 | B 不创建 |
