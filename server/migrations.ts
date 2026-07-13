@@ -1,4 +1,5 @@
 import type { SqliteDatabase } from './db';
+import { createJobMemorySchemaV2 } from './migrations/jobMemorySchemaV2';
 
 export interface SchemaMigration {
   version: number;
@@ -12,7 +13,14 @@ export interface MigrationRunResult {
   newlyAppliedVersions: number[];
 }
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export interface MigrationRunOptions {
+  targetVersion?: number;
+  migrations?: readonly SchemaMigration[];
+}
+
+export const PRODUCTION_SCHEMA_VERSION = 1;
+export const LATEST_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -61,6 +69,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       db.exec(BASELINE_SCHEMA_SQL);
     },
   },
+  {
+    version: 2,
+    name: '002_v0_7_job_memory_schema',
+    up: createJobMemorySchemaV2,
+  },
 ];
 
 function validateMigrations(migrations: readonly SchemaMigration[]): void {
@@ -87,6 +100,21 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at INTEGER NOT NULL
 );
 `);
+}
+
+function validateTargetVersion(
+  targetVersion: number,
+  migrations: readonly SchemaMigration[],
+): void {
+  if (!Number.isSafeInteger(targetVersion) || targetVersion < 1) {
+    throw new Error(`schema target version must be a positive safe integer: ${String(targetVersion)}`);
+  }
+  const latestKnownVersion = migrations.at(-1)?.version ?? 0;
+  if (targetVersion > latestKnownVersion) {
+    throw new Error(
+      `schema target version ${targetVersion} is newer than the latest known migration ${latestKnownVersion}`,
+    );
+  }
 }
 
 function readAppliedMigrations(
@@ -124,17 +152,29 @@ function validateAppliedMigrations(
 
 export function runMigrations(
   db: SqliteDatabase,
-  migrations: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
+  options: MigrationRunOptions = {},
 ): MigrationRunResult {
+  const migrations = options.migrations ?? SCHEMA_MIGRATIONS;
+  const targetVersion = options.targetVersion ?? PRODUCTION_SCHEMA_VERSION;
   validateMigrations(migrations);
+  validateTargetVersion(targetVersion, migrations);
   ensureMigrationTable(db);
 
   const appliedBefore = readAppliedMigrations(db);
   validateAppliedMigrations(appliedBefore, migrations);
+  const currentVersionBefore = appliedBefore.at(-1)?.version ?? 0;
+  if (targetVersion < currentVersionBefore) {
+    throw new Error(
+      `database schema version ${currentVersionBefore} cannot be downgraded to target version ${targetVersion}`,
+    );
+  }
   const appliedVersions = new Set(appliedBefore.map((record) => record.version));
   const newlyAppliedVersions: number[] = [];
 
   for (const migration of migrations) {
+    if (migration.version > targetVersion) {
+      break;
+    }
     if (appliedVersions.has(migration.version)) {
       continue;
     }

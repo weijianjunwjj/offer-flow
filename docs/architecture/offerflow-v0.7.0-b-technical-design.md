@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态**：已确认，B0 实施中
+- **状态**：已确认，B0 已完成，B1 实施中
 - **日期**：2026-07-13
 - **产品输入**：`docs/prd/offerflow-v0.7.md` Draft 0.4
 - **实施状态输入**：`docs/handoffs/offerflow-v0.7-stage-handoff-2026-07-13.md`
@@ -584,6 +584,9 @@ CREATE INDEX feedback_events_reason_idx
 
 ### 12.1 安全原则
 
+- B1 将默认 migration target 固定为当前生产安全版本 v1；schema v2 只允许通过显式 `targetVersion: 2` 门禁在临时数据库中执行。
+- 默认应用启动、默认 `db:init`、默认 selftest 和用户数据路径不得因 B1 自动升级到 schema v2。
+- 正式用户数据库启用 v2 的唯一入口留到 B7；启用前必须完成备份、dry-run、分类报告和用户确认。
 - schema v2 migration 只在单个 SQLite transaction 中创建空表、索引和外键并记录 schema_migrations，不自动分类真实 Job。
 - B7 的数据 backfill 是显式升级步骤：先创建 SQLite 与 snapshot 备份并输出 dry-run 分类；备份失败则拒绝执行。
 - 正式 backfill 在单个 SQLite transaction 中保守创建 Application/Event 并写 audit import_log；任一步失败整体回滚。
