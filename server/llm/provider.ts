@@ -162,12 +162,20 @@ interface BuildFetchOptionsResult {
   promptChars: number;
 }
 
+function resolveMaxTokens(explicit: number | undefined): number {
+  const HARD_MIN = 800;
+  const HARD_MAX = 8192;
+  const clamp = (value: number): number => Math.max(HARD_MIN, Math.min(HARD_MAX, value));
+  if (explicit !== undefined) return clamp(explicit);
+  return readEnvInt('OFFERFLOW_LLM_MAX_TOKENS', 1800, HARD_MIN, HARD_MAX);
+}
+
 function buildFetchOptions(
   systemPrompt: string,
   userMessage: string,
   options: LlmOptions | undefined,
 ): BuildFetchOptionsResult {
-  const maxTokens = readEnvInt('OFFERFLOW_LLM_MAX_TOKENS', options?.maxTokens ?? 1800, 800, 8192);
+  const maxTokens = resolveMaxTokens(options?.maxTokens);
   const temperature = readEnvFloat('OFFERFLOW_LLM_TEMPERATURE', options?.temperature ?? 0.2, 0, 1);
   const timeoutMs = readEnvInt('OFFERFLOW_LLM_TIMEOUT_MS', options?.timeoutMs ?? 30000, 5000, 60000);
 
