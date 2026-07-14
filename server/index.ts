@@ -13,6 +13,7 @@ import { registerJobRoutes } from './routes/jobs';
 import { registerImportRoutes } from './routes/import';
 import { registerSyncRoutes } from './routes/sync';
 import { registerLlmRoutes } from './routes/llm';
+import { registerJobMatchProfileRoutes } from './routes/jobMatchProfile';
 import { createShutdownSnapshotExporter, runStartupSync } from './sync/bootstrap';
 
 declare module 'fastify' {
@@ -96,6 +97,7 @@ export function buildServer(
   app.get('/health', async () => ({ ok: true }));
   app.get('/meta/db-path', async () => ({ path: dbPath }));
   registerProfileRoutes(app);
+  registerJobMatchProfileRoutes(app);
   const legacyCommunicationWriteDisabled = jobMemoryV2.enabled;
   registerJobRoutes(app, { legacyCommunicationWriteDisabled });
   registerImportRoutes(app, { legacyCommunicationWriteDisabled });
