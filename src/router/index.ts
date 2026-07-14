@@ -6,6 +6,7 @@ import {
   type RouteRecordRaw,
 } from 'vue-router';
 import ProfileConfigPage from '../pages/ProfileConfigPage.vue';
+import JobMatchProfilePage from '../pages/JobMatchProfilePage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -28,6 +29,7 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
   return [
     { path: '/', redirect: { name: 'jobs' } },
     { path: '/profile', name: 'profile', component: ProfileConfigPage },
+    { path: '/job-match-profile', name: 'job-match-profile', component: JobMatchProfilePage },
     options.jobMemoryV2Enabled
       ? {
         path: '/profile-versions',
