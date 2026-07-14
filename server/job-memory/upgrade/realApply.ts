@@ -74,6 +74,16 @@ export interface ApprovedRealApplyResult {
   approvedBackupUnchanged: true;
 }
 
+interface FailureState {
+  version: 1;
+  resolved: boolean;
+  stage: string;
+  approvedBackupId: string;
+  applyGitCommit: string;
+  failedAt: string;
+  resolvedAt?: string;
+}
+
 export function preApplyCheckpointOptions(
   authorization: RealApplyAuthorization,
 ): UpgradePathsInput {
@@ -301,6 +311,41 @@ function writeFailure(
   });
 }
 
+function readFailure(filePath: string): FailureState | null {
+  if (!fs.existsSync(filePath)) return null;
+  const failure = JSON.parse(fs.readFileSync(filePath, 'utf8')) as FailureState;
+  if (failure.version !== 1 || typeof failure.resolved !== 'boolean') {
+    throw new Error('B7-B 失败报告结构无效');
+  }
+  return failure;
+}
+
+async function findPreApplyCheckpoint(
+  authorization: RealApplyAuthorization,
+  approvedManifest: JobMemoryV2BackupManifest,
+  applyGitCommit: string,
+): Promise<string> {
+  const paths = resolveUpgradePaths(authorization);
+  const candidates: string[] = [];
+  for (const entry of fs.readdirSync(paths.backupDirectory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === authorization.backupId) continue;
+    if (!/^\d{8}-\d{6}-b7a-[a-f0-9]{8}$/.test(entry.name)) continue;
+    const manifestPath = path.join(paths.backupDirectory, entry.name, 'backup-manifest.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as JobMemoryV2BackupManifest;
+    if (
+      manifest.gitCommit === applyGitCommit
+      && manifest.sourceDatabase.sha256 === approvedManifest.sourceDatabase.sha256
+      && manifest.sourceSchemaVersion === 1
+    ) {
+      await verifyUpgradeBackup({ ...authorization, backupId: entry.name });
+      candidates.push(entry.name);
+    }
+  }
+  if (candidates.length !== 1) throw new Error('无法唯一识别本轮 pre-apply checkpoint');
+  return candidates[0]!;
+}
+
 export async function runApprovedRealApply(
   authorization: RealApplyAuthorization,
 ): Promise<ApprovedRealApplyResult> {
@@ -314,7 +359,8 @@ export async function runApprovedRealApply(
   const gitState = readGitState(paths.workspaceDirectory);
   assertRealApplyGitState(gitState);
   const state = getB7BStatePaths(paths.backupDirectory);
-  if (fs.existsSync(state.failure)) throw new Error('存在未解决的 B7-B 失败报告');
+  const priorFailure = readFailure(state.failure);
+  if (priorFailure !== null && !priorFailure.resolved) throw new Error('存在未解决的 B7-B 失败报告');
 
   const approved = await verifyUpgradeBackup(authorization);
   if (approved.databaseHash.slice(0, 12) !== authorization.expectedBackupHash) {
@@ -407,6 +453,69 @@ export async function runApprovedRealApply(
       ) throw new Error('B7-B 事务失败后真实库未恢复到授权前状态');
     }
     throw error;
+  } finally {
+    staging.cleanup();
+  }
+}
+
+export async function resumeApprovedSnapshotPublish(
+  authorization: RealApplyAuthorization,
+): Promise<ApprovedRealApplyResult> {
+  assertRealApplyAuthorization(authorization);
+  const paths = resolveUpgradePaths(authorization);
+  if (path.resolve(paths.sourceDatabasePath) !== path.resolve(getDbPath())) {
+    throw new Error('resume-snapshot-real 只允许默认真实数据库');
+  }
+  const gitState = readGitState(paths.workspaceDirectory);
+  assertRealApplyGitState(gitState);
+  const state = getB7BStatePaths(paths.backupDirectory);
+  const failure = readFailure(state.failure);
+  if (
+    failure === null
+    || failure.resolved
+    || failure.stage !== 'snapshot-publish'
+    || failure.approvedBackupId !== authorization.backupId
+  ) throw new Error('不存在可续跑的 snapshot-publish 失败状态');
+  const approved = await verifyUpgradeBackup(authorization);
+  if (approved.databaseHash.slice(0, 12) !== authorization.expectedBackupHash) {
+    throw new Error('续跑时批准备份短哈希不一致');
+  }
+  const verification = verifyRealUpgradeDatabase(paths.sourceDatabasePath, approved.manifest);
+  if (verification.marker.applyGitCommit !== failure.applyGitCommit) {
+    throw new Error('升级标记与失败报告的 apply Commit 不一致');
+  }
+  const checkpointId = await findPreApplyCheckpoint(
+    authorization,
+    approved.manifest,
+    failure.applyGitCommit,
+  );
+  const staging = await prepareSnapshotV2StagingFromApprovedBackup(authorization);
+  try {
+    const snapshot = publishAndVerifyOfficialSnapshotV2(
+      paths.sourceDatabasePath,
+      paths.workspaceDirectory,
+      staging.report,
+    );
+    const approvedAfter = await verifyUpgradeBackup(authorization);
+    if (approvedAfter.databaseHash !== approved.databaseHash) {
+      throw new Error('Snapshot 续跑后批准备份发生变化');
+    }
+    const result: ApprovedRealApplyResult = {
+      resultCode: 'B7B_APPLY_SUCCESS',
+      applyGitCommit: failure.applyGitCommit,
+      approvedBackupId: authorization.backupId,
+      preApplyCheckpointId: checkpointId,
+      verification,
+      snapshot,
+      approvedBackupUnchanged: true,
+    };
+    writeB7BPrivateJson(state.result, result);
+    writeB7BPrivateJson(state.failure, {
+      ...failure,
+      resolved: true,
+      resolvedAt: new Date().toISOString(),
+    } satisfies FailureState);
+    return result;
   } finally {
     staging.cleanup();
   }

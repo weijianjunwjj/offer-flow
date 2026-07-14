@@ -40,6 +40,19 @@ export interface OfficialSnapshotVerification {
   projectionPersisted: false;
 }
 
+export function assertOfficialSnapshotCountsMatchStaging(
+  expected: SnapshotV2RoundtripReport['tableCounts'],
+  actual: SnapshotV2RoundtripReport['tableCounts'],
+): void {
+  for (const [table, count] of Object.entries(expected)) {
+    // 正式库会比预演 clone 多一个 B7-B apply marker；该差异只允许出现在 app_meta。
+    if (table === 'app_meta') continue;
+    if (actual[table as keyof typeof actual] !== count) {
+      throw new Error(`正式 Snapshot v2 表数量与 staging 不一致：${table}`);
+    }
+  }
+}
+
 function assertExpectedSnapshot(report: SnapshotV2RoundtripReport): void {
   if (
     !report.exportImportOk
@@ -118,11 +131,10 @@ export function publishAndVerifyOfficialSnapshotV2(
   if (exported.tableCounts.applications !== 7 || exported.tableCounts.feedback_events !== 7) {
     throw new Error('正式 Snapshot v2 聚合与 staging 不一致');
   }
-  for (const [table, count] of Object.entries(expectedStaging.tableCounts)) {
-    if (exported.tableCounts[table as keyof typeof exported.tableCounts] !== count) {
-      throw new Error(`正式 Snapshot v2 表数量与 staging 不一致：${table}`);
-    }
-  }
+  assertOfficialSnapshotCountsMatchStaging(
+    expectedStaging.tableCounts,
+    exported.tableCounts as SnapshotV2RoundtripReport['tableCounts'],
+  );
   const consistency = auditSnapshotConsistency(databasePath);
   if (!consistency.ok || consistency.snapshotSchemaVersion !== 2) {
     throw new Error('正式 Snapshot v2 consistency 失败');

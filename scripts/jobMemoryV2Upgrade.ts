@@ -4,6 +4,7 @@ import {
   createPostUpgradeBackup,
   inspectSourceDatabase,
   runApprovedRealApply,
+  resumeApprovedSnapshotPublish,
   runUpgradeDryRun,
   verifyRealUpgradeDatabase,
   verifyUpgradeBackup,
@@ -20,6 +21,7 @@ type UpgradeMode =
   | 'verify-backup'
   | 'dry-run'
   | 'apply-real'
+  | 'resume-snapshot-real'
   | 'verify-real'
   | 'backup-post-real';
 
@@ -33,7 +35,8 @@ interface CliOptions extends UpgradePathsInput {
 }
 
 const ALLOWED_MODES = new Set<UpgradeMode>([
-  'inspect', 'backup', 'verify-backup', 'dry-run', 'apply-real', 'verify-real', 'backup-post-real',
+  'inspect', 'backup', 'verify-backup', 'dry-run', 'apply-real', 'resume-snapshot-real',
+  'verify-real', 'backup-post-real',
 ]);
 const VALUE_FLAGS = new Set([
   '--source', '--backup-dir', '--workspace', '--backup-id', '--confirm-backup-id',
@@ -49,7 +52,7 @@ function required(values: Map<string, string>, flag: string): string {
 export function parseUpgradeCliArgs(args: readonly string[]): CliOptions {
   const mode = args[0];
   if (typeof mode !== 'string' || !ALLOWED_MODES.has(mode as UpgradeMode)) {
-    throw new Error('仅支持受控的 inspect、backup、verify-backup、dry-run、apply-real、verify-real、backup-post-real');
+    throw new Error('仅支持受控的 inspect、backup、verify-backup、dry-run、apply-real、resume-snapshot-real、verify-real、backup-post-real');
   }
   const values = new Map<string, string>();
   for (let index = 1; index < args.length; index += 2) {
@@ -75,7 +78,7 @@ export function parseUpgradeCliArgs(args: readonly string[]): CliOptions {
   if ((options.mode === 'verify-backup' || options.mode === 'dry-run') && !options.backupId) {
     throw new Error(`${options.mode} 必须显式传入 --backup-id`);
   }
-  if (['apply-real', 'verify-real', 'backup-post-real'].includes(options.mode)) {
+  if (['apply-real', 'resume-snapshot-real', 'verify-real', 'backup-post-real'].includes(options.mode)) {
     for (const flag of [
       '--backup-id', '--confirm-backup-id', '--expected-source-fingerprint',
       '--expected-backup-hash', '--approval-token',
@@ -192,6 +195,24 @@ export async function runUpgradeCli(args: readonly string[]): Promise<void> {
       projection: result.verification.projection,
       secondRun: result.verification.secondRun,
       jobHashChanges: result.verification.jobHashChanges,
+      snapshotSchema: result.snapshot.schemaVersion,
+      snapshotConsistency: result.snapshot.consistency,
+      snapshotRoundtrip: result.snapshot.roundtrip,
+      approvedBackupUnchanged: result.approvedBackupUnchanged,
+    });
+    return;
+  }
+  if (options.mode === 'resume-snapshot-real') {
+    const result = await resumeApprovedSnapshotPublish(realAuthorization(options));
+    print({
+      resultCode: result.resultCode,
+      resumedStage: 'snapshot-publish',
+      approvedBackupId: result.approvedBackupId,
+      preApplyCheckpointId: result.preApplyCheckpointId,
+      applyGitCommit: result.applyGitCommit,
+      schema: result.verification.schemaVersion,
+      applications: result.verification.tableCounts.applications,
+      feedbackEvents: result.verification.tableCounts.feedbackEvents,
       snapshotSchema: result.snapshot.schemaVersion,
       snapshotConsistency: result.snapshot.consistency,
       snapshotRoundtrip: result.snapshot.roundtrip,

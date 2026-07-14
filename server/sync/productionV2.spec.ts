@@ -10,6 +10,7 @@ import { initSchema } from '../schema';
 import { exportSnapshotToDirectory, publishSnapshotPairAtomically } from './exportSnapshot';
 import { sha256Hex, toStableJson } from './hash';
 import { SNAPSHOT_SCHEMA_VERSION, SYNC_TABLES } from './types';
+import { assertOfficialSnapshotCountsMatchStaging } from '../job-memory/upgrade/officialSnapshot';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 
@@ -115,5 +116,18 @@ describe('B7-B 正式 Snapshot v2 发布', () => {
     expect(fs.readFileSync(path.join(target, 'offerflow.snapshot.json'), 'utf8')).toBe(oldSnapshot);
     expect(fs.readFileSync(path.join(target, 'offerflow.manifest.json'), 'utf8')).toBe(oldManifest);
     expect(fs.readdirSync(target).some((name) => name.includes('.rollback.tmp'))).toBe(false);
+  });
+
+  it('staging 比较只允许正式库新增 apply marker 导致的 app_meta 差异', () => {
+    const expected = {
+      profiles: 1, jobs: 13, resume_versions: 0, applications: 7,
+      feedback_events: 7, import_logs: 2, app_meta: 1,
+    };
+    expect(() => assertOfficialSnapshotCountsMatchStaging(expected, {
+      ...expected, app_meta: 2,
+    })).not.toThrow();
+    expect(() => assertOfficialSnapshotCountsMatchStaging(expected, {
+      ...expected, applications: 8, app_meta: 2,
+    })).toThrow('applications');
   });
 });
