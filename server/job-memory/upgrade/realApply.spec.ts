@@ -227,6 +227,8 @@ describe('B7-B schema + backfill 单一独占事务', () => {
     ['migration 后失败', { failAfterMigration: true }],
     ['提交前失败', { failBeforeCommit: true }],
     ['数量偏差', { expectedApplications: 8 }],
+    ['Projection 非法', { corruptProjectionPayload: true }],
+    ['Job hash 变化', { mutateJobAfterBackfill: true }],
   ] as const)('%s 时完整回滚到 v1', (_name, hooks) => {
     const target = fixture();
     const hashBefore = sha256Hex(fs.readFileSync(target.sourceDatabasePath));
@@ -237,6 +239,18 @@ describe('B7-B schema + backfill 单一独占事务', () => {
       'fixture-git-commit',
       hooks,
     )).toThrow();
+    assertRolledBack(target, hashBefore);
+  });
+
+  it('源指纹不一致时在事务前拒绝且保持 v1 零变化', () => {
+    const target = fixture();
+    const hashBefore = sha256Hex(fs.readFileSync(target.sourceDatabasePath));
+    expect(() => applySchemaAndBackfillAtomically(
+      target.sourceDatabasePath,
+      target.manifest,
+      { ...target.authorization, expectedSourceFingerprint: '000000000000' },
+      'fixture-git-commit',
+    )).toThrow('短指纹不一致');
     assertRolledBack(target, hashBefore);
   });
 

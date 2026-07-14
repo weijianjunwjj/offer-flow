@@ -6,6 +6,7 @@ import { projectApplication } from '../../../src/domain/job-memory';
 import { getDbPath } from '../../db';
 import { getDatabaseSchemaVersion, runMigrations } from '../../migrations';
 import { sha256Hex } from '../../sync/hash';
+import { auditSnapshotConsistency } from '../../sync/consistency';
 import { readSnapshotTable } from '../../sync/tables';
 import type { SnapshotTable, SyncTableName } from '../../sync/types';
 import { ApplicationRepository } from '../applicationRepository';
@@ -55,6 +56,8 @@ export interface AtomicApplyTestHooks {
   failBeforeCommit?: boolean;
   expectedApplications?: number;
   lockTimeoutMs?: number;
+  corruptProjectionPayload?: boolean;
+  mutateJobAfterBackfill?: boolean;
 }
 
 export interface AtomicApplyResult {
@@ -74,10 +77,21 @@ export interface ApprovedRealApplyResult {
   approvedBackupUnchanged: true;
 }
 
+export interface AlreadyResolvedSnapshotPublishResult
+  extends Omit<ApprovedRealApplyResult, 'resultCode'> {
+  resultCode: 'B7B_SNAPSHOT_ALREADY_RESOLVED';
+}
+
+export type ResumeSnapshotPublishResult =
+  | ApprovedRealApplyResult
+  | AlreadyResolvedSnapshotPublishResult;
+
 interface FailureState {
   version: 1;
   resolved: boolean;
   stage: string;
+  databaseCommitted: boolean;
+  snapshotPublished: boolean;
   approvedBackupId: string;
   applyGitCommit: string;
   failedAt: string;
@@ -236,6 +250,20 @@ export function applySchemaAndBackfillAtomically(
       if (hooks.failAfterMigration) throw new Error('B7B_TEST_FAIL_AFTER_MIGRATION');
       firstRun = runLegacyBackfill(db, { transactionMode: 'caller-managed' });
       secondRun = runLegacyBackfill(db, { transactionMode: 'caller-managed' });
+      if (hooks.corruptProjectionPayload) {
+        db.prepare(`
+          UPDATE feedback_events
+          SET payload_json = '{}'
+          WHERE id = (SELECT id FROM feedback_events ORDER BY id LIMIT 1)
+        `).run();
+      }
+      if (hooks.mutateJobAfterBackfill) {
+        db.prepare(`
+          UPDATE jobs
+          SET company = company || '-unexpected'
+          WHERE id = (SELECT id FROM jobs ORDER BY id LIMIT 1)
+        `).run();
+      }
       assertAtomicAggregates(db, firstRun, secondRun, hooks.expectedApplications ?? 7);
       assertSourceTablesMatchApproved(db, manifest);
       marker = markerFor(authorization, applyGitCommit, firstRun, secondRun);
@@ -301,10 +329,14 @@ function writeFailure(
   authorization: RealApplyAuthorization,
   gitCommit: string,
 ): void {
+  const databaseCommitted = stage !== 'database-transaction';
+  const snapshotPublished = stage === 'approved-backup-recheck';
   writeB7BPrivateJson(filePath, {
     version: 1,
     resolved: false,
     stage,
+    databaseCommitted,
+    snapshotPublished,
     approvedBackupId: authorization.backupId,
     applyGitCommit: gitCommit,
     failedAt: new Date().toISOString(),
@@ -313,7 +345,22 @@ function writeFailure(
 
 function readFailure(filePath: string): FailureState | null {
   if (!fs.existsSync(filePath)) return null;
-  const failure = JSON.parse(fs.readFileSync(filePath, 'utf8')) as FailureState;
+  const stored = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Partial<FailureState>;
+  const failure: FailureState = {
+    ...stored,
+    version: stored.version as 1,
+    resolved: stored.resolved as boolean,
+    stage: stored.stage as string,
+    // B7-B 的旧状态文件没有这两个字段。只在内存中按已知阶段补齐，
+    // 不回写真实私有状态，确保 B8 只读复核不会改变历史文件。
+    databaseCommitted: stored.databaseCommitted
+      ?? stored.stage !== 'database-transaction',
+    snapshotPublished: stored.snapshotPublished ?? stored.resolved === true,
+    approvedBackupId: stored.approvedBackupId as string,
+    applyGitCommit: stored.applyGitCommit as string,
+    failedAt: stored.failedAt as string,
+    resolvedAt: stored.resolvedAt,
+  };
   if (failure.version !== 1 || typeof failure.resolved !== 'boolean') {
     throw new Error('B7-B 失败报告结构无效');
   }
@@ -460,7 +507,7 @@ export async function runApprovedRealApply(
 
 export async function resumeApprovedSnapshotPublish(
   authorization: RealApplyAuthorization,
-): Promise<ApprovedRealApplyResult> {
+): Promise<ResumeSnapshotPublishResult> {
   assertRealApplyAuthorization(authorization);
   const paths = resolveUpgradePaths(authorization);
   if (path.resolve(paths.sourceDatabasePath) !== path.resolve(getDbPath())) {
@@ -471,9 +518,32 @@ export async function resumeApprovedSnapshotPublish(
   const state = getB7BStatePaths(paths.backupDirectory);
   const failure = readFailure(state.failure);
   if (
+    failure?.resolved === true
+    && failure.stage === 'snapshot-publish'
+    && failure.databaseCommitted
+    && failure.snapshotPublished
+    && failure.approvedBackupId === authorization.backupId
+  ) {
+    const approved = await verifyUpgradeBackup(authorization);
+    const stored = readApplyResult(paths.backupDirectory);
+    if (
+      stored.approvedBackupId !== authorization.backupId
+      || stored.applyGitCommit !== failure.applyGitCommit
+      || stored.resultCode !== 'B7B_APPLY_SUCCESS'
+    ) throw new Error('已解决的续发状态与最终 apply result 不一致');
+    verifyRealUpgradeDatabase(paths.sourceDatabasePath, approved.manifest);
+    const snapshot = auditSnapshotConsistency(paths.sourceDatabasePath);
+    if (!snapshot.ok || snapshot.snapshotSchemaVersion !== 2) {
+      throw new Error('已解决的续发状态对应正式 Snapshot 不一致');
+    }
+    return { ...stored, resultCode: 'B7B_SNAPSHOT_ALREADY_RESOLVED' };
+  }
+  if (
     failure === null
     || failure.resolved
     || failure.stage !== 'snapshot-publish'
+    || !failure.databaseCommitted
+    || failure.snapshotPublished
     || failure.approvedBackupId !== authorization.backupId
   ) throw new Error('不存在可续跑的 snapshot-publish 失败状态');
   const approved = await verifyUpgradeBackup(authorization);
@@ -513,6 +583,8 @@ export async function resumeApprovedSnapshotPublish(
     writeB7BPrivateJson(state.failure, {
       ...failure,
       resolved: true,
+      databaseCommitted: true,
+      snapshotPublished: true,
       resolvedAt: new Date().toISOString(),
     } satisfies FailureState);
     return result;

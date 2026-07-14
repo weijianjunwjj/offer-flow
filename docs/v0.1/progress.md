@@ -1956,7 +1956,7 @@ v0.1 不做：
   - `npm exec tsx -- scripts/importBackup.selftest.ts`：通过。
 - 手动 / 端口验收：
   - `/health` 返回 `{ ok: true }`。
-  - `/meta/db-path` 指向 `D:\VSCode\offer-pilot\data\offerflow.sqlite3`。
+  - `/meta/db-path` 指向 `<workspace>/data/offerflow.sqlite3`。
   - Vite 前端 `http://127.0.0.1:5173` 返回 200。
   - 浏览器轻量验收：页面可加载，显示 `v0.4.0` 与 `Backend + SQLite · 本地 HTTP API`，无错误横幅。
 - 真实数据迁移：

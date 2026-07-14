@@ -51,7 +51,10 @@ interface RowSummary {
 function readVerifiedSnapshot(dbPath: string): OfferFlowSnapshot {
   const paths = getSyncPaths(dbPath);
   if (!fs.existsSync(paths.snapshotPath) || !fs.existsSync(paths.manifestPath)) {
-    throw new Error('snapshot and manifest are both required for consistency verification');
+    throw new Error(
+      '正式 snapshot 和 manifest 缺失；全新 clone 请先初始化本地 v2 数据库并显式导出，'
+      + '恢复场景请使用批准备份，不能将缺失视为 consistency 已通过',
+    );
   }
   const snapshotJson = fs.readFileSync(paths.snapshotPath, 'utf8');
   const manifest = JSON.parse(fs.readFileSync(paths.manifestPath, 'utf8')) as SnapshotManifest;
