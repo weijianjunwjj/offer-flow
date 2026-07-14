@@ -20,6 +20,7 @@ import {
   applySchemaAndBackfillAtomically,
   assertRealApplyAuthorization,
   assertRealApplyGitState,
+  preApplyCheckpointOptions,
   type RealApplyAuthorization,
 } from './realApply';
 import { prepareSnapshotV2StagingFromApprovedBackup } from './officialSnapshot';
@@ -158,6 +159,16 @@ describe('B7-B 正式授权绑定', () => {
       .toThrow('分支');
     expect(() => assertRealApplyGitState({ branch: B7B_REQUIRED_BRANCH, head: 'head', clean: false }))
       .toThrow('干净');
+  });
+
+  it('额外 checkpoint 不复用批准 Backup ID', () => {
+    const authorization = valid();
+    expect(preApplyCheckpointOptions(authorization)).toEqual({
+      sourceDatabasePath: authorization.sourceDatabasePath,
+      backupDirectory: authorization.backupDirectory,
+      workspaceDirectory: authorization.workspaceDirectory,
+    });
+    expect(preApplyCheckpointOptions(authorization)).not.toHaveProperty('backupId');
   });
 });
 

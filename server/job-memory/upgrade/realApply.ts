@@ -28,6 +28,7 @@ import {
   assertNoSymbolicLinks,
   resolveBackupRunDirectory,
   resolveUpgradePaths,
+  type UpgradePathsInput,
 } from './pathSafety';
 import {
   B7B_UPGRADE_META_KEY,
@@ -71,6 +72,16 @@ export interface ApprovedRealApplyResult {
   verification: RealUpgradeVerificationReport;
   snapshot: OfficialSnapshotVerification;
   approvedBackupUnchanged: true;
+}
+
+export function preApplyCheckpointOptions(
+  authorization: RealApplyAuthorization,
+): UpgradePathsInput {
+  return {
+    sourceDatabasePath: authorization.sourceDatabasePath,
+    backupDirectory: authorization.backupDirectory,
+    workspaceDirectory: authorization.workspaceDirectory,
+  };
 }
 
 export interface GitState {
@@ -342,7 +353,7 @@ export async function runApprovedRealApply(
     || source.v2TablesPresent.length !== 0
   ) throw new Error('真实源库与 B7-A 授权状态不一致');
 
-  const checkpoint = await createUpgradeBackup(authorization);
+  const checkpoint = await createUpgradeBackup(preApplyCheckpointOptions(authorization));
   const staging = await prepareSnapshotV2StagingFromApprovedBackup(authorization);
   let transactionCommitted = false;
   try {
