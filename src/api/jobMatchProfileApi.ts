@@ -1,49 +1,58 @@
-import { JobMatchProfileDraftSchema, JobMatchProfileStateSchema, type JobMatchProfileDraft, type JobMatchProfileState } from '../domain/job-match-profile';
-import { apiGet, apiSend, type ReadOptions } from './client';
+import type {
+  JobMatchProfileDraft,
+  JobMatchProfileView,
+} from '../domain/job-match-profile';
+import { JobMatchProfileViewSchema } from '../domain/job-match-profile';
+import { apiGet, apiSend, type ReadOptions, type SendOptions } from './client';
 
-function parseState(value: unknown): JobMatchProfileState {
-  return JobMatchProfileStateSchema.parse(value);
+export interface JobMatchCommandRequest {
+  idempotencyKey: string;
+  expectedProfileStateVersion: number;
+}
+
+function checked(value: JobMatchProfileView): JobMatchProfileView {
+  return JobMatchProfileViewSchema.parse(value);
 }
 
 export const jobMatchProfileApi = {
-  async get(options?: ReadOptions): Promise<JobMatchProfileState> {
-    return parseState(await apiGet<unknown>('/job-match-profile', options));
+  async get(options?: ReadOptions): Promise<JobMatchProfileView> {
+    return checked(await apiGet<JobMatchProfileView>('/job-match-profile', options));
   },
-  async createManualProposal(
-    expectedStateVersion: number,
-    draft?: JobMatchProfileDraft,
-  ): Promise<JobMatchProfileState> {
-    return parseState(await apiSend<unknown>('/job-match-profile/proposals/manual', 'POST', {
-      expectedStateVersion,
-      ...(draft ? { draft: JobMatchProfileDraftSchema.parse(draft) } : {}),
-    }));
+  async generate(input: JobMatchCommandRequest, options?: SendOptions): Promise<JobMatchProfileView> {
+    return checked(await apiSend('/job-match-profile/proposals/generate', 'POST', input, options));
   },
-  async createAiProposal(expectedStateVersion: number): Promise<JobMatchProfileState> {
-    return parseState(await apiSend<unknown>('/job-match-profile/proposals/ai', 'POST', {
-      expectedStateVersion,
-    }));
+  async manual(
+    input: JobMatchCommandRequest & { payload: JobMatchProfileDraft },
+    options?: SendOptions,
+  ): Promise<JobMatchProfileView> {
+    return checked(await apiSend('/job-match-profile/proposals/manual', 'POST', input, options));
   },
-  async decideProposal(
-    proposalId: string,
-    input: {
-      expectedStateVersion: number;
-      action: 'accept' | 'modify_and_accept' | 'reject' | 'defer';
-      note?: string;
-      deferredUntil?: number | null;
-      modifiedDraft?: JobMatchProfileDraft;
-    },
-  ): Promise<JobMatchProfileState> {
-    return parseState(await apiSend<unknown>(
-      `/job-match-profile/proposals/${encodeURIComponent(proposalId)}/decision`,
-      'POST',
-      input,
-    ));
+  async accept(
+    id: string,
+    input: JobMatchCommandRequest & { decisionNote?: string | null; modifiedPayload?: JobMatchProfileDraft },
+    options?: SendOptions,
+  ): Promise<JobMatchProfileView> {
+    return checked(await apiSend(`/job-match-profile/proposals/${encodeURIComponent(id)}/accept`, 'POST', input, options));
   },
-  async activateVersion(versionId: string, expectedStateVersion: number): Promise<JobMatchProfileState> {
-    return parseState(await apiSend<unknown>(
-      `/job-match-profile/versions/${encodeURIComponent(versionId)}/activate`,
-      'POST',
-      { expectedStateVersion },
-    ));
+  async reject(
+    id: string,
+    input: JobMatchCommandRequest & { decisionNote?: string | null },
+    options?: SendOptions,
+  ): Promise<JobMatchProfileView> {
+    return checked(await apiSend(`/job-match-profile/proposals/${encodeURIComponent(id)}/reject`, 'POST', input, options));
+  },
+  async defer(
+    id: string,
+    input: JobMatchCommandRequest & { decisionNote?: string | null },
+    options?: SendOptions,
+  ): Promise<JobMatchProfileView> {
+    return checked(await apiSend(`/job-match-profile/proposals/${encodeURIComponent(id)}/defer`, 'POST', input, options));
+  },
+  async activate(
+    id: string,
+    input: JobMatchCommandRequest & { confirmed: true },
+    options?: SendOptions,
+  ): Promise<JobMatchProfileView> {
+    return checked(await apiSend(`/job-match-profile/versions/${encodeURIComponent(id)}/activate`, 'POST', input, options));
   },
 };

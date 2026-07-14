@@ -1,4 +1,4 @@
-export const API_BASE = 'http://127.0.0.1:17365';
+export const API_BASE = import.meta.env.VITE_OFFERFLOW_API_BASE || 'http://127.0.0.1:17365';
 
 export function buildApiUrl(path: string): string {
   return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
@@ -18,15 +18,25 @@ export interface ReadOptions {
   signal?: AbortSignal;
 }
 
+export interface SendOptions {
+  signal?: AbortSignal;
+}
+
 export async function apiGet<T>(path: string, options: ReadOptions = {}): Promise<T> {
   return apiRequest<T>(path, { signal: options.signal });
 }
 
-export async function apiSend<T>(path: string, method: string, body?: unknown): Promise<T> {
+export async function apiSend<T>(
+  path: string,
+  method: string,
+  body?: unknown,
+  options: SendOptions = {},
+): Promise<T> {
   return apiRequest<T>(path, {
     method,
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 }
 

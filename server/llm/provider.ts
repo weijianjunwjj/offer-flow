@@ -19,6 +19,7 @@ export interface LlmOptions {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface LlmStreamChunk {
@@ -120,16 +121,22 @@ async function fetchWithRetry(
   startTime: number,
   attempt: number,
   maxRetries: number,
+  externalSignal?: AbortSignal,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), init.timeoutMs);
+  const abortFromExternal = (): void => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) controller.abort(externalSignal.reason);
+  externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
 
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
     return response;
   } catch (error) {
     clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
     const err = error as Error & { cause?: unknown };
 
     if (err.name === 'AbortError') {
@@ -140,7 +147,7 @@ async function fetchWithRetry(
       const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
       console.log('[llm] retry', { attempt: attempt + 1, maxRetries, delayMs: delay, error: err.message });
       await sleep(delay);
-      return fetchWithRetry(url, init, startTime, attempt + 1, maxRetries);
+      return fetchWithRetry(url, init, startTime, attempt + 1, maxRetries, externalSignal);
     }
 
     throw err;
@@ -225,6 +232,7 @@ export async function chatCompletion(
       startTime,
       0,
       maxRetries,
+      options?.signal,
     );
 
     const upstreamElapsed = Date.now() - fetchStart;
@@ -347,6 +355,7 @@ export async function* chatCompletionStream(
       startTime,
       0,
       maxRetries,
+      options?.signal,
     );
   } catch (error) {
     const totalElapsed = Date.now() - startTime;

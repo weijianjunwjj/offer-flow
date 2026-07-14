@@ -1,6 +1,8 @@
 // OfferFlow v0.1 — Step 0 data shapes.
 // This file describes ONLY what we persist. No logic lives here.
 
+import type { JobMatchProfileState } from '../domain/job-match-profile';
+
 /** 当前求职重点:求稳 / 涨薪 / 履历 / 技术成长 */
 export type JobSearchFocus = 'stability' | 'raise' | 'resume' | 'growth';
 
@@ -15,6 +17,8 @@ export interface JobSeekerProfile {
   acceptOvertime: boolean;
   jobSearchFocus: JobSearchFocus;
   weaknessNote: string;
+  /** G1 全局岗位匹配画像；使用 Profile JSON 扩展，不新增数据库表。 */
+  jobMatchProfile?: JobMatchProfileState;
 }
 
 /** 投递建议四档 */

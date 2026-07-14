@@ -5,6 +5,8 @@ import { pathToFileURL } from 'node:url';
 import Fastify from 'fastify';
 import { getDbPath, openDb, type SqliteDatabase } from './db';
 import type { JobMemoryServiceDeps } from './job-memory/jobMemoryService';
+import type { JobMatchProfileServiceDeps } from './job-match-profile/service';
+import { registerJobMatchProfileRoutes } from './job-match-profile/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
 import { getDatabaseSchemaVersion } from './migrations';
 import { initSchema } from './schema';
@@ -13,7 +15,6 @@ import { registerJobRoutes } from './routes/jobs';
 import { registerImportRoutes } from './routes/import';
 import { registerSyncRoutes } from './routes/sync';
 import { registerLlmRoutes } from './routes/llm';
-import { registerJobMatchProfileRoutes } from './routes/jobMatchProfile';
 import { createShutdownSnapshotExporter, runStartupSync } from './sync/bootstrap';
 
 declare module 'fastify' {
@@ -31,6 +32,7 @@ export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
   jobMemoryV2?: JobMemoryV2Capability;
+  jobMatchProfile?: JobMatchProfileServiceDeps;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -97,7 +99,6 @@ export function buildServer(
   app.get('/health', async () => ({ ok: true }));
   app.get('/meta/db-path', async () => ({ path: dbPath }));
   registerProfileRoutes(app);
-  registerJobMatchProfileRoutes(app);
   const legacyCommunicationWriteDisabled = jobMemoryV2.enabled;
   registerJobRoutes(app, { legacyCommunicationWriteDisabled });
   registerImportRoutes(app, { legacyCommunicationWriteDisabled });
@@ -105,6 +106,7 @@ export function buildServer(
   registerLlmRoutes(app);
   if (jobMemoryV2.enabled) {
     registerJobMemoryRoutes(app, { serviceDeps: jobMemoryV2.serviceDeps });
+    registerJobMatchProfileRoutes(app, options.jobMatchProfile);
   }
   return app;
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { JobMatchProfileStateSchema } from '../job-match-profile';
 import { FEEDBACK_EVENT_TYPES } from './types';
 import type {
   ApplicationMemory,
@@ -521,6 +522,7 @@ export const JobSeekerProfileSchema: z.ZodType<JobSeekerProfile> = z.strictObjec
   acceptOvertime: z.boolean(),
   jobSearchFocus: z.enum(['stability', 'raise', 'resume', 'growth']),
   weaknessNote: z.string(),
+  jobMatchProfile: JobMatchProfileStateSchema.optional(),
 });
 
 export const ApplicationMemorySchema: z.ZodType<ApplicationMemory> = z.strictObject({
