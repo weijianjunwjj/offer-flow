@@ -206,6 +206,7 @@ export interface LegacyBackfillSummary {
 export interface LegacyBackfillOptions {
   now?: () => number;
   failAfterCreatedApplications?: number;
+  transactionMode?: 'internal' | 'caller-managed';
 }
 
 function increment(target: Record<string, number>, key: string): void {
@@ -247,7 +248,7 @@ export function runLegacyBackfill(
     auditLogCreated: false,
   };
   const createdMigrationKeys: string[] = [];
-  const execute = db.transaction(() => {
+  const execute = (): void => {
     for (const job of jobs) {
       summary.byLegacyStatus[job.communicationStatus] += 1;
       const decision = classifyLegacyBackfill(job);
@@ -385,7 +386,11 @@ export function runLegacyBackfill(
       );
       summary.auditLogCreated = true;
     }
-  });
-  execute();
+  };
+  if (options.transactionMode === 'caller-managed') {
+    execute();
+  } else {
+    db.transaction(execute)();
+  }
   return summary;
 }

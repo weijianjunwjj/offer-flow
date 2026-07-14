@@ -1,21 +1,44 @@
 import { pathToFileURL } from 'node:url';
 import {
   createUpgradeBackup,
+  createPostUpgradeBackup,
   inspectSourceDatabase,
+  runApprovedRealApply,
   runUpgradeDryRun,
+  verifyRealUpgradeDatabase,
   verifyUpgradeBackup,
+  assertRealApplyAuthorization,
+  readApplyResult,
+  type RealApplyAuthorization,
   type UpgradePathsInput,
 } from '../server/job-memory/upgrade';
+import { auditSnapshotConsistency } from '../server/sync/consistency';
 
-type UpgradeMode = 'inspect' | 'backup' | 'verify-backup' | 'dry-run';
+type UpgradeMode =
+  | 'inspect'
+  | 'backup'
+  | 'verify-backup'
+  | 'dry-run'
+  | 'apply-real'
+  | 'verify-real'
+  | 'backup-post-real';
 
 interface CliOptions extends UpgradePathsInput {
   mode: UpgradeMode;
   backupId?: string;
+  confirmBackupId?: string;
+  expectedSourceFingerprint?: string;
+  expectedBackupHash?: string;
+  approvalToken?: string;
 }
 
-const ALLOWED_MODES = new Set<UpgradeMode>(['inspect', 'backup', 'verify-backup', 'dry-run']);
-const VALUE_FLAGS = new Set(['--source', '--backup-dir', '--workspace', '--backup-id']);
+const ALLOWED_MODES = new Set<UpgradeMode>([
+  'inspect', 'backup', 'verify-backup', 'dry-run', 'apply-real', 'verify-real', 'backup-post-real',
+]);
+const VALUE_FLAGS = new Set([
+  '--source', '--backup-dir', '--workspace', '--backup-id', '--confirm-backup-id',
+  '--expected-source-fingerprint', '--expected-backup-hash', '--approval-token',
+]);
 
 function required(values: Map<string, string>, flag: string): string {
   const value = values.get(flag)?.trim();
@@ -26,7 +49,7 @@ function required(values: Map<string, string>, flag: string): string {
 export function parseUpgradeCliArgs(args: readonly string[]): CliOptions {
   const mode = args[0];
   if (typeof mode !== 'string' || !ALLOWED_MODES.has(mode as UpgradeMode)) {
-    throw new Error('B7-A 仅支持 inspect、backup、verify-backup、dry-run');
+    throw new Error('仅支持受控的 inspect、backup、verify-backup、dry-run、apply-real、verify-real、backup-post-real');
   }
   const values = new Map<string, string>();
   for (let index = 1; index < args.length; index += 2) {
@@ -44,11 +67,36 @@ export function parseUpgradeCliArgs(args: readonly string[]): CliOptions {
     backupDirectory: required(values, '--backup-dir'),
     workspaceDirectory: required(values, '--workspace'),
     backupId: values.get('--backup-id'),
+    confirmBackupId: values.get('--confirm-backup-id'),
+    expectedSourceFingerprint: values.get('--expected-source-fingerprint'),
+    expectedBackupHash: values.get('--expected-backup-hash'),
+    approvalToken: values.get('--approval-token'),
   };
   if ((options.mode === 'verify-backup' || options.mode === 'dry-run') && !options.backupId) {
     throw new Error(`${options.mode} 必须显式传入 --backup-id`);
   }
+  if (['apply-real', 'verify-real', 'backup-post-real'].includes(options.mode)) {
+    for (const flag of [
+      '--backup-id', '--confirm-backup-id', '--expected-source-fingerprint',
+      '--expected-backup-hash', '--approval-token',
+    ]) required(values, flag);
+  }
   return options;
+}
+
+function realAuthorization(options: CliOptions): RealApplyAuthorization {
+  const authorization: RealApplyAuthorization = {
+    sourceDatabasePath: options.sourceDatabasePath,
+    backupDirectory: options.backupDirectory,
+    workspaceDirectory: options.workspaceDirectory,
+    backupId: options.backupId as string,
+    confirmBackupId: options.confirmBackupId as string,
+    expectedSourceFingerprint: options.expectedSourceFingerprint as string,
+    expectedBackupHash: options.expectedBackupHash as string,
+    approvalToken: options.approvalToken as string,
+  };
+  assertRealApplyAuthorization(authorization);
+  return authorization;
 }
 
 function print(value: unknown): void {
@@ -125,6 +173,67 @@ export async function runUpgradeCli(args: readonly string[]): Promise<void> {
       integrity: result.integrity,
       foreignKeyViolationCount: result.foreignKeyViolationCount,
       snapshotFilesVerified: result.snapshotFilesVerified,
+    });
+    return;
+  }
+  if (options.mode === 'apply-real') {
+    const result = await runApprovedRealApply(realAuthorization(options));
+    print({
+      resultCode: result.resultCode,
+      approvedBackupId: result.approvedBackupId,
+      preApplyCheckpointId: result.preApplyCheckpointId,
+      applyGitCommit: result.applyGitCommit,
+      schema: result.verification.schemaVersion,
+      applications: result.verification.tableCounts.applications,
+      feedbackEvents: result.verification.tableCounts.feedbackEvents,
+      resumeVersions: result.verification.tableCounts.resumeVersions,
+      skip: result.verification.skipCount,
+      manualReview: result.verification.manualReviewCount,
+      projection: result.verification.projection,
+      secondRun: result.verification.secondRun,
+      jobHashChanges: result.verification.jobHashChanges,
+      snapshotSchema: result.snapshot.schemaVersion,
+      snapshotConsistency: result.snapshot.consistency,
+      snapshotRoundtrip: result.snapshot.roundtrip,
+      approvedBackupUnchanged: result.approvedBackupUnchanged,
+    });
+    return;
+  }
+  if (options.mode === 'verify-real') {
+    const authorization = realAuthorization(options);
+    const approved = await verifyUpgradeBackup(authorization);
+    const apply = readApplyResult(authorization.backupDirectory);
+    const report = verifyRealUpgradeDatabase(authorization.sourceDatabasePath, approved.manifest);
+    const snapshot = auditSnapshotConsistency(authorization.sourceDatabasePath);
+    print({
+      mode: 'verify-real',
+      resultCode: apply.resultCode,
+      schemaVersion: report.schemaVersion,
+      migrationContinuous: report.migrationContinuous,
+      integrity: report.integrity,
+      foreignKeyViolationCount: report.foreignKeyViolationCount,
+      tableCounts: report.tableCounts,
+      projection: report.projection,
+      skip: report.skipCount,
+      manualReview: report.manualReviewCount,
+      secondRun: report.secondRun,
+      jobHashChanges: report.jobHashChanges,
+      legacyFieldChanges: report.legacyFieldChanges,
+      snapshotSchemaVersion: snapshot.snapshotSchemaVersion,
+      snapshotConsistency: snapshot.ok,
+    });
+    return;
+  }
+  if (options.mode === 'backup-post-real') {
+    const result = await createPostUpgradeBackup(realAuthorization(options));
+    print({
+      mode: 'backup-post-real',
+      backupId: result.backupId,
+      relativeLocation: result.relativeLocation,
+      databaseSizeBytes: result.databaseSizeBytes,
+      databaseShortHash: result.databaseShortHash,
+      snapshotFilesVerified: result.snapshotFilesVerified,
+      overwrittenExistingBackup: false,
     });
     return;
   }

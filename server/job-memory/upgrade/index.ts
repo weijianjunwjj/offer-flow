@@ -3,3 +3,7 @@ export * from './inspection';
 export * from './backup';
 export * from './legacyBackfill';
 export * from './dryRun';
+export * from './officialSnapshot';
+export * from './postUpgradeBackup';
+export * from './realApply';
+export * from './realVerification';

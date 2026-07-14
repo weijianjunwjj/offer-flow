@@ -83,7 +83,7 @@ export function assertDistinctDatabasePaths(sourcePath: string, targetPath: stri
 }
 
 export function resolveBackupRunDirectory(backupRoot: string, backupId: string): string {
-  if (!/^\d{8}-\d{6}-b7a-[a-f0-9]{8}$/.test(backupId)) {
+  if (!/^\d{8}-\d{6}-b7[ab]-[a-f0-9]{8}$/.test(backupId)) {
     throw new Error('backup ID 格式无效');
   }
   const candidate = path.resolve(backupRoot, backupId);
