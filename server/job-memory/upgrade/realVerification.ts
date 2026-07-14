@@ -82,7 +82,7 @@ function readOriginalImportLogs(db: Database.Database): SnapshotTable {
   };
 }
 
-function parseMarker(db: Database.Database): B7BUpgradeMarker {
+export function readB7BUpgradeMarker(db: Database.Database): B7BUpgradeMarker {
   const row = db.prepare('SELECT value FROM app_meta WHERE key = ?').get(B7B_UPGRADE_META_KEY) as {
     value: string;
   } | undefined;
@@ -121,7 +121,7 @@ export function verifyRealUpgradeDatabase(
     ).all() as Array<{ version: number }>;
     const migrationContinuous = migrationRows.every((row, index) => row.version === index + 1)
       && migrationRows.at(-1)?.version === 2;
-    const marker = parseMarker(db);
+    const marker = readB7BUpgradeMarker(db);
 
     const applications = new ApplicationRepository(db).listApplications();
     const eventRepository = new FeedbackEventRepository(db);

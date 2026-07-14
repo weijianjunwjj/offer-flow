@@ -64,7 +64,7 @@ function readBooleanFeatureFlag(value: string | undefined, defaultValue: boolean
 
 export interface ReadOnlyServerSmokeReport {
   mode: 'explicit-v1' | 'default-v2';
-  jobs: 13;
+  jobs: number;
   summaries: number | null;
   migratedBundleHasApplication: boolean | null;
   skippedBundleHasApplication: boolean | null;
@@ -238,6 +238,7 @@ export async function runReadOnlyServerSmoke(
   mode: 'explicit-v1' | 'default-v2',
 ): Promise<ReadOnlyServerSmokeReport> {
   const before = databaseFingerprint(databasePath);
+  const expectedCounts = readDatabaseCounts(databasePath);
   const db = new Database(databasePath, { readonly: true, fileMustExist: true });
   db.pragma('query_only = ON');
   const app = buildServer({
@@ -268,6 +269,9 @@ export async function runReadOnlyServerSmoke(
         schemaValidated: true,
       };
     } else {
+      const activeResumeVersionId = (db.prepare(
+        "SELECT value FROM app_meta WHERE key = 'active_resume_version_id'",
+      ).get() as { value: string } | undefined)?.value ?? null;
       const migrated = db.prepare(
         'SELECT job_id AS jobId FROM applications ORDER BY job_id LIMIT 1',
       ).get() as { jobId: string } | undefined;
@@ -277,41 +281,48 @@ export async function runReadOnlyServerSmoke(
         WHERE applications.id IS NULL
         ORDER BY jobs.id LIMIT 1
       `).get() as { jobId: string } | undefined;
-      if (migrated === undefined || skipped === undefined) {
-        throw new Error('v2 恢复库缺少迁移/跳过样本');
+      if ((expectedCounts.applications ?? 0) > 0 && migrated === undefined) {
+        throw new Error('v2 只读 API smoke 缺少有 Application 的样本');
       }
       const summariesResponse = await jsonGet(baseUrl, '/jobs/summaries');
-      const migratedResponse = await jsonGet(
-        baseUrl,
-        `/jobs/${encodeURIComponent(migrated.jobId)}/bundle`,
+      const migratedResponse = migrated === undefined ? null : await jsonGet(
+        baseUrl, `/jobs/${encodeURIComponent(migrated.jobId)}/bundle`,
       );
-      const skippedResponse = await jsonGet(
-        baseUrl,
-        `/jobs/${encodeURIComponent(skipped.jobId)}/bundle`,
+      const skippedResponse = skipped === undefined ? null : await jsonGet(
+        baseUrl, `/jobs/${encodeURIComponent(skipped.jobId)}/bundle`,
       );
       const resumeResponse = await jsonGet(baseUrl, '/resume-versions');
       if ([summariesResponse, migratedResponse, skippedResponse, resumeResponse]
+        .filter((response) => response !== null)
         .some(({ status }) => status < 200 || status >= 300)) {
         throw new Error('v2 只读 API smoke HTTP 状态失败');
       }
       const summaries = JobSummariesResponseSchema.parse(summariesResponse.body);
-      const migratedBundle = JobDetailBundleV2Schema.parse(migratedResponse.body);
-      const skippedBundle = JobDetailBundleV2Schema.parse(skippedResponse.body);
+      const migratedBundle = migratedResponse === null
+        ? null
+        : JobDetailBundleV2Schema.parse(migratedResponse.body);
+      const skippedBundle = skippedResponse === null
+        ? null
+        : JobDetailBundleV2Schema.parse(skippedResponse.body);
       const resumes = ResumeVersionListResponseSchema.parse(resumeResponse.body);
       if (
-        summaries.length !== 13
-        || migratedBundle.memory.applications.length === 0
-        || skippedBundle.memory.applications.length !== 0
-        || resumes.resumeVersions.length !== 0
-        || resumes.activeResumeVersionId !== null
+        summaries.length !== expectedCounts.jobs
+        || (migratedBundle !== null && migratedBundle.memory.applications.length === 0)
+        || (skippedBundle !== null && skippedBundle.memory.applications.length !== 0)
+        || resumes.resumeVersions.length !== (expectedCounts.resumeVersions ?? 0)
+        || resumes.activeResumeVersionId !== activeResumeVersionId
       ) throw new Error('v2 只读 API smoke 聚合失败');
       report = {
         mode,
-        jobs: 13,
-        summaries: 13,
-        migratedBundleHasApplication: true,
-        skippedBundleHasApplication: false,
-        resumeVersions: 0,
+        jobs: expectedCounts.jobs,
+        summaries: summaries.length,
+        migratedBundleHasApplication: migratedBundle === null
+          ? null
+          : migratedBundle.memory.applications.length > 0,
+        skippedBundleHasApplication: skippedBundle === null
+          ? null
+          : skippedBundle.memory.applications.length > 0,
+        resumeVersions: resumes.resumeVersions.length,
         expectedResponsesPassed: true,
         schemaValidated: true,
       };

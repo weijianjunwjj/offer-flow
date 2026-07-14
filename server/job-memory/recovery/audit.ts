@@ -14,17 +14,17 @@ import { JobRepository } from '../../repositories/jobRepository';
 import { auditSnapshotConsistency } from '../../sync/consistency';
 import { getSyncPaths } from '../../sync/paths';
 import { SNAPSHOT_SCHEMA_VERSION } from '../../sync/types';
-import { verifyUpgradeBackup } from '../upgrade/backup';
 import {
-  B7B_APPROVED_BACKUP_ID,
-  B7B_EXPECTED_BACKUP_HASH,
-  B7B_EXPECTED_SOURCE_FINGERPRINT,
-  B7B_APPROVAL_TOKEN,
   B7B_REQUIRED_BRANCH,
-  getB7BStatePaths,
-  readApplyResult,
 } from '../upgrade/realApply';
-import { verifyRealUpgradeDatabase } from '../upgrade/realVerification';
+import {
+  verifyUpgradeAttestation,
+  type UpgradeAttestationReport,
+} from '../upgrade/upgradeAttestation';
+import {
+  verifyCurrentProductionDatabase,
+  type CurrentProductionVerificationReport,
+} from '../production/currentVerification';
 import {
   assertB8BackupFingerprintsUnchanged,
   auditB8Backups,
@@ -45,31 +45,23 @@ import {
   type V2RestoreDrillReport,
 } from './drills';
 
-interface RealDataAuditReport {
-  schemaVersion: 2;
-  integrity: 'ok';
-  foreignKeyViolationCount: 0;
-  migrationContinuous: true;
-  tableCounts: {
-    profiles: 1;
-    jobs: 13;
-    originalImportLogs: 1;
-    migrationAuditLogs: 1;
-    resumeVersions: 0;
-    applications: 7;
-    feedbackEvents: 7;
-  };
-  projection: { valid: 0; degraded: 7; invalid: 0 };
-  secondRun: { createdApplications: 0; createdEvents: 0; auditLogCreated: false };
-  jobHashChanges: 0;
-  legacyFieldChanges: 0;
-  snapshotSchemaVersion: 2;
-  snapshotDifferences: 0;
+type CurrentProductionAuditReport = CurrentProductionVerificationReport & {
   readOnlyServerSmoke: ReadOnlyServerSmokeReport;
-  historicalSnapshotFailureResolved: true;
-  finalApplyResultConsistent: true;
   dataUnchanged: true;
   snapshotUnchanged: true;
+};
+
+interface CurrentSnapshotAuditReport {
+  schemaVersion: 2;
+  differenceCount: 0;
+  consistent: true;
+  unchangedDuringAudit: true;
+}
+
+interface RealDataAuditSections {
+  historicalUpgrade: UpgradeAttestationReport;
+  currentProduction: CurrentProductionAuditReport;
+  currentSnapshot: CurrentSnapshotAuditReport;
 }
 
 interface ProductionAuditReport {
@@ -108,7 +100,9 @@ interface BoundaryAuditReport {
 export interface V070B8AuditReport {
   status: 'V070_B8_AUDIT_PASS';
   appVersion: '0.6.2';
-  realData: RealDataAuditReport;
+  historicalUpgrade: UpgradeAttestationReport;
+  currentProduction: CurrentProductionAuditReport;
+  currentSnapshot: CurrentSnapshotAuditReport;
   backups: B8BackupAuditReport;
   v1Restore: V1RestoreDrillReport;
   v2Restore: V2RestoreDrillReport;
@@ -329,73 +323,46 @@ function countSnapshotDifferences(report: ReturnType<typeof auditSnapshotConsist
   ), 0);
 }
 
-async function auditRealData(input: B8BackupAuditInput): Promise<RealDataAuditReport> {
+async function auditRealData(input: B8BackupAuditInput): Promise<RealDataAuditSections> {
   const databaseBefore = captureB8RealDataFingerprint(input.sourceDatabasePath);
   const snapshotDirectory = getSyncPaths(input.sourceDatabasePath).syncDir;
   const snapshotBefore = captureB8SnapshotFingerprint(snapshotDirectory);
-  const authorization = {
-    ...input,
-    backupId: B7B_APPROVED_BACKUP_ID,
-    confirmBackupId: B7B_APPROVED_BACKUP_ID,
-    expectedSourceFingerprint: B7B_EXPECTED_SOURCE_FINGERPRINT,
-    expectedBackupHash: B7B_EXPECTED_BACKUP_HASH,
-    approvalToken: B7B_APPROVAL_TOKEN,
-  };
-  const approved = await verifyUpgradeBackup(authorization);
-  const verification = verifyRealUpgradeDatabase(input.sourceDatabasePath, approved.manifest);
+  const historicalUpgrade = await verifyUpgradeAttestation(input);
+  const verification = verifyCurrentProductionDatabase(input.sourceDatabasePath);
   const snapshot = auditSnapshotConsistency(input.sourceDatabasePath);
   const readOnlyServerSmoke = await runReadOnlyServerSmoke(
     input.sourceDatabasePath,
     'default-v2',
   );
-  const statePaths = getB7BStatePaths(path.resolve(input.backupDirectory));
-  const failure = JSON.parse(fs.readFileSync(statePaths.failure, 'utf8')) as {
-    stage?: unknown;
-    resolved?: unknown;
-  };
-  const apply = readApplyResult(input.backupDirectory);
-  const historicalSnapshotFailureResolved = failure.stage === 'snapshot-publish'
-    && failure.resolved === true;
-  const finalApplyResultConsistent = apply.resultCode === 'B7B_APPLY_SUCCESS'
-    && apply.approvedBackupId === B7B_APPROVED_BACKUP_ID
-    && apply.preApplyCheckpointId === '20260714-112449-b7a-8d54a08b'
-    && apply.snapshot.schemaVersion === 2
-    && apply.snapshot.consistency;
   const snapshotDifferences = countSnapshotDifferences(snapshot);
   if (
     verification.schemaVersion !== 2
-    || verification.integrity[0] !== 'ok'
+    || verification.integrity !== 'ok'
     || verification.foreignKeyViolationCount !== 0
     || !verification.migrationContinuous
-    || verification.jobHashChanges !== 0
-    || verification.legacyFieldChanges !== 0
+    || verification.projection.invalid !== 0
     || !snapshot.ok
     || snapshot.snapshotSchemaVersion !== 2
     || snapshotDifferences !== 0
-    || !historicalSnapshotFailureResolved
-    || !finalApplyResultConsistent
   ) throw new Error('真实数据 B8 只读审计失败');
   if (
     captureB8RealDataFingerprint(input.sourceDatabasePath) !== databaseBefore
     || captureB8SnapshotFingerprint(snapshotDirectory) !== snapshotBefore
   ) throw new Error('真实数据或正式 Snapshot 在只读审计中发生变化');
   return {
-    schemaVersion: 2,
-    integrity: 'ok',
-    foreignKeyViolationCount: 0,
-    migrationContinuous: true,
-    tableCounts: verification.tableCounts as RealDataAuditReport['tableCounts'],
-    projection: verification.projection as RealDataAuditReport['projection'],
-    secondRun: verification.secondRun,
-    jobHashChanges: 0,
-    legacyFieldChanges: 0,
-    snapshotSchemaVersion: 2,
-    snapshotDifferences: 0,
-    readOnlyServerSmoke,
-    historicalSnapshotFailureResolved: true,
-    finalApplyResultConsistent: true,
-    dataUnchanged: true,
-    snapshotUnchanged: true,
+    historicalUpgrade,
+    currentProduction: {
+      ...verification,
+      readOnlyServerSmoke,
+      dataUnchanged: true,
+      snapshotUnchanged: true,
+    },
+    currentSnapshot: {
+      schemaVersion: 2,
+      differenceCount: 0,
+      consistent: true,
+      unchangedDuringAudit: true,
+    },
   };
 }
 
@@ -432,7 +399,9 @@ export async function runV070B8Audit(
   return {
     status: 'V070_B8_AUDIT_PASS',
     appVersion: '0.6.2',
-    realData,
+    historicalUpgrade: realData.historicalUpgrade,
+    currentProduction: realData.currentProduction,
+    currentSnapshot: realData.currentSnapshot,
     backups,
     v1Restore,
     v2Restore,

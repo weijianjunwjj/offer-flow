@@ -4,6 +4,7 @@ export * from './backup';
 export * from './legacyBackfill';
 export * from './dryRun';
 export * from './officialSnapshot';
+export * from './upgradeAttestation';
 export * from './postUpgradeBackup';
 export * from './realApply';
 export * from './realVerification';

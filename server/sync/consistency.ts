@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import Database from 'better-sqlite3';
 import { getDbPath } from '../db';
 import { sha256Hex } from './hash';
@@ -48,16 +49,22 @@ interface RowSummary {
   hash: string;
 }
 
-function readVerifiedSnapshot(dbPath: string): OfferFlowSnapshot {
+function readVerifiedSnapshot(dbPath: string, snapshotDirectory?: string): OfferFlowSnapshot {
   const paths = getSyncPaths(dbPath);
-  if (!fs.existsSync(paths.snapshotPath) || !fs.existsSync(paths.manifestPath)) {
+  const snapshotPath = snapshotDirectory === undefined
+    ? paths.snapshotPath
+    : path.join(snapshotDirectory, 'offerflow.snapshot.json');
+  const manifestPath = snapshotDirectory === undefined
+    ? paths.manifestPath
+    : path.join(snapshotDirectory, 'offerflow.manifest.json');
+  if (!fs.existsSync(snapshotPath) || !fs.existsSync(manifestPath)) {
     throw new Error(
       '正式 snapshot 和 manifest 缺失；全新 clone 请先初始化本地 v2 数据库并显式导出，'
       + '恢复场景请使用批准备份，不能将缺失视为 consistency 已通过',
     );
   }
-  const snapshotJson = fs.readFileSync(paths.snapshotPath, 'utf8');
-  const manifest = JSON.parse(fs.readFileSync(paths.manifestPath, 'utf8')) as SnapshotManifest;
+  const snapshotJson = fs.readFileSync(snapshotPath, 'utf8');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as SnapshotManifest;
   if (
     manifest.schemaVersion !== SNAPSHOT_SCHEMA_VERSION
     || manifest.databaseSchemaVersion !== SNAPSHOT_SCHEMA_VERSION
@@ -137,8 +144,11 @@ function compareTables(
   };
 }
 
-export function auditSnapshotConsistency(dbPath = getDbPath()): SnapshotConsistencyReport {
-  const snapshot = readVerifiedSnapshot(dbPath);
+export function auditSnapshotConsistency(
+  dbPath = getDbPath(),
+  snapshotDirectory?: string,
+): SnapshotConsistencyReport {
+  const snapshot = readVerifiedSnapshot(dbPath, snapshotDirectory);
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     const reports = {} as SnapshotConsistencyReport['tables'];
@@ -160,7 +170,9 @@ export function auditSnapshotConsistency(dbPath = getDbPath()): SnapshotConsiste
     return {
       ok,
       databasePath: dbPath,
-      snapshotPath: getSyncPaths(dbPath).snapshotPath,
+      snapshotPath: snapshotDirectory === undefined
+        ? getSyncPaths(dbPath).snapshotPath
+        : path.join(snapshotDirectory, 'offerflow.snapshot.json'),
       snapshotSchemaVersion: snapshot.schemaVersion,
       snapshotAppVersion: snapshot.appVersion,
       snapshotExportedAt: snapshot.exportedAt,

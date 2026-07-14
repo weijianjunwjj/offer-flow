@@ -16,10 +16,15 @@ import {
   assertNoSymbolicLinks,
   resolveBackupRunDirectory,
 } from '../upgrade/pathSafety';
+import {
+  B7B_APPROVED_BACKUP_ID,
+  B7B_POST_UPGRADE_BACKUP_ID,
+  B7B_PRE_APPLY_CHECKPOINT_ID,
+} from '../upgrade/realApply';
 
-export const B8_APPROVED_V1_BACKUP_ID = '20260714-102807-b7a-6f0ac3d1';
-export const B8_PRE_APPLY_CHECKPOINT_ID = '20260714-112449-b7a-8d54a08b';
-export const B8_POST_UPGRADE_BACKUP_ID = '20260714-112746-b7b-475bd682';
+export const B8_APPROVED_V1_BACKUP_ID = B7B_APPROVED_BACKUP_ID;
+export const B8_PRE_APPLY_CHECKPOINT_ID = B7B_PRE_APPLY_CHECKPOINT_ID;
+export const B8_POST_UPGRADE_BACKUP_ID = B7B_POST_UPGRADE_BACKUP_ID;
 
 export interface B8BackupAuditInput {
   sourceDatabasePath: string;

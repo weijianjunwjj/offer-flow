@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { getDbPath, openDb } from '../db';
+import { getDbPath } from '../db';
 import { getDatabaseSchemaVersion } from '../migrations';
 import { readAppVersion } from './appVersion';
 import { getOrCreateDeviceId } from './device';
@@ -17,7 +17,8 @@ import {
 } from './types';
 
 function openProductionDb(dbPath: string): Database.Database {
-  const db = openDb(dbPath);
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  db.pragma('query_only = ON');
   const schemaVersion = getDatabaseSchemaVersion(db);
   if (schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
     db.close();
@@ -30,6 +31,7 @@ function openProductionDb(dbPath: string): Database.Database {
 
 export interface SnapshotPublishTestHooks {
   failAfterSnapshotReplace?: boolean;
+  validatePublished?: () => void;
 }
 
 export function publishSnapshotPairAtomically(
@@ -62,6 +64,7 @@ export function publishSnapshotPairAtomically(
     if (manifest.snapshotHash !== sha256Hex(snapshotText)) {
       throw new Error('原子发布后的 snapshot/manifest hash 不一致');
     }
+    hooks.validatePublished?.();
     for (const rollback of rollbacks) {
       if (fs.existsSync(rollback)) fs.rmSync(rollback);
     }
