@@ -18,3 +18,10 @@ test('hash 深链接、导航、前进后退与 404', async ({ page }) => {
   await page.goto('/#/unknown/path');
   await expect(page.getByRole('heading', { name: '页面不存在' })).toBeVisible();
 });
+
+test('岗位匹配画像一级路由可通过顶部导航到达', async ({ page }) => {
+  await page.goto('/#/profile');
+  await page.getByRole('button', { name: '岗位匹配画像' }).click();
+  await expect(page).toHaveURL(/#\/job-match-profile$/);
+  await expect(page.getByRole('heading', { name: '岗位匹配画像' })).toBeVisible();
+});

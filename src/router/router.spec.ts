@@ -23,6 +23,13 @@ describe('OfferFlow Router', () => {
     expect(normalizeJobId('x'.repeat(201))).toBeNull();
   });
 
+  it('注册岗位匹配画像一级路由', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory());
+    await router.push('/job-match-profile');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('job-match-profile');
+  });
+
   it('未知前端路径进入 NotFoundPage', async () => {
     const router = createOfferFlowRouter(createMemoryHistory());
     await router.push('/missing/path');
