@@ -106,23 +106,23 @@ function feedbackEvent(eventType: string) {
 }
 
 describe('Job Memory capability gate', () => {
-  it('默认 Server 保持 schema v1 且不注册 v2 routes', async () => {
-    const { tempDir, dbPath } = makeTempPath('offerflow-job-memory-disabled-');
+  it('默认 Server 初始化 schema v2 并注册 v2 routes', async () => {
+    const { tempDir, dbPath } = makeTempPath('offerflow-job-memory-default-v2-');
     const app = buildServer(dbPath);
     cleanups.push(async () => {
       await app.close();
       fs.rmSync(tempDir, { recursive: true, force: true });
     });
     const response = await app.inject({ method: 'GET', url: '/resume-versions' });
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode).toBe(200);
     expect(app.db.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").pluck().get())
-      .toBe('1');
+      .toBe('2');
   });
 
   it('capability=true 遇到 v1 DB 时在 Server 创建阶段明确失败', () => {
     const { tempDir, dbPath } = makeTempPath('offerflow-job-memory-v1-rejected-');
     const db = openDb(dbPath);
-    initSchema(db);
+    initSchema(db, { targetVersion: 1 });
     db.close();
     cleanups.push(() => fs.rmSync(tempDir, { recursive: true, force: true }));
     expect(() => buildServer({ dbPath, jobMemoryV2: { enabled: true } }))

@@ -14,10 +14,9 @@ import { ResumeVersionRepository } from '../job-memory/resumeVersionRepository';
 import { atomicWriteJson, sha256Hex, toStableJson } from '../sync/hash';
 import { readSnapshotTable } from '../sync/tables';
 import {
-  SNAPSHOT_SCHEMA_VERSION,
-  SYNC_TABLES,
-  type OfferFlowSnapshot,
-  type SnapshotManifest,
+  LEGACY_SYNC_TABLES,
+  type LegacyOfferFlowSnapshotV1,
+  type LegacySnapshotManifestV1,
 } from '../sync/types';
 import {
   auditSnapshotV2Consistency,
@@ -106,15 +105,15 @@ function seedV2(databasePath: string): void {
 
 function writeLegacySnapshot(directory: string, databasePath: string): void {
   const db = openDb(databasePath);
-  let snapshot: OfferFlowSnapshot;
+  let snapshot: LegacyOfferFlowSnapshotV1;
   try {
     snapshot = {
       schemaVersion: 1,
       exportedAt: '2026-07-14T00:00:00.000Z',
       deviceId: 'legacy-fixture',
       appVersion: '0.6.2',
-      tables: Object.fromEntries(SYNC_TABLES.map((table) => [table, readSnapshotTable(db, table)])),
-    } as OfferFlowSnapshot;
+      tables: Object.fromEntries(LEGACY_SYNC_TABLES.map((table) => [table, readSnapshotTable(db, table)])),
+    } as LegacyOfferFlowSnapshotV1;
   } finally {
     db.close();
   }
@@ -122,15 +121,15 @@ function writeLegacySnapshot(directory: string, databasePath: string): void {
   const text = toStableJson(snapshot);
   fs.writeFileSync(path.join(directory, 'offerflow.snapshot.json'), text, 'utf8');
   atomicWriteJson(path.join(directory, 'offerflow.manifest.json'), {
-    schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    schemaVersion: 1,
     exportedAt: snapshot.exportedAt,
     deviceId: snapshot.deviceId,
     appVersion: snapshot.appVersion,
     snapshotHash: sha256Hex(text),
     tableCounts: Object.fromEntries(
-      SYNC_TABLES.map((table) => [table, snapshot.tables[table]?.rows.length ?? 0]),
+      LEGACY_SYNC_TABLES.map((table) => [table, snapshot.tables[table]?.rows.length ?? 0]),
     ),
-  } satisfies SnapshotManifest);
+  } satisfies LegacySnapshotManifestV1);
 }
 
 describe('显式 snapshot v2', () => {
@@ -216,7 +215,7 @@ describe('snapshot v1 显式 legacy upgrade', () => {
     const legacyDbPath = path.join(tempDir, 'legacy-source.sqlite3');
     const legacyDb = openDb(legacyDbPath);
     try {
-      initSchema(legacyDb);
+      initSchema(legacyDb, { targetVersion: 1 });
       new JobRepository(legacyDb).create({
         id: 'legacy-replied', communicationStatus: 'replied', lastGreetedAt: 100,
       });

@@ -359,36 +359,45 @@ function assertForeignKeyViolation(action: () => void): void {
 }
 
 try {
-  assert.equal(PRODUCTION_SCHEMA_VERSION, 1);
+  assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
   assert.equal(CURRENT_SCHEMA_VERSION, PRODUCTION_SCHEMA_VERSION);
   assert.equal(LATEST_SCHEMA_VERSION, 2);
   assert.equal(SCHEMA_MIGRATIONS.at(-1)?.version, LATEST_SCHEMA_VERSION);
   assert.equal(SCHEMA_MIGRATIONS.length, LATEST_SCHEMA_VERSION);
-  assert.equal(SNAPSHOT_SCHEMA_VERSION, 1);
-  assert.deepEqual([...SYNC_TABLES], ['app_meta', 'profiles', 'jobs', 'import_logs']);
+  assert.equal(SNAPSHOT_SCHEMA_VERSION, 2);
+  assert.deepEqual([...SYNC_TABLES], [
+    'profiles', 'jobs', 'resume_versions', 'applications',
+    'feedback_events', 'import_logs', 'app_meta',
+  ]);
   assert.doesNotMatch(
     JOB_MEMORY_SCHEMA_V2_SQL,
     /\b(?:INSERT\s+INTO|UPDATE\s+jobs|DELETE\s+FROM)\b/i,
   );
   assert.doesNotMatch(JOB_MEMORY_SCHEMA_V2_SQL, /communication_status/i);
 
-  // Default initialization remains at the production-safe v1 target and is idempotent.
+  // B7-B 后默认初始化到生产 v2 target，并保持幂等。
   withTempDatabase((db) => {
     const first = initSchema(db);
     assert.deepEqual(first, {
-      currentVersion: 1,
-      appliedVersions: [1],
-      newlyAppliedVersions: [1],
+      currentVersion: 2,
+      appliedVersions: [1, 2],
+      newlyAppliedVersions: [1, 2],
     });
     assert.deepEqual(tableNames(db), [
       'app_meta',
+      'applications',
+      'feedback_events',
       'import_logs',
       'jobs',
       'profiles',
+      'resume_versions',
       'schema_migrations',
     ]);
-    assert.equal(JOB_MEMORY_TABLES.some((table) => tableNames(db).includes(table)), false);
-    assert.deepEqual(migrationRecords(db), [{ version: 1, name: '001_v0_6_baseline' }]);
+    assert.equal(JOB_MEMORY_TABLES.every((table) => tableNames(db).includes(table)), true);
+    assert.deepEqual(migrationRecords(db), [
+      { version: 1, name: '001_v0_6_baseline' },
+      { version: 2, name: '002_v0_7_job_memory_schema' },
+    ]);
     const metaBefore = db
       .prepare("SELECT value, updated_at FROM app_meta WHERE key = 'schema_version'")
       .get();
@@ -425,7 +434,7 @@ try {
       );
     `);
     const before = readV1BusinessData(db);
-    assert.deepEqual(initSchema(db).newlyAppliedVersions, [1]);
+    assert.deepEqual(initSchema(db, { targetVersion: 1 }).newlyAppliedVersions, [1]);
     assert.equal(schemaVersion(db), 1);
     assert.deepEqual(readV1BusinessData(db), before);
     assert.equal(JOB_MEMORY_TABLES.some((table) => tableNames(db).includes(table)), false);
@@ -433,7 +442,7 @@ try {
 
   // A v1 database with real-shaped legacy rows upgrades to empty v2 tables without rewrites.
   withTempDatabase((db) => {
-    initSchema(db);
+    initSchema(db, { targetVersion: 1 });
     seedV1BusinessData(db);
     const v1DataBefore = readV1BusinessData(db);
     const jobsDataJsonBefore = db
@@ -477,7 +486,7 @@ try {
     for (const table of JOB_MEMORY_TABLES) {
       assert.equal(rowCount(db, table), 0);
     }
-    assert.throws(() => initSchema(db), /cannot be downgraded/);
+    assert.deepEqual(initSchema(db).newlyAppliedVersions, []);
   });
 
   // A target newer than the registry fails before any migration table is created.
@@ -491,7 +500,7 @@ try {
 
   // The actual v2 migration SQL is transactionally rolled back when failure is injected after up().
   withTempDatabase((db) => {
-    initSchema(db);
+    initSchema(db, { targetVersion: 1 });
     seedV1BusinessData(db);
     const v1DataBefore = readV1BusinessData(db);
     const officialV2 = SCHEMA_MIGRATIONS[1];
@@ -547,9 +556,9 @@ try {
       /contiguous and ordered/,
     );
 
-    initSchema(db);
+    initSchema(db, { targetVersion: 1 });
     db.prepare('UPDATE schema_migrations SET name = ? WHERE version = 1').run('conflict');
-    assert.throws(() => initSchema(db), /name conflict/);
+    assert.throws(() => initSchema(db, { targetVersion: 1 }), /name conflict/);
   });
 
   // CHECK constraints, legal minimum rows, FK enforcement and RESTRICT deletion.

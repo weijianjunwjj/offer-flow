@@ -9,10 +9,9 @@ import { JobRepository } from '../../repositories/jobRepository';
 import { atomicWriteJson, sha256Hex, toStableJson } from '../../sync/hash';
 import { readSnapshotTable } from '../../sync/tables';
 import {
-  SNAPSHOT_SCHEMA_VERSION,
-  SYNC_TABLES,
-  type OfferFlowSnapshot,
-  type SnapshotManifest,
+  LEGACY_SYNC_TABLES,
+  type LegacyOfferFlowSnapshotV1,
+  type LegacySnapshotManifestV1,
 } from '../../sync/types';
 import { createUpgradeBackup, verifyUpgradeBackup } from './backup';
 import { runUpgradeDryRun } from './dryRun';
@@ -47,7 +46,7 @@ function fixture(): Fixture {
   execFileSync('git', ['add', 'README.md', '.gitignore'], { cwd: workspaceDirectory, stdio: 'ignore', windowsHide: true });
   execFileSync('git', ['commit', '-m', 'fixture'], { cwd: workspaceDirectory, stdio: 'ignore', windowsHide: true });
   const db = openDb(sourceDatabasePath);
-  initSchema(db);
+  initSchema(db, { targetVersion: 1 });
   db.close();
   cleanups.push(() => fs.rmSync(tempDir, { recursive: true, force: true }));
   return { tempDir, workspaceDirectory, sourceDatabasePath, backupDirectory };
@@ -55,17 +54,17 @@ function fixture(): Fixture {
 
 function writeSnapshotV1(target: Fixture): void {
   const db = openDb(target.sourceDatabasePath);
-  let snapshot: OfferFlowSnapshot;
+  let snapshot: LegacyOfferFlowSnapshotV1;
   try {
     snapshot = {
-      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      schemaVersion: 1,
       exportedAt: '2026-07-14T00:00:00.000Z',
       deviceId: 'fixture-device',
       appVersion: '0.6.2',
       tables: Object.fromEntries(
-        SYNC_TABLES.map((table) => [table, readSnapshotTable(db, table)]),
+        LEGACY_SYNC_TABLES.map((table) => [table, readSnapshotTable(db, table)]),
       ),
-    } as OfferFlowSnapshot;
+    } as LegacyOfferFlowSnapshotV1;
   } finally {
     db.close();
   }
@@ -80,9 +79,9 @@ function writeSnapshotV1(target: Fixture): void {
     appVersion: snapshot.appVersion,
     snapshotHash: sha256Hex(snapshotText),
     tableCounts: Object.fromEntries(
-      SYNC_TABLES.map((table) => [table, snapshot.tables[table]?.rows.length ?? 0]),
+      LEGACY_SYNC_TABLES.map((table) => [table, snapshot.tables[table]?.rows.length ?? 0]),
     ),
-  } satisfies SnapshotManifest);
+  } satisfies LegacySnapshotManifestV1);
 }
 
 function options(target: Fixture) {
@@ -110,7 +109,7 @@ function seedMixedJobs(target: Fixture): void {
 }
 
 describe('B7-A 只读审计和安全备份', () => {
-  it('CLI 只暴露四个只读/克隆模式，不接受 apply、force 或缺省路径', () => {
+  it('CLI 不接受通用 apply、force 或缺省授权，apply-real 必须完整绑定 B7-B', () => {
     expect(() => parseUpgradeCliArgs(['apply'])).toThrow('仅支持');
     expect(() => parseUpgradeCliArgs([
       'inspect', '--source', 'source.sqlite3', '--backup-dir', 'backups',
@@ -122,6 +121,17 @@ describe('B7-A 只读审计和安全备份', () => {
       'verify-backup', '--source', 'source.sqlite3', '--backup-dir', 'backups',
       '--workspace', '.', '--backup-id', '20260714-010203-b7a-deadbeef',
     ]).mode).toBe('verify-backup');
+    expect(() => parseUpgradeCliArgs([
+      'apply-real', '--source', 'source.sqlite3', '--backup-dir', 'backups', '--workspace', '.',
+      '--backup-id', '20260714-102807-b7a-6f0ac3d1',
+    ])).toThrow('缺少必填参数');
+    expect(parseUpgradeCliArgs([
+      'apply-real', '--source', 'source.sqlite3', '--backup-dir', 'backups', '--workspace', '.',
+      '--backup-id', '20260714-102807-b7a-6f0ac3d1',
+      '--confirm-backup-id', '20260714-102807-b7a-6f0ac3d1',
+      '--expected-source-fingerprint', '891d4ccc32c0', '--expected-backup-hash', 'ba0d599568ad',
+      '--approval-token', 'B7B-APPLY-20260714-102807-B7A-6F0AC3D1',
+    ]).mode).toBe('apply-real');
   });
 
   it('生成在线备份、无敏感 manifest，并拒绝覆盖已有 backup ID', async () => {
