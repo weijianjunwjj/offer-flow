@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:router": "node scripts/runRouterSmoke.mjs",
+    "job-match-profile:smoke": "tsx scripts/jobMatchProfile.smoke.ts",
     "job-memory-v2:smoke": "tsx scripts/devJobMemoryV2.ts --smoke",
     "job-memory-v2:upgrade": "tsx scripts/jobMemoryV2Upgrade.ts",
     "job-memory-v2:upgrade-selftest": "vitest run server/job-memory/upgrade server/snapshot/v2.spec.ts",
