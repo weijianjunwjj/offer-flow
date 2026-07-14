@@ -29,6 +29,7 @@
     "job-memory-v2:verify-real": "tsx scripts/jobMemoryV2Upgrade.ts verify-real --source data/offerflow.sqlite3 --backup-dir backups/job-memory-v2 --workspace . --backup-id 20260714-102807-b7a-6f0ac3d1 --confirm-backup-id 20260714-102807-b7a-6f0ac3d1 --expected-source-fingerprint 891d4ccc32c0 --expected-backup-hash ba0d599568ad --approval-token B7B-APPLY-20260714-102807-B7A-6F0AC3D1",
     "job-memory-v2:smoke-real": "tsx scripts/jobMemoryV2RealReadOnlySmoke.ts",
     "job-memory-v2:backup-post-real": "tsx scripts/jobMemoryV2Upgrade.ts backup-post-real --source data/offerflow.sqlite3 --backup-dir backups/job-memory-v2 --workspace . --backup-id 20260714-102807-b7a-6f0ac3d1 --confirm-backup-id 20260714-102807-b7a-6f0ac3d1 --expected-source-fingerprint 891d4ccc32c0 --expected-backup-hash ba0d599568ad --approval-token B7B-APPLY-20260714-102807-B7A-6F0AC3D1",
+    "v0.7:b8-audit": "tsx scripts/v070B8Audit.ts",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
     "migration:selftest": "tsx scripts/migrations.selftest.ts",
