@@ -19,6 +19,10 @@ import type {
   ResumeVersionRecord,
 } from '../domain/job-memory';
 import type { JobSeekerProfile } from '../storage';
+import {
+  formatDateTime,
+  formatResumeVersionSourceLabel,
+} from '../domain/presentation';
 import { navigationConfirm } from '../router/confirmNavigation';
 import {
   buildProfileResumeSnapshot,
@@ -26,7 +30,6 @@ import {
   defaultResumeVersionName,
   hashResumeContentSnapshot,
   hasResumeContent,
-  shortContentHash,
   sortResumeVersions,
 } from './resumeVersionsModel';
 
@@ -40,6 +43,7 @@ const loadError = ref('');
 const actionError = ref('');
 const notice = ref('');
 const duplicateVersionId = ref<string | null>(null);
+const expandedTechnicalVersionIds = ref<ReadonlySet<string>>(new Set());
 const submitting = ref(false);
 
 let alive = true;
@@ -209,11 +213,11 @@ function openCreate(): void {
   resetMessages();
   const snapshot = currentProfileSnapshot.value;
   if (snapshot === null) {
-    actionError.value = '尚未保存正式 Profile，不能创建简历版本。';
+    actionError.value = '尚未保存正式个人档案，不能创建简历版本。';
     return;
   }
   if (!hasResumeContent(snapshot)) {
-    actionError.value = 'Profile 的简历正文和项目经历均为空，不能创建空白版本。';
+    actionError.value = '个人档案的简历正文和项目经历均为空，不能创建空白版本。';
     return;
   }
   const name = defaultResumeVersionName();
@@ -240,7 +244,7 @@ async function reconcileUnknownCreate(snapshot: ResumeContentSnapshot): Promise<
 
 async function submitCreate(): Promise<void> {
   if (submitting.value || createDraft.name.trim() === '') return;
-  if (!window.confirm('确认冻结当前 Profile 内容并创建简历版本？创建后内容不可修改。')) return;
+  if (!window.confirm('确认冻结当前个人档案内容并创建简历版本？创建后内容不可修改。')) return;
   submitting.value = true;
   actionError.value = '';
   const snapshot = { ...createDraft.contentSnapshot };
@@ -449,15 +453,14 @@ function setArchiveMode(mode: ArchiveMode): void {
 }
 
 function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString();
+  return formatDateTime(timestamp);
 }
 
-function sourceLabel(sourceType: ResumeVersionRecord['source']): string {
-  return {
-    profile_snapshot: 'Profile 快照',
-    pasted_text: '粘贴文本',
-    imported_file_text: '导入文件文本',
-  }[sourceType];
+function toggleTechnicalInfo(versionId: string, open: boolean): void {
+  const next = new Set(expandedTechnicalVersionIds.value);
+  if (open) next.add(versionId);
+  else next.delete(versionId);
+  expandedTechnicalVersionIds.value = next;
 }
 
 function beforeUnload(event: BeforeUnloadEvent): void {
@@ -498,7 +501,7 @@ onBeforeUnmount(() => {
         :disabled="loadStatus !== 'ready' || !profileHasResumeContent || submitting"
         @click="openCreate"
       >
-        从当前 Profile 创建版本
+        从当前个人档案创建版本
       </button>
     </header>
 
@@ -516,7 +519,7 @@ onBeforeUnmount(() => {
     <p v-if="actionError" class="banner banner-error" role="alert">{{ actionError }}</p>
 
     <section v-if="loadStatus === 'loading' || loadStatus === 'idle'" class="state-card" role="status">
-      正在读取 Profile 与简历版本…
+      正在读取个人档案与简历版本…
     </section>
     <section v-else-if="loadStatus !== 'ready'" class="state-card state-error" role="alert">
       <h2>{{ loadStatus === 'unavailable' ? '功能未启用' : '暂时无法读取简历版本' }}</h2>
@@ -525,18 +528,18 @@ onBeforeUnmount(() => {
     </section>
 
     <template v-else>
-      <section class="profile-state" aria-label="当前 Profile 状态">
-        <strong>快照来源：当前正式 Profile</strong>
-        <span v-if="profile === null" class="warning">尚未保存 Profile，不能创建版本。</span>
+      <section class="profile-state" aria-label="当前个人档案状态">
+        <strong>快照来源：当前正式个人档案</strong>
+        <span v-if="profile === null" class="warning">尚未保存个人档案，不能创建版本。</span>
         <span v-else-if="!profileHasResumeContent" class="warning">
           简历正文和项目经历均为空，不能创建空白版本。
         </span>
-        <span v-else>将冻结 `resumeText`（简历正文）与 `projectExperience`（项目经历）。</span>
+        <span v-else>将冻结当前简历正文与项目经历。</span>
       </section>
 
       <section v-if="sortedVersions.length === 0" class="state-card empty-state" role="status">
         <h2>还没有简历版本</h2>
-        <p>版本不会自动从 Profile 生成。检查预览并确认后，才会创建不可变快照。</p>
+        <p>版本不会自动从个人档案生成。检查预览并确认后，才会创建不可变快照。</p>
       </section>
 
       <section v-else class="version-list" aria-label="简历版本列表">
@@ -559,9 +562,15 @@ onBeforeUnmount(() => {
             </div>
             <p class="summary">{{ version.summary || '暂无摘要' }}</p>
             <p class="metadata">
-              {{ sourceLabel(version.source) }} · 创建于 {{ formatTime(version.createdAt) }} · 内容 {{ shortContentHash(version.contentHash) }}
+              {{ formatResumeVersionSourceLabel(version.source) }} · 创建于 {{ formatTime(version.createdAt) }}
             </p>
             <p v-if="version.archivedAt !== null" class="metadata">归档于 {{ formatTime(version.archivedAt) }}</p>
+            <details class="technical-info" @toggle="toggleTechnicalInfo(version.id, ($event.target as HTMLDetailsElement).open)">
+              <summary>查看技术信息</summary>
+              <p v-if="expandedTechnicalVersionIds.has(version.id)" class="metadata">
+                版本标识：{{ version.id }} · 内容摘要：{{ version.contentHash }} · 行版本：{{ version.rowVersion }}
+              </p>
+            </details>
           </div>
           <div class="card-actions">
             <button type="button" class="secondary-btn" :disabled="submitting" @click="openEdit(version)">
@@ -594,7 +603,7 @@ onBeforeUnmount(() => {
       <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="create-title">
         <header class="modal-head">
           <div>
-            <h2 id="create-title">创建 Profile 简历快照</h2>
+            <h2 id="create-title">创建个人档案简历快照</h2>
             <p>请先检查将要冻结的真实内容。创建后只能修改名称和摘要。</p>
           </div>
           <button type="button" class="icon-btn" aria-label="关闭创建窗口" @click="requestCloseCreate()">×</button>
@@ -635,7 +644,7 @@ onBeforeUnmount(() => {
           <button type="button" class="icon-btn" aria-label="关闭编辑窗口" @click="requestCloseEdit()">×</button>
         </header>
         <p v-if="editConflictVersion !== null" class="banner banner-warning" role="alert">
-          服务端当前 rowVersion：{{ editConflictVersion }}。你的草稿已保留。
+          服务端当前版本号：{{ editConflictVersion }}。你的草稿已保留。
           <button type="button" class="link-btn" @click="reloadEditingVersion">重新加载</button>
         </p>
         <label class="field">

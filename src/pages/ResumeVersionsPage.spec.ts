@@ -126,8 +126,18 @@ describe('ResumeVersionsPage', () => {
     expect(wrapper.text()).toContain('可用');
     expect(wrapper.text()).toContain('已归档');
     expect(wrapper.text()).not.toContain('active0123456789abcdef');
+    expect(wrapper.text()).not.toContain('profile_snapshot');
+    expect(wrapper.text()).not.toContain('contentHash');
+    expect(wrapper.text()).not.toContain('rowVersion');
+    for (const raw of [
+      'stage', 'outcome', 'communicationStatus', 'followUpCount', 'nextAllowedFollowUpAt',
+      'lastMeaningfulEventAt', 'projectionStatus', 'direct_employer', 'not_contacted',
+      'application_created', 'sourceConfidence', 'evidenceLevel', 'timePrecision',
+    ]) {
+      expect(wrapper.text()).not.toContain(raw);
+    }
 
-    await button(wrapper, '从当前 Profile 创建版本').trigger('click');
+    await button(wrapper, '从当前个人档案创建版本').trigger('click');
     expect(wrapper.get('.snapshot-preview').text()).toContain(profile.resumeText);
     expect(wrapper.get('.snapshot-preview').text()).toContain(profile.projectExperience);
     await wrapper.get('input[type="text"]').setValue('我的正式快照');
@@ -159,8 +169,8 @@ describe('ResumeVersionsPage', () => {
     apiMocks.list.mockResolvedValue(listResponse([]));
     apiMocks.profileGet.mockResolvedValue(profileValue);
     const { wrapper } = await mountPage();
-    expect(button(wrapper, '从当前 Profile 创建版本').attributes()).toHaveProperty('disabled');
-    expect(wrapper.text()).toMatch(/尚未保存 Profile|不能创建空白版本/);
+    expect(button(wrapper, '从当前个人档案创建版本').attributes()).toHaveProperty('disabled');
+    expect(wrapper.text()).toMatch(/尚未保存个人档案|不能创建空白版本/);
     expect(apiMocks.create).not.toHaveBeenCalled();
     wrapper.unmount();
   });
@@ -275,7 +285,7 @@ describe('ResumeVersionsPage', () => {
     apiMocks.profileGet.mockResolvedValue(profile);
     apiMocks.create.mockRejectedValue(new ResumeVersionApiError('NETWORK_ERROR', 'offline'));
     const { wrapper } = await mountPage();
-    await button(wrapper, '从当前 Profile 创建版本').trigger('click');
+    await button(wrapper, '从当前个人档案创建版本').trigger('click');
     await button(wrapper, '确认创建快照').trigger('click');
     await vi.waitFor(() => expect(apiMocks.list).toHaveBeenCalledTimes(2));
     await flushPromises();
@@ -307,7 +317,7 @@ describe('ResumeVersionsPage', () => {
     apiMocks.profileGet.mockResolvedValue(profile);
     apiMocks.create.mockReturnValue(new Promise((resolve) => { resolveCreate = resolve; }));
     const { wrapper } = await mountPage();
-    await button(wrapper, '从当前 Profile 创建版本').trigger('click');
+    await button(wrapper, '从当前个人档案创建版本').trigger('click');
     await button(wrapper, '确认创建快照').trigger('click');
     expect(apiMocks.create).toHaveBeenCalledTimes(1);
     wrapper.unmount();

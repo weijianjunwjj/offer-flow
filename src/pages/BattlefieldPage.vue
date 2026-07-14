@@ -24,6 +24,18 @@ import { copyText } from '../app/clipboard';
 import { buildMessageTemplate } from '../app/messageTemplates';
 import { COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
+  formatApplicationChannelLabel,
+  formatApplicationOutcomeLabel,
+  formatApplicationStageLabel,
+  formatCommunicationStatusLabel,
+  formatDateTime,
+  formatImportedRecommendationLabel,
+  formatParseStatusLabel,
+  formatProjectionStatusLabel,
+  formatRecruitingEntityKindLabel,
+  formatReviewStatusLabel,
+} from '../domain/presentation';
+import {
   COMPANY_SIZE_OPTIONS,
   COMPANY_SIZE_LABELS,
   LEVEL_LABELS,
@@ -444,6 +456,8 @@ async function saveGreeting(): Promise<void> {
 
 // Task 7 / v0.3 T1：沟通状态流转。手动切换，立即持久化，不做自动推进 / 提醒 / 流程校验。
 const communicationStatus = ref<CommunicationStatus>('not_contacted');
+const decisionTechnicalExpanded = ref(false);
+const pageTechnicalExpanded = ref(false);
 const statusSaveState = ref<'idle' | 'done' | 'fail'>('idle');
 const statusSaveError = ref('');
 const currentStatusLabel = computed(
@@ -493,23 +507,7 @@ const availableReviewActions = computed<ReviewAction[]>(() =>
   reviewDecisionJob.value === null ? [] : getAvailableReviewActions(reviewDecisionJob.value),
 );
 const reviewStatusLabel = computed(() => {
-  const status = currentJob.value?.reviewStatus;
-  switch (status) {
-    case 'pending_review':
-      return '待人工确认';
-    case 'confirmed':
-      return '已确认';
-    case 'deferred':
-      return '已暂缓';
-    case 'rejected':
-      return '已拒绝';
-    case undefined:
-      return '未进入确认';
-    default: {
-      const exhaustive: never = status;
-      return exhaustive;
-    }
-  }
+  return formatReviewStatusLabel(currentJob.value?.reviewStatus);
 });
 const reviewNotice = computed(() => {
   const status = currentJob.value?.reviewStatus;
@@ -540,7 +538,7 @@ const reviewSourceRows = computed<Array<{ label: string; value: string }>>(() =>
     { label: '岗位', value: form.role.trim() },
     { label: '城市', value: form.city.trim() },
     { label: '薪资', value: form.salaryRange.trim() },
-    { label: '导入分类', value: draft?.recommendedCategory ?? '' },
+    { label: '导入分类', value: draft === undefined ? '' : formatImportedRecommendationLabel(draft.recommendedCategory) },
     { label: '置信度', value: formatReviewConfidence(draft?.confidence) },
   ];
   return rows.filter((row) => row.value !== '');
@@ -549,18 +547,7 @@ const reviewReason = computed(() => currentJob.value?.importedDraft?.reason?.tri
 const reviewWarnings = computed(() => currentJob.value?.importedDraft?.warnings ?? []);
 const hasReviewAiRawResult = computed(() => aiRawResult.value.trim() !== '');
 const reviewParseStatusText = computed(() => {
-  switch (parseStatus.value) {
-    case 'parsed':
-      return '已解析';
-    case 'unparsed':
-      return '未解析 / 原文已保存';
-    case 'none':
-      return '无';
-    default: {
-      const exhaustive: never = parseStatus.value;
-      return exhaustive;
-    }
-  }
+  return formatParseStatusLabel(parseStatus.value);
 });
 
 function formatReviewConfidence(value: number | null | undefined): string {
@@ -904,7 +891,7 @@ async function saveMatchScore(): Promise<void> {
 }
 
 function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
+  return formatDateTime(timestamp);
 }
 
 function hydrateJob(job: JobRecord): void {
@@ -1179,8 +1166,11 @@ async function analyzeWithLlm(): Promise<void> {
     <h1>岗位主战场</h1>
     <p class="mode">
       当前模式：{{ modeLabel }}
-      <span v-if="jobId" class="job-id">（岗位 ID：{{ jobId }}）</span>
     </p>
+    <details v-if="jobId" class="technical-info page-technical" @toggle="pageTechnicalExpanded = ($event.target as HTMLDetailsElement).open">
+      <summary>查看技术信息</summary>
+      <p v-if="pageTechnicalExpanded" class="job-id">岗位标识：{{ jobId }}</p>
+    </details>
 
     <p v-if="loadError" class="banner banner-error" role="alert">
       {{ loadError }}
@@ -1258,29 +1248,38 @@ async function analyzeWithLlm(): Promise<void> {
       <div v-if="jobMemoryV2Enabled && decisionFacts" class="decision-source" :data-source="decisionFacts.source">
         <template v-if="decisionFacts.source === 'application_projection'">
           <strong>决策依据：当前求职流程的事件投影</strong>
-          <p>当前 Application：{{ decisionFacts.application.applicationId }}</p>
           <p v-if="selectedDecisionApplication">
-            {{ selectedDecisionApplication.record.channel }}
-            · {{ selectedDecisionApplication.record.recruitingEntity.name ?? selectedDecisionApplication.record.recruitingEntity.kind }}
+            {{ formatApplicationChannelLabel(selectedDecisionApplication.record.channel, selectedDecisionApplication.record.channelOtherLabel) }}
+            · {{ selectedDecisionApplication.record.recruitingEntity.name ?? formatRecruitingEntityKindLabel(selectedDecisionApplication.record.recruitingEntity.kind) }}
             · {{ selectedDecisionApplication.record.cityContext.jobCity ?? '城市未知' }}
           </p>
           <div class="decision-source-grid">
-            <span>stage：{{ decisionFacts.application.projection.stage }}</span>
-            <span>outcome：{{ decisionFacts.application.projection.outcome ?? '无' }}</span>
-            <span>communicationStatus：{{ decisionFacts.application.projection.communicationStatus }}</span>
-            <span>followUpCount：{{ decisionFacts.application.projection.followUpCount }}</span>
-            <span>nextAllowedFollowUpAt：{{ decisionFacts.application.projection.nextAllowedFollowUpAt === null ? '未计算' : formatTime(decisionFacts.application.projection.nextAllowedFollowUpAt) }}</span>
-            <span>projectionStatus：{{ decisionFacts.application.projection.projectionStatus }}</span>
+            <span>流程阶段：{{ formatApplicationStageLabel(decisionFacts.application.projection.stage) }}</span>
+            <span>流程结果：{{ formatApplicationOutcomeLabel(decisionFacts.application.projection.outcome) }}</span>
+            <span>沟通状态：{{ formatCommunicationStatusLabel(decisionFacts.application.projection.communicationStatus) }}</span>
+            <span>跟进次数：{{ decisionFacts.application.projection.followUpCount }} 次</span>
+            <span>下次可跟进时间：{{ decisionFacts.application.projection.nextAllowedFollowUpAt === null ? '暂不适用' : formatTime(decisionFacts.application.projection.nextAllowedFollowUpAt) }}</span>
+            <span>事实投影：{{ formatProjectionStatusLabel(decisionFacts.application.projection.projectionStatus) }}</span>
           </div>
-          <ul v-if="decisionFacts.application.projection.warnings.length || decisionFacts.application.projection.errors.length" class="projection-issues">
-            <li v-for="issue in [...decisionFacts.application.projection.warnings, ...decisionFacts.application.projection.errors]" :key="`${issue.code}-${issue.eventId ?? ''}`">{{ issue.code }}：{{ issue.message }}</li>
-          </ul>
-          <p>流程事实请在时间线中新增或纠错；话术草稿请在当前 Application 中维护。</p>
+          <p v-if="decisionFacts.application.projection.warnings.length || decisionFacts.application.projection.errors.length" class="projection-issues">
+            当前流程投影存在 {{ decisionFacts.application.projection.warnings.length + decisionFacts.application.projection.errors.length }} 项技术提示，请核对事实时间线。
+          </p>
+          <details class="technical-info" @toggle="decisionTechnicalExpanded = ($event.target as HTMLDetailsElement).open">
+            <summary>查看技术信息</summary>
+            <div v-if="decisionTechnicalExpanded">
+              <p>流程标识：{{ decisionFacts.application.applicationId }}</p>
+              <p>原始投影：{{ decisionFacts.application.projection.stage }} / {{ decisionFacts.application.projection.outcome ?? 'null' }} / {{ decisionFacts.application.projection.communicationStatus }} / {{ decisionFacts.application.projection.projectionStatus }}</p>
+              <ul v-if="decisionFacts.application.projection.warnings.length || decisionFacts.application.projection.errors.length">
+                <li v-for="issue in [...decisionFacts.application.projection.warnings, ...decisionFacts.application.projection.errors]" :key="`${issue.code}-${issue.eventId ?? ''}`">{{ issue.code }}：{{ issue.message }}</li>
+              </ul>
+            </div>
+          </details>
+          <p>流程事实请在时间线中新增或纠错；话术草稿请在当前求职流程中维护。</p>
         </template>
         <template v-else-if="decisionFacts.source === 'legacy_job_fallback'">
-          <strong>决策依据：历史 Job 沟通数据（只读兼容）</strong>
+          <strong>决策依据：岗位历史沟通数据（只读兼容）</strong>
           <p>{{ pageScope?.decisionCompatibilityWarning }}</p>
-          <p>当前旧状态：{{ decisionFacts.legacyCommunication.communicationStatus }}；跟进 {{ decisionFacts.legacyCommunication.followupCount }} 次。</p>
+          <p>当前历史状态：{{ formatCommunicationStatusLabel(decisionFacts.legacyCommunication.communicationStatus) }}；跟进 {{ decisionFacts.legacyCommunication.followupCount }} 次。</p>
           <p>该状态未进入可信事件时间线，也不进入未来市场证据统计。</p>
         </template>
         <template v-else>
@@ -1552,7 +1551,7 @@ async function analyzeWithLlm(): Promise<void> {
             <span class="label">岗位级首次沟通草稿</span>
             <textarea v-model="draftMessageText" rows="4" placeholder="仅为岗位级草稿，尚未记录流程。"></textarea>
           </label>
-          <p>保存草稿不会创建 Application、追加 Event 或改变沟通状态。</p>
+          <p>保存草稿不会创建求职流程、追加反馈事实或改变沟通状态。</p>
           <button type="button" class="save-btn" @click="saveOpportunityDraft">保存岗位级草稿</button>
           <span v-if="followupSaveState === 'done'" class="save-feedback ok" role="status">已保存 ✓</span>
           <span v-else-if="followupSaveState === 'fail'" class="save-feedback fail" role="alert">{{ followupSaveError }}</span>

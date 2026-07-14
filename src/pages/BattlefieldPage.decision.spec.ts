@@ -89,7 +89,15 @@ describe('Battlefield B6 决策与沟通 UI', () => {
     expect(wrapper.text()).toContain('继续沟通');
     expect(wrapper.find('.status-options').exists()).toBe(false);
     expect(wrapper.find('.opportunity-draft-card').exists()).toBe(false);
-    expect(wrapper.text()).toContain('话术草稿请在当前 Application 中维护');
+    expect(wrapper.text()).toContain('话术草稿请在当前求职流程中维护');
+    expect(wrapper.text()).toContain('沟通状态：已回复');
+    for (const raw of [
+      'app-1', 'stage', 'outcome', 'communicationStatus', 'followUpCount',
+      'nextAllowedFollowUpAt', 'lastMeaningfulEventAt', 'projectionStatus', 'direct_employer',
+      'not_contacted', 'application_created', 'sourceConfidence', 'evidenceLevel', 'timePrecision',
+    ]) {
+      expect(wrapper.text()).not.toContain(raw);
+    }
     wrapper.unmount();
   });
 
@@ -102,9 +110,9 @@ describe('Battlefield B6 决策与沟通 UI', () => {
     mocks.scope = scopeFor(currentJob, true, facts);
     const wrapper = await mountPage();
     expect(wrapper.get('.decision-source').attributes('data-source')).toBe('legacy_job_fallback');
-    expect(wrapper.text()).toContain('历史 Job 沟通数据（只读兼容）');
+    expect(wrapper.text()).toContain('岗位历史沟通数据（只读兼容）');
     expect(wrapper.find('.status-options').exists()).toBe(false);
-    expect(wrapper.get('.opportunity-draft-card').text()).toContain('不会创建 Application、追加 Event 或改变沟通状态');
+    expect(wrapper.get('.opportunity-draft-card').text()).toContain('不会创建求职流程、追加反馈事实或改变沟通状态');
     wrapper.unmount();
   });
 

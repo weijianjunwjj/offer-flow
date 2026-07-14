@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import type {
-  ApplicationChannel,
-  EvidenceLevel,
-  FeedbackActor,
-  SourceConfidence,
-} from '../../domain/job-memory';
+import {
+  APPLICATION_CHANNEL_OPTIONS,
+  EVIDENCE_LEVEL_OPTIONS,
+  SOURCE_CONFIDENCE_OPTIONS,
+  formatReasonCodeLabel,
+} from '../../domain/presentation';
 import {
   REJECTION_REASON_CODES,
   USER_EVENT_GROUPS,
@@ -14,34 +14,15 @@ import {
 
 const draft = defineModel<FeedbackEventFactDraft>({ required: true });
 
-const actorOptions: Array<{ value: Exclude<FeedbackActor, 'system'>; label: string }> = [
+const actorOptions = [
   { value: 'user', label: '用户本人' },
   { value: 'hr', label: 'HR' },
   { value: 'interviewer', label: '面试官' },
   { value: 'recruiter', label: '招聘者 / 猎头' },
-];
-const confidenceOptions: Array<{ value: SourceConfidence; label: string }> = [
-  { value: 'exact', label: '精确' },
-  { value: 'approximate', label: '大约' },
-  { value: 'recalled', label: '回忆' },
-  { value: 'inferred', label: '推断' },
-];
-const evidenceOptions: Array<{ value: EvidenceLevel; label: string }> = [
-  { value: 'strong', label: '强证据' },
-  { value: 'medium', label: '中等证据' },
-  { value: 'weak', label: '弱证据' },
-];
-const channelOptions: Array<{ value: ApplicationChannel | null; label: string }> = [
-  { value: null, label: '未记录渠道' },
-  { value: 'boss', label: 'Boss 直聘' },
-  { value: 'official_site', label: '官网' },
-  { value: 'referral', label: '内推' },
-  { value: 'headhunter', label: '猎头' },
-  { value: 'email', label: '邮件' },
-  { value: 'wechat', label: '微信' },
-  { value: 'other', label: '其他' },
-  { value: 'unknown', label: '未知' },
-];
+] as const;
+const confidenceOptions = SOURCE_CONFIDENCE_OPTIONS;
+const evidenceOptions = EVIDENCE_LEVEL_OPTIONS;
+const channelOptions = [{ value: null, label: '未记录渠道' }, ...APPLICATION_CHANNEL_OPTIONS];
 
 function eventInputType(): 'date' | 'datetime-local' {
   return draft.value.timePrecision === 'date' ? 'date' : 'datetime-local';
@@ -55,7 +36,7 @@ function eventInputType(): 'date' | 'datetime-local' {
       <select v-model="draft.eventType" data-event-type>
         <optgroup v-for="group in USER_EVENT_GROUPS" :key="group.label" :label="group.label">
           <option v-for="eventType in group.eventTypes" :key="eventType" :value="eventType">
-            {{ eventTypeLabel(eventType) }}（{{ eventType }}）
+            {{ eventTypeLabel(eventType) }}
           </option>
         </optgroup>
       </select>
@@ -112,11 +93,11 @@ function eventInputType(): 'date' | 'datetime-local' {
       <span>拒绝原因</span>
       <select v-model="draft.reasonCode" data-reason-code>
         <option value="">未填写</option>
-        <option v-for="reason in REJECTION_REASON_CODES" :key="reason" :value="reason">{{ reason }}</option>
+        <option v-for="reason in REJECTION_REASON_CODES" :key="reason" :value="reason">{{ formatReasonCodeLabel(reason) }}</option>
       </select>
     </label>
     <label v-else>
-      <span>原因代码（可选）</span>
+      <span>原因（可选）</span>
       <input v-model="draft.reasonCode" placeholder="不根据备注自动推断" data-reason-code />
     </label>
     <label class="wide">

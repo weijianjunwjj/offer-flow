@@ -49,6 +49,26 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('JobList B4 求职流程摘要', () => {
+  it('导入建议分类使用中文映射，不回显 wait_review code', async () => {
+    const imported = job();
+    imported.importStatus = 'imported_draft';
+    imported.reviewStatus = 'pending_review';
+    imported.importedDraft = {
+      recommendedCategory: 'wait_review', reason: '需要核对', confidence: 0.5,
+      riskFlags: [], warnings: [], missingFields: [], rawText: '',
+    };
+    mocks.list.mockResolvedValue([imported]);
+    mocks.summaries.mockResolvedValue([{
+      job: imported, applicationCount: 0, activeApplicationCount: 0,
+      defaultApplication: null, defaultResumeVersionName: null, projectionDiagnostics: [],
+    }]);
+    const wrapper = await mountPage();
+    await flushPromises();
+    expect(wrapper.text()).toContain('待人工确认');
+    expect(wrapper.text()).not.toContain('wait_review');
+    wrapper.unmount();
+  });
+
   it('岗位与摘要各请求一次，展示零流程事实且两条读取都收到 AbortSignal', async () => {
     mocks.list.mockResolvedValue([job()]);
     mocks.summaries.mockResolvedValue([{
@@ -120,6 +140,14 @@ describe('JobList B4 求职流程摘要', () => {
     expect(wrapper.get('.ac-status').text()).toBe('已回复');
     expect(wrapper.get('.ac-badge.action').text()).toBe('继续沟通');
     expect(wrapper.text()).not.toContain('已结束');
+    expect(wrapper.get('[data-application-summary]').text()).toContain('沟通中');
+    for (const raw of [
+      'stage', 'outcome', 'communicationStatus', 'followUpCount', 'nextAllowedFollowUpAt',
+      'lastMeaningfulEventAt', 'projectionStatus', 'direct_employer', 'not_contacted',
+      'application_created', 'sourceConfidence', 'evidenceLevel', 'timePrecision', 'wait_review',
+    ]) {
+      expect(wrapper.text()).not.toContain(raw);
+    }
     wrapper.unmount();
   });
 

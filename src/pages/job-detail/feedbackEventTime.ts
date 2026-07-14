@@ -1,4 +1,5 @@
 import type { EventTimePrecision } from '../../domain/job-memory';
+import { formatDateTime, formatTimePrecisionLabel } from '../../domain/presentation';
 
 export interface EventTimeResult {
   ok: boolean;
@@ -82,16 +83,10 @@ export function formatEventTime(
 ): string {
   if (value === null || precision === 'unknown') return '发生时间未知';
   if (precision === 'date') return `${decodeEventTimeInput(value, precision)}（仅日期）`;
-  const text = new Date(value).toLocaleString('zh-CN', { hour12: false });
+  const text = formatDateTime(value);
   return precision === 'approximate' ? `约 ${text}` : text;
 }
 
 export function eventTimePrecisionLabel(precision: EventTimePrecision): string {
-  const labels: Record<EventTimePrecision, string> = {
-    exact: '精确时间',
-    date: '仅日期',
-    approximate: '大约时间',
-    unknown: '未知',
-  };
-  return labels[precision];
+  return formatTimePrecisionLabel(precision);
 }

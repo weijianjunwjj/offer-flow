@@ -38,7 +38,14 @@ import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisua
 import OpportunityMiniBars from '../components/OpportunityMiniBars.vue';
 import { features } from '../config/features';
 import { jobMemoryApi } from '../api/jobMemoryApi';
-import type { ApplicationChannel, JobSummary } from '../domain/job-memory';
+import type { JobSummary } from '../domain/job-memory';
+import {
+  formatApplicationChannelLabel,
+  formatApplicationOutcomeLabel,
+  formatApplicationStageLabel,
+  formatDateTime,
+  formatImportedRecommendationLabel,
+} from '../domain/presentation';
 
 const router = useRouter();
 
@@ -130,14 +137,6 @@ function summaryFor(jobId: string): JobSummary | null {
   return summaryByJobId.value.get(jobId) ?? null;
 }
 
-function applicationChannelLabel(channel: ApplicationChannel, other: string | null): string {
-  const labels: Record<ApplicationChannel, string> = {
-    boss: 'Boss 直聘', official_site: '官网', referral: '内推', headhunter: '猎头',
-    email: '邮件', wechat: '微信', other: other ?? '其他', unknown: '未知渠道',
-  };
-  return labels[channel];
-}
-
 function summaryStatus(summary: JobSummary): string {
   if (summary.applicationCount === 0) return '未记录流程';
   if (summary.defaultApplication === null) {
@@ -146,7 +145,7 @@ function summaryStatus(summary: JobSummary): string {
       : '无可用流程';
   }
   const projection = summary.defaultApplication.projection;
-  return `${projection.stage} / ${projection.outcome ?? '无结果'}`;
+  return `${formatApplicationStageLabel(projection.stage)} / ${formatApplicationOutcomeLabel(projection.outcome)}`;
 }
 
 function isImportedDraft(job: JobRecord): boolean {
@@ -159,7 +158,7 @@ function isPendingReviewJob(job: JobRecord): boolean {
 }
 
 function importCategoryLabel(job: JobRecord): string {
-  return job.importedDraft?.recommendedCategory ?? 'wait_review';
+  return formatImportedRecommendationLabel(job.importedDraft?.recommendedCategory ?? 'wait_review');
 }
 
 function importConfidenceLabel(job: JobRecord): string {
@@ -456,10 +455,10 @@ function dash(value: string): string {
   return value.trim() === '' ? '—' : value;
 }
 function formatTime(ts: number): string {
-  return new Date(ts).toLocaleString();
+  return formatDateTime(ts);
 }
 function formatOptionalTime(ts: number | null): string {
-  return ts === null ? '发生时间未知' : formatTime(ts);
+  return formatDateTime(ts, '发生时间未知');
 }
 </script>
 
@@ -490,7 +489,7 @@ function formatOptionalTime(ts: number | null): string {
         <li>录入 Boss 岗位信息与 JD</li>
         <li>点击「AI 分析 JD」调用 LLM 分析（也可手动粘贴外部 AI 结果作为备用）</li>
         <li>检查 AI 分析结果，确认后保存</li>
-        <li>若是外部导入草稿，再通过 confirm / defer / reject 完成 Review</li>
+        <li>若是外部导入草稿，再通过确认、稍后处理或拒绝完成审核</li>
         <li>维护沟通状态，面试前随时回看</li>
       </ol>
       <button class="new-btn" @click="createJob">+ 新建岗位</button>
@@ -632,7 +631,7 @@ function formatOptionalTime(ts: number | null): string {
                     共 {{ summary.applicationCount }} 次流程 · {{ summary.activeApplicationCount }} 次进行中
                   </span>
                   <span v-if="summary.defaultApplication">
-                    {{ applicationChannelLabel(summary.defaultApplication.record.channel, summary.defaultApplication.record.channelOtherLabel) }}
+                    {{ formatApplicationChannelLabel(summary.defaultApplication.record.channel, summary.defaultApplication.record.channelOtherLabel) }}
                     · {{ summary.defaultResumeVersionName ?? '未知历史简历' }}
                     · 最近事实 {{ formatOptionalTime(summary.defaultApplication.projection.lastMeaningfulEventAt) }}
                   </span>

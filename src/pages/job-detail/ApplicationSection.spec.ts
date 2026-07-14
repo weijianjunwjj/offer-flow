@@ -108,7 +108,8 @@ describe('ApplicationSection', () => {
     const cards = wrapper.findAll('.application-card');
     expect(cards).toHaveLength(2);
     expect(cards[0]?.text()).toContain('默认');
-    expect(cards[0]?.text()).toContain('newer');
+    expect(cards[0]?.attributes('data-application-id')).toBe('newer');
+    expect(cards[0]?.text()).not.toContain('newer');
     await cards[1]?.find('.card-select').trigger('click');
     expect(scope.selectedApplicationId).toBe('older');
     expect(scope.updateApplication).not.toHaveBeenCalled();
@@ -123,7 +124,7 @@ describe('ApplicationSection', () => {
     scope.eventDraft.note = '属于 newer 的草稿';
     mocks.scope = scope;
     const wrapper = mount(ApplicationSection, { props: { scopeRequired: true } });
-    const olderCard = wrapper.findAll('.application-card').find((card) => card.text().includes('older'))!;
+    const olderCard = wrapper.get('[data-application-id="older"]');
     vi.mocked(window.confirm).mockReturnValueOnce(false);
     await olderCard.get('.card-select').trigger('click');
     expect(scope.selectedApplicationId).toBe('newer');
@@ -132,6 +133,30 @@ describe('ApplicationSection', () => {
     await olderCard.get('.card-select').trigger('click');
     expect(scope.selectedApplicationId).toBe('older');
     expect(scope.eventDraft).toBeNull();
+  });
+
+  it('默认展示使用中文业务标签，技术标识与原始枚举保持折叠', async () => {
+    const current = application('application-uuid', 20);
+    current.record.recruitingEntity = { ...current.record.recruitingEntity, kind: 'direct_employer' };
+    const scope = createScope([current]);
+    mocks.scope = scope;
+    const wrapper = mount(ApplicationSection, { props: { scopeRequired: true } });
+    const defaultText = wrapper.text();
+    expect(defaultText).toContain('直招雇主');
+    expect(defaultText).toContain('已创建流程');
+    for (const raw of [
+      'application-uuid', 'stage', 'outcome', 'communicationStatus', 'followUpCount',
+      'nextAllowedFollowUpAt', 'lastMeaningfulEventAt', 'projectionStatus', 'direct_employer',
+      'not_contacted', 'application_created', 'sourceConfidence', 'evidenceLevel', 'timePrecision',
+    ]) {
+      expect(defaultText).not.toContain(raw);
+    }
+
+    const details = wrapper.get('details.technical-info');
+    (details.element as HTMLDetailsElement).open = true;
+    await details.trigger('toggle');
+    expect(wrapper.text()).toContain('application-uuid');
+    expect(wrapper.text()).toContain('not_contacted');
   });
 
   it('关闭脏草稿前确认，拒绝放弃时保留，确认后清空', async () => {

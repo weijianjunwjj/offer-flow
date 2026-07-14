@@ -2,6 +2,20 @@
 import { computed, nextTick, ref } from 'vue';
 import { ApplicationApiError } from '../../api/jobMemoryApi';
 import type { FeedbackEventRecord } from '../../domain/job-memory';
+import {
+  formatActorLabel,
+  formatApplicationChannelLabel,
+  formatApplicationOutcomeLabel,
+  formatApplicationStageLabel,
+  formatClosedState,
+  formatCommunicationStatusLabel,
+  formatDateTime,
+  formatEvidenceLevelLabel,
+  formatProjectionStatusLabel,
+  formatReasonCodeLabel,
+  formatSourceConfidenceLabel,
+  formatVoidedState,
+} from '../../domain/presentation';
 import { isJobDetailBundleV2 } from '../../page-scopes/jobDetailTypes';
 import { navigationConfirm } from '../../router/confirmNavigation';
 import FeedbackEventFields from './FeedbackEventFields.vue';
@@ -26,6 +40,8 @@ import { useInjectedDetailScope } from './sectionScope';
 const props = defineProps<{ scopeRequired: boolean }>();
 const scope = useInjectedDetailScope(props.scopeRequired);
 const writeError = ref('');
+const projectionTechnicalExpanded = ref(false);
+const expandedEventTechnicalIds = ref<ReadonlySet<string>>(new Set());
 
 const bundle = computed(() => {
   const current = scope?.$source.bundle ?? null;
@@ -56,11 +72,18 @@ const voidRequest = computed(() => (
 ));
 
 function formatRecordedTime(value: number): string {
-  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  return formatDateTime(value);
 }
 
 function nullableTime(value: number | null): string {
-  return value === null ? '无' : formatRecordedTime(value);
+  return formatDateTime(value, '尚未记录');
+}
+
+function toggleEventTechnicalInfo(eventId: string, open: boolean): void {
+  const next = new Set(expandedEventTechnicalIds.value);
+  if (open) next.add(eventId);
+  else next.delete(eventId);
+  expandedEventTechnicalIds.value = next;
 }
 
 function markEventDraftBaseline(): void {
@@ -99,8 +122,8 @@ function confirmationText(draft: FeedbackEventDraft): string {
     '确认写入这条求职事实？',
     `事实：${eventFactPreview(draft)}`,
     `时间精度：${eventTimePrecisionLabel(draft.timePrecision)}`,
-    `actor：${draft.actor}`,
-    `reasonCode：${draft.reasonCode.trim() || '未填写'}`,
+    `事实主体：${formatActorLabel(draft.actor)}`,
+    `原因：${formatReasonCodeLabel(draft.reasonCode.trim())}`,
     `是否关闭投影：${closes ? '是' : '否'}`,
     '是否可能改变默认流程摘要：是（最终以服务端投影为准）',
   ].join('\n');
@@ -109,7 +132,7 @@ function confirmationText(draft: FeedbackEventDraft): string {
 async function submitEvent(): Promise<void> {
   if (!scope || !selected.value || !eventDraft.value || !appendRequest.value || writeInFlight.value) return;
   if (selected.value.record.voidedAt !== null || selected.value.projection.isVoided) {
-    writeError.value = '已作废的 Application 不能新增事件。';
+    writeError.value = '已作废的求职流程不能新增事件。';
     return;
   }
   if (!appendRequest.value.ok || appendRequest.value.value === null) {
@@ -120,7 +143,7 @@ async function submitEvent(): Promise<void> {
     || selected.value.projection.isClosed;
   if (requiresConfirmation) {
     const closedWarning = selected.value.projection.isClosed
-      ? '\n当前流程已关闭：该记录不会重新开启旧流程；若是新的招聘流程，请在上方新建 Application。'
+      ? '\n当前流程已关闭：该记录不会重新开启旧流程；若是新的招聘流程，请在上方新建求职流程。'
       : '';
     if (!window.confirm(`${confirmationText(eventDraft.value)}${closedWarning}`)) return;
   }
@@ -150,12 +173,12 @@ async function submitVoid(): Promise<void> {
     && CLOSING_EVENT_TYPES.has(eventVoidDraft.value.replacementEvent.eventType);
   const confirmed = window.confirm([
     '确认纠正这条历史记录？',
-    `错误记录：${eventTypeLabel(target.eventType)}（${target.id}）`,
+    `错误记录：${eventTypeLabel(target.eventType)}`,
     `作废原因：${eventVoidDraft.value.reason.trim()}`,
     `替代事实：${replacement}`,
     `替代事实是否关闭投影：${replacementCloses ? '是' : '否'}`,
     '是否可能改变默认流程摘要：是（最终以服务端投影为准）',
-    '历史事件不会被 UPDATE；系统会追加 event_voided，并在同一事务内可选追加替代事件。',
+    '历史事件不会被原地覆盖；系统会追加作废审计，并在同一事务内可选追加替代事件。',
   ].join('\n'));
   if (!confirmed) return;
   writeError.value = '';
@@ -169,10 +192,10 @@ async function submitVoid(): Promise<void> {
 function readableError(error: unknown): string {
   if (!(error instanceof ApplicationApiError)) return (error as Error).message;
   const labels: Partial<Record<ApplicationApiError['code'], string>> = {
-    VERSION_CONFLICT: 'Application 版本已变化，已重新读取并保留纠错草稿；请核对后重试。',
+    VERSION_CONFLICT: '求职流程版本已变化，已重新读取并保留纠错草稿；请核对后重试。',
     NETWORK_ERROR: '网络结果不确定，草稿和同一幂等键已保留；请核对时间线后重试。',
     EVENT_ALREADY_VOIDED: '该记录已被其他操作纠正，时间线已重新读取。',
-    APPLICATION_ALREADY_VOIDED: '这条 Application 已作废，不能继续写入事件。',
+    APPLICATION_ALREADY_VOIDED: '这条求职流程已作废，不能继续写入事件。',
     FEEDBACK_EVENT_NOT_FOUND: '目标事件不存在或已被移走，请重新读取。',
     INVALID_REPLACEMENT_EVENT: '替代事件不是允许的普通业务事实。',
     AUDIT_EVENT_NOT_USER_CREATABLE: '系统审计事件不能由用户直接创建。',
@@ -182,14 +205,14 @@ function readableError(error: unknown): string {
 
 function eventDetails(event: FeedbackEventRecord): string[] {
   const details = [
-    `actor=${event.actor}`,
-    `channel=${event.channel ?? '未记录'}`,
-    `来源=${event.sourceConfidence}`,
-    `证据=${event.evidenceLevel}`,
+    `事实主体：${formatActorLabel(event.actor)}`,
+    `渠道：${event.channel === null ? '未记录渠道' : formatApplicationChannelLabel(event.channel)}`,
+    `来源可信度：${formatSourceConfidenceLabel(event.sourceConfidence)}`,
+    `证据强度：${formatEvidenceLevelLabel(event.evidenceLevel)}`,
   ];
-  if (event.reasonCode !== null) details.push(`reason=${event.reasonCode}`);
+  if (event.reasonCode !== null) details.push(`原因：${formatReasonCodeLabel(event.reasonCode)}`);
   if (event.eventType === 'no_response_recorded') {
-    details.push(`观察截止=${formatRecordedTime(event.payload.observedAsOf)}`);
+    details.push(`观察截止：${formatRecordedTime(event.payload.observedAsOf)}`);
   }
   return details;
 }
@@ -218,37 +241,45 @@ async function focusEvent(eventId: string): Promise<void> {
     </header>
 
     <div v-if="!selected" class="empty-state">
-      请先在“求职流程”中创建或选择一条 Application；时间线不会自动制造投递事实。
+      请先在“求职流程”中创建或选择一条记录；时间线不会自动制造投递事实。
     </div>
 
     <template v-else>
       <p class="legacy-boundary">
-        这里展示的是事件投影结果。当前决策面板仍使用 legacy 兼容规则，将在 B6 单独切换。
+        这里展示的是事实事件推导出的当前流程状态；决策面板与当前所选流程保持一致。
       </p>
       <div class="projection-grid" :class="`projection-${selected.projection.projectionStatus}`">
-        <span><b>stage</b>{{ selected.projection.stage }}</span>
-        <span><b>outcome</b>{{ selected.projection.outcome ?? '无' }}</span>
-        <span><b>communicationStatus</b>{{ selected.projection.communicationStatus }}</span>
-        <span><b>followUpCount</b>{{ selected.projection.followUpCount }}</span>
-        <span><b>nextAllowedFollowUpAt</b>{{ nullableTime(selected.projection.nextAllowedFollowUpAt) }}</span>
-        <span><b>lastMeaningfulEventAt</b>{{ nullableTime(selected.projection.lastMeaningfulEventAt) }}</span>
-        <span><b>isClosed / isVoided</b>{{ selected.projection.isClosed }} / {{ selected.projection.isVoided }}</span>
-        <span><b>projectionStatus</b>{{ selected.projection.projectionStatus }}</span>
+        <span><b>流程阶段</b>{{ formatApplicationStageLabel(selected.projection.stage) }}</span>
+        <span><b>流程结果</b>{{ formatApplicationOutcomeLabel(selected.projection.outcome) }}</span>
+        <span><b>沟通状态</b>{{ formatCommunicationStatusLabel(selected.projection.communicationStatus) }}</span>
+        <span><b>跟进次数</b>{{ selected.projection.followUpCount }} 次</span>
+        <span><b>下次可跟进时间</b>{{ nullableTime(selected.projection.nextAllowedFollowUpAt) }}</span>
+        <span><b>最近有效事实</b>{{ nullableTime(selected.projection.lastMeaningfulEventAt) }}</span>
+        <span><b>结束 / 作废</b>{{ formatClosedState(selected.projection.isClosed) }} / {{ formatVoidedState(selected.projection.isVoided) }}</span>
+        <span><b>事实投影</b>{{ formatProjectionStatusLabel(selected.projection.projectionStatus) }}</span>
       </div>
-      <ul v-if="selected.projection.warnings.length || selected.projection.errors.length" class="projection-issues">
-        <li v-for="issue in [...selected.projection.warnings, ...selected.projection.errors]" :key="`${issue.code}-${issue.eventId ?? ''}`">
-          {{ issue.code }}：{{ issue.message }}
-        </li>
-      </ul>
+      <p v-if="selected.projection.warnings.length || selected.projection.errors.length" class="projection-issues">
+        当前流程投影存在 {{ selected.projection.warnings.length + selected.projection.errors.length }} 项技术提示，请核对事实记录。
+      </p>
+      <details class="technical-info" @toggle="projectionTechnicalExpanded = ($event.target as HTMLDetailsElement).open">
+        <summary>查看技术信息</summary>
+        <div v-if="projectionTechnicalExpanded">
+          <p>流程标识：{{ selected.record.id }} · 行版本：{{ selected.record.rowVersion }}</p>
+          <p>原始投影：{{ selected.projection.stage }} / {{ selected.projection.outcome ?? 'null' }} / {{ selected.projection.communicationStatus }} / {{ selected.projection.projectionStatus }}</p>
+          <ul v-if="selected.projection.warnings.length || selected.projection.errors.length">
+            <li v-for="issue in [...selected.projection.warnings, ...selected.projection.errors]" :key="`${issue.code}-${issue.eventId ?? ''}`">{{ issue.code }}：{{ issue.message }}</li>
+          </ul>
+        </div>
+      </details>
 
       <p v-if="selected.record.voidedAt !== null || selected.projection.isVoided" class="closed-warning danger">
-        当前 Application 已作废，禁止新增或纠正 FeedbackEvent。
+        当前求职流程已作废，禁止新增或纠正反馈事实。
       </p>
       <p v-else-if="selected.projection.isClosed" class="closed-warning">
-        当前流程已关闭。新增入口默认收起；仍可补记晚到事实，但不会重开旧流程。再次投递请在上方新建 Application。
+        当前流程已关闭。新增入口默认收起；仍可补记晚到事实，但不会重开旧流程。再次投递请在上方新建求职流程。
       </p>
 
-      <div v-if="entries.length === 0" class="empty-state">当前流程还没有 Event。</div>
+      <div v-if="entries.length === 0" class="empty-state">当前流程还没有反馈事实。</div>
       <div v-else class="timeline-list">
         <article
           v-for="entry in entries"
@@ -268,7 +299,6 @@ async function focusEvent(eventId: string): Promise<void> {
               <strong>{{ eventTypeLabel(entry.event.eventType) }}</strong>
               <i v-if="entry.auditLabel">{{ entry.auditLabel }}</i>
               <i v-if="entry.isVoided" class="voided-pill">已作废</i>
-              <code>{{ entry.event.eventType }}</code>
             </div>
             <button
               v-if="canVoidTimelineEvent(selected, entry)"
@@ -285,13 +315,17 @@ async function focusEvent(eventId: string): Promise<void> {
             <span><b>记录时间</b>{{ formatRecordedTime(entry.event.createdAt) }}</span>
           </div>
           <p class="event-meta">{{ eventDetails(entry.event).join(' · ') }}</p>
+          <details class="technical-info event-technical" @toggle="toggleEventTechnicalInfo(entry.event.id, ($event.target as HTMLDetailsElement).open)">
+            <summary>查看技术信息</summary>
+            <p v-if="expandedEventTechnicalIds.has(entry.event.id)">事件标识：{{ entry.event.id }} · 原始类型：{{ entry.event.eventType }} · 记录来源：{{ entry.event.recordedBy }}</p>
+          </details>
           <p v-if="entry.event.note" class="event-note">{{ entry.event.note }}</p>
           <p v-if="entry.event.eventType === 'legacy_status_imported'" class="audit-detail">
-            weak / inferred 迁移兼容种子，不伪装成用户确认的新事实。
+            弱证据 / 系统推断的迁移兼容记录，不伪装成用户确认的新事实。
           </p>
           <p v-if="entry.event.eventType === 'event_voided'" class="audit-detail">
             指向错误记录
-            <button type="button" class="inline-link" @click="focusEvent(entry.event.targetEventId)">{{ entry.event.targetEventId }}</button>
+            <button type="button" class="inline-link" @click="focusEvent(entry.event.targetEventId)">查看原记录</button>
             ；原因：{{ entry.event.payload.reason }}
           </p>
           <div v-if="entry.voidEvent" class="void-detail">
@@ -300,7 +334,7 @@ async function focusEvent(eventId: string): Promise<void> {
             <span v-if="entry.replacementEvent">
               该记录已由另一条记录替代：
               <button type="button" class="inline-link" @click="focusEvent(entry.replacementEvent.id)">
-                {{ eventTypeLabel(entry.replacementEvent.eventType) }}（{{ entry.replacementEvent.id }}）
+                {{ eventTypeLabel(entry.replacementEvent.eventType) }}
               </button>
             </span>
           </div>
@@ -320,7 +354,7 @@ async function focusEvent(eventId: string): Promise<void> {
         <div class="fact-preview" data-fact-preview>
           <b>事实预览</b>
           <span>{{ eventFactPreview(eventDraft) }}</span>
-          <span>将写入 Application {{ selected.record.id }}；当前版本 {{ selected.record.rowVersion }}</span>
+          <span>确认后将写入当前求职流程；不会自动发送或改变其他流程。</span>
         </div>
         <p v-if="selected.projection.isClosed" class="closed-warning">
           该流程已关闭；保存前会再次确认，事件不会重新开启旧流程。
@@ -338,7 +372,7 @@ async function focusEvent(eventId: string): Promise<void> {
     <div v-if="eventVoidDraft && selected" class="modal-backdrop" role="presentation" @click.self="closeDraft">
       <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="event-void-title">
         <header class="modal-head">
-          <div><h2 id="event-void-title">纠正历史记录</h2><p>原事件不会被 UPDATE；系统将追加 event_voided 审计。</p></div>
+          <div><h2 id="event-void-title">纠正历史记录</h2><p>原事件不会被覆盖；系统将追加作废审计。</p></div>
           <button type="button" class="close-btn" :disabled="writeInFlight" @click="closeDraft">×</button>
         </header>
         <label class="stack"><span>作废原因（必填）</span><textarea v-model="eventVoidDraft.reason" rows="3" data-void-reason /></label>
@@ -346,7 +380,7 @@ async function focusEvent(eventId: string): Promise<void> {
         <FeedbackEventFields v-if="eventVoidDraft.replacementEnabled" v-model="eventVoidDraft.replacementEvent" />
         <div class="fact-preview" data-void-preview>
           <b>纠错预览</b>
-          <span>错误记录 {{ eventVoidDraft.targetEventId }} → event_voided</span>
+          <span>原记录将追加作废审计，不会被原地覆盖</span>
           <span v-if="eventVoidDraft.replacementEnabled">→ {{ eventFactPreview(eventVoidDraft.replacementEvent) }}</span>
           <span v-else>→ 不添加替代事件</span>
         </div>

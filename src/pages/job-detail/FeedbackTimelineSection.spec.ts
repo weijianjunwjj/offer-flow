@@ -73,16 +73,22 @@ describe('FeedbackTimelineSection', () => {
     const legacy = makeLegacyEvent({ id: 'legacy', idempotencyKey: 'legacy', createdAt: 500 });
     mocks.scope = createScope(application([created, unknown, legacy]));
     const wrapper = mount(FeedbackTimelineSection, { props: { scopeRequired: true } });
-    expect(wrapper.text()).toContain('事件投影结果');
-    expect(wrapper.text()).toContain('legacy 兼容规则');
+    expect(wrapper.text()).toContain('事实事件推导出的当前流程状态');
     expect(wrapper.text()).toContain('发生时间未知');
     expect(wrapper.text()).toContain('记录时间');
     expect(wrapper.text()).toContain('系统审计');
     expect(wrapper.text()).toContain('迁移兼容');
-    expect(wrapper.text()).toContain('LEGACY_SEED_APPLIED');
+    expect(wrapper.text()).toContain('弱证据 / 系统推断');
+    for (const raw of [
+      'stage', 'outcome', 'communicationStatus', 'followUpCount', 'nextAllowedFollowUpAt',
+      'lastMeaningfulEventAt', 'projectionStatus', 'direct_employer', 'not_contacted',
+      'application_created', 'sourceConfidence', 'evidenceLevel', 'timePrecision', 'LEGACY_SEED_APPLIED',
+    ]) {
+      expect(wrapper.text()).not.toContain(raw);
+    }
   });
 
-  it('invalid projection 明确展示错误，不伪装成正常状态', () => {
+  it('不可用投影默认显示中文摘要，原始诊断只在技术信息展开后出现', async () => {
     const current = application([makeEvent('application_created')]);
     current.projection = {
       ...current.projection,
@@ -91,8 +97,13 @@ describe('FeedbackTimelineSection', () => {
     };
     mocks.scope = createScope(current);
     const wrapper = mount(FeedbackTimelineSection, { props: { scopeRequired: true } });
-    expect(wrapper.get('.projection-invalid').text()).toContain('invalid');
-    expect(wrapper.text()).toContain('INVALID_PROJECTION_OUTPUT：投影输出损坏');
+    expect(wrapper.get('.projection-invalid').text()).toContain('投影不可用');
+    expect(wrapper.text()).toContain('1 项技术提示');
+    expect(wrapper.text()).not.toContain('INVALID_PROJECTION_OUTPUT');
+    const details = wrapper.get('details.technical-info');
+    (details.element as HTMLDetailsElement).open = true;
+    await details.trigger('toggle');
+    expect(wrapper.text()).toContain('INVALID_PROJECTION_OUTPUT');
   });
 
   it('被作废事件不消失，展示原因、作废时间和 replacement 关联', () => {
@@ -123,6 +134,8 @@ describe('FeedbackTimelineSection', () => {
     expect(options).toContain('no_response_recorded');
     expect(options).not.toContain('event_voided');
     expect(options).not.toContain('application_created');
+    expect(wrapper.get('[role="dialog"]').text()).not.toContain('applied');
+    expect(wrapper.get('[role="dialog"]').text()).not.toContain('sourceConfidence');
     expect(wrapper.get('[data-fact-preview]').text()).toContain('事实预览');
     const key = scope.eventDraft?.idempotencyKey;
     await wrapper.get('.modal-actions .primary-btn').trigger('click');
@@ -173,7 +186,7 @@ describe('FeedbackTimelineSection', () => {
     const current = application([event], { voidedAt: 2_000, voidReason: '流程误录' });
     mocks.scope = createScope(current);
     const wrapper = mount(FeedbackTimelineSection, { props: { scopeRequired: true } });
-    expect(wrapper.text()).toContain('当前 Application 已作废');
+    expect(wrapper.text()).toContain('当前求职流程已作废');
     expect(wrapper.find('.section-head .primary-btn').exists()).toBe(false);
     expect(wrapper.find('.correct-btn').exists()).toBe(false);
   });

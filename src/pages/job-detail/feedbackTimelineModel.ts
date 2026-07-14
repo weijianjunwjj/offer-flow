@@ -15,6 +15,12 @@ import type {
   SourceConfidence,
   EventTimePrecision,
 } from '../../domain/job-memory';
+import {
+  formatActorLabel,
+  formatFeedbackEventTypeLabel,
+  formatReasonCodeLabel,
+  formatTimePrecisionLabel,
+} from '../../domain/presentation';
 import { encodeEventTime } from './feedbackEventTime';
 
 export const USER_EVENT_GROUPS = [
@@ -318,25 +324,13 @@ function eventByApplication(application: ApplicationMemory, event: FeedbackEvent
 }
 
 export function eventTypeLabel(eventType: FeedbackEventType): string {
-  const labels: Record<FeedbackEventType, string> = {
-    application_created: '创建求职流程', applied: '已投递', hr_contacted: 'HR 主动联系',
-    greeting_sent: '已发送招呼', message_viewed: '消息已读', hr_replied: 'HR 已回复',
-    resume_requested: '被索要简历', phone_screen: '电话初筛', interview_scheduled: '已安排面试',
-    interview_completed: '已完成面试', interview_advanced: '面试推进', follow_up_sent: '已发送跟进',
-    no_response_recorded: '截至某时仍未回复', rejected: '招聘方拒绝', user_withdrew: '用户主动退出',
-    offer_received: '收到 Offer', offer_declined: '拒绝 Offer', offer_accepted: '接受 Offer',
-    recruitment_paused: '招聘暂停', recruitment_frozen: '招聘冻结', process_resumed: '流程恢复',
-    position_closed: '岗位关闭', marked_stale: '标记失效', legacy_status_imported: '旧状态迁移种子',
-    application_metadata_corrected: '流程元数据已纠正', application_voided: '流程已作废',
-    event_voided: '事件作废审计',
-  };
-  return labels[eventType];
+  return formatFeedbackEventTypeLabel(eventType);
 }
 
 export function eventFactPreview(draft: FeedbackEventFactDraft): string {
   const time = draft.timePrecision === 'unknown'
     ? '发生时间未知'
-    : `${draft.eventAtInput || '未填写'}（${draft.timePrecision}）`;
-  return `${eventTypeLabel(draft.eventType)}；${time}；actor=${draft.actor}`
-    + `${draft.reasonCode.trim() === '' ? '' : `；reason=${draft.reasonCode.trim()}`}`;
+    : `${draft.eventAtInput || '未填写'}（${formatTimePrecisionLabel(draft.timePrecision)}）`;
+  return `${eventTypeLabel(draft.eventType)}；${time}；事实主体：${formatActorLabel(draft.actor)}`
+    + `${draft.reasonCode.trim() === '' ? '' : `；原因：${formatReasonCodeLabel(draft.reasonCode.trim())}`}`;
 }

@@ -1,14 +1,26 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import type {
-  ApplicationChannel,
   ApplicationMemory,
-  ApplicationOrigin,
   EventTimePrecision,
-  RecruitingEntityKind,
   ResumeVersionRecord,
-  WorkMode,
 } from '../../domain/job-memory';
+import {
+  APPLICATION_CHANNEL_OPTIONS,
+  APPLICATION_ORIGIN_OPTIONS,
+  CONTACT_ROLE_OPTIONS,
+  RECRUITING_ENTITY_KIND_OPTIONS,
+  WORK_MODE_OPTIONS,
+  formatApplicationChannelLabel,
+  formatApplicationOriginLabel,
+  formatApplicationOutcomeLabel,
+  formatApplicationStageLabel,
+  formatCommunicationStatusLabel,
+  formatDateTime,
+  formatProjectionStatusLabel,
+  formatRecruitingEntityKindLabel,
+  formatWorkModeLabel,
+} from '../../domain/presentation';
 import type { CreateApplicationRequest } from '../../../server/job-memory/dtoSchemas';
 import { ApplicationApiError } from '../../api/jobMemoryApi';
 import { navigationConfirm } from '../../router/confirmNavigation';
@@ -46,49 +58,20 @@ const createDraft = computed(() => scope?.applicationDrafts.create ?? null);
 const editDraft = computed(() => scope?.applicationDrafts.edit ?? null);
 const voidDraft = computed(() => scope?.applicationDrafts.void ?? null);
 const writeInFlight = computed(() => scope?.actionStatus.applicationWrite === 'loading');
-
-const channelOptions: Array<{ value: ApplicationChannel; label: string }> = [
-  { value: 'boss', label: 'Boss 直聘' },
-  { value: 'official_site', label: '官网' },
-  { value: 'referral', label: '内推' },
-  { value: 'headhunter', label: '猎头' },
-  { value: 'email', label: '邮件' },
-  { value: 'wechat', label: '微信' },
-  { value: 'other', label: '其他' },
-  { value: 'unknown', label: '未知' },
-];
-const originOptions: Array<{ value: ApplicationOrigin; label: string }> = [
-  { value: 'outbound', label: '主动投递 / 接触' },
-  { value: 'inbound', label: '招聘方主动联系' },
-  { value: 'unknown', label: '来源不确定' },
-];
-const recruitingOptions: Array<{ value: RecruitingEntityKind; label: string }> = [
-  { value: 'direct_employer', label: '直招雇主' },
-  { value: 'outsourcing_vendor', label: '外包供应商' },
-  { value: 'staffing_agency', label: '人力派遣 / Agency' },
-  { value: 'headhunter', label: '猎头' },
-  { value: 'unknown', label: '未知' },
-];
-const workModeOptions: Array<{ value: WorkMode; label: string }> = [
-  { value: 'onsite', label: '现场办公' },
-  { value: 'hybrid', label: '混合办公' },
-  { value: 'remote', label: '远程' },
-  { value: 'unknown', label: '未知' },
-];
+const channelOptions = APPLICATION_CHANNEL_OPTIONS;
+const originOptions = APPLICATION_ORIGIN_OPTIONS;
+const recruitingOptions = RECRUITING_ENTITY_KIND_OPTIONS;
+const workModeOptions = WORK_MODE_OPTIONS;
+const contactRoleOptions = CONTACT_ROLE_OPTIONS;
+const expandedTechnicalApplicationIds = ref<ReadonlySet<string>>(new Set());
 
 function nullableText(value: string): string | null {
   const normalized = value.trim();
   return normalized === '' ? null : normalized;
 }
 
-function channelLabel(channel: ApplicationChannel, other: string | null): string {
-  if (channel === 'other') return other ?? '其他渠道（未填写）';
-  return channelOptions.find((option) => option.value === channel)?.label ?? channel;
-}
-
-function originLabel(origin: ApplicationOrigin): string {
-  return originOptions.find((option) => option.value === origin)?.label ?? origin;
-}
+const channelLabel = formatApplicationChannelLabel;
+const originLabel = formatApplicationOriginLabel;
 
 function resumeById(id: string | null): ResumeVersionRecord | null {
   if (id === null) return null;
@@ -103,7 +86,25 @@ function resumeLabel(id: string | null): string {
 }
 
 function formatTime(value: number | null): string {
-  return value === null ? '未知' : new Date(value).toLocaleString('zh-CN', { hour12: false });
+  return formatDateTime(value);
+}
+
+function recruitingEntityLabel(application: ApplicationMemory): string {
+  return application.record.recruitingEntity.name?.trim()
+    || formatRecruitingEntityKindLabel(application.record.recruitingEntity.kind);
+}
+
+function applicationTitle(application: ApplicationMemory): string {
+  const contact = application.record.primaryContact?.displayName?.trim();
+  const counterpart = contact || recruitingEntityLabel(application);
+  return `${channelLabel(application.record.channel, application.record.channelOtherLabel)} · ${counterpart} · ${formatDateTime(application.record.createdAt)}`;
+}
+
+function toggleTechnicalInfo(applicationId: string, open: boolean): void {
+  const next = new Set(expandedTechnicalApplicationIds.value);
+  if (open) next.add(applicationId);
+  else next.delete(applicationId);
+  expandedTechnicalApplicationIds.value = next;
 }
 
 function statusLabel(application: ApplicationMemory): string {
@@ -322,7 +323,7 @@ async function submitVoid(): Promise<void> {
   }
   const superseded = voidDraft.value.supersededByApplicationId === null
     ? '不关联替代流程'
-    : `由 ${voidDraft.value.supersededByApplicationId} 替代`;
+    : `由 ${applicationTitle(applications.value.find(({ record }) => record.id === voidDraft.value?.supersededByApplicationId) ?? voidingMemory.value)} 替代`;
   if (!window.confirm(`确认作废这条误录流程？\n原因：${voidDraft.value.reason.trim()}\n${superseded}\n这不是“招聘方拒绝”，也不会删除历史。`)) return;
   clearFeedback();
   try {
@@ -354,7 +355,7 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
     <header class="section-head">
       <div>
         <h2>求职流程</h2>
-        <p>一条 Application 代表一次独立投递或招聘接触；重复投递会新增记录，不覆盖旧流程。</p>
+        <p>一条求职流程代表一次独立投递或招聘接触；重复投递会新增记录，不覆盖旧流程。</p>
       </div>
       <button type="button" class="primary-btn" @click="openCreate">
         {{ applications.length === 0 ? '记录一次求职流程' : '再次投递 / 新建流程' }}
@@ -362,13 +363,13 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
     </header>
 
     <p class="decision-context">
-      决策上下文：<strong>{{ selected ? `当前流程 ${selected.record.id}` : '岗位级建议' }}</strong>。
-      存在求职流程时，决策只读取当前 Application 的事件投影，不读取 Job 旧沟通字段。
+      决策上下文：<strong>{{ selected ? applicationTitle(selected) : '岗位级建议' }}</strong>。
+      存在求职流程时，决策只读取当前流程的事实投影，不读取岗位旧沟通字段。
     </p>
 
     <div v-if="applications.length === 0" class="empty-state">
       <strong>还没有求职流程</strong>
-      <p>仅浏览、收藏或准备话术不会自动创建 Application；确认发生真实投递或招聘接触后再记录。</p>
+      <p>仅浏览、收藏或准备话术不会自动创建求职流程；确认发生真实投递或招聘接触后再记录。</p>
       <button type="button" class="primary-btn" @click="openCreate">记录一次求职流程</button>
     </div>
 
@@ -377,33 +378,41 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
         v-for="application in applications"
         :key="application.record.id"
         class="application-card"
+        :data-application-id="application.record.id"
         :class="{ selected: scope?.selectedApplicationId === application.record.id, invalid: application.projection.projectionStatus === 'invalid' }"
       >
         <button type="button" class="card-select" @click="setSelected(application.record.id)">
           <span class="card-title">
-            <strong>{{ channelLabel(application.record.channel, application.record.channelOtherLabel) }}</strong>
-            <span class="application-id">{{ application.record.id }}</span>
+            <strong>{{ applicationTitle(application) }}</strong>
             <i v-if="application.record.id === defaultId">默认</i>
             <i>{{ statusLabel(application) }}</i>
-            <i v-if="application.projection.projectionStatus !== 'valid'" class="warn">{{ application.projection.projectionStatus }}</i>
+            <i v-if="application.projection.projectionStatus !== 'valid'" class="warn">{{ formatProjectionStatusLabel(application.projection.projectionStatus) }}</i>
           </span>
           <span class="card-grid">
             <span><b>创建</b>{{ formatTime(application.record.createdAt) }}</span>
             <span><b>来源</b>{{ originLabel(application.record.origin) }}</span>
             <span><b>简历</b>{{ resumeLabel(application.record.resumeVersionId) }}</span>
-            <span><b>阶段 / 结果</b>{{ application.projection.stage }} / {{ application.projection.outcome ?? '无' }}</span>
-            <span><b>沟通状态</b>{{ application.projection.communicationStatus }}</span>
+            <span><b>阶段 / 结果</b>{{ formatApplicationStageLabel(application.projection.stage) }} / {{ formatApplicationOutcomeLabel(application.projection.outcome) }}</span>
+            <span><b>沟通状态</b>{{ formatCommunicationStatusLabel(application.projection.communicationStatus) }}</span>
             <span><b>最近事实</b>{{ formatTime(application.projection.lastMeaningfulEventAt) }}</span>
-            <span><b>招聘主体</b>{{ application.record.recruitingEntity.name ?? application.record.recruitingEntity.kind }}</span>
+            <span><b>招聘主体</b>{{ recruitingEntityLabel(application) }}</span>
             <span><b>联系人</b>{{ application.record.primaryContact?.displayName ?? '未记录' }}</span>
-            <span><b>城市</b>{{ application.record.cityContext.jobCity ?? '未知' }} / {{ application.record.cityContext.marketCity ?? '市场城市未知' }} / {{ application.record.cityContext.workMode }}</span>
+            <span><b>城市</b>{{ application.record.cityContext.jobCity ?? '未知' }} / {{ application.record.cityContext.marketCity ?? '市场城市未知' }} / {{ formatWorkModeLabel(application.record.cityContext.workMode) }}</span>
           </span>
         </button>
-        <ul v-if="application.projection.warnings.length || application.projection.errors.length" class="projection-issues">
-          <li v-for="issue in [...application.projection.warnings, ...application.projection.errors]" :key="`${issue.code}-${issue.eventId ?? ''}`">
-            {{ issue.code }}：{{ issue.message }}
-          </li>
-        </ul>
+        <p v-if="application.projection.warnings.length || application.projection.errors.length" class="projection-issues">
+          当前流程投影存在 {{ application.projection.warnings.length + application.projection.errors.length }} 项技术提示，请核对事实时间线。
+        </p>
+        <details class="technical-info" @toggle="toggleTechnicalInfo(application.record.id, ($event.target as HTMLDetailsElement).open)">
+          <summary>查看技术信息</summary>
+          <div v-if="expandedTechnicalApplicationIds.has(application.record.id)">
+            <p>流程标识：{{ application.record.id }} · 行版本：{{ application.record.rowVersion }}</p>
+            <p>原始投影：{{ application.projection.stage }} / {{ application.projection.outcome ?? 'null' }} / {{ application.projection.communicationStatus }} / {{ application.projection.projectionStatus }}</p>
+            <ul v-if="application.projection.warnings.length || application.projection.errors.length">
+              <li v-for="issue in [...application.projection.warnings, ...application.projection.errors]" :key="`${issue.code}-${issue.eventId ?? ''}`">{{ issue.code }}：{{ issue.message }}</li>
+            </ul>
+          </div>
+        </details>
         <footer class="card-actions">
           <button type="button" :disabled="application.record.voidedAt !== null" @click="openEdit(application)">纠正上下文</button>
           <button type="button" class="danger-link" :disabled="application.record.voidedAt !== null" @click="openVoid(application)">作废误录</button>
@@ -436,11 +445,11 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
           <label class="wide check"><input type="checkbox" :checked="createDraft.primaryContact !== null" @change="setContactEnabled(($event.target as HTMLInputElement).checked)" /><span>记录主要联系人</span></label>
           <template v-if="createDraft.primaryContact">
             <label><span>联系人名称</span><input v-model="createDraft.primaryContact.displayName" /></label>
-            <label><span>联系人角色</span><select v-model="createDraft.primaryContact.role"><option value="company_hr">公司 HR</option><option value="hiring_manager">招聘经理</option><option value="headhunter">猎头</option><option value="platform_recruiter">平台招聘者</option><option value="unknown">未知</option></select></label>
+            <label><span>联系人角色</span><select v-model="createDraft.primaryContact.role"><option v-for="option in contactRoleOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
             <label><span>平台标识</span><input v-model="createDraft.primaryContact.platformId" /></label>
           </template>
           <label class="wide"><span>话术草稿（非市场事实）</span><textarea v-model="createDraft.draftMessageText" rows="3" /></label>
-          <label><span>初始事件</span><select v-model="createDraft.initialEventType"><option value="none">暂不补记</option><option value="applied">已投递 applied</option><option value="hr_contacted">HR 主动联系 hr_contacted</option></select></label>
+          <label><span>初始事件</span><select v-model="createDraft.initialEventType"><option value="none">暂不补记</option><option value="applied">已投递</option><option value="hr_contacted">招聘方主动联系</option></select></label>
           <label v-if="createDraft.initialEventType !== 'none'"><span>时间精度</span><select v-model="createDraft.initialEventTimePrecision"><option value="unknown">时间未知</option><option value="exact">准确到时间</option><option value="date">只知道日期</option><option value="approximate">大约时间</option></select></label>
           <label v-if="createDraft.initialEventType !== 'none' && createDraft.initialEventTimePrecision !== 'unknown'"><span>发生时间</span><input v-model="createDraft.initialEventAtInput" :type="eventInputType(createDraft.initialEventTimePrecision)" /></label>
           <label v-if="createDraft.initialEventType !== 'none'" class="wide"><span>事件备注</span><input v-model="createDraft.initialEventNote" placeholder="可留空" /></label>
@@ -453,7 +462,7 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
 
     <div v-if="editDraft && editingMemory" class="modal-backdrop" role="presentation" @click.self="closeDraft">
       <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="application-edit-title">
-        <header class="modal-head"><div><h2 id="application-edit-title">纠正流程上下文</h2><p>只提交实际变化的白名单字段；来源 origin 和投影状态不可在此修改。</p></div><button type="button" class="close-btn" @click="closeDraft">×</button></header>
+        <header class="modal-head"><div><h2 id="application-edit-title">纠正流程上下文</h2><p>只提交实际变化的允许字段；流程来源和事实投影状态不可在此修改。</p></div><button type="button" class="close-btn" @click="closeDraft">×</button></header>
         <div class="form-grid">
           <label><span>简历版本</span><select v-model="editDraft.resumeVersionId"><option :value="null">未知历史版本</option><option v-for="resume in memory?.resumeVersions" :key="resume.id" :value="resume.id" :disabled="resume.archivedAt !== null && resume.id !== editingMemory.record.resumeVersionId">{{ resume.name }}{{ resume.archivedAt !== null ? '（已归档）' : '' }}</option></select></label>
           <label><span>渠道</span><select v-model="editDraft.channel"><option v-for="option in channelOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
@@ -465,7 +474,7 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
           <label><span>市场城市</span><input v-model="editDraft.cityContext.marketCity" /></label>
           <label><span>办公方式</span><select v-model="editDraft.cityContext.workMode"><option v-for="option in workModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
           <label class="wide check"><input type="checkbox" :checked="editDraft.primaryContact !== null" @change="setContactEnabled(($event.target as HTMLInputElement).checked)" /><span>记录主要联系人</span></label>
-          <template v-if="editDraft.primaryContact"><label><span>联系人名称</span><input v-model="editDraft.primaryContact.displayName" /></label><label><span>联系人角色</span><select v-model="editDraft.primaryContact.role"><option value="company_hr">公司 HR</option><option value="hiring_manager">招聘经理</option><option value="headhunter">猎头</option><option value="platform_recruiter">平台招聘者</option><option value="unknown">未知</option></select></label><label><span>平台标识</span><input v-model="editDraft.primaryContact.platformId" /></label></template>
+          <template v-if="editDraft.primaryContact"><label><span>联系人名称</span><input v-model="editDraft.primaryContact.displayName" /></label><label><span>联系人角色</span><select v-model="editDraft.primaryContact.role"><option v-for="option in contactRoleOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><label><span>平台标识</span><input v-model="editDraft.primaryContact.platformId" /></label></template>
           <label class="wide"><span>话术草稿</span><textarea v-model="editDraft.draftMessageText" rows="3" /></label>
           <label class="wide"><span>纠正原因（必填）</span><input v-model="editDraft.reason" placeholder="说明为什么需要纠正" /></label>
         </div>
@@ -478,7 +487,7 @@ function eventInputType(precision: EventTimePrecision): 'date' | 'datetime-local
       <section class="modal-card compact" role="dialog" aria-modal="true" aria-labelledby="application-void-title">
         <header class="modal-head"><div><h2 id="application-void-title">作废误录流程</h2><p>作废不是招聘方拒绝；记录仍保留且不可恢复。</p></div><button type="button" class="close-btn" @click="closeDraft">×</button></header>
         <label class="stack"><span>作废原因（必填）</span><textarea v-model="voidDraft.reason" rows="3" /></label>
-        <label class="stack"><span>由同岗位另一条流程替代（可选）</span><select v-model="voidDraft.supersededByApplicationId"><option :value="null">不关联替代流程</option><option v-for="application in supersedeOptions" :key="application.record.id" :value="application.record.id">{{ application.record.id }} · {{ channelLabel(application.record.channel, application.record.channelOtherLabel) }}</option></select></label>
+        <label class="stack"><span>由同岗位另一条流程替代（可选）</span><select v-model="voidDraft.supersededByApplicationId"><option :value="null">不关联替代流程</option><option v-for="application in supersedeOptions" :key="application.record.id" :value="application.record.id">{{ applicationTitle(application) }}</option></select></label>
         <p v-if="writeError" class="write-error" role="alert">{{ writeError }}</p>
         <footer class="modal-actions"><button type="button" @click="closeDraft">取消</button><button type="button" class="danger-btn" :disabled="writeInFlight || voidDraft.reason.trim() === ''" @click="submitVoid">二次确认并作废</button></footer>
       </section>
