@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **状态**：已确认，B0–B7 已完成，B8 待开始
+- **状态**：已确认，B0–B8 已完成，v0.7.0 待合并发布
 - **日期**：2026-07-14
 - **产品输入**：`docs/prd/offerflow-v0.7.md` Draft 0.4
 - **实施状态输入**：`docs/handoffs/offerflow-v0.7-stage-handoff-2026-07-13.md`
@@ -16,6 +16,7 @@
 - **B5 完成边界**：FeedbackEvent 时间线、手工事实录入、事件作废和可选替代事件已完成。正式事实继续由用户确认后写入，历史事件不原地覆盖。
 - **B6 完成边界**：v2 模式的决策输入已切换到 ApplicationProjection；存在 Application 时不再读取 Job legacy 沟通状态，零 Application 的历史岗位只允许只读 legacy fallback。v2 capability 已禁用新的 legacy 沟通事实写入，默认 v1 模式保持兼容。
 - **B7 完成边界**：B7-B 已绑定批准备份 `20260714-102807-b7a-6f0ac3d1` 完成正式升级：真实数据库 schema 1→2，Job 13、Application 7、FeedbackEvent 7、ResumeVersion 0，保守 skip 6、manual review 0，Projection degraded 7/invalid 0，Job canonical hash changes 0；Snapshot v2 consistency/roundtrip 通过，pre-apply checkpoint 为 `20260714-112449-b7a-8d54a08b`，升级后备份为 `20260714-112746-b7b-475bd682`。生产默认 schema、后端 capability、前端 flag 与 Snapshot 已切换到 v2；Job legacy 字段和显式 v1 兼容入口继续保留。
+- **B8 完成边界**：发布前审计、三份备份复核、真实数据只读验证、v1/v2 隔离恢复、数据库已提交但 Snapshot 待续发、事务前/事务中失败、生产默认、事实源、Human-in-the-loop、隐私和范围 Gate 已覆盖；完整测试和关键 Gate 双跑通过。恢复演练未触碰真实数据库，App 版本仍为 0.6.2，main 未合并。
 
 正式 PRD 决定产品范围，阶段交接决定实际完成状态。A 技术设计仍保留实施前的 Draft 和历史依赖事实；B 以 main 中已经完成的 Hash Router、Page Scope、Runtime Gate 1 与生命周期保护为真实基线，不将 A 文档中的历史“待安装”状态解释为当前事实。
 
@@ -894,32 +895,32 @@ B1 只能先在临时数据库验证；B7 才允许在明确备份和 audit 后�
 
 ### 21.1 模型与事实
 
-- [ ] Job 可以有零个、一个或多个 Application，未投递 Job 不自动建流程。
-- [ ] 重复投递、换渠道、换简历和独立招聘流程不会覆盖旧 Application。
-- [ ] ResumeVersion 内容不可变，旧 Application 的版本归属不受后续修改影响。
-- [ ] FeedbackEvent 不原地修改或删除，纠错可审计且投影稳定。
-- [ ] stage/outcome/communicationStatus 只有事件投影一个正式来源。
+- [x] Job 可以有零个、一个或多个 Application，未投递 Job 不自动建流程。
+- [x] 重复投递、换渠道、换简历和独立招聘流程不会覆盖旧 Application。
+- [x] ResumeVersion 内容不可变，旧 Application 的版本归属不受后续修改影响。
+- [x] FeedbackEvent 不原地修改或删除，纠错可审计且投影稳定。
+- [x] stage/outcome/communicationStatus 只有事件投影一个正式来源。
 
 ### 21.2 兼容与迁移
 
-- [ ] 8 态 communicationStatus 有确定投影，deriveDecision 读取 projection。
-- [ ] 零 Application 旧 Job 可继续做岗位级决策，但不进入市场统计。
-- [ ] unknown 与 false、user_withdrew 与 rejected、no response 与 rejection 分离。
-- [ ] migration 决策表、幂等、中断回滚、备份和 audit report 全部验证。
-- [ ] snapshot v2 同步三张新表并通过 consistency/roundtrip。
+- [x] 8 态 communicationStatus 有确定投影，deriveDecision 读取 projection。
+- [x] 零 Application 旧 Job 可继续做岗位级决策，但不进入市场统计。
+- [x] unknown 与 false、user_withdrew 与 rejected、no response 与 rejection 分离。
+- [x] migration 决策表、幂等、中断回滚、备份和 audit report 全部验证。
+- [x] snapshot v2 同步三张新表并通过 consistency/roundtrip。
 
 ### 21.3 API、页面与安全
 
-- [ ] API 有 runtime validation、404/409/422、idempotency、expectedVersion 和事务测试。
-- [ ] `/profile-versions`、ApplicationSection、FeedbackTimelineSection 和 JobList 摘要可用。
-- [ ] 写操作是普通 Action，不注册 Runtime Task；`loadJobBundle` 保持只读、可取消、无旧写。
-- [ ] AI/OCR 未确认候选不能进入正式事实或统计；现有 import review 保持原语义。
-- [ ] 没有实现 C、v0.7.1、v0.7.2、Runtime SSE Gate 2、自动投递或自动沟通。
+- [x] API 有 runtime validation、404/409/422、idempotency、expectedVersion 和事务测试。
+- [x] `/profile-versions`、ApplicationSection、FeedbackTimelineSection 和 JobList 摘要可用。
+- [x] 写操作是普通 Action，不注册 Runtime Task；`loadJobBundle` 保持只读、可取消、无旧写。
+- [x] AI/OCR 未确认候选不能进入正式事实或统计；现有 import review 保持原语义。
+- [x] 没有实现 C、v0.7.1、v0.7.2、Runtime SSE Gate 2、自动投递或自动沟通。
 
 ### 21.4 回归 Gate
 
-- [ ] typecheck、build、Vitest、selftest、OfferFlow JSON eval 全部通过。
-- [ ] migration、repository/API、snapshot 和 Browser Router smoke 通过。
-- [ ] Router smoke 连续两次退出码 0 且端口释放。
-- [ ] 测试只使用临时 SQLite，不调用真实 LLM/OCR，不改真实用户数据。
-- [ ] 完整差异、数据安全和发布前审计通过后，才可将 B 标记完成。
+- [x] typecheck、build、Vitest、selftest、OfferFlow JSON eval 全部通过。
+- [x] migration、repository/API、snapshot 和 Browser Router smoke 通过。
+- [x] Router smoke 连续两次退出码 0 且端口释放。
+- [x] 测试只使用临时 SQLite，不调用真实 LLM/OCR，不改真实用户数据。
+- [x] 完整差异、数据安全和发布前审计通过后，才可将 B 标记完成。
