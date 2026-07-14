@@ -1,6 +1,16 @@
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+export const LEGACY_SNAPSHOT_SCHEMA_VERSION = 1 as const;
+export const SNAPSHOT_SCHEMA_VERSION = 2 as const;
 
-export const SYNC_TABLES = ['app_meta', 'profiles', 'jobs', 'import_logs'] as const;
+export const LEGACY_SYNC_TABLES = ['app_meta', 'profiles', 'jobs', 'import_logs'] as const;
+export const SYNC_TABLES = [
+  'profiles',
+  'jobs',
+  'resume_versions',
+  'applications',
+  'feedback_events',
+  'import_logs',
+  'app_meta',
+] as const;
 
 export type SyncTableName = (typeof SYNC_TABLES)[number];
 
@@ -24,6 +34,7 @@ export interface SnapshotTable {
 
 export interface OfferFlowSnapshot {
   schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
+  databaseSchemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
   exportedAt: string;
   deviceId: string;
   appVersion: string;
@@ -32,11 +43,29 @@ export interface OfferFlowSnapshot {
 
 export interface SnapshotManifest {
   schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
+  databaseSchemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
   exportedAt: string;
   deviceId: string;
   appVersion: string;
   snapshotHash: string;
   tableCounts: Partial<Record<SyncTableName, number>>;
+}
+
+export interface LegacyOfferFlowSnapshotV1 {
+  schemaVersion: typeof LEGACY_SNAPSHOT_SCHEMA_VERSION;
+  exportedAt: string;
+  deviceId: string;
+  appVersion: string;
+  tables: Partial<Record<(typeof LEGACY_SYNC_TABLES)[number], SnapshotTable>>;
+}
+
+export interface LegacySnapshotManifestV1 {
+  schemaVersion: typeof LEGACY_SNAPSHOT_SCHEMA_VERSION;
+  exportedAt: string;
+  deviceId: string;
+  appVersion: string;
+  snapshotHash: string;
+  tableCounts: Partial<Record<(typeof LEGACY_SYNC_TABLES)[number], number>>;
 }
 
 export interface DoctorResult {

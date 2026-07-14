@@ -41,7 +41,7 @@ export function buildServer(
 ): ReturnType<typeof Fastify> {
   const options = normalizeBuildOptions(input);
   const dbPath = options.dbPath ?? (options.db === undefined ? getDbPath() : ':injected:');
-  const jobMemoryV2 = options.jobMemoryV2 ?? { enabled: false };
+  const jobMemoryV2 = options.jobMemoryV2 ?? { enabled: true };
   const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
@@ -54,15 +54,21 @@ export function buildServer(
   const db = options.db ?? openDb(dbPath);
   const ownsDb = options.db === undefined;
   if (jobMemoryV2.enabled) {
-    const schemaVersion = getDatabaseSchemaVersion(db);
-    if (schemaVersion < 2) {
+    let schemaVersion = getDatabaseSchemaVersion(db);
+    if (schemaVersion === 0) {
+      initSchema(db, { targetVersion: 2 });
+      schemaVersion = getDatabaseSchemaVersion(db);
+    }
+    if (schemaVersion !== 2) {
       if (ownsDb) db.close();
       throw new Error(
-        `Job Memory v2 capability requires schema version 2 or newer; current version is ${schemaVersion}`,
+        `Job Memory v2 capability requires schema version 2; current version is ${schemaVersion}. `
+        + 'Legacy schema v1 must use the authorized B7-B upgrade tool.',
       );
     }
   } else {
-    initSchema(db);
+    const schemaVersion = getDatabaseSchemaVersion(db);
+    if (schemaVersion === 0) initSchema(db, { targetVersion: 1 });
   }
   app.decorate('db', db);
   const exportOnClose = createShutdownSnapshotExporter(dbPath);

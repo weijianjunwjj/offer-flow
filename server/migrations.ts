@@ -16,9 +16,10 @@ export interface MigrationRunResult {
 export interface MigrationRunOptions {
   targetVersion?: number;
   migrations?: readonly SchemaMigration[];
+  transactionMode?: 'per-migration' | 'caller-managed';
 }
 
-export const PRODUCTION_SCHEMA_VERSION = 1;
+export const PRODUCTION_SCHEMA_VERSION = 2;
 export const LATEST_SCHEMA_VERSION = 2;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 
@@ -166,6 +167,7 @@ export function runMigrations(
 ): MigrationRunResult {
   const migrations = options.migrations ?? SCHEMA_MIGRATIONS;
   const targetVersion = options.targetVersion ?? PRODUCTION_SCHEMA_VERSION;
+  const transactionMode = options.transactionMode ?? 'per-migration';
   validateMigrations(migrations);
   validateTargetVersion(targetVersion, migrations);
   ensureMigrationTable(db);
@@ -189,7 +191,7 @@ export function runMigrations(
       continue;
     }
 
-    const applyMigration = db.transaction(() => {
+    const applyMigration = (): void => {
       migration.up(db);
       const appliedAt = Date.now();
       db.prepare(
@@ -200,9 +202,13 @@ export function runMigrations(
          VALUES ('schema_version', ?, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       ).run(String(migration.version), appliedAt);
-    });
+    };
 
-    applyMigration();
+    if (transactionMode === 'caller-managed') {
+      applyMigration();
+    } else {
+      db.transaction(applyMigration)();
+    }
     appliedVersions.add(migration.version);
     newlyAppliedVersions.push(migration.version);
   }

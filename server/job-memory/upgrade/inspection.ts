@@ -9,7 +9,12 @@ import { withJobRecordDefaults, type StoredJobRecord } from '../../../src/storag
 import { getDatabaseSchemaVersion } from '../../migrations';
 import { sha256Hex } from '../../sync/hash';
 import { readSnapshotTable } from '../../sync/tables';
-import type { OfferFlowSnapshot, SnapshotManifest, SnapshotTable, SyncTableName } from '../../sync/types';
+import type {
+  LegacyOfferFlowSnapshotV1 as OfferFlowSnapshot,
+  LegacySnapshotManifestV1 as SnapshotManifest,
+  SnapshotTable,
+  SyncTableName,
+} from '../../sync/types';
 import { resolveUpgradePaths, type UpgradePathsInput } from './pathSafety';
 
 const LEGACY_STATUSES = [

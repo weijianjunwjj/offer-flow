@@ -53,6 +53,9 @@ data/corrupted/
 backups/
 sync/*.tmp
 sync/*.lock
+sync/offerflow.snapshot.json
+sync/offerflow.manifest.json
+sync/.offerflow-publish-*/
 
 # Task 0 临时候选代码解压目录（不入库）
 .step0-candidate/

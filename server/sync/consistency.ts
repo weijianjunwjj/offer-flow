@@ -6,13 +6,13 @@ import { getSyncPaths } from './paths';
 import { orderRowColumns, readSnapshotTable, rowIdentity, updatedAtValue } from './tables';
 import {
   SNAPSHOT_SCHEMA_VERSION,
+  SYNC_TABLES,
   type OfferFlowSnapshot,
   type SnapshotManifest,
   type SnapshotTable,
-  type SyncTableName,
 } from './types';
 
-export const BUSINESS_SYNC_TABLES = ['profiles', 'jobs', 'import_logs'] as const satisfies readonly SyncTableName[];
+export const BUSINESS_SYNC_TABLES = SYNC_TABLES;
 
 export interface ChangedSnapshotRecord {
   id: string;
@@ -55,14 +55,20 @@ function readVerifiedSnapshot(dbPath: string): OfferFlowSnapshot {
   }
   const snapshotJson = fs.readFileSync(paths.snapshotPath, 'utf8');
   const manifest = JSON.parse(fs.readFileSync(paths.manifestPath, 'utf8')) as SnapshotManifest;
-  if (manifest.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
+  if (
+    manifest.schemaVersion !== SNAPSHOT_SCHEMA_VERSION
+    || manifest.databaseSchemaVersion !== SNAPSHOT_SCHEMA_VERSION
+  ) {
     throw new Error(`unsupported snapshot manifest schemaVersion: ${String(manifest.schemaVersion)}`);
   }
   if (manifest.snapshotHash !== sha256Hex(snapshotJson)) {
     throw new Error('snapshot hash mismatch during consistency verification');
   }
   const snapshot = JSON.parse(snapshotJson) as OfferFlowSnapshot;
-  if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
+  if (
+    snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION
+    || snapshot.databaseSchemaVersion !== SNAPSHOT_SCHEMA_VERSION
+  ) {
     throw new Error(`unsupported snapshot schemaVersion: ${String(snapshot.schemaVersion)}`);
   }
   return snapshot;

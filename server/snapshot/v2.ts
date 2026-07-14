@@ -14,8 +14,8 @@ import {
   readSnapshotTable,
 } from '../sync/tables';
 import type {
-  OfferFlowSnapshot as OfferFlowSnapshotV1,
-  SnapshotManifest as SnapshotManifestV1,
+  LegacyOfferFlowSnapshotV1 as OfferFlowSnapshotV1,
+  LegacySnapshotManifestV1 as SnapshotManifestV1,
   SnapshotTable,
   SyncTableName,
 } from '../sync/types';

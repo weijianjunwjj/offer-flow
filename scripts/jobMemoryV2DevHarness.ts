@@ -263,7 +263,7 @@ async function fetchJsonResponse(url: string, init?: RequestInit): Promise<{ sta
 async function runLegacyV1WriteSmoke(): Promise<true> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-job-memory-v1-'));
   const dbPath = path.join(tempDir, 'offerflow-v1.sqlite3');
-  const app = buildServer(dbPath);
+  const app = buildServer({ dbPath, jobMemoryV2: { enabled: false } });
   try {
     const base = await app.listen({ host: DEV_HOST, port: 0 });
     const created = await fetchJson(`${base}/jobs`, {
