@@ -167,7 +167,7 @@ function buildFetchOptions(
   userMessage: string,
   options: LlmOptions | undefined,
 ): BuildFetchOptionsResult {
-  const maxTokens = readEnvInt('OFFERFLOW_LLM_MAX_TOKENS', options?.maxTokens ?? 1800, 800, 4096);
+  const maxTokens = readEnvInt('OFFERFLOW_LLM_MAX_TOKENS', options?.maxTokens ?? 1800, 800, 8192);
   const temperature = readEnvFloat('OFFERFLOW_LLM_TEMPERATURE', options?.temperature ?? 0.2, 0, 1);
   const timeoutMs = readEnvInt('OFFERFLOW_LLM_TIMEOUT_MS', options?.timeoutMs ?? 30000, 5000, 60000);
 
