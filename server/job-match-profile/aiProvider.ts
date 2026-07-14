@@ -28,6 +28,52 @@ const FORBIDDEN_LEGACY_FIELDS = [
   'riskLevel',
 ];
 
+const FIELD_CONTRACT = `数组与嵌套对象的元素字段规格（必须严格遵守字段名，禁止改名、禁止新增字段、禁止省略字段）：
+
+- coreCapabilities[] 每个元素：
+  { "key": string, "label": string, "level": "core" | "supporting" | "to_validate", "summary": string, "evidenceRefs": string[] }
+
+- constraints[] 每个元素：
+  { "key": string, "label": string, "summary": string, "evidenceRefs": string[] }
+  注意：constraints 元素禁止使用 description / category / impact 等字段名，只能使用 key、label、summary、evidenceRefs。
+
+- supportingEvidence[] 与 counterEvidence[]（顶层以及每个城市内）每个元素：
+  { "sourceType": "profile" | "resume_version" | "job" | "application" | "feedback_event" | "user_input",
+    "sourceId": string | null,
+    "label": string,
+    "polarity": "support" | "counter" | "neutral",
+    "strength": "strong" | "medium" | "weak",
+    "city": "suzhou" | "wuxi" | "shanghai" | "hangzhou" | null,
+    "summary": string }
+
+- stretchRoles / primaryRoles / safeRoles（顶层以及每个城市内）都是同一种 roleBand 对象：
+  { "roleTitles": string[], "roleFamilies": string[],
+    "salaryRange": { "minK": number | null, "maxK": number | null, "note": string },
+    "companySizes": string[], "companyTypes": string[], "industries": string[],
+    "technicalFocus": string[], "suitableReasons": string[], "risks": string[] }
+
+- cityProfiles[] 每个元素：
+  { "city": "suzhou" | "wuxi" | "shanghai" | "hangzhou",
+    "confidence": "insufficient" | "exploratory" | "actionable",
+    "summary": string, "highestReachableRole": string,
+    "stretchRoles": roleBand, "primaryRoles": roleBand, "safeRoles": roleBand,
+    "educationBarrier": string, "salaryNote": string, "preferredCompanyProfile": string[],
+    "supportingEvidence": evidence[], "counterEvidence": evidence[],
+    "missingEvidence": string[], "borrowedEvidence": borrowedEvidence[] }
+
+- borrowedEvidence[] 每个元素：
+  { "sourceCity": "suzhou" | "wuxi" | "shanghai" | "hangzhou",
+    "reason": string, "discountNote": string, "notApplicableTo": string[] }
+
+- idealEnvironment 对象：
+  { "companySizes": string[], "companyTypes": string[], "industries": string[], "teamTraits": string[], "description": string }
+
+- acceptableRange 对象：
+  { "roleTitles": string[], "cities": ("suzhou" | "wuxi" | "shanghai" | "hangzhou")[],
+    "salaryNote": string, "companyTypes": string[], "workModes": string[], "notes": string[] }
+
+上面模板中出现的空数组仅表示"允许为空"，一旦填充元素，元素必须严格符合以上字段规格。`;
+
 function buildOutputTemplateJson(): string {
   return JSON.stringify(createEmptyJobMatchProfileDraft(), null, 2);
 }
@@ -40,6 +86,8 @@ function buildSystemPrompt(): string {
 \`\`\`
 ${template}
 \`\`\`
+
+${FIELD_CONTRACT}
 
 输出契约（必须全部遵守）：
 1. 模板只表达字段结构，不能原样返回空字符串或占位内容。
@@ -112,6 +160,8 @@ ${errorDescription}
 \`\`\`
 ${template}
 \`\`\`
+
+${FIELD_CONTRACT}
 
 原始只读输入快照：
 \`\`\`

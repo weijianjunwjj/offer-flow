@@ -200,4 +200,40 @@ describe('AI 输出契约完整性', () => {
       expect(firstSystemPrompt).toContain(field);
     }
   });
+
+  it('首次系统 Prompt 含数组元素字段规格，并显式禁止 constraints 使用 description/category/impact', async () => {
+    mocks.chatCompletion.mockReset();
+    const draft = makeJobMatchProfileDraftFixture();
+    mocks.chatCompletion.mockResolvedValue({ rawText: JSON.stringify(draft), model: 'fake-model' });
+
+    const { deepSeekJobMatchProfileProvider } = await importFresh();
+    const snapshot = { snapshot: {} } as never;
+    await deepSeekJobMatchProfileProvider.generate(snapshot);
+
+    const firstSystemPrompt = mocks.chatCompletion.mock.calls[0]?.[0] as string;
+    // constraints 元素字段签名
+    expect(firstSystemPrompt).toContain('evidenceRefs');
+    expect(firstSystemPrompt).toContain('description / category / impact');
+    // 能力 level 与证据枚举取值
+    expect(firstSystemPrompt).toContain('to_validate');
+    expect(firstSystemPrompt).toContain('neutral');
+    expect(firstSystemPrompt).toContain('borrowedEvidence');
+    expect(firstSystemPrompt).toContain('salaryRange');
+  });
+
+  it('修复调用 Prompt 同样携带数组元素字段规格', async () => {
+    mocks.chatCompletion.mockReset();
+    const draft = makeJobMatchProfileDraftFixture();
+    mocks.chatCompletion
+      .mockResolvedValueOnce({ rawText: legacyStructureRawText, model: 'fake-model' })
+      .mockResolvedValueOnce({ rawText: JSON.stringify(draft), model: 'fake-model' });
+
+    const { deepSeekJobMatchProfileProvider } = await importFresh();
+    const snapshot = { snapshot: {} } as never;
+    await deepSeekJobMatchProfileProvider.generate(snapshot);
+
+    const secondUserMessage = mocks.chatCompletion.mock.calls[1]?.[1] as string;
+    expect(secondUserMessage).toContain('description / category / impact');
+    expect(secondUserMessage).toContain('to_validate');
+  });
 });
