@@ -2,8 +2,8 @@
 
 ## 1. 文档状态
 
-- **状态**：已确认，B0–B6 已完成，B7-A 备份与 dry-run 已完成，等待 B7-B 正式升级批准
-- **日期**：2026-07-13
+- **状态**：已确认，B0–B7 已完成，B8 待开始
+- **日期**：2026-07-14
 - **产品输入**：`docs/prd/offerflow-v0.7.md` Draft 0.4
 - **实施状态输入**：`docs/handoffs/offerflow-v0.7-stage-handoff-2026-07-13.md`
 - **页面基建输入**：`docs/architecture/offerflow-v0.7.0-a-technical-design.md`
@@ -15,7 +15,7 @@
 - **B4 完成边界**：统一的 Job Memory v2 前端 capability、JobDetail 聚合 Bundle、ApplicationSection、同岗位多次 Application、上下文纠正与作废、JobList 最小流程摘要和临时库 smoke 已完成。B4 只消费后端投影并保留事件 source，不展示 FeedbackTimeline，也不提供普通事件录入、事件纠错或事件作废 UI。
 - **B5 完成边界**：FeedbackEvent 时间线、手工事实录入、事件作废和可选替代事件已完成。正式事实继续由用户确认后写入，历史事件不原地覆盖。
 - **B6 完成边界**：v2 模式的决策输入已切换到 ApplicationProjection；存在 Application 时不再读取 Job legacy 沟通状态，零 Application 的历史岗位只允许只读 legacy fallback。v2 capability 已禁用新的 legacy 沟通事实写入，默认 v1 模式保持兼容。
-- **B7-A 完成边界**：真实数据库只读审计、一致性备份、备份克隆库迁移与保守 backfill dry-run、snapshot v2 往返验证已完成；真实数据库仍为 schema v1，未执行 backfill，生产 v2 capability 仍关闭。B7-B 正式升级必须绑定本次备份标识并再次获得用户明确批准。
+- **B7 完成边界**：B7-B 已绑定批准备份 `20260714-102807-b7a-6f0ac3d1` 完成正式升级：真实数据库 schema 1→2，Job 13、Application 7、FeedbackEvent 7、ResumeVersion 0，保守 skip 6、manual review 0，Projection degraded 7/invalid 0，Job canonical hash changes 0；Snapshot v2 consistency/roundtrip 通过，pre-apply checkpoint 为 `20260714-112449-b7a-8d54a08b`，升级后备份为 `20260714-112746-b7b-475bd682`。生产默认 schema、后端 capability、前端 flag 与 Snapshot 已切换到 v2；Job legacy 字段和显式 v1 兼容入口继续保留。
 
 正式 PRD 决定产品范围，阶段交接决定实际完成状态。A 技术设计仍保留实施前的 Draft 和历史依赖事实；B 以 main 中已经完成的 Hash Router、Page Scope、Runtime Gate 1 与生命周期保护为真实基线，不将 A 文档中的历史“待安装”状态解释为当前事实。
 
