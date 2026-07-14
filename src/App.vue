@@ -1,8 +1,4 @@
 <script setup lang="ts">
-// 应用根组件 + 最小导航壳。
-// Task 2 引入 Naive UI 基础壳：n-config-provider（默认浅色主题）+ n-message-provider，建立浅色高级科技感外壳。
-// 视觉方向：浅色、干净、高级，类 Linear / Vercel / 飞书多维表格的清爽感，不做暗黑驾驶舱。
-// v0.7.0-A：页面身份由 URL 与 Vue Router 管理，App 只保留全局 provider 和导航壳。
 import { computed } from 'vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import type { GlobalThemeOverrides } from 'naive-ui';
@@ -18,11 +14,12 @@ import {
 const route = useRoute();
 const router = useRouter();
 const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
-const activeSection = computed(() => (
-  route.name === 'profile' || route.name === 'profile-versions' ? 'profile' : 'jobs'
-));
+const activeSection = computed(() => {
+  if (route.name === 'job-match-profile') return 'job-match-profile';
+  if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
+  return 'jobs';
+});
 
-// 浅色高级科技感主题微调：蓝 / 青蓝主色，浅色底，深灰黑文字，圆角克制。
 const themeOverrides: GlobalThemeOverrides = {
   common: {
     primaryColor: '#2563eb',
@@ -40,6 +37,10 @@ function goProfile(): void {
   void router.push({ name: 'profile' });
 }
 
+function goJobMatchProfile(): void {
+  void router.push({ name: 'job-match-profile' });
+}
+
 function goJobs(): void {
   void router.push({ name: 'jobs' });
 }
@@ -55,7 +56,6 @@ function routeViewKey(): string {
   return String(route.name ?? route.fullPath);
 }
 
-// content 内边距与最大宽度，最大宽度由全局设计令牌统一控制。
 const contentStyle =
   'box-sizing: border-box; width: 100%; padding: 24px; max-width: var(--of-content-max-width); margin: 0 auto;';
 </script>
@@ -73,7 +73,7 @@ const contentStyle =
                 <span class="brand-ver">v0.6.2</span>
               </div>
               <span class="tagline">
-                Backend + SQLite · DeepSeek LLM / SSE 流式分析 · 人工确认，不做 Boss 自动化
+                Backend + SQLite · AI 只生成提案 · 人工确认，不做 Boss 自动化
               </span>
             </div>
           </div>
@@ -94,6 +94,14 @@ const contentStyle =
               @click="goProfileVersions"
             >
               简历版本
+            </n-button>
+            <n-button
+              :type="activeSection === 'job-match-profile' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'job-match-profile'"
+              size="small"
+              @click="goJobMatchProfile"
+            >
+              岗位匹配画像
             </n-button>
             <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"
@@ -117,7 +125,6 @@ const contentStyle =
 </template>
 
 <style>
-/* 浅色高级科技感设计令牌（全局，供各页面 scoped 样式复用）。 */
 :root {
   color-scheme: light;
   --of-bg: #f6f8fc;
@@ -149,7 +156,6 @@ body,
 <style scoped>
 .app-shell {
   height: 100%;
-  /* 浅色克制高光：低饱和蓝 / 青蓝，营造干净清爽的科技感（类 Linear / Vercel），不做荧光。 */
   background:
     radial-gradient(1200px 600px at 82% -12%, rgba(37, 99, 235, 0.06), transparent 60%),
     radial-gradient(900px 500px at -8% 8%, rgba(14, 165, 233, 0.05), transparent 55%),
@@ -193,7 +199,6 @@ body,
 .brand {
   font-size: 16px;
   letter-spacing: 0.3px;
-  /* 保留渐变品牌字，但克制不荧光：蓝 → 青蓝。 */
   background: linear-gradient(90deg, var(--of-brand), var(--of-brand-2));
   -webkit-background-clip: text;
   background-clip: text;
