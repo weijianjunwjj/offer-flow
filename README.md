@@ -238,8 +238,8 @@ OfferFlow 默认本地数据优先，不再把 `data/offerflow.sqlite3` 当作�
 
 - App 版本仍为 v0.6.2。
 - v0.7.0-A 页面与读取基建已完成、合并并推送：Hash Router、JobDetailPage、Page Scope、Runtime Gate 1 与异步竞态/销毁测试均已落地。
-- v0.7.0-B 的 B0–B8 已完成：ResumeVersion、Job / Application 分离、FeedbackEvent、事件时间线、旧数据保守迁移、Snapshot v2、恢复演练与发布前审计均已通过。
-- 当前状态为 v0.7.0 Release Candidate；App 版本仍为 v0.6.2，等待最终合并发布轮统一升级版本。
+- v0.7.0-B 的 B0–B8 已完成可信求职记忆底座：ResumeVersion、Job / Application 分离、FeedbackEvent、事件时间线、旧数据保守迁移、Snapshot v2、恢复演练与工程审计均已通过。
+- 当前状态为 **v0.7 产品实施中**：可信求职记忆底座已完成，动态画像与策略尚未完成，产品发布验收未通过，禁止发布。App 版本仍为 v0.6.2。
 - 历史补录、基础漏斗和 Runtime SSE Gate 2 属于 v0.7.0-C，不提前实施。
 
 中期可能方向：
@@ -263,4 +263,4 @@ OfferFlow 默认本地数据优先，不再把 `data/offerflow.sqlite3` 当作�
 - v0.6.1：DeepSeek LLM SSE 流式分析体验，支持岗位分析结果打字机式渲染，复用统一 `API_BASE`，补齐 SSE CORS，本地分析体验由约 17s 静默等待优化为约 10s 首屏可见并持续流式输出。
 - v0.6.2：v0.7 前置稳定性收口，建立 SQLite migration baseline，修复本地 SQLite 与 tracked snapshot 一致性，统一 App 版本并校正普通 LLM 保存与 JD 导入 Review 的文档边界。
 
-当前项目状态：App 版本仍为 v0.6.2，v0.7.0-A 与 v0.7.0-B（B0–B8）均已完成；功能分支处于 v0.7.0 Release Candidate，等待最终合并发布。
+当前项目状态：App 版本仍为 v0.6.2；v0.7.0-A 与 v0.7.0-B（B0–B8）完成了页面运行时和可信求职记忆底座，但不等于完整 v0.7 产品完成。动态画像、证据充分性与阶段策略仍待 R1–R5 实现，当前禁止发布。
