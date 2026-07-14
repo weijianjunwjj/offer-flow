@@ -9,22 +9,24 @@
 - main：未合并；未创建 PR、Tag 或 Release。
 - B8 没有新增产品功能、数据库结构或依赖。
 
-## 2. 真实数据只读复核
+## 2. R0.1 后真实数据只读复核
 
 | 项目 | 结果 |
 |---|---|
 | schema / migration | 2 / 连续 |
 | integrity / foreign keys | ok / 0 |
-| profiles / jobs | 1 / 13 |
-| 原始 import_logs / migration audit | 1 / 1 |
-| resume_versions / applications / feedback_events | 0 / 7 / 7 |
-| Projection | valid 0 / degraded 7 / invalid 0 |
-| backfill | skip 6 / manual review 0 / 二次新增 0 |
-| Job hash / legacy 字段变化 | 0 / 0 |
+| profiles / jobs | 1 / 14 |
+| import_logs / app_meta | 2 / 3 |
+| resume_versions / applications / feedback_events | 1 / 8 / 9 |
+| Projection | valid 1 / degraded 7 / invalid 0 |
+| 领域不变量 | orphan、非法 target/replacement、rowVersion、幂等冲突均为 0 |
+| migration/backfill 重复 | 重复 legacy seed 0 / 异常 migration Event 0 |
 | 正式 Snapshot | schema 2，所有同步表差异 0 |
 | 复核前后 | 数据库与 Snapshot 规范化指纹均未变化 |
 
-迁移 Event 均为 `legacy_status_imported`，来源为 `system_migration`，置信度为 inferred、证据级别为 weak；没有伪造 applied、rejected、message_viewed 等具体业务事件。所有迁移 Application 的 ResumeVersion 仍为未知，Projection 未持久化。
+R0 后用户通过正常 Human-in-the-loop 页面操作新增了 1 个 Job、1 个 ResumeVersion、1 个 Application 和 2 个 FeedbackEvent，并激活了该 ResumeVersion。只读审计确认这些新增记录的 Schema、审计事件与人工来源合法；没有异常自动写入、第二轮 backfill、重复 `legacy_status_imported`、Projection 持久化或 Job legacy 字段旁路。
+
+原 `job-memory-v2:verify-real` 错误地将 B7-B 当时的固定聚合和旧源指纹当作永久生产基线。R0.1 已将职责拆分：`verify-upgrade-attestation` 继续绑定 B7-B 的 Backup、apply-result、历史 13/0/7/7 聚合与旧指纹；`verify-real` 只验证当前 schema、integrity/FK、migration、领域不变量、Projection、正式 Snapshot 一致性以及运行前后数据不变。生产数据经用户确认后的正常增长不再破坏历史升级证明。
 
 ## 3. 关键备份
 
@@ -33,8 +35,9 @@
 | `20260714-102807-b7a-6f0ac3d1` | 1 | 270336 B | `ba0d599568ad` | ok / 0 | v1，2 文件 | 通过 |
 | `20260714-112449-b7a-8d54a08b` | 1 | 270336 B | `ba0d599568ad` | ok / 0 | v1，2 文件 | 通过 |
 | `20260714-112746-b7b-475bd682` | 2 | 356352 B | `b147f7533535` | ok / 0 | v2，2 文件 | 通过 |
+| `20260714-161148-r01-c4b319ff` | 2 | 372736 B | `2b07702be957` | ok / 0 | 同步前旧 v2，2 文件 | 不适用（R0.1 pre-sync） |
 
-三份备份均为普通目录、非符号链接、被 Git ignore；完整 manifest hash/size 校验通过，审计前后未被覆盖。
+四份备份均为普通目录、非符号链接、被 Git ignore；完整 manifest hash/size 校验通过。R0.1 备份使用安全 online backup，保存同步前真实 schema v2 SQLite 与旧正式 Snapshot pair，未覆盖前三份历史备份。
 
 ## 4. 恢复与续发演练
 
@@ -64,20 +67,19 @@
 
 | Gate | 结果 |
 |---|---|
-| B8 目标测试 | 4 文件、25 测试通过 |
-| B8 audit | 连续两次 `V070_B8_AUDIT_PASS` |
-| upgrade selftest | 4 文件、35 测试通过 |
+| R0.1 目标测试 | 5 文件、21 测试通过 |
+| B8 audit | 连续两次 `V070_B8_AUDIT_PASS`；历史升级、当前生产、当前 Snapshot 分段通过 |
+| upgrade selftest | 5 文件、39 测试通过 |
 | migration selftest | 通过 |
-| server/job-memory/snapshot/sync | 11 文件、91 测试通过 |
-| 完整 Vitest | 37 文件、292 测试通过，无 skip/todo |
+| 完整 Vitest | 41 文件、307 测试通过，无 skip/todo |
 | typecheck / build | 通过 / 通过 |
 | selftest | 全链路通过 |
 | decision / backend API selftest | 通过 / 通过 |
 | v2 smoke | 通过，临时目录清理 |
-| snapshot:check | 连续两次通过，聚合一致 |
-| verify-real | 连续两次通过，聚合一致、二次新增 0 |
+| snapshot:check | 正式同步后连续两次通过，当前聚合差异 0 |
+| verify-real | 连续两次通过，当前不变量、Snapshot、前后指纹与无写入均通过 |
+| verify-upgrade-attestation | 连续两次通过，当前增长不影响历史 B7-B 证明 |
 | Router smoke | 连续两次通过，端口释放 |
-| OFFER_FLOW_JSON eval | 10/10，通过率 100% |
 
 测试没有调用真实 LLM、OCR 或外部业务服务，没有使用全局进程终止命令，也没有修改真实业务数据。
 
@@ -91,3 +93,5 @@
 B8 只完成可信求职记忆底座的工程审计，不构成完整 v0.7 产品发布候选。此前将 B8 识别为 Release Candidate 是把技术阶段完成误当成产品结果完成，本节现予纠正；第 2–8 节的既有测试、数据与恢复演练事实不受影响。
 
 当前统一状态为：`v0.7 产品实施中`、`可信求职记忆底座已完成`、`动态画像与策略尚未完成`、`禁止发布`。App 版本继续保持 `0.6.2`，不得据此执行版本升级、合并、PR、Tag 或 Release。后续发布判断必须以 `docs/product/offerflow-v0.7-release-contract.md` 的全部产品结果为准。
+
+R0.1 只修正生产基线与验证语义，并将正式 Snapshot v2 同步至当前真实数据库；它不改变 R1–R5 的未实现状态，不构成 RC，也不解除产品发布阻塞。
