@@ -10,6 +10,7 @@ import {
   NDescriptionsItem,
   NDivider,
   NEmpty,
+  NInput,
   NList,
   NListItem,
   NModal,
@@ -25,6 +26,7 @@ import {
 } from 'naive-ui';
 import { jobMatchProfileApi } from '../api/jobMatchProfileApi';
 import {
+  JobMatchProfileDraftSchema,
   createEmptyJobMatchProfileState,
   getActiveJobMatchProfileVersion,
   getJobMatchProfileView,
@@ -41,6 +43,13 @@ const busy = ref(false);
 const errorText = ref('');
 const activeCity = ref<JobMatchCityCode>('global');
 const reviewProposal = ref<JobMatchProfileProposal | null>(null);
+const editedDraftJson = ref('');
+const showReview = computed({
+  get: () => reviewProposal.value !== null,
+  set: (visible: boolean) => {
+    if (!visible) reviewProposal.value = null;
+  },
+});
 
 const cityTabs: Array<{ code: JobMatchCityCode; label: string }> = [
   { code: 'global', label: '全局画像' },
@@ -67,17 +76,14 @@ const confidenceTypes = {
   exploratory: 'info',
   actionable: 'success',
 } as const;
-const proposalStatusLabels = {
-  proposed: '待审核',
-  accepted: '已接受',
-  modified_and_accepted: '修改后接受',
-  rejected: '已拒绝',
-  deferred: '稍后处理',
-  expired: '已失效',
-} as const;
 
 function formatTime(value: number): string {
   return new Date(value).toLocaleString('zh-CN');
+}
+
+function openReview(proposal: JobMatchProfileProposal): void {
+  reviewProposal.value = proposal;
+  editedDraftJson.value = JSON.stringify(proposal.draft, null, 2);
 }
 
 async function load(): Promise<void> {
@@ -92,27 +98,29 @@ async function load(): Promise<void> {
   }
 }
 
-async function run(action: () => Promise<JobMatchProfileState>, success: string): Promise<void> {
+async function run(action: () => Promise<JobMatchProfileState>, success: string): Promise<boolean> {
   busy.value = true;
   errorText.value = '';
   try {
     state.value = await action();
     message.success(success);
+    return true;
   } catch (error) {
     errorText.value = (error as Error).message;
+    return false;
   } finally {
     busy.value = false;
   }
 }
 
-function createManualProposal(): Promise<void> {
+function createManualProposal(): Promise<boolean> {
   return run(
     () => jobMatchProfileApi.createManualProposal(state.value.stateVersion),
     '已建立手工草案，请先审核，尚未成为正式画像',
   );
 }
 
-function createAiProposal(): Promise<void> {
+function createAiProposal(): Promise<boolean> {
   return run(
     () => jobMatchProfileApi.createAiProposal(state.value.stateVersion),
     'AI 草案已生成，请先审核，尚未成为正式画像',
@@ -123,7 +131,7 @@ async function decide(
   proposal: JobMatchProfileProposal,
   action: 'accept' | 'reject' | 'defer',
 ): Promise<void> {
-  await run(
+  const success = await run(
     () => jobMatchProfileApi.decideProposal(proposal.id, {
       expectedStateVersion: state.value.stateVersion,
       action,
@@ -131,10 +139,28 @@ async function decide(
     }),
     action === 'accept' ? '已激活新的正式画像版本' : action === 'reject' ? '已拒绝该提案' : '已标记稍后处理',
   );
-  reviewProposal.value = null;
+  if (success) reviewProposal.value = null;
 }
 
-function activate(versionId: string): Promise<void> {
+async function modifyAndAccept(proposal: JobMatchProfileProposal): Promise<void> {
+  try {
+    const modifiedDraft = JobMatchProfileDraftSchema.parse(JSON.parse(editedDraftJson.value));
+    const success = await run(
+      () => jobMatchProfileApi.decideProposal(proposal.id, {
+        expectedStateVersion: state.value.stateVersion,
+        action: 'modify_and_accept',
+        note: '用户修改草案后确认成为正式岗位匹配画像',
+        modifiedDraft,
+      }),
+      '已保存修改并激活新的正式画像版本',
+    );
+    if (success) reviewProposal.value = null;
+  } catch (error) {
+    errorText.value = `修改后的草案不符合严格结构：${(error as Error).message}`;
+  }
+}
+
+function activate(versionId: string): Promise<boolean> {
   return run(
     () => jobMatchProfileApi.activateVersion(versionId, state.value.stateVersion),
     '已切换正式画像版本',
@@ -193,35 +219,28 @@ onMounted(load);
                   {{ confidenceLabels[activeView.confidenceState] }}
                 </n-tag>
               </div>
-
               <n-alert :type="activeView.confidenceState === 'actionable' ? 'success' : 'warning'" class="block">
                 {{ activeView.confidenceReason }}
               </n-alert>
-
               <n-descriptions bordered :column="1" label-placement="left" class="block">
                 <n-descriptions-item label="核心岗位定位">{{ activeView.corePositioning }}</n-descriptions-item>
                 <n-descriptions-item label="当前最高可达岗位">{{ activeView.highestReachableRole }}</n-descriptions-item>
               </n-descriptions>
-
               <div class="bands">
                 <n-card v-for="band in [activeView.stretch, activeView.focus, activeView.safe]" :key="band.label" size="small">
-                  <template #header>
-                    {{ band.label === 'stretch' ? '冲刺' : band.label === 'focus' ? '主攻' : '稳妥' }}
-                  </template>
+                  <template #header>{{ band.label === 'stretch' ? '冲刺' : band.label === 'focus' ? '主攻' : '稳妥' }}</template>
                   <strong>{{ band.roles.join(' / ') }}</strong>
                   <p>薪资：{{ band.salaryRange }}</p>
                   <p>公司：{{ band.companyRange.join('；') }}</p>
                   <n-text depth="3">{{ band.notes.join('；') }}</n-text>
                 </n-card>
               </div>
-
               <div class="two-columns block">
                 <n-card title="核心优势" size="small"><n-list><n-list-item v-for="item in activeView.strengths" :key="item">{{ item }}</n-list-item></n-list></n-card>
                 <n-card title="待验证能力" size="small"><n-list><n-list-item v-for="item in activeView.capabilitiesToValidate" :key="item">{{ item }}</n-list-item></n-list></n-card>
                 <n-card title="主要限制" size="small"><n-list><n-list-item v-for="item in activeView.constraints" :key="item">{{ item }}</n-list-item></n-list></n-card>
                 <n-card title="理想公司与团队" size="small"><n-list><n-list-item v-for="item in activeView.idealEnvironment" :key="item">{{ item }}</n-list-item></n-list></n-card>
               </div>
-
               <n-card title="证据、反证与最大不确定性" size="small" class="block">
                 <div class="evidence-grid">
                   <section>
@@ -234,16 +253,10 @@ onMounted(load);
                     <n-empty v-if="activeView.counterEvidence.length === 0" description="暂无直接反证" />
                     <n-list v-else><n-list-item v-for="item in activeView.counterEvidence" :key="item.id">{{ item.statement }}<br><n-text depth="3">{{ item.sourceLabel }} · 权重 {{ item.weight }}</n-text></n-list-item></n-list>
                   </section>
-                  <section>
-                    <h3>最大不确定性</h3>
-                    <n-list><n-list-item v-for="item in activeView.biggestUncertainties" :key="item">{{ item }}</n-list-item></n-list>
-                  </section>
+                  <section><h3>最大不确定性</h3><n-list><n-list-item v-for="item in activeView.biggestUncertainties" :key="item">{{ item }}</n-list-item></n-list></section>
                 </div>
               </n-card>
-
-              <n-alert type="error" class="block">
-                当前禁止结论：{{ activeView.blockedConclusions.join('；') }}
-              </n-alert>
+              <n-alert type="error" class="block">当前禁止结论：{{ activeView.blockedConclusions.join('；') }}</n-alert>
             </template>
           </n-tab-pane>
         </n-tabs>
@@ -254,11 +267,8 @@ onMounted(load);
         <n-list v-else>
           <n-list-item v-for="proposal in pendingProposals" :key="proposal.id">
             <n-space justify="space-between" align="center">
-              <div>
-                <strong>{{ proposal.draft.title }}</strong>
-                <div><n-text depth="3">{{ proposal.source === 'ai' ? 'AI 提案' : '手工草案' }} · {{ formatTime(proposal.createdAt) }}</n-text></div>
-              </div>
-              <n-button @click="reviewProposal = proposal">审核提案</n-button>
+              <div><strong>{{ proposal.draft.title }}</strong><div><n-text depth="3">{{ proposal.source === 'ai' ? 'AI 提案' : '手工草案' }} · {{ formatTime(proposal.createdAt) }}</n-text></div></div>
+              <n-button @click="openReview(proposal)">审核提案</n-button>
             </n-space>
           </n-list-item>
         </n-list>
@@ -284,7 +294,7 @@ onMounted(load);
       </n-collapse>
     </n-spin>
 
-    <n-modal v-model:show="reviewProposal" preset="card" title="审核岗位匹配画像提案" style="width: min(920px, 92vw)">
+    <n-modal v-model:show="showReview" preset="card" title="审核岗位匹配画像提案" style="width: min(920px, 92vw)">
       <template v-if="reviewProposal">
         <n-alert type="warning">此时仍是提案，不会影响正式画像。接受后才会生成新的不可原地修改版本。</n-alert>
         <n-divider />
@@ -296,10 +306,17 @@ onMounted(load);
             <p>{{ getJobMatchProfileView(reviewProposal.draft, tab.code).confidenceReason }}</p>
           </n-tab-pane>
         </n-tabs>
+        <n-collapse class="block">
+          <n-collapse-item title="修改草案（严格 JSON）" name="edit-draft">
+            <n-alert type="info" class="edit-hint">修改后会重新按同一 Draft Schema 校验；原提案仍保留，正式版本保存修改后的内容。</n-alert>
+            <n-input v-model:value="editedDraftJson" type="textarea" :autosize="{ minRows: 12, maxRows: 24 }" />
+          </n-collapse-item>
+        </n-collapse>
         <n-space justify="end" class="modal-actions">
           <n-button :loading="busy" @click="decide(reviewProposal, 'defer')">稍后处理</n-button>
           <n-button type="error" ghost :loading="busy" @click="decide(reviewProposal, 'reject')">拒绝</n-button>
-          <n-button type="primary" :loading="busy" @click="decide(reviewProposal, 'accept')">接受并激活</n-button>
+          <n-button :loading="busy" @click="modifyAndAccept(reviewProposal)">修改后接受</n-button>
+          <n-button type="primary" :loading="busy" @click="decide(reviewProposal, 'accept')">直接接受并激活</n-button>
         </n-space>
       </template>
     </n-modal>
@@ -323,6 +340,7 @@ onMounted(load);
 .evidence-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .evidence-grid h3 { margin-top: 0; }
 .modal-actions { margin-top: 20px; }
+.edit-hint { margin-bottom: 12px; }
 pre { white-space: pre-wrap; color: var(--of-ink-2); }
 @media (max-width: 860px) { .hero { align-items: flex-start; flex-direction: column; } .bands, .evidence-grid { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .two-columns { grid-template-columns: 1fr; } }
