@@ -68,6 +68,18 @@ export interface PostUpgradeBackupResult {
   manifest: PostUpgradeBackupManifest;
 }
 
+export interface VerifyPostUpgradeBackupResult {
+  ok: true;
+  backupId: string;
+  schemaVersion: 2;
+  databaseSizeBytes: number;
+  databaseShortHash: string;
+  integrity: ['ok'];
+  foreignKeyViolationCount: 0;
+  snapshotFilesVerified: 2;
+  applyResultVerified: true;
+}
+
 function createBackupId(date = new Date()): string {
   const pad = (value: number): string => String(value).padStart(2, '0');
   const timestamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
@@ -87,6 +99,64 @@ function databaseHealth(databasePath: string): { integrity: string[]; foreignKey
   } finally {
     db.close();
   }
+}
+
+export function verifyPostUpgradeBackup(
+  backupDirectory: string,
+  backupId: string,
+): VerifyPostUpgradeBackupResult {
+  const targetDirectory = resolveBackupRunDirectory(path.resolve(backupDirectory), backupId);
+  assertNoSymbolicLinks(targetDirectory);
+  const manifestPath = path.join(targetDirectory, 'backup-manifest.json');
+  const applyResultPath = path.join(targetDirectory, 'apply-result.json');
+  if (!fs.existsSync(manifestPath) || !fs.existsSync(applyResultPath)) {
+    throw new Error('升级后备份 manifest/apply-result 不完整');
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as PostUpgradeBackupManifest;
+  if (
+    manifest.toolVersion !== 'b7-b-v1'
+    || manifest.backupId !== backupId
+    || manifest.sourceSchemaVersion !== 2
+    || manifest.approvedBackupId !== '20260714-102807-b7a-6f0ac3d1'
+    || manifest.snapshotV2.files.length !== 2
+  ) throw new Error('升级后备份 manifest 结构或授权绑定无效');
+  const databasePath = path.join(targetDirectory, manifest.database.fileName);
+  const databaseBytes = fs.readFileSync(databasePath);
+  if (
+    databaseBytes.byteLength !== manifest.database.sizeBytes
+    || sha256Hex(databaseBytes) !== manifest.database.sha256
+  ) throw new Error('升级后数据库备份 hash/size 不一致');
+  const health = databaseHealth(databasePath);
+  if (health.schema !== 2 || health.integrity[0] !== 'ok' || health.foreignKeys !== 0) {
+    throw new Error('升级后数据库备份未通过 schema/integrity/FK');
+  }
+  for (const file of manifest.snapshotV2.files) {
+    const content = fs.readFileSync(path.join(targetDirectory, 'snapshot-v2', file.name));
+    if (content.byteLength !== file.sizeBytes || sha256Hex(content) !== file.sha256) {
+      throw new Error('升级后 Snapshot v2 备份 hash/size 不一致');
+    }
+  }
+  const apply = JSON.parse(fs.readFileSync(applyResultPath, 'utf8')) as {
+    resultCode?: string;
+    approvedBackupId?: string;
+    postUpgradeBackupId?: string;
+  };
+  if (
+    apply.resultCode !== 'B7B_APPLY_SUCCESS'
+    || apply.approvedBackupId !== manifest.approvedBackupId
+    || apply.postUpgradeBackupId !== backupId
+  ) throw new Error('升级后备份 apply-result 绑定无效');
+  return {
+    ok: true,
+    backupId,
+    schemaVersion: 2,
+    databaseSizeBytes: databaseBytes.byteLength,
+    databaseShortHash: manifest.database.sha256.slice(0, 12),
+    integrity: ['ok'],
+    foreignKeyViolationCount: 0,
+    snapshotFilesVerified: 2,
+    applyResultVerified: true,
+  };
 }
 
 export async function createPostUpgradeBackup(
@@ -176,6 +246,7 @@ export async function createPostUpgradeBackup(
       postUpgradeBackupId: backupId,
       readOnlySmokePassed: true,
     });
+    verifyPostUpgradeBackup(paths.backupDirectory, backupId);
     const approvedAfter = await verifyUpgradeBackup(authorization);
     if (approvedAfter.databaseHash !== approved.databaseHash) {
       throw new Error('创建升级后备份期间批准备份发生变化');
