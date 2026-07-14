@@ -7,6 +7,7 @@ import type {
   JobMatchProfileView,
 } from '../domain/job-match-profile';
 import { makeJobMatchProfileDraftFixture } from '../domain/job-match-profile/testFixtures';
+import { JobMatchProfileDraftSchema } from '../domain/job-match-profile';
 import JobMatchProfilePage from './JobMatchProfilePage.vue';
 
 const mocks = vi.hoisted(() => ({
@@ -206,6 +207,55 @@ describe('JobMatchProfilePage · 路由与页面', () => {
     expect(technical.text()).toContain('查看技术信息');
     // 折叠状态下不展示技术 JSON
     expect(wrapper.text()).not.toContain('"activeVersionId"');
+    wrapper.unmount();
+  });
+
+  it('点击“手工建立提案”能够正常挂载编辑器，不抛异常', async () => {
+    mocks.get.mockResolvedValue(emptyView());
+    const { wrapper } = await mountPage();
+    await expect(
+      wrapper.find('[data-testid="jmp-manual"]').trigger('click'),
+    ).resolves.not.toThrow();
+    await flushPromises();
+    const editor = document.body.querySelector('[data-profile-editor]');
+    expect(editor).not.toBeNull();
+    wrapper.unmount();
+  });
+
+  it('对待审核 proposal 点击“修改后接受”能够正常挂载编辑器', async () => {
+    mocks.get.mockResolvedValue(populatedView());
+    const { wrapper } = await mountPage();
+    await expect(
+      wrapper.find('[data-testid="jmp-modify"]').trigger('click'),
+    ).resolves.not.toThrow();
+    await flushPromises();
+    const editor = document.body.querySelector('[data-profile-editor]');
+    expect(editor).not.toBeNull();
+    wrapper.unmount();
+  });
+
+  it('编辑器提交的对象通过 Draft Schema，且不反向修改原始对象', async () => {
+    mocks.get.mockResolvedValue(populatedView());
+    mocks.accept.mockResolvedValue(populatedView());
+    const view = populatedView();
+    mocks.get.mockResolvedValue(view);
+    const originalProposal = view.state.proposals[0]!;
+    const originalNorthStar = originalProposal.payload.northStarPositioning;
+    const { wrapper } = await mountPage();
+
+    await wrapper.find('[data-testid="jmp-modify"]').trigger('click');
+    await flushPromises();
+
+    const form = document.body.querySelector('[data-profile-editor]') as HTMLFormElement | null;
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    expect(mocks.accept).toHaveBeenCalledTimes(1);
+    const acceptInput = mocks.accept.mock.calls[0]?.[1] as { modifiedPayload: unknown };
+    expect(() => JobMatchProfileDraftSchema.parse(acceptInput.modifiedPayload)).not.toThrow();
+    // 提交对象是独立普通对象，未反向污染原始 proposal payload
+    expect(originalProposal.payload.northStarPositioning).toBe(originalNorthStar);
     wrapper.unmount();
   });
 });

@@ -69,7 +69,10 @@ export const deepSeekJobMatchProfileProvider: JobMatchProfileAiProvider = {
       { maxTokens: 4096, temperature: 0.1, signal },
     );
     if (result.error) {
-      throw new JobMatchProfileError(503, 'AI_STRUCTURED_OUTPUT_INVALID', result.error);
+      if (result.error.includes('超时')) {
+        throw new JobMatchProfileError(503, 'AI_PROVIDER_TIMEOUT', result.error);
+      }
+      throw new JobMatchProfileError(503, 'AI_PROVIDER_UNAVAILABLE', result.error);
     }
     return { rawText: result.rawText, model: result.model };
   },

@@ -27,8 +27,14 @@ export function registerJobMatchProfileRoutes(
     scoped.get('/job-match-profile', async () => service.getProfile());
     scoped.post('/job-match-profile/proposals/generate', async (request) => {
       const controller = new AbortController();
-      request.raw.once('close', () => controller.abort());
-      return service.generateProposal(request.body, controller.signal);
+      const socket = request.raw.socket;
+      const abortOnDisconnect = (): void => controller.abort();
+      socket.once('close', abortOnDisconnect);
+      try {
+        return await service.generateProposal(request.body, controller.signal);
+      } finally {
+        socket.off('close', abortOnDisconnect);
+      }
     });
     scoped.post('/job-match-profile/proposals/manual', async (request) => (
       service.createManualProposal(request.body)

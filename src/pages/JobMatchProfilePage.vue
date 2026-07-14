@@ -24,6 +24,7 @@ import {
 import { jobMatchProfileApi } from '../api/jobMatchProfileApi';
 import {
   JOB_MATCH_CITY_CODES,
+  cloneJobMatchProfileDraft,
   createEmptyJobMatchProfileDraft,
   type JobMatchCityCode,
   type JobMatchCityProfile,
@@ -159,7 +160,7 @@ function openManualEditor(): void {
 }
 
 function openModifyEditor(proposal: JobMatchProfileProposal): void {
-  editorSeed.value = structuredClone(proposal.payload) as JobMatchProfileDraft;
+  editorSeed.value = cloneJobMatchProfileDraft(proposal.payload);
   editorMode.value = { kind: 'modify', proposalId: proposal.id };
 }
 

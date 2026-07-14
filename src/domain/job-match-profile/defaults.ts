@@ -22,8 +22,8 @@ export function emptyJobMatchRoleBand(): JobMatchRoleBand {
 
 export function createEmptyJobMatchProfileDraft(): JobMatchProfileDraft {
   return {
-    northStarPositioning: '',
-    highestReachableRole: '',
+    northStarPositioning: '尚待填写核心定位',
+    highestReachableRole: '尚待验证',
     primaryRoleFamilies: [],
     stretchRoles: emptyJobMatchRoleBand(),
     primaryRoles: emptyJobMatchRoleBand(),
@@ -31,10 +31,10 @@ export function createEmptyJobMatchProfileDraft(): JobMatchProfileDraft {
     coreCapabilities: [],
     constraints: [],
     idealEnvironment: {
-      companySizes: [], companyTypes: [], industries: [], teamTraits: [], description: '',
+      companySizes: [], companyTypes: [], industries: [], teamTraits: [], description: '尚待填写理想公司与团队环境',
     },
     acceptableRange: {
-      roleTitles: [], cities: [...JOB_MATCH_CITY_CODES], salaryNote: '',
+      roleTitles: [], cities: [...JOB_MATCH_CITY_CODES], salaryNote: '样本不足，暂不形成正式薪资结论',
       companyTypes: [], workModes: [], notes: [],
     },
     cityProfiles: JOB_MATCH_CITY_CODES.map((city: JobMatchCityCode) => ({

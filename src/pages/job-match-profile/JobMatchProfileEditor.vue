@@ -2,6 +2,7 @@
 import { reactive, watch } from 'vue';
 import {
   JOB_MATCH_CITY_CODES,
+  cloneJobMatchProfileDraft,
   type JobMatchProfileDraft,
 } from '../../domain/job-match-profile';
 import { JOB_MATCH_CITY_LABELS } from '../../domain/presentation';
@@ -16,11 +17,11 @@ const emit = defineEmits<{
   dirty: [value: boolean];
 }>();
 
-const draft = reactive<JobMatchProfileDraft>(structuredClone(props.modelValue));
+const draft = reactive<JobMatchProfileDraft>(cloneJobMatchProfileDraft(props.modelValue));
 let syncing = false;
 watch(() => props.modelValue, (value) => {
   syncing = true;
-  Object.assign(draft, structuredClone(value));
+  Object.assign(draft, cloneJobMatchProfileDraft(value));
   queueMicrotask(() => { syncing = false; });
 }, { deep: true });
 watch(draft, () => { if (!syncing) emit('dirty', true); }, { deep: true });
@@ -33,7 +34,7 @@ function addConstraint(): void {
   draft.constraints.push({ key: '', label: '', summary: '', evidenceRefs: [] });
 }
 function removeConstraint(index: number): void { draft.constraints.splice(index, 1); }
-function handleSubmit(): void { emit('submit', structuredClone(draft) as JobMatchProfileDraft); }
+function handleSubmit(): void { emit('submit', cloneJobMatchProfileDraft(draft)); }
 </script>
 
 <template>
