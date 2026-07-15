@@ -15,6 +15,7 @@ import {
   LATEST_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
 } from './migrations';
+import { planSchemaStartup, schemaRefusalMessage } from './schemaStartup';
 import { initSchema } from './schema';
 import { registerProfileRoutes } from './routes/profile';
 import { registerJobRoutes } from './routes/jobs';
@@ -72,26 +73,25 @@ export function buildServer(
   const db = options.db ?? openDb(dbPath);
   const ownsDb = options.db === undefined;
   if (jobMemoryV2.enabled) {
-    const targetVersion = capabilityBaselineEnabled ? LATEST_SCHEMA_VERSION : PRODUCTION_SCHEMA_VERSION;
+    const requiredVersion = capabilityBaselineEnabled ? LATEST_SCHEMA_VERSION : PRODUCTION_SCHEMA_VERSION;
+    // 真实生产库（data/offerflow.sqlite3）禁止在服务启动时自动迁移；
+    // 仅临时文件库 / 注入的测试库 / 内存库允许自动初始化到所需 schema。
+    const isRealProductionDb = ownsDb && dbPath === getDbPath();
+    const allowAutoMigrate = !isRealProductionDb;
     let schemaVersion = getDatabaseSchemaVersion(db);
-    if (schemaVersion === 0) {
-      initSchema(db, { targetVersion });
+    const plan = planSchemaStartup({
+      currentVersion: schemaVersion,
+      requiredVersion,
+      latestVersion: LATEST_SCHEMA_VERSION,
+      productionVersion: PRODUCTION_SCHEMA_VERSION,
+      allowAutoMigrate,
+    });
+    if (plan.kind === 'migrate') {
+      initSchema(db, { targetVersion: plan.targetVersion });
       schemaVersion = getDatabaseSchemaVersion(db);
-    } else if (
-      capabilityBaselineEnabled
-      && schemaVersion >= PRODUCTION_SCHEMA_VERSION
-      && schemaVersion < LATEST_SCHEMA_VERSION
-    ) {
-      // 纯新增的 G2 能力基线表；v2 生产语义不受影响。
-      initSchema(db, { targetVersion: LATEST_SCHEMA_VERSION });
-      schemaVersion = getDatabaseSchemaVersion(db);
-    }
-    if (schemaVersion < PRODUCTION_SCHEMA_VERSION) {
+    } else if (plan.kind === 'refuse') {
       if (ownsDb) db.close();
-      throw new Error(
-        `Job Memory v2 capability requires schema version 2; current version is ${schemaVersion}. `
-        + 'Legacy schema v1 must use the authorized B7-B upgrade tool.',
-      );
+      throw new Error(schemaRefusalMessage(plan.reason, schemaVersion, requiredVersion, LATEST_SCHEMA_VERSION));
     }
   } else {
     const schemaVersion = getDatabaseSchemaVersion(db);
