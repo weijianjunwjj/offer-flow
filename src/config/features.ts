@@ -14,4 +14,11 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_JOB_MEMORY_V2,
     true,
   ),
+  // G3 交接文档明确要求本轮真实生产库禁止升级到 schema v4，
+  // 真实入口暂未开启 historyImport 能力，因此前端导航默认不显式暴露该入口，
+  // 仅在显式打开该环境变量的测试 / 预发环境中可见。
+  historyImportEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_HISTORY_IMPORT,
+    false,
+  ),
 });

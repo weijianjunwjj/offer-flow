@@ -7,10 +7,14 @@ import { getDbPath, openDb, type SqliteDatabase } from './db';
 import type { JobMemoryServiceDeps } from './job-memory/jobMemoryService';
 import type { JobMatchProfileServiceDeps } from './job-match-profile/service';
 import type { CapabilityBaselineServiceDeps } from './capability-baseline/service';
+import type { HistoryImportServiceDeps } from './history-import/service';
 import { registerJobMatchProfileRoutes } from './job-match-profile/routes';
 import { registerCapabilityBaselineRoutes } from './capability-baseline/routes';
+import { registerHistoryImportRoutes } from './history-import/routes';
+import { registerFunnelRoutes } from './funnel/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
 import {
+  CAPABILITY_BASELINE_SCHEMA_VERSION,
   getDatabaseSchemaVersion,
   LATEST_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
@@ -40,12 +44,23 @@ export interface CapabilityBaselineCapability {
   serviceDeps?: CapabilityBaselineServiceDeps;
 }
 
+export interface HistoryImportCapability {
+  enabled?: boolean;
+  serviceDeps?: HistoryImportServiceDeps;
+}
+
+export interface FunnelCapability {
+  enabled?: boolean;
+}
+
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
   jobMemoryV2?: JobMemoryV2Capability;
   jobMatchProfile?: JobMatchProfileServiceDeps;
   capabilityBaseline?: CapabilityBaselineCapability;
+  historyImport?: HistoryImportCapability;
+  funnel?: FunnelCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -61,6 +76,12 @@ export function buildServer(
   // 能力基线（G2）默认关闭：可信求职记忆生产/恢复/快照底座固定在 schema v2；
   // 仅在真实服务入口与能力基线自身测试中显式开启，届时才把库升级到 v3。
   const capabilityBaselineEnabled = options.capabilityBaseline?.enabled ?? false;
+  // 历史补录（G3 第二层，详细事件补录写入）默认关闭：需要 schema v4 的补录会话/草稿表，
+  // 仅显式开启时才把库升级到 v4（v4 是纯新增表，向下兼容 v3）。
+  const historyImportEnabled = options.historyImport?.enabled ?? false;
+  // 基础漏斗默认开启：只读聚合正式 applications / feedback_events（schema v2 起已存在），
+  // 不需要任何额外迁移，因此可以安全在真实入口默认开启。
+  const funnelEnabled = options.funnel?.enabled ?? true;
   const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
@@ -73,7 +94,13 @@ export function buildServer(
   const db = options.db ?? openDb(dbPath);
   const ownsDb = options.db === undefined;
   if (jobMemoryV2.enabled) {
-    const requiredVersion = capabilityBaselineEnabled ? LATEST_SCHEMA_VERSION : PRODUCTION_SCHEMA_VERSION;
+    // 每个能力只升级到自己需要的最低 schema 版本，不因为 v4 存在就顺带把只开了
+    // 能力基线（G2）的场景也拉到 v4——两者的 requiredVersion 相互独立。
+    const requiredVersion = historyImportEnabled
+      ? LATEST_SCHEMA_VERSION
+      : capabilityBaselineEnabled
+        ? CAPABILITY_BASELINE_SCHEMA_VERSION
+        : PRODUCTION_SCHEMA_VERSION;
     // 真实生产库（data/offerflow.sqlite3）禁止在服务启动时自动迁移；
     // 仅临时文件库 / 注入的测试库 / 内存库允许自动初始化到所需 schema。
     const isRealProductionDb = ownsDb && dbPath === getDbPath();
@@ -134,13 +161,24 @@ export function buildServer(
     if (capabilityBaselineEnabled) {
       registerCapabilityBaselineRoutes(app, options.capabilityBaseline?.serviceDeps);
     }
+    if (historyImportEnabled) {
+      registerHistoryImportRoutes(app, { serviceDeps: options.historyImport?.serviceDeps });
+    }
+    if (funnelEnabled) {
+      registerFunnelRoutes(app);
+    }
   }
   return app;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // 真实服务入口显式开启 G2 能力基线（会把本地库升级到 schema v3）。
-  const app = buildServer({ capabilityBaseline: { enabled: true } });
+  // 真实服务入口显式开启 G2 能力基线（schema v3）与基础漏斗只读聚合（无需迁移，默认开启）。
+  // G3 历史补录（详细事件补录写入）按交接文档明确要求：本轮禁止把真实生产库
+  // （data/offerflow.sqlite3）自动升级到 schema v4，仅在测试 / 注入库中验证，
+  // 因此历史补录能力暂不在真实入口开启，避免服务启动即因 schema 拒绝而报错退出。
+  const app = buildServer({
+    capabilityBaseline: { enabled: true },
+  });
   let isClosing = false;
   const closeAndExit = (signal: NodeJS.Signals): void => {
     if (isClosing) {

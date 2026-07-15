@@ -14,9 +14,12 @@ import {
 const route = useRoute();
 const router = useRouter();
 const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
+const historyImportNavigationEnabled = computed(() => router.hasRoute('history-import'));
 const activeSection = computed(() => {
   if (route.name === 'job-match-profile') return 'job-match-profile';
   if (route.name === 'capability-baseline') return 'capability-baseline';
+  if (route.name === 'market-funnel') return 'market-funnel';
+  if (route.name === 'history-import') return 'history-import';
   if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
   return 'jobs';
 });
@@ -44,6 +47,14 @@ function goJobMatchProfile(): void {
 
 function goCapabilityBaseline(): void {
   void router.push({ name: 'capability-baseline' });
+}
+
+function goMarketFunnel(): void {
+  void router.push({ name: 'market-funnel' });
+}
+
+function goHistoryImport(): void {
+  void router.push({ name: 'history-import' });
 }
 
 function goJobs(): void {
@@ -116,6 +127,25 @@ const contentStyle =
               @click="goCapabilityBaseline"
             >
               能力基线
+            </n-button>
+            <n-button
+              :type="activeSection === 'market-funnel' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'market-funnel'"
+              size="small"
+              data-testid="nav-market-funnel"
+              @click="goMarketFunnel"
+            >
+              基础漏斗
+            </n-button>
+            <n-button
+              v-if="historyImportNavigationEnabled"
+              :type="activeSection === 'history-import' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'history-import'"
+              size="small"
+              data-testid="nav-history-import"
+              @click="goHistoryImport"
+            >
+              历史补录
             </n-button>
             <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"

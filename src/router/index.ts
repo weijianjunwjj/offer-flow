@@ -8,6 +8,8 @@ import {
 import ProfileConfigPage from '../pages/ProfileConfigPage.vue';
 import JobMatchProfilePage from '../pages/JobMatchProfilePage.vue';
 import CapabilityBaselinePage from '../pages/CapabilityBaselinePage.vue';
+import HistoryImportPage from '../pages/HistoryImportPage.vue';
+import MarketFunnelPage from '../pages/MarketFunnelPage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -24,6 +26,7 @@ export function normalizeJobId(value: unknown): string | null {
 
 export interface RouterFeatureOptions {
   jobMemoryV2Enabled: boolean;
+  historyImportEnabled?: boolean;
 }
 
 export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
@@ -32,6 +35,14 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
     { path: '/profile', name: 'profile', component: ProfileConfigPage },
     { path: '/job-match-profile', name: 'job-match-profile', component: JobMatchProfilePage },
     { path: '/capability-baseline', name: 'capability-baseline', component: CapabilityBaselinePage },
+    { path: '/market-funnel', name: 'market-funnel', component: MarketFunnelPage },
+    options.historyImportEnabled
+      ? { path: '/history-import', name: 'history-import', component: HistoryImportPage }
+      : {
+        path: '/history-import',
+        name: 'history-import-disabled',
+        redirect: { name: 'jobs', query: { feature: 'history-import-disabled' } },
+      },
     options.jobMemoryV2Enabled
       ? {
         path: '/profile-versions',

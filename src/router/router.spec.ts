@@ -62,4 +62,34 @@ describe('OfferFlow Router', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(router.currentRoute.value.name).toBe('profile');
   });
+
+  it('基础漏斗路由默认注册（只读，无需 schema 迁移）', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+    });
+    await router.push('/market-funnel');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('market-funnel');
+  });
+
+  it('历史补录默认关闭时深链接安全重定向到岗位台账', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      historyImportEnabled: false,
+    });
+    await router.push('/history-import');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('jobs');
+    expect(router.currentRoute.value.query.feature).toBe('history-import-disabled');
+  });
+
+  it('显式开启时注册 /history-import', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      historyImportEnabled: true,
+    });
+    await router.push('/history-import');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('history-import');
+  });
 });
