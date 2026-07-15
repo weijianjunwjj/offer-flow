@@ -52,3 +52,11 @@ v0.7 仍禁止发布，App 版本继续保持 `0.6.2`。
 - 历史补录真实库入口继续保持关闭（不升级 `data/offerflow.sqlite3` 到 v4）；新增隔离 sandbox 环境供用户人工验收，不影响真实数据。
 - 基础漏斗信息架构（总览优先、单维分组、岗位族、可信度、终态分布、明细钻取）在本轮产品收口中重做。
 - v0.7 继续禁止发布；不得在本节以外的任何位置提前标记 G3“已验收”。
+
+## 7. 真实数据库受控升级与生产烟测（2026-07-15 补充）
+
+- 真实数据库 `data/offerflow.sqlite3` 已使用仓库既有的 `scripts/upgradeRealDatabase.ts`（`--confirm --expected-source-fingerprint=... --backup-dir=backups/history-funnel`）由 schema v3 受控升级到 v4；升级前独立备份并校验哈希、完整性、行数一致，升级后经工具自带校验与 `scripts/v070VerifyReal.ts`（`verifierBusinessWrites=0`）只读复核，均通过。
+- 正式环境入口已开放历史补录：`server/index.ts` 的生产 `buildServer()` 增加 `historyImport: { enabled: true }`；`src/config/features.ts` 的 `historyImportEnabled` 默认值改为 `true`；G3 sandbox（`scripts/devG3Sandbox.ts`、独立测试库、sandbox 提示）保持不变。
+- 已完成不写正式业务数据的最小生产烟测：岗位台账、岗位匹配画像（G1）、能力基线（G2）、基础漏斗（已投递=9，与升级前一致）均可正常查看；历史补录导航与页面可正常进入；创建一个空草稿会话并验证可重新进入、随后丢弃，丢弃后会话状态为 `discarded`；`jobs`/`applications`/`feedback_events` 行数在烟测前后均保持 15/9/11 不变；浏览器控制台与后端日志均无异常。
+- Snapshot v4 尚未发布，未执行 `snapshot:check` 的发布动作（该命令当前预期为非绿，属已知的正式数据漂移，非阻塞项）。
+- **G3 仍未正式验收**：本节仅记录真实库受控升级与生产烟测已完成，产品逻辑此前已在 sandbox 中经用户验收，但本轮未新增用户对生产环境的最终签收动作；G3 最终签收、Snapshot 发布、合并 main、进入 G4，均等待用户后续明确裁决。
