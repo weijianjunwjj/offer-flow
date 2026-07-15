@@ -50,8 +50,8 @@
 | API / 领域 | HistoricalBaselineImport、HistoricalEventDraft（名称可在 R1 技术设计中细化，但不得改变两层补录结果）；Application/FeedbackEvent 正式写入仍需人工确认。 |
 | 自动化测试 | 两层补录、回忆数据弱证据、未投递不计拒绝、去重、分组漏斗与零样本展示。 |
 | 截图验收 | 最小补录、详细补录、补录预览确认和基础漏斗四类画面；必须显示数据来源、可信度与未投递排除说明。 |
-| 当前状态 | **未实现**。 |
-| 阻塞项 | R1 尚未开始；禁止用 B 的 legacy backfill 冒充用户历史补录产品。 |
+| 当前状态 | **G3 工程实现进行中，尚未用户验收**。 |
+| 阻塞项 | 禁止用 B 的 legacy backfill 冒充用户历史补录产品；G3 完成工程实现后仍需用户人工验收才能标记“已验收”。 |
 
 ### 2.4 长期能力基线
 
@@ -134,4 +134,6 @@
 
 R0 只纠正发布契约、中文展示与后续技术设计；R0.1 只完成生产数据基线、正式 Snapshot v2 和真实验证语义收口，均不实现 R1–R5。当前只有“可信求职记忆”具备已通过的工程证据；其余产品结果不能被 B0–B8 或 R0.1 代替。因此产品发布验收失败，禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release。
 
-G1（全局岗位匹配画像 MVP）已于 2026-07-15 经用户验收，进入 G2（CandidateEvidence 与 CapabilityBaseline）。G1 只覆盖第 2.5 项城市岗位画像的 MVP 子集，不解除其余产品结果（含 2.5 的正式 MarketPositionProfile 与 EvidenceSufficiency）的发布阻塞；v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release。
+G1（全局岗位匹配画像 MVP）已于 2026-07-15 经用户验收，进入 G2（CandidateEvidence 与 CapabilityBaseline）。G1 只覆盖第 2.5 项城市岗位画像的 MVP 子集，不解除其余产品结果（含 2.5 的正式 MarketPositionProfile 与 EvidenceSufficiency）的发布阻塞。
+
+G2（CandidateEvidence 与 CapabilityBaseline）已于 2026-07-15 经用户人工测试验收：候选能力证据审核、正式证据库、AI/手工能力基线提案、无正式证据时阻止生成基线、支持证据/反证/待验证项同时保留、接受/修改后接受/拒绝/稍后处理、能力基线版本历史与版本激活均已验收；截图归档尚未完成，列为 G6 统一归档项；未发现阻塞 G3 的产品问题。G2 只覆盖第 2.4 项长期能力基线，不解除其余产品结果的发布阻塞。现进入 G3（历史补录与基础漏斗）。v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release，App 版本继续保持 `0.6.2`。
