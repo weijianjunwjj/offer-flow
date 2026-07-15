@@ -55,7 +55,8 @@ export function runStartupSync(dbPath = getDbPath()): BootstrapSyncResult {
     if (schemaVersion === 1) {
       throw new Error('检测到 schema v1 遗留数据库；必须先运行绑定备份授权的 B7-B 正式升级');
     }
-    if (schemaVersion !== 2) {
+    // 生产快照/同步底座仍以 v2 为准；G2 能力基线的 v3 为纯新增表，允许 >= 2 的库正常启动。
+    if (schemaVersion < 2) {
       throw new Error(`不支持的生产数据库 schema version：${schemaVersion}`);
     }
   } finally {

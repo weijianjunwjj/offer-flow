@@ -361,7 +361,8 @@ function assertForeignKeyViolation(action: () => void): void {
 try {
   assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
   assert.equal(CURRENT_SCHEMA_VERSION, PRODUCTION_SCHEMA_VERSION);
-  assert.equal(LATEST_SCHEMA_VERSION, 2);
+  // G2 能力基线新增 v3；LATEST 与 PRODUCTION 有意区分。
+  assert.equal(LATEST_SCHEMA_VERSION, 3);
   assert.equal(SCHEMA_MIGRATIONS.at(-1)?.version, LATEST_SCHEMA_VERSION);
   assert.equal(SCHEMA_MIGRATIONS.length, LATEST_SCHEMA_VERSION);
   assert.equal(SNAPSHOT_SCHEMA_VERSION, 2);
@@ -672,6 +673,80 @@ try {
     assert.equal(rowCount(db, 'resume_versions'), 1);
     assert.equal(rowCount(db, 'applications'), 1);
     assert.equal(rowCount(db, 'feedback_events'), 2);
+  });
+  // v2 → v3 升级：纯新增 G2 能力基线表，不破坏任何已有 v1/v2 业务数据。
+  const CAPABILITY_TABLES = [
+    'candidate_evidence',
+    'capability_baseline_meta',
+    'capability_baseline_proposals',
+    'capability_baseline_versions',
+    'capability_command_receipts',
+  ] as const;
+  const CAPABILITY_INDEXES = [
+    'candidate_evidence_capability_idx',
+    'capability_baseline_proposals_status_idx',
+    'capability_baseline_versions_status_idx',
+  ] as const;
+
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 2 });
+    seedV1BusinessData(db);
+    const resumeId = insertResumeVersion(db, { id: 'resume-v3-upgrade' });
+    const applicationId = insertApplication(db, { id: 'application-v3-upgrade', resumeVersionId: resumeId });
+    insertFeedbackEvent(db, { id: 'event-v3-upgrade', applicationId });
+
+    const v1DataBefore = readV1BusinessData(db);
+    const jobMemoryBefore = {
+      resumeVersions: db.prepare('SELECT * FROM resume_versions ORDER BY id').all(),
+      applications: db.prepare('SELECT * FROM applications ORDER BY id').all(),
+      feedbackEvents: db.prepare('SELECT * FROM feedback_events ORDER BY id').all(),
+    };
+    for (const table of CAPABILITY_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+
+    const result = initSchema(db, { targetVersion: 3 });
+    assert.deepEqual(result, {
+      currentVersion: 3,
+      appliedVersions: [1, 2, 3],
+      newlyAppliedVersions: [3],
+    });
+    assert.equal(schemaVersion(db), 3);
+    assert.deepEqual(migrationRecords(db), [
+      { version: 1, name: '001_v0_6_baseline' },
+      { version: 2, name: '002_v0_7_job_memory_schema' },
+      { version: 3, name: '003_v0_7_capability_baseline_schema' },
+    ]);
+    for (const table of CAPABILITY_TABLES) {
+      assert.equal(tableNames(db).includes(table), true);
+      assert.equal(rowCount(db, table), 0);
+    }
+    for (const index of CAPABILITY_INDEXES) {
+      assert.equal(indexNames(db).includes(index), true);
+    }
+
+    // 所有已有 v1/v2 业务数据必须逐字节保留。
+    assert.deepEqual(readV1BusinessData(db), v1DataBefore);
+    assert.deepEqual(db.prepare('SELECT * FROM resume_versions ORDER BY id').all(), jobMemoryBefore.resumeVersions);
+    assert.deepEqual(db.prepare('SELECT * FROM applications ORDER BY id').all(), jobMemoryBefore.applications);
+    assert.deepEqual(db.prepare('SELECT * FROM feedback_events ORDER BY id').all(), jobMemoryBefore.feedbackEvents);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+
+    // 升级可重复执行且幂等。
+    assert.deepEqual(initSchema(db, { targetVersion: 3 }).newlyAppliedVersions, []);
+    assert.equal(schemaVersion(db), 3);
+
+    // 默认 initSchema 仍停留在生产 v2，不会自动拉到 v3。
+    assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
+  });
+
+  // 默认 target（生产 v2）不会创建 G2 能力基线表。
+  withTempDatabase((db) => {
+    initSchema(db);
+    assert.equal(schemaVersion(db), 2);
+    for (const table of CAPABILITY_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
   });
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
