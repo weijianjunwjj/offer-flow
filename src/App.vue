@@ -16,6 +16,7 @@ const router = useRouter();
 const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
 const activeSection = computed(() => {
   if (route.name === 'job-match-profile') return 'job-match-profile';
+  if (route.name === 'capability-baseline') return 'capability-baseline';
   if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
   return 'jobs';
 });
@@ -39,6 +40,10 @@ function goProfile(): void {
 
 function goJobMatchProfile(): void {
   void router.push({ name: 'job-match-profile' });
+}
+
+function goCapabilityBaseline(): void {
+  void router.push({ name: 'capability-baseline' });
 }
 
 function goJobs(): void {
@@ -102,6 +107,15 @@ const contentStyle =
               @click="goJobMatchProfile"
             >
               岗位匹配画像
+            </n-button>
+            <n-button
+              :type="activeSection === 'capability-baseline' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'capability-baseline'"
+              size="small"
+              data-testid="nav-capability-baseline"
+              @click="goCapabilityBaseline"
+            >
+              能力基线
             </n-button>
             <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"
