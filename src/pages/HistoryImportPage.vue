@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import {
   NAlert, NButton, NCard, NCollapse, NCollapseItem, NDatePicker, NEmpty, NInput,
   NList, NListItem, NModal, NRadio, NRadioGroup, NSelect, NSpace, NSpin, NSteps, NStep,
@@ -180,6 +180,17 @@ function closeSession(): void {
   confirmResult.value = null;
 }
 
+watch(() => baselineForm.value.duplicateOfDraftId, (duplicateOfDraftId) => {
+  if (duplicateOfDraftId === null) {
+    baselineForm.value.keepAsIndependentProcess = false;
+    baselineForm.value.independentProcessReason = null;
+  }
+});
+
+watch(() => baselineForm.value.keepAsIndependentProcess, (keepAsIndependentProcess) => {
+  if (!keepAsIndependentProcess) baselineForm.value.independentProcessReason = null;
+});
+
 function openBaselineModal(draft: HistoricalBaselineDraft | null): void {
   baselineModalDraftId.value = draft?.id ?? null;
   baselineForm.value = draft
@@ -336,6 +347,69 @@ function outcomeLabel(kind: string): string {
   if (kind === 'kept_independent_no_application') return '仅保留岗位记录（未投递）';
   return '已跳过（重复记录）';
 }
+
+interface DisplayOutcome {
+  baselineDraftId: string;
+  kind: string;
+}
+
+const displayedOutcomes = computed<DisplayOutcome[]>(() => {
+  if (confirmResult.value !== null) return confirmResult.value.outcomes;
+  if (bundle.value === null || bundle.value.session.status !== 'confirmed') return [];
+  return bundle.value.drafts.map(({ draft }) => ({
+    baselineDraftId: draft.id,
+    kind: draft.duplicateOfDraftId !== null && !draft.keepAsIndependentProcess
+      ? 'skipped_duplicate'
+      : draft.createdApplicationId !== null
+        ? 'created_application'
+        : 'kept_independent_no_application',
+  }));
+});
+
+const duplicateCandidateOptions = computed(() => {
+  if (bundle.value === null) return [];
+  return bundle.value.drafts
+    .map((item) => item.draft)
+    .filter((draft) => draft.id !== baselineModalDraftId.value)
+    .map((draft) => ({ value: draft.id, label: `${draft.company} · ${draft.role}` }));
+});
+
+interface PreviewRow {
+  draftId: string;
+  company: string;
+  role: string;
+  actuallyApplied: boolean;
+  willCreateEventCount: number;
+  exclusionReason: string | null;
+  duplicateWarning: string | null;
+  independentReason: string | null;
+  weakEvidence: boolean;
+}
+
+const previewRows = computed<PreviewRow[]>(() => {
+  if (bundle.value === null) return [];
+  return bundle.value.drafts.map((item) => {
+    const draft = item.draft;
+    const duplicateTarget = draft.duplicateOfDraftId === null
+      ? null
+      : bundle.value?.drafts.find((d) => d.draft.id === draft.duplicateOfDraftId)?.draft ?? null;
+    return {
+      draftId: draft.id,
+      company: draft.company,
+      role: draft.role,
+      actuallyApplied: draft.actuallyApplied,
+      willCreateEventCount: draft.actuallyApplied ? 1 + item.events.length : 0,
+      exclusionReason: draft.actuallyApplied
+        ? null
+        : '未实际投递：不会创建求职流程，不计入求职漏斗，也不计为拒绝或无回复。',
+      duplicateWarning: duplicateTarget === null
+        ? null
+        : `疑似与「${duplicateTarget.company} · ${duplicateTarget.role}」重复`,
+      independentReason: draft.keepAsIndependentProcess ? draft.independentProcessReason : null,
+      weakEvidence: draft.evidenceLevel === 'weak' || draft.sourceConfidence === 'recalled' || draft.sourceConfidence === 'inferred',
+    };
+  });
+});
 </script>
 
 <template>
@@ -448,8 +522,43 @@ function outcomeLabel(kind: string): string {
             </div>
           </n-card>
 
+          <n-card v-if="bundle.session.status === 'preview_generated'" size="small" title="补录预览" class="block" data-testid="hi-preview-result">
+            <n-table :bordered="false" :single-line="false">
+              <thead>
+                <tr>
+                  <th>基线草稿</th>
+                  <th>将创建的岗位/流程</th>
+                  <th>将创建的事件数（含 application_created）</th>
+                  <th>数据可信度</th>
+                  <th>重复警告</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in previewRows" :key="row.draftId" :data-testid="`hi-preview-row-${row.draftId}`">
+                  <td>{{ row.company }} · {{ row.role }}</td>
+                  <td>
+                    <n-tag v-if="row.actuallyApplied" size="small" type="success">创建 Job + Application</n-tag>
+                    <n-tag v-else size="small">仅创建 Job（不创建 Application）</n-tag>
+                  </td>
+                  <td>{{ row.willCreateEventCount }}</td>
+                  <td>
+                    <n-tag v-if="row.weakEvidence" size="small" type="warning">回忆 / 推断数据，弱证据</n-tag>
+                    <n-tag v-else size="small">正常</n-tag>
+                  </td>
+                  <td>
+                    <n-text v-if="row.duplicateWarning" type="warning">{{ row.duplicateWarning }}</n-text>
+                    <n-text v-if="row.independentReason" depth="3">已作为独立流程保留，理由：{{ row.independentReason }}</n-text>
+                  </td>
+                </tr>
+              </tbody>
+            </n-table>
+            <n-alert v-for="row in previewRows.filter((r) => r.exclusionReason !== null)" :key="row.draftId" type="info" class="block">
+              {{ row.company }} · {{ row.role }}：{{ row.exclusionReason }}
+            </n-alert>
+          </n-card>
+
           <n-card v-if="bundle.session.status === 'preview_generated'" size="small" title="确认补录" class="block" data-testid="hi-confirm-card">
-            <n-alert type="warning" class="block">确认后将写入正式数据（创建岗位与求职流程），且不可原地撤回；如需更正请使用后续的作废流程。</n-alert>
+            <n-alert type="warning" class="block">确认后将写入正式数据（创建岗位与求职流程），且不可原地撤回；如需更正请使用后续的作废流程。重复点击确认不会重复写入（幂等）。</n-alert>
             <n-space>
               <n-button type="primary" :loading="busy" data-testid="hi-confirm" @click="confirmImport">确认补录</n-button>
               <n-button :loading="busy" data-testid="hi-discard" @click="discardImport">丢弃该会话</n-button>
@@ -457,18 +566,17 @@ function outcomeLabel(kind: string): string {
           </n-card>
 
           <!-- 结果 -->
-          <n-card v-if="confirmResult !== null" size="small" title="补录结果" class="block" data-testid="hi-result">
+          <n-card v-if="displayedOutcomes.length > 0" size="small" title="补录结果" class="block" data-testid="hi-result">
             <n-table :bordered="false">
               <thead><tr><th>基线草稿</th><th>结果</th></tr></thead>
               <tbody>
-                <tr v-for="outcome in confirmResult.outcomes" :key="outcome.baselineDraftId">
+                <tr v-for="outcome in displayedOutcomes" :key="outcome.baselineDraftId">
                   <td>{{ outcome.baselineDraftId.slice(0, 8) }}</td>
                   <td><n-tag size="small">{{ outcomeLabel(outcome.kind) }}</n-tag></td>
                 </tr>
               </tbody>
             </n-table>
           </n-card>
-          <n-empty v-else-if="bundle.session.status === 'confirmed'" description="该会话已确认，但结果详情不可用（可能来自历史会话）" class="block" />
           <n-alert v-else-if="bundle.session.status === 'discarded'" type="warning" class="block">该会话已被丢弃。</n-alert>
 
           <n-collapse class="block">
@@ -528,9 +636,38 @@ function outcomeLabel(kind: string): string {
           <n-text depth="3">备注</n-text>
           <n-input v-model:value="baselineForm.notes" type="textarea" placeholder="补充说明（可留空）" clearable />
         </n-space>
+        <n-space vertical size="small">
+          <n-text depth="3">疑似重复的其它基线草稿（可留空）</n-text>
+          <n-select
+            v-model:value="baselineForm.duplicateOfDraftId"
+            :options="duplicateCandidateOptions"
+            clearable
+            placeholder="选择疑似重复的草稿"
+            data-testid="hi-duplicate-select"
+          />
+        </n-space>
+        <n-space v-if="baselineForm.duplicateOfDraftId !== null" vertical size="small">
+          <n-space align="center">
+            <n-text depth="3">作为独立流程保留（而非跳过重复）</n-text>
+            <n-switch v-model:value="baselineForm.keepAsIndependentProcess" data-testid="hi-keep-independent" />
+          </n-space>
+          <n-input
+            v-if="baselineForm.keepAsIndependentProcess"
+            v-model:value="baselineForm.independentProcessReason"
+            placeholder="请填写作为独立流程保留的理由（必填）"
+            data-testid="hi-independent-reason"
+          />
+        </n-space>
         <n-space justify="end">
           <n-button @click="baselineModalVisible = false">取消</n-button>
-          <n-button type="primary" :loading="busy" :disabled="!baselineForm.company.trim() || !baselineForm.role.trim()" data-testid="hi-baseline-submit" @click="submitBaseline">
+          <n-button
+            type="primary"
+            :loading="busy"
+            :disabled="!baselineForm.company.trim() || !baselineForm.role.trim()
+              || (baselineForm.keepAsIndependentProcess && !baselineForm.independentProcessReason?.trim())"
+            data-testid="hi-baseline-submit"
+            @click="submitBaseline"
+          >
             保存草稿
           </n-button>
         </n-space>

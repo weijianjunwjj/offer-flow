@@ -107,19 +107,33 @@ describe('GET /funnel', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       totalProcessCount: number;
-      groups: Array<{ key: { city: string | null; roleFamily: string; channel: string } }>;
+      groups: Array<{ key: { city: string | null; jobFamily: string; channel: string } }>;
+      overview: { stages: Array<{ stage: string; count: number }> };
       exclusions: { notes: string[] };
     };
     expect(body.totalProcessCount).toBe(1);
-    expect(body.groups).toHaveLength(1);
-    expect(body.groups[0]?.key).toEqual({
-      city: '上海',
-      roleFamily: '后端工程师',
-      channel: 'boss',
-      resumeVersionId: null,
-      windowLabel: null,
+    // 默认不分组，返回全局总览。
+    expect(body.groups).toHaveLength(0);
+    expect(body.overview.stages[0]).toMatchObject({ stage: 'applied', count: 1 });
+    expect(body.exclusions.notes.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it('按渠道分组时返回单维分组结果', async () => {
+    const { app } = createHarness();
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/jobs/job-1/applications',
+      payload: applicationPayload('app-key-group'),
     });
-    expect(body.exclusions.notes.length).toBeGreaterThan(0);
+    expect(createResponse.statusCode).toBe(200);
+
+    const response = await app.inject({ method: 'GET', url: '/funnel?groupBy=channel' });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      groups: Array<{ key: { channel: string | null } }>;
+    };
+    expect(body.groups).toHaveLength(1);
+    expect(body.groups[0]?.key.channel).toBe('boss');
   });
 
   it('查询参数非法时返回 422', async () => {
