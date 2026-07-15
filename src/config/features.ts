@@ -14,12 +14,11 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_JOB_MEMORY_V2,
     true,
   ),
-  // G3 交接文档明确要求本轮真实生产库禁止升级到 schema v4，
-  // 真实入口暂未开启 historyImport 能力，因此前端导航默认不显式暴露该入口，
-  // 仅在显式打开该环境变量的测试 / 预发环境中可见。
+  // 真实生产库已通过显式授权命令（db:upgrade-real --confirm）升级到 schema v4，
+  // 历史补录能力正式在真实入口开启；仍可通过环境变量显式关闭。
   historyImportEnabled: readBooleanFeatureFlag(
     import.meta.env.VITE_OFFERFLOW_HISTORY_IMPORT,
-    false,
+    true,
   ),
   // G3 隔离验收环境（dev:g3-sandbox）专用标记：仅用于显示不可关闭的提示横幅，
   // 不改变 historyImportEnabled 之外任何其它默认行为。

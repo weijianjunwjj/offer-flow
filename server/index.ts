@@ -173,11 +173,12 @@ export function buildServer(
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // 真实服务入口显式开启 G2 能力基线（schema v3）与基础漏斗只读聚合（无需迁移，默认开启）。
-  // G3 历史补录（详细事件补录写入）按交接文档明确要求：本轮禁止把真实生产库
-  // （data/offerflow.sqlite3）自动升级到 schema v4，仅在测试 / 注入库中验证，
-  // 因此历史补录能力暂不在真实入口开启，避免服务启动即因 schema 拒绝而报错退出。
+  // G3 历史补录：真实生产库已通过显式授权命令（db:upgrade-real --confirm）升级到 schema v4
+  // 并完成升级后校验，现正式在真实入口开启；服务启动仍不会自动迁移真实库，
+  // schema 低于所需版本或高于本代码支持版本时均会按 schemaStartup 的拒绝逻辑直接报错退出。
   const app = buildServer({
     capabilityBaseline: { enabled: true },
+    historyImport: { enabled: true },
   });
   let isClosing = false;
   const closeAndExit = (signal: NodeJS.Signals): void => {
