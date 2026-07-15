@@ -38,6 +38,7 @@ const loading = ref(true);
 const busy = ref(false);
 const errorText = ref('');
 const notice = ref('');
+const lastErrorCode = ref<string | null>(null);
 const activeTab = ref<'baseline' | 'review' | 'library' | 'versions'>('baseline');
 
 const evidenceEditorMode = ref<EvidenceEditorMode | null>(null);
@@ -119,6 +120,8 @@ async function run(action: () => Promise<CapabilityBaselineView>, success: strin
     return true;
   } catch (error) {
     errorText.value = (error as Error).message;
+    const body = (error as { body?: { code?: string } }).body;
+    lastErrorCode.value = body?.code ?? null;
     return false;
   } finally {
     busy.value = false;
@@ -131,11 +134,16 @@ function generateEvidence(): Promise<boolean> {
     'AI 已生成候选证据，尚未进入正式证据库，请逐条审核',
   );
 }
-function generateBaseline(): Promise<boolean> {
-  return run(
+async function generateBaseline(): Promise<boolean> {
+  const ok = await run(
     () => capabilityBaselineApi.generateBaselineProposal({ idempotencyKey: newKey(), expectedStateVersion: expectedVersion() }),
     'AI 已生成能力基线提案，尚未成为正式基线',
   );
+  // 零正式证据时引导用户先去候选证据审核。
+  if (!ok && lastErrorCode.value === 'BASELINE_EVIDENCE_REQUIRED') {
+    activeTab.value = 'review';
+  }
+  return ok;
 }
 
 function openManualEvidence(): void {

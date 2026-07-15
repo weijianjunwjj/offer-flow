@@ -257,7 +257,8 @@ describe('CapabilityBaselineService · 能力基线版本', () => {
 
   it('AI 基线提案：generatedBy=ai，不自动激活', async () => {
     const service = buildService();
-    const view = await service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: 0 });
+    const { view: seeded } = acceptOneEvidence(service);
+    const view = await service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: seeded.state.stateVersion });
     expect(view.state.proposals[0]!.generatedBy).toBe('ai');
     expect(view.activeVersion).toBeNull();
   });
@@ -342,23 +343,119 @@ describe('CapabilityBaselineService · 能力基线版本', () => {
       idempotencyKey: key(),
       expectedStateVersion: seeded.state.stateVersion,
       payload: makeCapabilityBaselineDraftFixture(['nonexistent-evidence-id']),
-    })).toThrowError(/引用的证据/);
+    })).toThrowError(/不存在或尚未接受的证据/);
   });
 
-  it('AI 提案编造的非 id 证据引用被清洗，提案可被接受（不报 EVIDENCE_REFERENCE_MISSING）', async () => {
+  it('AI 返回不存在的 evidence id：未知引用被移除，且高确定性结论降为证据不足', async () => {
     const hallucinated = makeCapabilityBaselineDraftFixture();
+    hallucinated.capabilities[0]!.conclusionStatus = 'established';
+    hallucinated.capabilities[0]!.conclusion = '该能力已确立且成熟。';
     hallucinated.capabilities[0]!.supportingEvidenceRefs = ['简历/工作经历', 'profile.weaknessNote'];
     hallucinated.externalConstraints[0]!.evidenceRefs = ['profile.targetCity'];
     const provider = fakeProvider({
       generateBaseline: async () => ({ rawText: JSON.stringify(hallucinated), model: 'fake-model' }),
     });
     const service = buildService(provider);
-    let view = await service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: 0 });
-    const proposal = view.state.proposals[0]!;
-    expect(proposal.payload.capabilities[0]!.supportingEvidenceRefs).toEqual([]);
-    expect(proposal.payload.externalConstraints[0]!.evidenceRefs).toEqual([]);
-    view = service.acceptBaselineProposal(proposal.id, { idempotencyKey: key(), expectedStateVersion: view.state.stateVersion });
+    const { view: seeded } = acceptOneEvidence(service);
+    let view = await service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: seeded.state.stateVersion });
+    const dim = view.state.proposals[0]!.payload.capabilities[0]!;
+    expect(dim.supportingEvidenceRefs).toEqual([]);
+    expect(dim.conclusionStatus).toBe('insufficient');
+    expect(dim.conclusion).not.toContain('已确立');
+    expect(dim.unverified.some((u) => u.includes('没有已接受证据'))).toBe(true);
+    expect(view.state.proposals[0]!.payload.externalConstraints[0]!.evidenceRefs).toEqual([]);
+    // 归一化后引用为空 → 可被接受且不报缺失。
+    view = service.acceptBaselineProposal(view.state.proposals[0]!.id, { idempotencyKey: key(), expectedStateVersion: view.state.stateVersion });
     expect(view.activeVersion?.version).toBe(1);
+  });
+
+  it('只有 neutral 证据：不能形成 established / supported', async () => {
+    const draft = makeCapabilityBaselineDraftFixture();
+    draft.capabilities[0]!.conclusionStatus = 'supported';
+    // 让 AI 用一个 neutral 证据 id 去支撑（应被拒绝支撑）。
+    const provider = fakeProvider({
+      generateBaseline: async () => {
+        const view = svc.getView();
+        const neutralId = view.state.evidence.find((e) => (e.acceptedContent?.polarity ?? e.polarity) === 'neutral')!.id;
+        draft.capabilities[0]!.supportingEvidenceRefs = [neutralId];
+        return { rawText: JSON.stringify(draft), model: 'fake-model' };
+      },
+    });
+    const svc = buildService(provider);
+    // 接受一条 neutral 证据。
+    let view = addManualEvidence(svc, svc.getView(), { polarity: 'neutral', sourceType: 'user_input', sourceConfidence: 'exact', summary: '中性背景信号。' });
+    view = svc.acceptEvidence(view.state.evidence[0]!.id, { idempotencyKey: key(), expectedStateVersion: view.state.stateVersion });
+    view = await svc.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: view.state.stateVersion });
+    const dim = view.state.proposals[0]!.payload.capabilities[0]!;
+    expect(dim.supportingEvidenceRefs).toEqual([]);
+    expect(['insufficient', 'exploratory']).toContain(dim.conclusionStatus);
+  });
+
+  it('有已接受 support 证据：supported/established 结论可保留', async () => {
+    const support = makeCapabilityBaselineDraftFixture();
+    support.capabilities[0]!.conclusionStatus = 'supported';
+    const provider = fakeProvider({
+      generateBaseline: async () => {
+        const view = svc.getView();
+        const supportId = view.state.evidence.find((e) => (e.acceptedContent?.polarity ?? e.polarity) === 'support')!.id;
+        support.capabilities[0]!.supportingEvidenceRefs = [supportId];
+        return { rawText: JSON.stringify(support), model: 'fake-model' };
+      },
+    });
+    const svc = buildService(provider);
+    const { view: seeded } = acceptOneEvidence(svc);
+    const view = await svc.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: seeded.state.stateVersion });
+    const dim = view.state.proposals[0]!.payload.capabilities[0]!;
+    expect(dim.conclusionStatus).toBe('supported');
+    expect(dim.supportingEvidenceRefs.length).toBe(1);
+  });
+
+  it('有已接受 counter 证据：contradicted 结论可保留', async () => {
+    const draft = makeCapabilityBaselineDraftFixture();
+    draft.capabilities[0]!.conclusionStatus = 'contradicted';
+    draft.capabilities[0]!.conclusion = '存在有力反证。';
+    const provider = fakeProvider({
+      generateBaseline: async () => {
+        const view = svc.getView();
+        const counterId = view.state.evidence.find((e) => (e.acceptedContent?.polarity ?? e.polarity) === 'counter')!.id;
+        draft.capabilities[0]!.counterEvidenceRefs = [counterId];
+        return { rawText: JSON.stringify(draft), model: 'fake-model' };
+      },
+    });
+    const svc = buildService(provider);
+    let view = addManualEvidence(svc, svc.getView(), { polarity: 'counter', sourceType: 'user_input', sourceConfidence: 'exact', summary: '确证的能力反证。' });
+    view = svc.acceptEvidence(view.state.evidence[0]!.id, { idempotencyKey: key(), expectedStateVersion: view.state.stateVersion });
+    view = await svc.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: view.state.stateVersion });
+    const dim = view.state.proposals[0]!.payload.capabilities[0]!;
+    expect(dim.conclusionStatus).toBe('contradicted');
+    expect(dim.counterEvidenceRefs.length).toBe(1);
+  });
+
+  it('acceptedEvidence 为 0：generate 返回 BASELINE_EVIDENCE_REQUIRED，不创建提案/回执/不改 stateVersion', async () => {
+    const service = buildService();
+    await expect(service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: 0 }))
+      .rejects.toMatchObject({ code: 'BASELINE_EVIDENCE_REQUIRED', statusCode: 422 });
+    const view = service.getView();
+    expect(view.state.proposals).toHaveLength(0);
+    expect(view.state.commandReceipts).toHaveLength(0);
+    expect(view.state.stateVersion).toBe(0);
+  });
+
+  it('手工 proposal 引用非法 id：严格返回 EVIDENCE_REFERENCE_MISSING，不自动清洗', () => {
+    const service = buildService();
+    const { view: seeded } = acceptOneEvidence(service);
+    let caught: { code?: string; details?: { missing?: string[] } } | undefined;
+    try {
+      service.createManualBaselineProposal({
+        idempotencyKey: key(), expectedStateVersion: seeded.state.stateVersion,
+        payload: makeCapabilityBaselineDraftFixture(['nonexistent-evidence-id']),
+      });
+    } catch (error) {
+      caught = error as never;
+    }
+    expect(caught?.code).toBe('EVIDENCE_REFERENCE_MISSING');
+    expect(caught?.details?.missing).toContain('nonexistent-evidence-id');
+    expect(service.getView().state.proposals).toHaveLength(0);
   });
 
   it('生成期间输入指纹变化：阻止过期 AI 结果写入', async () => {
@@ -370,7 +467,8 @@ describe('CapabilityBaselineService · 能力基线版本', () => {
       },
     });
     const service = buildService(mutatingProvider);
-    await expect(service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: 0 }))
+    const { view: seeded } = acceptOneEvidence(service);
+    await expect(service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: seeded.state.stateVersion }))
       .rejects.toMatchObject({ code: 'STATE_VERSION_CONFLICT' });
   });
 });

@@ -1,5 +1,6 @@
 import type {
   CandidateEvidenceContent,
+  CapabilityBaselineDraft,
   CapabilityConstraintKind,
   CapabilityEvidencePolarity,
 } from './types';
@@ -132,6 +133,77 @@ export function isDuplicateEvidence(
 ): boolean {
   const key = evidenceDedupeKey(content);
   return existing.some((item) => evidenceDedupeKey(item) === key);
+}
+
+export interface AcceptedEvidenceRef {
+  id: string;
+  polarity: CapabilityEvidencePolarity;
+}
+
+function pushUnique(list: string[], value: string): void {
+  if (!list.includes(value)) list.push(value);
+}
+
+/**
+ * 将 AI 生成的能力基线 Draft 与真实已接受证据对齐（仅用于 AI Draft，手工提案继续严格拒绝非法引用）。
+ *
+ * 不变量：
+ * - supportingEvidenceRefs 只保留真实、已接受、polarity=support 的证据 id；
+ * - counterEvidenceRefs 只保留真实、已接受、polarity=counter 的证据 id；
+ * - neutral 证据不进入 support/counter 槽，因此不能单独支撑"已建立/已支持"；
+ * - established / supported 结论若无有效 support 证据 → 降为 insufficient，并写入待验证项；
+ * - contradicted 结论若无有效 counter 证据 → 降为 insufficient，并写入待验证项；
+ * - 降级时清除高确定性结论措辞，改为明确的"证据不足"说明；
+ * - 不编造替代证据、不新增引用、不改变已接受证据本身。
+ */
+export function normalizeAiBaselineAgainstAcceptedEvidence(
+  draft: CapabilityBaselineDraft,
+  acceptedEvidence: ReadonlyArray<AcceptedEvidenceRef>,
+): CapabilityBaselineDraft {
+  const supportIds = new Set(acceptedEvidence.filter((e) => e.polarity === 'support').map((e) => e.id));
+  const counterIds = new Set(acceptedEvidence.filter((e) => e.polarity === 'counter').map((e) => e.id));
+  const acceptedIds = new Set(acceptedEvidence.map((e) => e.id));
+
+  const capabilities = draft.capabilities.map((dimension) => {
+    const validSupport = dimension.supportingEvidenceRefs.filter((id) => supportIds.has(id));
+    const validCounter = dimension.counterEvidenceRefs.filter((id) => counterIds.has(id));
+    let conclusionStatus = dimension.conclusionStatus;
+    let conclusion = dimension.conclusion;
+    const unverified = [...dimension.unverified];
+
+    if ((conclusionStatus === 'established' || conclusionStatus === 'supported') && validSupport.length === 0) {
+      conclusionStatus = 'insufficient';
+      conclusion = '当前没有已接受证据支撑该能力结论，尚待验证。';
+      pushUnique(unverified, '当前没有已接受证据支撑该能力结论');
+    }
+    if (conclusionStatus === 'contradicted' && validCounter.length === 0) {
+      conclusionStatus = 'insufficient';
+      conclusion = '当前没有已接受反证支撑该否定结论，尚待验证。';
+      pushUnique(unverified, '当前没有已接受反证支撑该结论');
+    }
+
+    return {
+      ...dimension,
+      conclusion,
+      conclusionStatus,
+      supportingEvidenceRefs: validSupport,
+      counterEvidenceRefs: validCounter,
+      unverified,
+    };
+  });
+
+  const externalConstraints = draft.externalConstraints.map((constraint) => ({
+    ...constraint,
+    evidenceRefs: constraint.evidenceRefs.filter((id) => acceptedIds.has(id)),
+  }));
+
+  let overallConfidence = draft.overallConfidence;
+  const anySupported = capabilities.some((dimension) => dimension.supportingEvidenceRefs.length > 0);
+  if ((overallConfidence === 'established' || overallConfidence === 'supported') && !anySupported) {
+    overallConfidence = 'insufficient';
+  }
+
+  return { ...draft, capabilities, externalConstraints, overallConfidence };
 }
 
 /**

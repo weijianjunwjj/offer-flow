@@ -14,6 +14,7 @@ import {
   cloneCapabilityBaselineDraft,
   evidenceGuardrailViolations,
   isDuplicateEvidence,
+  normalizeAiBaselineAgainstAcceptedEvidence,
   type CandidateEvidence,
   type CandidateEvidenceContent,
   type CapabilityBaselineDraft,
@@ -249,7 +250,10 @@ export class CapabilityBaselineService {
     const current = this.requireState(parsed.data.expectedStateVersion);
     const profile = this.requireProfile();
     const snapshot = buildCapabilityBaselineInputSnapshot(this.db, profile, current, { now: this.now });
-    this.assertBaselineReferencesExist(parsed.data.payload, current);
+    this.assertBaselineReferencesExist(
+      parsed.data.payload, current,
+      '手工提案引用了不存在或尚未接受的证据，请先在候选证据审核中接受相关证据',
+    );
     const proposal = this.makeBaselineProposal(
       parsed.data.payload, 'manual', null, snapshot, this.acceptedEvidenceIds(current),
       parsed.data.expectedStateVersion,
@@ -272,6 +276,13 @@ export class CapabilityBaselineService {
     if (!this.aiProvider.isConfigured()) {
       return Promise.reject(new CapabilityBaselineError(
         503, 'AI_PROVIDER_NOT_CONFIGURED', 'DeepSeek 尚未配置，可改用手工建立能力基线提案',
+      ));
+    }
+    // 零正式证据时禁止生成正式基线：不产生引用为空却可被接受的 proposal。
+    if (this.acceptedEvidenceIds(this.repo.getState()).length === 0) {
+      return Promise.reject(new CapabilityBaselineError(
+        422, 'BASELINE_EVIDENCE_REQUIRED',
+        '请先在候选证据审核中接受至少一条能力证据，再生成长期能力基线',
       ));
     }
     const inFlight = this.pendingBaseline.get(parsed.data.idempotencyKey);
@@ -297,9 +308,9 @@ export class CapabilityBaselineService {
     if (latestSnapshot.inputFingerprint !== snapshot.inputFingerprint) {
       throw new CapabilityBaselineError(409, 'STATE_VERSION_CONFLICT', '生成期间输入资料已变化，请重新生成');
     }
-    // AI 可能编造非 id 的证据引用；只保留真实已接受证据 id，丢弃编造项，
-    // 使提案可被接受且不虚构证据来源（引用完整性仍由 accept 时的严格校验兜底）。
-    const payload = this.sanitizeBaselineEvidenceRefs(rawPayload, this.acceptedEvidenceIds(current));
+    // AI 可能编造非 id 引用或给出无证据支撑的高确定性结论；按已接受证据的极性对齐：
+    // 移除非法引用，并把缺乏有效 support/counter 的高确定性结论降级为证据不足。
+    const payload = normalizeAiBaselineAgainstAcceptedEvidence(rawPayload, this.acceptedEvidenceRefs(current));
     const proposal = this.makeBaselineProposal(
       payload, 'ai', result.model, snapshot, this.acceptedEvidenceIds(current),
       command.expectedStateVersion,
@@ -517,34 +528,20 @@ export class CapabilityBaselineService {
       .map((item) => item.id);
   }
 
-  /**
-   * 清洗基线草案中的证据引用：只保留 acceptedIds 中真实存在的 id，丢弃 AI 编造的非 id 文本。
-   * 不改变结论文本、不新增引用，仅移除无效引用。
-   */
-  private sanitizeBaselineEvidenceRefs(
-    payload: CapabilityBaselineDraft,
-    acceptedIds: string[],
-  ): CapabilityBaselineDraft {
-    const allowed = new Set(acceptedIds);
-    const keep = (refs: string[]): string[] => refs.filter((ref) => allowed.has(ref));
-    return {
-      ...payload,
-      capabilities: payload.capabilities.map((dimension) => ({
-        ...dimension,
-        supportingEvidenceRefs: keep(dimension.supportingEvidenceRefs),
-        counterEvidenceRefs: keep(dimension.counterEvidenceRefs),
-      })),
-      externalConstraints: payload.externalConstraints.map((constraint) => ({
-        ...constraint,
-        evidenceRefs: keep(constraint.evidenceRefs),
-      })),
-    };
+  /** 已接受证据的 id 与其生效极性，供 AI 基线证据不变量对齐使用。 */
+  private acceptedEvidenceRefs(state: CapabilityBaselineState): Array<{ id: string; polarity: CandidateEvidence['polarity'] }> {
+    return state.evidence
+      .filter((item) => item.status === 'accepted' || item.status === 'modified_and_accepted')
+      .map((item) => ({ id: item.id, polarity: item.acceptedContent?.polarity ?? item.polarity }));
   }
 
-  /** 正式版本引用的证据必须存在且已接受。 */
+  /**
+   * 正式版本引用的证据必须存在且已接受。手工提案严格拒绝非法引用，不做自动清洗。
+   */
   private assertBaselineReferencesExist(
     payload: CapabilityBaselineDraft,
     state: CapabilityBaselineState,
+    message = '该提案引用了不存在或尚未接受的证据，请拒绝后重新生成，或先完成候选证据审核。',
   ): void {
     const accepted = new Set(this.acceptedEvidenceIds(state));
     const refs = new Set<string>();
@@ -556,9 +553,7 @@ export class CapabilityBaselineService {
     }
     const missing = [...refs].filter((ref) => !accepted.has(ref));
     if (missing.length > 0) {
-      throw new CapabilityBaselineError(
-        422, 'EVIDENCE_REFERENCE_MISSING', '能力基线引用的证据不存在或尚未接受', { missing },
-      );
+      throw new CapabilityBaselineError(422, 'EVIDENCE_REFERENCE_MISSING', message, { missing });
     }
   }
 
