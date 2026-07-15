@@ -43,12 +43,13 @@ export class FunnelService {
     }));
     return aggregateFunnel(sources, {
       city: query.city ?? null,
-      roleFamily: query.roleFamily ?? null,
+      jobFamily: query.jobFamily ?? null,
       channel: query.channel ?? null,
       resumeVersionId: query.resumeVersionId ?? null,
       from: query.from ?? null,
       to: query.to ?? null,
       timeGranularity: query.timeGranularity ?? 'none',
+      groupBy: query.groupBy ?? 'none',
     });
   }
 }
