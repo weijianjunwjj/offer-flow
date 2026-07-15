@@ -1,6 +1,7 @@
 import type { SqliteDatabase } from './db';
 import { createJobMemorySchemaV2 } from './migrations/jobMemorySchemaV2';
 import { createCapabilityBaselineSchemaV3 } from './migrations/capabilityBaselineSchemaV3';
+import { createHistoryFunnelSchemaV4 } from './migrations/historyFunnelSchemaV4';
 
 export interface SchemaMigration {
   version: number;
@@ -22,9 +23,12 @@ export interface MigrationRunOptions {
 
 // 可信求职记忆（Job Memory v2）生产底座仍固定在 v2：快照、恢复与生产验证机器都以 v2 为准。
 export const PRODUCTION_SCHEMA_VERSION = 2;
-// G2 能力基线新增 v3；LATEST 与 PRODUCTION 有意区分，v3 为纯新增表，不改动 v2 生产语义。
-export const LATEST_SCHEMA_VERSION = 3;
+// G2 能力基线新增 v3、G3 历史补录与基础漏斗新增 v4；LATEST 与 PRODUCTION 有意区分，
+// v3/v4 均为纯新增表，不改动 v2 生产语义。
+export const LATEST_SCHEMA_VERSION = 4;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
+// G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
+export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -82,6 +86,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 3,
     name: '003_v0_7_capability_baseline_schema',
     up: createCapabilityBaselineSchemaV3,
+  },
+  {
+    version: 4,
+    name: '004_v0_7_history_funnel_schema',
+    up: createHistoryFunnelSchemaV4,
   },
 ];
 

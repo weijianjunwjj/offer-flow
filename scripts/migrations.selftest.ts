@@ -361,8 +361,8 @@ function assertForeignKeyViolation(action: () => void): void {
 try {
   assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
   assert.equal(CURRENT_SCHEMA_VERSION, PRODUCTION_SCHEMA_VERSION);
-  // G2 能力基线新增 v3；LATEST 与 PRODUCTION 有意区分。
-  assert.equal(LATEST_SCHEMA_VERSION, 3);
+  // G2 能力基线新增 v3、G3 历史补录与漏斗新增 v4；LATEST 与 PRODUCTION 有意区分。
+  assert.equal(LATEST_SCHEMA_VERSION, 4);
   assert.equal(SCHEMA_MIGRATIONS.at(-1)?.version, LATEST_SCHEMA_VERSION);
   assert.equal(SCHEMA_MIGRATIONS.length, LATEST_SCHEMA_VERSION);
   assert.equal(SNAPSHOT_SCHEMA_VERSION, 2);
@@ -747,6 +747,251 @@ try {
     for (const table of CAPABILITY_TABLES) {
       assert.equal(tableNames(db).includes(table), false);
     }
+  });
+
+  // v3 → v4 升级：纯新增 G3 历史补录与漏斗草稿表，不破坏任何已有 v1/v2/v3 业务数据。
+  const HISTORY_FUNNEL_TABLES = [
+    'historical_import_sessions',
+    'historical_baseline_drafts',
+    'historical_event_drafts',
+    'historical_import_receipts',
+  ] as const;
+  const HISTORY_FUNNEL_INDEXES = [
+    'historical_baseline_drafts_session_idx',
+    'historical_baseline_drafts_duplicate_idx',
+    'historical_event_drafts_baseline_idx',
+    'historical_import_receipts_session_idx',
+  ] as const;
+
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 3 });
+    seedV1BusinessData(db);
+    const resumeId = insertResumeVersion(db, { id: 'resume-v4-upgrade' });
+    const applicationId = insertApplication(db, { id: 'application-v4-upgrade', resumeVersionId: resumeId });
+    insertFeedbackEvent(db, { id: 'event-v4-upgrade', applicationId });
+
+    const v1DataBefore = readV1BusinessData(db);
+    const jobMemoryBefore = {
+      resumeVersions: db.prepare('SELECT * FROM resume_versions ORDER BY id').all(),
+      applications: db.prepare('SELECT * FROM applications ORDER BY id').all(),
+      feedbackEvents: db.prepare('SELECT * FROM feedback_events ORDER BY id').all(),
+    };
+    for (const table of HISTORY_FUNNEL_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+
+    const result = initSchema(db, { targetVersion: 4 });
+    assert.deepEqual(result, {
+      currentVersion: 4,
+      appliedVersions: [1, 2, 3, 4],
+      newlyAppliedVersions: [4],
+    });
+    assert.equal(schemaVersion(db), 4);
+    assert.deepEqual(migrationRecords(db), [
+      { version: 1, name: '001_v0_6_baseline' },
+      { version: 2, name: '002_v0_7_job_memory_schema' },
+      { version: 3, name: '003_v0_7_capability_baseline_schema' },
+      { version: 4, name: '004_v0_7_history_funnel_schema' },
+    ]);
+    for (const table of HISTORY_FUNNEL_TABLES) {
+      assert.equal(tableNames(db).includes(table), true);
+      assert.equal(rowCount(db, table), 0);
+    }
+    for (const index of HISTORY_FUNNEL_INDEXES) {
+      assert.equal(indexNames(db).includes(index), true);
+    }
+
+    // 所有已有 v1/v2/v3 业务数据必须逐字节保留。
+    assert.deepEqual(readV1BusinessData(db), v1DataBefore);
+    assert.deepEqual(db.prepare('SELECT * FROM resume_versions ORDER BY id').all(), jobMemoryBefore.resumeVersions);
+    assert.deepEqual(db.prepare('SELECT * FROM applications ORDER BY id').all(), jobMemoryBefore.applications);
+    assert.deepEqual(db.prepare('SELECT * FROM feedback_events ORDER BY id').all(), jobMemoryBefore.feedbackEvents);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+
+    // 升级可重复执行且幂等。
+    assert.deepEqual(initSchema(db, { targetVersion: 4 }).newlyAppliedVersions, []);
+    assert.equal(schemaVersion(db), 4);
+
+    // 默认 initSchema 仍停留在生产 v2，不会自动拉到 v4。
+    assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
+  });
+
+  // 默认 target（生产 v2）不会创建 G3 历史补录/漏斗表。
+  withTempDatabase((db) => {
+    initSchema(db);
+    assert.equal(schemaVersion(db), 2);
+    for (const table of HISTORY_FUNNEL_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+  });
+
+  // CHECK/FK 约束：历史补录草稿表。
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 4 });
+    seedV1BusinessData(db);
+
+    const insertSession = (overrides: Partial<{
+      id: string;
+      status: string;
+      createdAt: number;
+      updatedAt: number;
+      confirmedAt: number | null;
+      discardedAt: number | null;
+      rowVersion: number;
+    }> = {}) => {
+      const fixture = {
+        id: nextId('session'),
+        status: 'draft',
+        createdAt: 200,
+        updatedAt: 200,
+        confirmedAt: null,
+        discardedAt: null,
+        rowVersion: 1,
+        ...overrides,
+      };
+      db.prepare(
+        `INSERT INTO historical_import_sessions
+          (id, status, created_at, updated_at, confirmed_at, discarded_at, row_version)
+         VALUES (@id, @status, @createdAt, @updatedAt, @confirmedAt, @discardedAt, @rowVersion)`,
+      ).run(fixture);
+      return fixture.id;
+    };
+
+    const sessionId = insertSession();
+    assert.equal(rowCount(db, 'historical_import_sessions'), 1);
+
+    assertCheckViolation(() => insertSession({ status: 'invalid_status' }));
+    assertCheckViolation(() => insertSession({ status: 'confirmed', confirmedAt: null }));
+    assertCheckViolation(() =>
+      insertSession({ status: 'confirmed', confirmedAt: 210, discardedAt: 210 }),
+    );
+
+    const insertBaselineDraft = (overrides: Partial<Record<string, unknown>> = {}) => {
+      const id = (overrides.id as string) ?? nextId('baseline-draft');
+      const fixture = {
+        id,
+        sessionId,
+        company: '测试公司',
+        role: '前端工程师',
+        city: 'Suzhou',
+        actuallyApplied: 1,
+        appliedAt: 210,
+        timePrecision: 'approximate',
+        channel: 'boss',
+        recruitingEntityKind: 'direct_employer',
+        recruitingEntityName: null,
+        contactName: null,
+        resumeVersionId: null,
+        highestKnownStage: null,
+        sourceConfidence: 'recalled',
+        evidenceLevel: 'weak',
+        notes: null,
+        duplicateOfDraftId: null,
+        keepAsIndependentProcess: 0,
+        independentProcessReason: null,
+        createdJobId: null,
+        createdApplicationId: null,
+        createdAt: 210,
+        updatedAt: 210,
+        rowVersion: 1,
+        ...overrides,
+      };
+      db.prepare(
+        `INSERT INTO historical_baseline_drafts (
+          id, session_id, company, role, city, actually_applied, applied_at, time_precision,
+          channel, recruiting_entity_kind, recruiting_entity_name, contact_name, resume_version_id,
+          highest_known_stage, source_confidence, evidence_level, notes, duplicate_of_draft_id,
+          keep_as_independent_process, independent_process_reason, created_job_id,
+          created_application_id, created_at, updated_at, row_version
+        ) VALUES (
+          @id, @sessionId, @company, @role, @city, @actuallyApplied, @appliedAt, @timePrecision,
+          @channel, @recruitingEntityKind, @recruitingEntityName, @contactName, @resumeVersionId,
+          @highestKnownStage, @sourceConfidence, @evidenceLevel, @notes, @duplicateOfDraftId,
+          @keepAsIndependentProcess, @independentProcessReason, @createdJobId,
+          @createdApplicationId, @createdAt, @updatedAt, @rowVersion
+        )`,
+      ).run(fixture);
+      return id;
+    };
+
+    const draftId = insertBaselineDraft();
+    assert.equal(rowCount(db, 'historical_baseline_drafts'), 1);
+
+    assertCheckViolation(() => insertBaselineDraft({ company: '   ' }));
+    assertCheckViolation(() => insertBaselineDraft({ actuallyApplied: 2 }));
+    assertCheckViolation(() =>
+      insertBaselineDraft({ appliedAt: null, timePrecision: 'exact' }),
+    );
+    assertCheckViolation(() =>
+      insertBaselineDraft({ keepAsIndependentProcess: 1, independentProcessReason: null }),
+    );
+    assertCheckViolation(() =>
+      insertBaselineDraft({ keepAsIndependentProcess: 0, independentProcessReason: '不应存在' }),
+    );
+    assertCheckViolation(() =>
+      insertBaselineDraft({ actuallyApplied: 0, createdApplicationId: 'application-v4-upgrade-fake' }),
+    );
+    assertCheckViolation(() => {
+      const id = nextId('self-duplicate-draft');
+      insertBaselineDraft({ id, duplicateOfDraftId: id });
+    });
+    assertForeignKeyViolation(() => insertBaselineDraft({ sessionId: 'session-missing' }));
+
+    const insertEventDraft = (overrides: Partial<Record<string, unknown>> = {}) => {
+      const id = (overrides.id as string) ?? nextId('event-draft');
+      const fixture = {
+        id,
+        baselineDraftId: draftId,
+        eventType: 'applied',
+        eventAt: 210,
+        timePrecision: 'approximate',
+        actor: 'user',
+        sourceConfidence: 'recalled',
+        evidenceLevel: 'weak',
+        channel: 'boss',
+        reasonCode: null,
+        note: null,
+        createdFeedbackEventId: null,
+        createdAt: 210,
+        updatedAt: 210,
+        rowVersion: 1,
+        ...overrides,
+      };
+      db.prepare(
+        `INSERT INTO historical_event_drafts (
+          id, baseline_draft_id, event_type, event_at, time_precision, actor, source_confidence,
+          evidence_level, channel, reason_code, note, created_feedback_event_id, created_at,
+          updated_at, row_version
+        ) VALUES (
+          @id, @baselineDraftId, @eventType, @eventAt, @timePrecision, @actor, @sourceConfidence,
+          @evidenceLevel, @channel, @reasonCode, @note, @createdFeedbackEventId, @createdAt,
+          @updatedAt, @rowVersion
+        )`,
+      ).run(fixture);
+      return id;
+    };
+
+    insertEventDraft();
+    assert.equal(rowCount(db, 'historical_event_drafts'), 1);
+    assertCheckViolation(() => insertEventDraft({ eventType: 'invalid_event' }));
+    assertCheckViolation(() => insertEventDraft({ eventAt: null, timePrecision: 'exact' }));
+    assertForeignKeyViolation(() => insertEventDraft({ baselineDraftId: 'draft-missing' }));
+
+    db.prepare(
+      `INSERT INTO historical_import_receipts (idempotency_key, session_id, request_hash, result_json, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run('receipt-key-1', sessionId, 'hash-1', '{"ok":true}', 220);
+    assert.equal(rowCount(db, 'historical_import_receipts'), 1);
+    assertForeignKeyViolation(() =>
+      db
+        .prepare(
+          `INSERT INTO historical_import_receipts (idempotency_key, session_id, request_hash, result_json, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run('receipt-key-2', 'session-missing', 'hash-2', '{}', 221),
+    );
+
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   });
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
