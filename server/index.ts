@@ -6,9 +6,15 @@ import Fastify from 'fastify';
 import { getDbPath, openDb, type SqliteDatabase } from './db';
 import type { JobMemoryServiceDeps } from './job-memory/jobMemoryService';
 import type { JobMatchProfileServiceDeps } from './job-match-profile/service';
+import type { CapabilityBaselineServiceDeps } from './capability-baseline/service';
 import { registerJobMatchProfileRoutes } from './job-match-profile/routes';
+import { registerCapabilityBaselineRoutes } from './capability-baseline/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
-import { getDatabaseSchemaVersion } from './migrations';
+import {
+  getDatabaseSchemaVersion,
+  LATEST_SCHEMA_VERSION,
+  PRODUCTION_SCHEMA_VERSION,
+} from './migrations';
 import { initSchema } from './schema';
 import { registerProfileRoutes } from './routes/profile';
 import { registerJobRoutes } from './routes/jobs';
@@ -28,11 +34,17 @@ export interface JobMemoryV2Capability {
   serviceDeps?: JobMemoryServiceDeps;
 }
 
+export interface CapabilityBaselineCapability {
+  enabled?: boolean;
+  serviceDeps?: CapabilityBaselineServiceDeps;
+}
+
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
   jobMemoryV2?: JobMemoryV2Capability;
   jobMatchProfile?: JobMatchProfileServiceDeps;
+  capabilityBaseline?: CapabilityBaselineCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -45,6 +57,7 @@ export function buildServer(
   const options = normalizeBuildOptions(input);
   const dbPath = options.dbPath ?? (options.db === undefined ? getDbPath() : ':injected:');
   const jobMemoryV2 = options.jobMemoryV2 ?? { enabled: true };
+  const capabilityBaselineEnabled = options.capabilityBaseline?.enabled ?? true;
   const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
@@ -57,12 +70,21 @@ export function buildServer(
   const db = options.db ?? openDb(dbPath);
   const ownsDb = options.db === undefined;
   if (jobMemoryV2.enabled) {
+    const targetVersion = capabilityBaselineEnabled ? LATEST_SCHEMA_VERSION : PRODUCTION_SCHEMA_VERSION;
     let schemaVersion = getDatabaseSchemaVersion(db);
     if (schemaVersion === 0) {
-      initSchema(db, { targetVersion: 2 });
+      initSchema(db, { targetVersion });
+      schemaVersion = getDatabaseSchemaVersion(db);
+    } else if (
+      capabilityBaselineEnabled
+      && schemaVersion >= PRODUCTION_SCHEMA_VERSION
+      && schemaVersion < LATEST_SCHEMA_VERSION
+    ) {
+      // 纯新增的 G2 能力基线表；v2 生产语义不受影响。
+      initSchema(db, { targetVersion: LATEST_SCHEMA_VERSION });
       schemaVersion = getDatabaseSchemaVersion(db);
     }
-    if (schemaVersion !== 2) {
+    if (schemaVersion < PRODUCTION_SCHEMA_VERSION) {
       if (ownsDb) db.close();
       throw new Error(
         `Job Memory v2 capability requires schema version 2; current version is ${schemaVersion}. `
@@ -107,6 +129,9 @@ export function buildServer(
   if (jobMemoryV2.enabled) {
     registerJobMemoryRoutes(app, { serviceDeps: jobMemoryV2.serviceDeps });
     registerJobMatchProfileRoutes(app, options.jobMatchProfile);
+    if (capabilityBaselineEnabled) {
+      registerCapabilityBaselineRoutes(app, options.capabilityBaseline?.serviceDeps);
+    }
   }
   return app;
 }
