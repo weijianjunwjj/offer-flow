@@ -291,12 +291,15 @@ export class CapabilityBaselineService {
     const snapshot = buildCapabilityBaselineInputSnapshot(this.db, profile, current, { now: this.now });
     const result = await this.aiProvider.generateBaseline(snapshot.snapshot, signal);
     if (signal?.aborted) throw new DOMException('能力基线提案生成已取消', 'AbortError');
-    const payload = parseCapabilityBaselineAiOutput(result.rawText);
+    const rawPayload = parseCapabilityBaselineAiOutput(result.rawText);
     const latestProfile = this.requireProfile();
     const latestSnapshot = buildCapabilityBaselineInputSnapshot(this.db, latestProfile, this.repo.getState(), { now: this.now });
     if (latestSnapshot.inputFingerprint !== snapshot.inputFingerprint) {
       throw new CapabilityBaselineError(409, 'STATE_VERSION_CONFLICT', '生成期间输入资料已变化，请重新生成');
     }
+    // AI 可能编造非 id 的证据引用；只保留真实已接受证据 id，丢弃编造项，
+    // 使提案可被接受且不虚构证据来源（引用完整性仍由 accept 时的严格校验兜底）。
+    const payload = this.sanitizeBaselineEvidenceRefs(rawPayload, this.acceptedEvidenceIds(current));
     const proposal = this.makeBaselineProposal(
       payload, 'ai', result.model, snapshot, this.acceptedEvidenceIds(current),
       command.expectedStateVersion,
@@ -512,6 +515,30 @@ export class CapabilityBaselineService {
     return state.evidence
       .filter((item) => item.status === 'accepted' || item.status === 'modified_and_accepted')
       .map((item) => item.id);
+  }
+
+  /**
+   * 清洗基线草案中的证据引用：只保留 acceptedIds 中真实存在的 id，丢弃 AI 编造的非 id 文本。
+   * 不改变结论文本、不新增引用，仅移除无效引用。
+   */
+  private sanitizeBaselineEvidenceRefs(
+    payload: CapabilityBaselineDraft,
+    acceptedIds: string[],
+  ): CapabilityBaselineDraft {
+    const allowed = new Set(acceptedIds);
+    const keep = (refs: string[]): string[] => refs.filter((ref) => allowed.has(ref));
+    return {
+      ...payload,
+      capabilities: payload.capabilities.map((dimension) => ({
+        ...dimension,
+        supportingEvidenceRefs: keep(dimension.supportingEvidenceRefs),
+        counterEvidenceRefs: keep(dimension.counterEvidenceRefs),
+      })),
+      externalConstraints: payload.externalConstraints.map((constraint) => ({
+        ...constraint,
+        evidenceRefs: keep(constraint.evidenceRefs),
+      })),
+    };
   }
 
   /** 正式版本引用的证据必须存在且已接受。 */

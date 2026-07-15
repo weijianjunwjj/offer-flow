@@ -252,7 +252,7 @@ export interface CapabilityBaselineInputSnapshot {
     evidenceLevel: string;
     capabilitySignal: CapabilityEvidencePolarity;
   }>;
-  acceptedEvidence: CandidateEvidenceContent[];
+  acceptedEvidence: Array<CandidateEvidenceContent & { id: string }>;
   activeJobMatchProfileSummary: string | null;
   activeCapabilityBaseline: CapabilityBaselineDraft | null;
 }

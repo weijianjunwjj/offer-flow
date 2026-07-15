@@ -69,7 +69,7 @@ ${baselineTemplateJson()}
 - capabilities 是能力维度数组，可动态扩展，不要写死为固定条数。每个维度：{ key, label, conclusion, conclusionStatus, supportingEvidenceRefs[], counterEvidenceRefs[], unverified[], largestUncertainty }。
 - conclusionStatus 与 overallConfidence 只能是 established / supported / exploratory / insufficient / contradicted。
 - externalConstraints 每个元素：{ key, kind, label, summary, evidenceRefs[] }；kind 只能是 education / age / city_supply / salary / hiring_preference / other。
-- supportingEvidenceRefs / counterEvidenceRefs / evidenceRefs 只能引用输入快照 acceptedEvidence 中真实存在的证据来源；不得引用不存在的 ID。
+- supportingEvidenceRefs / counterEvidenceRefs / evidenceRefs 只能填写输入快照 acceptedEvidence[].id 中真实存在的 id 字符串；若 acceptedEvidence 为空，这些数组必须为空数组 []；禁止填写简历字段名、profile 字段名、来源标签或任何非 id 文本。
 - 所有展示性字符串使用非空中文。
 ${GUARDRAILS}
 只输出 JSON 对象。`;

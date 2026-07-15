@@ -22,7 +22,7 @@ export interface BuildCapabilityBaselineSnapshotOptions {
 
 function effectiveEvidenceContent(
   state: CapabilityBaselineState,
-): CandidateEvidenceContent[] {
+): Array<CandidateEvidenceContent & { id: string }> {
   return state.evidence
     .filter((item) => item.status === 'accepted' || item.status === 'modified_and_accepted')
     .map((item) => {
@@ -40,7 +40,8 @@ function effectiveEvidenceContent(
         timePrecision: item.timePrecision,
         sourceConfidence: item.sourceConfidence,
       };
-      return content;
+      // 让 AI 能引用真实的已接受证据 id（supportingEvidenceRefs 等只能填这些 id）。
+      return { id: item.id, ...content };
     });
 }
 

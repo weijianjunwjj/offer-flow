@@ -345,6 +345,22 @@ describe('CapabilityBaselineService · 能力基线版本', () => {
     })).toThrowError(/引用的证据/);
   });
 
+  it('AI 提案编造的非 id 证据引用被清洗，提案可被接受（不报 EVIDENCE_REFERENCE_MISSING）', async () => {
+    const hallucinated = makeCapabilityBaselineDraftFixture();
+    hallucinated.capabilities[0]!.supportingEvidenceRefs = ['简历/工作经历', 'profile.weaknessNote'];
+    hallucinated.externalConstraints[0]!.evidenceRefs = ['profile.targetCity'];
+    const provider = fakeProvider({
+      generateBaseline: async () => ({ rawText: JSON.stringify(hallucinated), model: 'fake-model' }),
+    });
+    const service = buildService(provider);
+    let view = await service.generateBaselineProposal({ idempotencyKey: key(), expectedStateVersion: 0 });
+    const proposal = view.state.proposals[0]!;
+    expect(proposal.payload.capabilities[0]!.supportingEvidenceRefs).toEqual([]);
+    expect(proposal.payload.externalConstraints[0]!.evidenceRefs).toEqual([]);
+    view = service.acceptBaselineProposal(proposal.id, { idempotencyKey: key(), expectedStateVersion: view.state.stateVersion });
+    expect(view.activeVersion?.version).toBe(1);
+  });
+
   it('生成期间输入指纹变化：阻止过期 AI 结果写入', async () => {
     const mutatingProvider = fakeProvider({
       generateBaseline: async () => {
