@@ -454,7 +454,10 @@ const previewRows = computed<PreviewRow[]>(() => {
           <template #header>
             <n-space justify="space-between" align="center" style="width: 100%">
               <span>会话 {{ bundle.session.id.slice(0, 8) }}</span>
-              <n-button size="small" quaternary @click="closeSession">返回会话列表</n-button>
+              <n-space>
+                <n-button v-if="bundle.session.status === 'draft'" size="small" :loading="busy" data-testid="hi-discard" @click="discardImport">丢弃该会话</n-button>
+                <n-button size="small" quaternary @click="closeSession">返回会话列表</n-button>
+              </n-space>
             </n-space>
           </template>
 
