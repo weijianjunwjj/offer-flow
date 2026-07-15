@@ -10,11 +10,14 @@ import {
   NLayoutContent,
   NButton,
   NSpace,
+  NAlert,
 } from 'naive-ui';
+import { features } from './config/features';
 const route = useRoute();
 const router = useRouter();
 const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
 const historyImportNavigationEnabled = computed(() => router.hasRoute('history-import'));
+const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
 const activeSection = computed(() => {
   if (route.name === 'job-match-profile') return 'job-match-profile';
   if (route.name === 'capability-baseline') return 'capability-baseline';
@@ -159,6 +162,15 @@ const contentStyle =
         </n-layout-header>
 
         <n-layout-content class="app-content" :content-style="contentStyle">
+          <n-alert
+            v-if="g3SandboxBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g3-sandbox-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G3 隔离验收环境，所有补录操作只写入测试副本，不会修改真实求职数据。
+          </n-alert>
           <RouterView v-slot="{ Component }">
             <component :is="Component" :key="routeViewKey()" />
           </RouterView>

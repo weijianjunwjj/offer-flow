@@ -7,6 +7,16 @@
       "runtimeArgs": ["run", "dev"],
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "offerflow-g3-sandbox",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "scripts/devG3Sandbox.ts"],
+      "port": 5273,
+      "env": {
+        "OFFERFLOW_G3_SANDBOX_API_PORT": "17466",
+        "OFFERFLOW_G3_SANDBOX_WEB_PORT": "5273"
+      }
     }
   ]
 }

@@ -72,3 +72,6 @@ sync/.offerflow-publish-*/
 artifacts/
 
 docs/interview/
+
+# G3 隔离验收沙箱数据库副本（仅本地测试，不入库）
+tmp/g3-sandbox/

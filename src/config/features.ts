@@ -21,4 +21,10 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_HISTORY_IMPORT,
     false,
   ),
+  // G3 隔离验收环境（dev:g3-sandbox）专用标记：仅用于显示不可关闭的提示横幅，
+  // 不改变 historyImportEnabled 之外任何其它默认行为。
+  g3SandboxEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_G3_SANDBOX,
+    false,
+  ),
 });
