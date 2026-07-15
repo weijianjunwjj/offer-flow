@@ -6,6 +6,7 @@ import {
 import { withJobRecordDefaults, type StoredJobRecord } from '../../../src/storage/defaults';
 import {
   getDatabaseSchemaVersion,
+  PRODUCTION_SCHEMA_VERSION,
   SCHEMA_MIGRATIONS,
 } from '../../migrations';
 import { JobRepository } from '../../repositories/jobRepository';
@@ -172,9 +173,12 @@ export function verifyCurrentProductionDatabase(
     const migrations = db.prepare(
       'SELECT version, name FROM schema_migrations ORDER BY version',
     ).all() as Array<{ version: number; name: string }>;
-    const migrationContinuous = migrations.length === SCHEMA_MIGRATIONS.length
+    // 生产底座固定在 PRODUCTION_SCHEMA_VERSION（v2）；LATEST 可高于它（如 G2 的 v3），
+    // 因此只校验生产库恰好包含前 PRODUCTION_SCHEMA_VERSION 条连续且名称匹配的 migration。
+    const productionMigrations = SCHEMA_MIGRATIONS.slice(0, PRODUCTION_SCHEMA_VERSION);
+    const migrationContinuous = migrations.length === productionMigrations.length
       && migrations.every((row, index) => (
-        row.version === index + 1 && row.name === SCHEMA_MIGRATIONS[index]?.name
+        row.version === index + 1 && row.name === productionMigrations[index]?.name
       ));
     if (!migrationContinuous) throw new Error('当前生产数据库 migration 不连续或名称不匹配');
     const appMetaSchema = db.prepare(

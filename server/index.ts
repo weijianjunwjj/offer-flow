@@ -57,7 +57,9 @@ export function buildServer(
   const options = normalizeBuildOptions(input);
   const dbPath = options.dbPath ?? (options.db === undefined ? getDbPath() : ':injected:');
   const jobMemoryV2 = options.jobMemoryV2 ?? { enabled: true };
-  const capabilityBaselineEnabled = options.capabilityBaseline?.enabled ?? true;
+  // 能力基线（G2）默认关闭：可信求职记忆生产/恢复/快照底座固定在 schema v2；
+  // 仅在真实服务入口与能力基线自身测试中显式开启，届时才把库升级到 v3。
+  const capabilityBaselineEnabled = options.capabilityBaseline?.enabled ?? false;
   const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
@@ -137,7 +139,8 @@ export function buildServer(
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const app = buildServer();
+  // 真实服务入口显式开启 G2 能力基线（会把本地库升级到 schema v3）。
+  const app = buildServer({ capabilityBaseline: { enabled: true } });
   let isClosing = false;
   const closeAndExit = (signal: NodeJS.Signals): void => {
     if (isClosing) {
