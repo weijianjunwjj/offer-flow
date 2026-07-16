@@ -3,8 +3,8 @@
 - 状态：已冻结，作为 v0.7 发布判断的最高优先级产品契约
 - 日期：2026-07-14
 - 产品依据：`docs/prd/offerflow-v0.7.md`
-- 当前 App 版本：`0.6.2`
-- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency（含 AI 生成提案路径）已于 2026-07-16 在隔离沙箱中经用户正式验收；G5 StrategyWindow 与正式策略 Proposal Review 已于 2026-07-16 在隔离沙箱（schema v6）经用户正式验收并封板；G6-A（发布准备与生产迁移演练）已于 2026-07-16 完成；G6-B（真实生产切换）已于 2026-07-16 执行（真实库 v4→v6、G4/G5 正式版本晋升、正式入口开放、Snapshot 方案 B）；**G6 已于 2026-07-16 经用户最终生产验收通过并封板（用户反馈“测试过了没啥问题。”），OfferFlow v0.7 产品与生产验收完成**；但“验收完成”不等于“已发布”——App 版本仍 `0.6.2`，push、合并 main、Tag、Release 均尚未授权，各自须用户单独明确授权**
+- 当前 App 版本：`0.7.0`（2026-07-16 版本号封板；v0.7 已完成产品与生产验收。仅版本号封板，尚未 push 新提交、尚未合并 main、尚未创建 Tag、尚未发布 GitHub Release）
+- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency（含 AI 生成提案路径）已于 2026-07-16 在隔离沙箱中经用户正式验收；G5 StrategyWindow 与正式策略 Proposal Review 已于 2026-07-16 在隔离沙箱（schema v6）经用户正式验收并封板；G6-A（发布准备与生产迁移演练）已于 2026-07-16 完成；G6-B（真实生产切换）已于 2026-07-16 执行（真实库 v4→v6、G4/G5 正式版本晋升、正式入口开放、Snapshot 方案 B）；**G6 已于 2026-07-16 经用户最终生产验收通过并封板（用户反馈“测试过了没啥问题。”），OfferFlow v0.7 产品与生产验收完成**；**App 版本已于 2026-07-16 版本号封板为 `0.7.0`**；但“版本号封板”不等于“已发布”——尚未 push 新提交、尚未合并 main、尚未创建 Tag、尚未发布 GitHub Release，各自须用户单独明确授权**
 
 ## 1. 契约目的
 

@@ -52,4 +52,4 @@
 
 ### 最终生产验收（2026-07-16）
 
-用户已在真实生产环境完成最终人工验收，反馈“测试过了没啥问题。”：G4 正式 V1、G5 求职策略（证据收集窗口/行动清单/实验计划/版本历史）、G1~G3 数据（岗位台账 15 条、漏斗 9 条）在真实环境均正常，页面无 sandbox/rehearsal 横幅。**G6 正式验收通过并封板，OfferFlow v0.7 产品与生产验收完成。** 详见 `docs/handoffs/offerflow-v0.7-final-acceptance-2026-07-16.md`。仍未授权 push / 合并 main / Tag / Release，App 版本仍 `0.6.2`。
+用户已在真实生产环境完成最终人工验收，反馈“测试过了没啥问题。”：G4 正式 V1、G5 求职策略（证据收集窗口/行动清单/实验计划/版本历史）、G1~G3 数据（岗位台账 15 条、漏斗 9 条）在真实环境均正常，页面无 sandbox/rehearsal 横幅。**G6 正式验收通过并封板，OfferFlow v0.7 产品与生产验收完成。** 详见 `docs/handoffs/offerflow-v0.7-final-acceptance-2026-07-16.md`。App 版本已于 2026-07-16 版本号封板为 `0.7.0`；仍未授权 push / 合并 main / Tag / Release。

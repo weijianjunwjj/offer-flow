@@ -59,7 +59,7 @@
 | FeedbackEvent 行数不变 | rehearsalVerified | feedback_events=11 保持 |
 | G1~G5 路由可达 | userRequired | G6 候选环境读侧烟测 |
 | 普通用户字段不暴露 UUID/hash/rowVersion | engineeringVerified | G1~G5 页面既有断言 |
-| App 版本仍 0.6.2 | engineeringVerified | package.json 未改 |
+| App 版本 0.7.0（版本号封板） | productionVerified | 2026-07-16 版本封板：package.json / package-lock.json / UI 顶部徽标均为 v0.7.0；仅版本号封板，未 push/合并 main/Tag/Release |
 | 不存在自动 Boss 投递 | engineeringVerified | 代码无自动投递路径 |
 | 不存在自动降薪/迁移/辞职/放弃方向 | engineeringVerified | G5 门禁与禁止措辞守卫 |
 | AI 只在明确点击时调用 | engineeringVerified | 服务不在启动/测试中调用真实模型 |
