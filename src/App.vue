@@ -20,7 +20,9 @@ const historyImportNavigationEnabled = computed(() => router.hasRoute('history-i
 const marketPositionNavigationEnabled = computed(() => router.hasRoute('market-position'));
 const strategyWindowNavigationEnabled = computed(() => router.hasRoute('strategy-window'));
 const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
-const g4SandboxBannerVisible = computed(() => features.g4SandboxEnabled);
+// G5 沙箱会同时启用 G4 能力与数据，但只展示 G5 环境横幅，避免重复提示；
+// 因此 G4 横幅仅在“开了 G4 但未开 G5”时显示。
+const g4SandboxBannerVisible = computed(() => features.g4SandboxEnabled && !features.g5SandboxEnabled);
 const g5SandboxBannerVisible = computed(() => features.g5SandboxEnabled);
 const activeSection = computed(() => {
   if (route.name === 'job-match-profile') return 'job-match-profile';

@@ -321,7 +321,8 @@ export class StrategyService {
   ): Promise<StrategyView> {
     const window = this.computeWindow(snapshot);
     const deterministicDraft = buildDeterministicStrategyDraft(window, { createId: this.createId });
-    const facts = buildStrategyAiFactsSnapshot(window, deterministicDraft, snapshot.acceptedEvidenceIds);
+    const allowedActionIds = deterministicDraft.actions.map((action) => action.id);
+    const facts = buildStrategyAiFactsSnapshot(window, deterministicDraft);
     const result = await this.aiProvider.generate(facts, signal);
     if (signal?.aborted) throw new DOMException('求职策略提案生成已取消', 'AbortError');
 
@@ -330,7 +331,7 @@ export class StrategyService {
       throw new StrategyError(409, 'STRATEGY_INPUT_STALE', '生成期间正式输入数据已发生变化，请重新生成');
     }
 
-    const parsedOutput = parseStrategyAiOutput(result.rawText, snapshot.acceptedEvidenceIds);
+    const parsedOutput = parseStrategyAiOutput(result.rawText, allowedActionIds);
     if ('error' in parsedOutput) {
       throw new StrategyError(422, 'STRATEGY_AI_OUTPUT_INVALID', 'AI 生成的求职策略文案未通过安全校验', {
         reason: parsedOutput.error,
