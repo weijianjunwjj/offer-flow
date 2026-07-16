@@ -4,8 +4,10 @@ import {
   MarketPositionActivateRequestSchema,
   MarketPositionDecisionRequestSchema,
   MarketPositionDraftSchema,
+  MarketPositionGenerateProposalRequestSchema,
   MarketPositionManualProposalRequestSchema,
   MarketPositionViewSchema,
+  type MarketPositionAiGenerationMetadata,
   type MarketPositionCommandType,
   type MarketPositionDraft,
   type MarketPositionProposal,
@@ -16,16 +18,30 @@ import type { SqliteDatabase } from '../db';
 import { canonicalJson, sha256RequestHash } from '../job-memory/requestHash';
 import { CapabilityBaselineRepository } from '../capability-baseline/repository';
 import { ProfileRepository } from '../repositories/profileRepository';
-import { buildMarketPositionInputSnapshot } from './inputSnapshot';
+import {
+  buildDeterministicMarketPositionDraft,
+  buildMarketPositionAiFactsSnapshot,
+  mergeAiNarrativeIntoDraft,
+} from './aiMerge';
+import {
+  deepSeekMarketPositionProvider,
+  MARKET_POSITION_PROMPT_VERSION,
+  parseMarketPositionAiOutput,
+  type MarketPositionAiProvider,
+} from './aiProvider';
+import { buildMarketPositionInputSnapshot, type MarketPositionInputSnapshotResult } from './inputSnapshot';
 import { MarketPositionError, invalidMarketPositionInput } from './errors';
 import {
   MarketPositionRepository,
   MarketPositionStateVersionConflictError,
 } from './repository';
 
+const DETERMINISTIC_RULE_VERSION = 'market-position-deterministic-v1';
+
 export interface MarketPositionServiceDeps {
   now?: () => number;
   createId?: () => string;
+  aiProvider?: MarketPositionAiProvider;
 }
 
 function cloneDraft(draft: MarketPositionDraft): MarketPositionDraft {
@@ -40,10 +56,10 @@ function draftDiff(left: MarketPositionDraft, right: MarketPositionDraft): strin
 }
 
 /**
- * G4 市场位置画像服务。只支持手工提案/审核/激活工作流，不接入 AI 生成——
- * 若未来需要 AI 辅助，也只能用于润色文案，绝不能改动 EvidenceSufficiency/
- * DecisionGate/计数/id/blockedClaims；当前阶段未确认存在这样的安全能力，
- * 因此本服务暂不提供任何 AI 生成路径。
+ * G4 市场位置画像服务。支持手工提案与 AI 生成提案两条路径，AI 路径由服务端先计算
+ * 确定性草稿（EvidenceSufficiency/DecisionGate/计数/allowedClaims/blockedClaims），
+ * 再调用 AI 只生成中文叙述文案并合并进确定性草稿——AI 输出中的确定性字段一律忽略，
+ * 绝不信任前端传入的计数或结论，AI 也绝不能自动激活正式版本。
  */
 export class MarketPositionService {
   private readonly repo: MarketPositionRepository;
@@ -51,6 +67,9 @@ export class MarketPositionService {
   private readonly capabilityBaselines: CapabilityBaselineRepository;
   private readonly now: () => number;
   private readonly createId: () => string;
+  private readonly aiProvider: MarketPositionAiProvider;
+  private readonly pendingGenerations = new Map<string, Promise<MarketPositionView>>();
+  private readonly pendingInputHashes = new Map<string, string>();
 
   constructor(private readonly db: SqliteDatabase, deps: MarketPositionServiceDeps = {}) {
     this.repo = new MarketPositionRepository(db);
@@ -58,6 +77,7 @@ export class MarketPositionService {
     this.capabilityBaselines = new CapabilityBaselineRepository(db);
     this.now = deps.now ?? Date.now;
     this.createId = deps.createId ?? nanoid;
+    this.aiProvider = deps.aiProvider ?? deepSeekMarketPositionProvider;
   }
 
   getView(): MarketPositionView {
@@ -67,8 +87,67 @@ export class MarketPositionService {
       activeVersion: state.activeVersionId === null
         ? null
         : state.versions.find(({ id }) => id === state.activeVersionId) ?? null,
-      llmConfigured: false,
+      llmConfigured: this.aiProvider.isConfigured(),
     });
+  }
+
+  /**
+   * AI 生成市场位置提案：服务端重新读取 G1/G2/G3 正式数据并计算 inputHash，
+   * 与前端 expectedInputHash 不一致时视为输入已过期；同一 inputHash 已存在
+   * 未处理提案时直接返回既有提案，不重新调用模型，避免重复计费。
+   */
+  generateProposal(input: unknown, signal?: AbortSignal): Promise<MarketPositionView> {
+    const parsed = MarketPositionGenerateProposalRequestSchema.safeParse(input);
+    if (!parsed.success) return Promise.reject(invalidMarketPositionInput(parsed.error));
+    const requestHash = sha256RequestHash(parsed.data);
+    const existingReceipt = this.findReceipt(parsed.data.idempotencyKey, requestHash);
+    if (existingReceipt !== null) return Promise.resolve(this.getView());
+    const state = this.requireState(parsed.data.expectedStateVersion);
+    if (!this.aiProvider.isConfigured()) {
+      return Promise.reject(new MarketPositionError(
+        503, 'MARKET_POSITION_AI_UNAVAILABLE', 'AI 服务尚未配置，可改用手工建立市场位置提案',
+      ));
+    }
+    const snapshot = this.buildFreshSnapshot();
+    if (
+      parsed.data.expectedInputHash !== undefined
+      && parsed.data.expectedInputHash !== null
+      && parsed.data.expectedInputHash !== snapshot.inputHash
+    ) {
+      return Promise.reject(new MarketPositionError(
+        409, 'MARKET_POSITION_INPUT_STALE', '正式输入数据已发生变化，请刷新后重新生成',
+      ));
+    }
+    const existingOpenProposal = state.proposals.find((proposal) => (
+      proposal.status === 'proposed'
+      && proposal.generatedBy === 'ai'
+      && proposal.inputSnapshot.inputHash === snapshot.inputHash
+    ));
+    if (existingOpenProposal !== undefined) {
+      return Promise.reject(new MarketPositionError(
+        409, 'MARKET_POSITION_PROPOSAL_ALREADY_EXISTS', '相同输入已有待审核的 AI 生成提案', {
+          proposalId: existingOpenProposal.id,
+        },
+      ));
+    }
+    const pendingInputKey = `${snapshot.inputHash}:${this.aiProvider.modelName()}`;
+    const pendingIdempotency = this.pendingInputHashes.get(pendingInputKey);
+    if (pendingIdempotency !== undefined && pendingIdempotency !== parsed.data.idempotencyKey) {
+      return Promise.reject(new MarketPositionError(
+        409, 'MARKET_POSITION_PROPOSAL_ALREADY_EXISTS', '相同输入正在生成 AI 提案，请稍候',
+      ));
+    }
+    const sameRequest = this.pendingGenerations.get(parsed.data.idempotencyKey);
+    if (sameRequest !== undefined) return sameRequest;
+
+    const promise = this.finishAiGeneration(parsed.data, snapshot, signal)
+      .finally(() => {
+        this.pendingGenerations.delete(parsed.data.idempotencyKey);
+        this.pendingInputHashes.delete(pendingInputKey);
+      });
+    this.pendingGenerations.set(parsed.data.idempotencyKey, promise);
+    this.pendingInputHashes.set(pendingInputKey, parsed.data.idempotencyKey);
+    return promise;
   }
 
   createManualProposal(input: unknown): MarketPositionView {
@@ -78,7 +157,7 @@ export class MarketPositionService {
     if (this.findReceipt(parsed.data.idempotencyKey, requestHash) !== null) return this.getView();
     const current = this.requireState(parsed.data.expectedStateVersion);
     this.assertEffectiveChange(current, parsed.data.payload);
-    const proposal = this.makeProposal(parsed.data.payload, 'manual', parsed.data.expectedStateVersion);
+    const proposal = this.makeProposal(parsed.data.payload, 'manual', null, parsed.data.expectedStateVersion);
     return this.commit(parsed.data.expectedStateVersion, (state) => ({
       ...state,
       stateVersion: state.stateVersion + 1,
@@ -171,6 +250,13 @@ export class MarketPositionService {
    * 构建可供手工填写提案时参考的最新输入快照（不生成任何文案，只提供计数与来源 id）。
    */
   buildCurrentInputSnapshot(): ReturnType<typeof buildMarketPositionInputSnapshot> {
+    return this.buildFreshSnapshot();
+  }
+
+  /**
+   * 服务端自行重新读取 G1/G2/G3 正式数据构建输入快照，绝不信任前端传入的计数或结论。
+   */
+  private buildFreshSnapshot(): MarketPositionInputSnapshotResult {
     const profile = this.profiles.get();
     const jobMatchState = profile?.jobMatchProfile;
     const jobMatchProfileVersionId = jobMatchState?.activeVersionId ?? null;
@@ -184,6 +270,54 @@ export class MarketPositionService {
       capabilityBaselineVersionId,
       acceptedEvidenceIds,
     }, { now: this.now });
+  }
+
+  private async finishAiGeneration(
+    command: { idempotencyKey: string; expectedStateVersion: number },
+    snapshot: MarketPositionInputSnapshotResult,
+    signal?: AbortSignal,
+  ): Promise<MarketPositionView> {
+    const facts = buildMarketPositionAiFactsSnapshot(snapshot);
+    const result = await this.aiProvider.generate(facts, signal);
+    if (signal?.aborted) throw new DOMException('市场位置提案生成已取消', 'AbortError');
+
+    const latestSnapshot = this.buildFreshSnapshot();
+    if (latestSnapshot.inputHash !== snapshot.inputHash) {
+      throw new MarketPositionError(409, 'MARKET_POSITION_INPUT_STALE', '生成期间正式输入数据已发生变化，请重新生成');
+    }
+
+    const parsedOutput = parseMarketPositionAiOutput(result.rawText, snapshot.acceptedEvidenceIds);
+    if ('error' in parsedOutput) {
+      throw new MarketPositionError(422, 'MARKET_POSITION_AI_OUTPUT_INVALID', 'AI 生成的市场位置文案未通过安全校验', {
+        reason: parsedOutput.error,
+      });
+    }
+
+    const deterministicDraft = buildDeterministicMarketPositionDraft(snapshot, {
+      jobMatchProfileVersionId: snapshot.jobMatchProfileVersionId,
+      capabilityBaselineVersionId: snapshot.capabilityBaselineVersionId,
+      funnelCutoffAt: snapshot.funnelCutoffAt,
+    }, snapshot.capturedAt);
+    const mergedDraft = mergeAiNarrativeIntoDraft(deterministicDraft, parsedOutput.data);
+
+    const aiGeneration: MarketPositionAiGenerationMetadata = {
+      provider: 'deepseek',
+      model: result.model,
+      generatedAt: this.now(),
+      inputHash: snapshot.inputHash,
+      promptVersion: MARKET_POSITION_PROMPT_VERSION,
+      deterministicRuleVersion: DETERMINISTIC_RULE_VERSION,
+    };
+    const proposal = this.makeProposal(mergedDraft, 'ai', aiGeneration, command.expectedStateVersion, snapshot);
+    const requestHash = sha256RequestHash(command);
+    return this.commit(command.expectedStateVersion, (state) => ({
+      ...state,
+      stateVersion: state.stateVersion + 1,
+      proposals: [...state.proposals, proposal],
+      commandReceipts: [...state.commandReceipts, this.receipt(
+        command.idempotencyKey, 'generate_proposal', null, proposal.id, requestHash,
+      )],
+    }));
   }
 
   private simpleDecision(
@@ -234,21 +368,13 @@ export class MarketPositionService {
   private makeProposal(
     payload: MarketPositionDraft,
     generatedBy: 'ai' | 'manual',
+    aiGeneration: MarketPositionAiGenerationMetadata | null,
     expectedStateVersion: number,
+    prebuiltSnapshot?: MarketPositionInputSnapshotResult,
   ): MarketPositionProposal {
     const checked = MarketPositionDraftSchema.safeParse(payload);
     if (!checked.success) throw invalidMarketPositionInput(checked.error);
-    const profile = this.profiles.get();
-    const jobMatchState = profile?.jobMatchProfile;
-    const capabilityState = this.capabilityBaselines.getState();
-    const acceptedEvidenceIds = capabilityState.evidence
-      .filter((item) => item.status === 'accepted' || item.status === 'modified_and_accepted')
-      .map((item) => item.id);
-    const snapshotResult = buildMarketPositionInputSnapshot(this.db, {
-      jobMatchProfileVersionId: jobMatchState?.activeVersionId ?? null,
-      capabilityBaselineVersionId: capabilityState.activeVersionId,
-      acceptedEvidenceIds,
-    }, { now: this.now });
+    const snapshotResult = prebuiltSnapshot ?? this.buildFreshSnapshot();
     return {
       id: this.createId(),
       status: 'proposed',
@@ -265,7 +391,8 @@ export class MarketPositionService {
         capturedAt: snapshotResult.capturedAt,
       },
       generatedBy,
-      modelInfo: null,
+      modelInfo: aiGeneration?.model ?? null,
+      aiGeneration,
       createdAt: this.now(),
       decidedAt: null,
       decisionNote: null,

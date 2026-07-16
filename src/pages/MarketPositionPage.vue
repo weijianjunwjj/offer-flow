@@ -4,6 +4,7 @@ import {
   NAlert, NButton, NCard, NCollapse, NCollapseItem, NEmpty, NList, NListItem,
   NModal, NSpace, NSpin, NTabPane, NTabs, NTag, NText, NTimeline, NTimelineItem,
 } from 'naive-ui';
+import { ApiError } from '../api/client';
 import { marketPositionApi } from '../api/marketPositionApi';
 import {
   createEmptyMarketPositionDraft,
@@ -29,9 +30,11 @@ type DraftEditorMode = { kind: 'manual' } | { kind: 'modify'; proposalId: string
 const view = ref<MarketPositionView | null>(null);
 const loading = ref(true);
 const busy = ref(false);
+const generating = ref(false);
 const errorText = ref('');
 const notice = ref('');
 const activeTab = ref<'overview' | MarketPositionCityCode | 'review' | 'versions'>('overview');
+const highlightedProposalId = ref<string | null>(null);
 
 const draftEditorMode = ref<DraftEditorMode | null>(null);
 const draftSeed = ref<MarketPositionDraft>(createEmptyMarketPositionDraft());
@@ -70,6 +73,18 @@ function formatTime(value: number): string {
 function expectedVersion(): number {
   return state.value?.stateVersion ?? 0;
 }
+function describeError(error: unknown): string {
+  if (error instanceof ApiError) {
+    const code = (error.body as { code?: string } | undefined)?.code;
+    if (code === 'MARKET_POSITION_AI_UNAVAILABLE') return 'AI 服务尚未配置或暂不可用，可改用手工建立市场位置提案';
+    if (code === 'MARKET_POSITION_AI_OUTPUT_INVALID') return 'AI 未能生成符合安全约束的文案，可重试或改用手工建立市场位置提案';
+    if (code === 'MARKET_POSITION_AI_EVIDENCE_REFERENCE_INVALID') return 'AI 引用了无效证据，已阻止生成，可重试或改用手工建立市场位置提案';
+    if (code === 'MARKET_POSITION_INPUT_STALE') return '正式输入数据已发生变化，请刷新后重新生成';
+    if (code === 'MARKET_POSITION_PROPOSAL_ALREADY_EXISTS') return '相同输入已有待审核的 AI 生成提案，请先处理该提案';
+    return error.message;
+  }
+  return '操作失败，请稍后重试';
+}
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -77,7 +92,7 @@ async function load(): Promise<void> {
   try {
     view.value = await marketPositionApi.get();
   } catch (error) {
-    errorText.value = (error as Error).message;
+    errorText.value = describeError(error);
   } finally {
     loading.value = false;
   }
@@ -92,10 +107,31 @@ async function run(action: () => Promise<MarketPositionView>, success: string): 
     notice.value = success;
     return true;
   } catch (error) {
-    errorText.value = (error as Error).message;
+    errorText.value = describeError(error);
     return false;
   } finally {
     busy.value = false;
+  }
+}
+
+async function generateProposal(): Promise<void> {
+  if (generating.value || busy.value) return;
+  generating.value = true;
+  errorText.value = '';
+  notice.value = '';
+  try {
+    const before = new Set((state.value?.proposals ?? []).map((p) => p.id));
+    view.value = await marketPositionApi.generateProposal({
+      idempotencyKey: newKey(), expectedStateVersion: expectedVersion(),
+    });
+    notice.value = '已生成待审核的 AI 市场位置提案，请审核后确认';
+    const created = (state.value?.proposals ?? []).find((p) => !before.has(p.id) && p.generatedBy === 'ai');
+    highlightedProposalId.value = created?.id ?? null;
+    activeTab.value = 'review';
+  } catch (error) {
+    errorText.value = describeError(error);
+  } finally {
+    generating.value = false;
   }
 }
 
@@ -174,11 +210,26 @@ onMounted(load);
           本页不做自动决策、不自动降薪、不放弃方向、不触发搬迁；证据不足时会明确标注，绝不虚构市场结论。
         </p>
       </div>
-      <n-space>
-        <n-button :loading="busy" :disabled="loading" data-testid="mp-manual-draft" @click="openManualDraft">手工建立市场位置提案</n-button>
+      <n-space vertical align="end">
+        <n-space>
+          <n-button
+            type="primary"
+            :loading="generating"
+            :disabled="loading || busy"
+            data-testid="mp-ai-generate"
+            @click="generateProposal"
+          >AI 生成市场位置提案</n-button>
+          <n-button :loading="busy" :disabled="loading || generating" data-testid="mp-manual-draft" @click="openManualDraft">手工建立市场位置提案</n-button>
+        </n-space>
+        <n-text depth="3" style="max-width: 420px; text-align: right; font-size: 12px" data-testid="mp-ai-disclosure">
+          系统将基于 G1 岗位画像、G2 能力基线和 G3 正式市场反馈生成待审核提案，不会自动成为正式结论。
+        </n-text>
       </n-space>
     </header>
 
+    <n-alert v-if="!loading && !view?.llmConfigured" type="warning" class="block" data-testid="mp-ai-not-configured">
+      当前环境未配置 AI 服务，AI 生成按钮仍可点击，但会提示不可用；可改用手工建立市场位置提案。
+    </n-alert>
     <n-alert v-if="errorText" type="error" closable class="block" data-testid="mp-error" @close="errorText = ''">{{ errorText }}</n-alert>
     <n-alert v-if="notice" type="success" closable class="block" data-testid="mp-notice" @close="notice = ''">{{ notice }}</n-alert>
 
@@ -246,12 +297,59 @@ onMounted(load);
           <n-card title="待审核市场位置提案" size="small" data-testid="mp-review">
             <n-empty v-if="pendingProposals.length === 0" description="暂无待审核提案" />
             <n-list v-else>
-              <n-list-item v-for="proposal in pendingProposals" :key="proposal.id" :data-testid="`mp-proposal-${proposal.id}`">
+              <n-list-item
+                v-for="proposal in pendingProposals"
+                :key="proposal.id"
+                :data-testid="`mp-proposal-${proposal.id}`"
+                :class="{ 'mp-proposal-highlight': proposal.id === highlightedProposalId }"
+              >
                 <n-space vertical size="small" style="width: 100%">
                   <div>
-                    <strong>{{ proposal.payload.global.headline }}</strong>
-                    <div><n-text depth="3">{{ proposal.generatedBy === 'ai' ? 'AI 生成' : '手工建立' }} · {{ formatTime(proposal.createdAt) }}</n-text></div>
+                    <n-space align="center" size="small">
+                      <n-tag :type="proposal.generatedBy === 'ai' ? 'info' : 'default'" data-testid="mp-proposal-source">
+                        {{ proposal.generatedBy === 'ai' ? 'AI 生成' : '手工建立' }}
+                      </n-tag>
+                      <strong>{{ proposal.payload.global.headline }}</strong>
+                    </n-space>
+                    <div><n-text depth="3">{{ formatTime(proposal.createdAt) }}</n-text></div>
                   </div>
+
+                  <n-card v-if="proposal.aiGeneration" size="small" embedded data-testid="mp-proposal-ai-meta">
+                    <n-space vertical size="small">
+                      <n-text depth="3">生成时间：{{ formatTime(proposal.aiGeneration.generatedAt) }}</n-text>
+                      <n-text depth="3">
+                        输入依据：G1 岗位画像 {{ proposal.inputSnapshot.jobMatchProfileVersionId ?? '无' }}
+                        · G2 能力基线 {{ proposal.inputSnapshot.capabilityBaselineVersionId ?? '无' }}
+                        · G3 数据截止 {{ formatTime(proposal.inputSnapshot.funnelCutoffAt) }}
+                      </n-text>
+                    </n-space>
+                  </n-card>
+
+                  <n-card size="small" embedded :data-testid="`mp-proposal-detail-${proposal.id}`">
+                    <n-space vertical size="small">
+                      <n-space justify="space-between" align="center">
+                        <n-text depth="3">全局证据等级（系统计算，AI 不可更改）</n-text>
+                        <n-tag :type="evidenceLevelTagType[proposal.payload.global.evidenceSufficiency.evidenceLevel]">
+                          {{ MARKET_POSITION_EVIDENCE_LEVEL_LABELS[proposal.payload.global.evidenceSufficiency.evidenceLevel] }}
+                        </n-tag>
+                      </n-space>
+                      <n-text class="ai-narrative" depth="1">{{ proposal.payload.global.positioning }}</n-text>
+                      <n-text depth="3">允许结论：{{ proposal.payload.global.evidenceSufficiency.allowedClaims.join('；') || '暂无' }}</n-text>
+                      <n-text depth="3">禁止结论：{{ proposal.payload.global.evidenceSufficiency.blockedClaims.join('；') || '暂无' }}</n-text>
+                      <n-text v-if="proposal.payload.global.uncertainties.length" depth="3">
+                        不确定性：{{ proposal.payload.global.uncertainties.join('；') }}
+                      </n-text>
+                      <n-space>
+                        <n-tag
+                          v-for="gate in proposal.payload.global.decisionGates"
+                          :key="gate.gateType"
+                          size="small"
+                          :type="gateStatusTagType[gate.status]"
+                        >{{ DECISION_GATE_TYPE_LABELS[gate.gateType] }}：{{ DECISION_GATE_STATUS_LABELS[gate.status] }}</n-tag>
+                      </n-space>
+                    </n-space>
+                  </n-card>
+
                   <n-space>
                     <n-button type="primary" size="small" :loading="busy" data-testid="mp-prop-accept" @click="acceptProposal(proposal)">接受并激活</n-button>
                     <n-button size="small" :loading="busy" data-testid="mp-prop-modify" @click="openModifyProposal(proposal)">修改后接受</n-button>
@@ -331,6 +429,8 @@ onMounted(load);
 .block { margin-top: 16px; }
 .status-card { box-shadow: var(--of-shadow, 0 12px 30px -24px #0f172a); }
 .status-title { margin: 5px 0; font-size: 20px; font-weight: 700; }
+.ai-narrative { display: block; font-style: italic; }
+.mp-proposal-highlight { outline: 2px solid var(--of-brand, #2563eb); border-radius: 8px; }
 pre { white-space: pre-wrap; color: var(--of-ink-2, #475569); }
 @media (max-width: 860px) { .hero { align-items: flex-start; flex-direction: column; } }
 </style>

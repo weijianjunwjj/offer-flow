@@ -156,6 +156,15 @@ const inputSnapshotSchema = z.strictObject({
   capturedAt: z.number().int().nonnegative(),
 });
 
+const aiGenerationMetadataSchema = z.strictObject({
+  provider: nonBlank,
+  model: nonBlank,
+  generatedAt: z.number().int().nonnegative(),
+  inputHash: hashHex64,
+  promptVersion: nonBlank,
+  deterministicRuleVersion: nonBlank,
+});
+
 export const MarketPositionProposalSchema: z.ZodType<MarketPositionProposal> = z.strictObject({
   id: nonBlank,
   status: z.enum(['proposed', 'accepted', 'modified_and_accepted', 'rejected', 'deferred']),
@@ -165,6 +174,7 @@ export const MarketPositionProposalSchema: z.ZodType<MarketPositionProposal> = z
   inputSnapshot: inputSnapshotSchema,
   generatedBy: z.enum(['ai', 'manual']),
   modelInfo: nonBlank.nullable(),
+  aiGeneration: aiGenerationMetadataSchema.nullable(),
   createdAt: z.number().int().nonnegative(),
   decidedAt: z.number().int().nonnegative().nullable(),
   decisionNote: z.string().nullable(),
@@ -237,4 +247,13 @@ export const MarketPositionAcceptRequestSchema = MarketPositionDecisionRequestSc
 
 export const MarketPositionActivateRequestSchema = MarketPositionCommandBaseSchema.extend({
   confirmed: z.literal(true),
+});
+
+/**
+ * expectedInputHash 只是前端"我看到的输入快照"确认信息，服务端仍会重新读取 G1/G2/G3
+ * 正式数据自行计算 inputHash，绝不信任前端传入的计数或结论；两者不一致时判定为
+ * MARKET_POSITION_INPUT_STALE，要求前端刷新后重新发起。
+ */
+export const MarketPositionGenerateProposalRequestSchema = MarketPositionCommandBaseSchema.extend({
+  expectedInputHash: hashHex64.nullable().optional(),
 });

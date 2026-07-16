@@ -144,6 +144,15 @@ export interface MarketPositionInputSnapshot {
   capturedAt: number;
 }
 
+export interface MarketPositionAiGenerationMetadata {
+  provider: string;
+  model: string;
+  generatedAt: number;
+  inputHash: string;
+  promptVersion: string;
+  deterministicRuleVersion: string;
+}
+
 export interface MarketPositionProposal {
   id: string;
   status: MarketPositionProposalStatus;
@@ -153,6 +162,7 @@ export interface MarketPositionProposal {
   inputSnapshot: MarketPositionInputSnapshot;
   generatedBy: 'ai' | 'manual';
   modelInfo: string | null;
+  aiGeneration: MarketPositionAiGenerationMetadata | null;
   createdAt: number;
   decidedAt: number | null;
   decisionNote: string | null;

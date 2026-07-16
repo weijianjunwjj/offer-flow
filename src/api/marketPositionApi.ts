@@ -45,6 +45,12 @@ export const marketPositionApi = {
   ): Promise<MarketPositionView> {
     return checked(await apiSend(`${base}/proposals/manual`, 'POST', input, options));
   },
+  async generateProposal(
+    input: MarketPositionCommandRequest & { expectedInputHash?: string | null },
+    options?: SendOptions,
+  ): Promise<MarketPositionView> {
+    return checked(await apiSend(`${base}/proposals/generate`, 'POST', input, options));
+  },
   async acceptProposal(
     id: string,
     input: MarketPositionCommandRequest & { decisionNote?: string | null; modifiedPayload?: MarketPositionDraft },

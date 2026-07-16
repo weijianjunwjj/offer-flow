@@ -26,6 +26,17 @@ export function registerMarketPositionRoutes(
 
     scoped.get('/market-position', async () => service.getView());
     scoped.get('/market-position/input-snapshot', async () => service.buildCurrentInputSnapshot());
+    scoped.post('/market-position/proposals/generate', async (request) => {
+      const controller = new AbortController();
+      const socket = request.raw.socket;
+      const abortOnDisconnect = (): void => controller.abort();
+      socket.once('close', abortOnDisconnect);
+      try {
+        return await service.generateProposal(request.body, controller.signal);
+      } finally {
+        socket.off('close', abortOnDisconnect);
+      }
+    });
     scoped.post('/market-position/proposals/manual', async (request) => (
       service.createManualProposal(request.body)
     ));

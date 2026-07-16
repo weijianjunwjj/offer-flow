@@ -9,11 +9,16 @@ export type MarketPositionErrorCode =
   | 'INVALID_MARKET_POSITION_INPUT'
   | 'ACTIVE_VERSION_NOT_FOUND'
   | 'NO_EFFECTIVE_CHANGE'
-  | 'IDEMPOTENCY_KEY_REUSED';
+  | 'IDEMPOTENCY_KEY_REUSED'
+  | 'MARKET_POSITION_AI_UNAVAILABLE'
+  | 'MARKET_POSITION_AI_OUTPUT_INVALID'
+  | 'MARKET_POSITION_AI_EVIDENCE_REFERENCE_INVALID'
+  | 'MARKET_POSITION_INPUT_STALE'
+  | 'MARKET_POSITION_PROPOSAL_ALREADY_EXISTS';
 
 export class MarketPositionError extends Error {
   constructor(
-    readonly statusCode: 404 | 409 | 422,
+    readonly statusCode: 404 | 409 | 422 | 503,
     readonly code: MarketPositionErrorCode,
     message: string,
     readonly details: Record<string, unknown> = {},
