@@ -3,7 +3,7 @@
 - 日期：2026-07-14
 - 上位契约：`docs/product/offerflow-v0.7-release-contract.md`
 - 产品事实源：`docs/prd/offerflow-v0.7.md`
-- 当前结论：v0.7 产品实施中，禁止发布；G1–G5 均已经用户验收，下一阶段 G6（v0.7 最终验收、生产切换与发布裁决）尚未开始
+- 当前结论：v0.7 产品实施中，禁止发布；G1–G5 均已经用户验收；G6-A（发布准备与生产迁移演练）已于 2026-07-16 完成、等待用户裁决；G6-B（真实生产切换）尚未开始
 
 本矩阵用于证明“PRD 条款 → 用户产品结果 → 工程证据”的闭环。B0–B8 只映射可信求职记忆底座及其工程安全性；表中存在一个实现阶段或测试结果，不代表对应用户价值已经交付。
 
@@ -23,7 +23,7 @@
 | §6.2、§9 | 证据充分性与高影响结论门禁 | EvidenceSufficiency / DecisionGate | 市场位置画像充分性标注与决策门 | `server/market-position` | evidenceLevel 三档、7 类 DecisionGate、abandon_direction/relocation_decision 永不 decision_ready；AI 生成路径不可篡改上述计算结果（结构化输出校验+服务端重新合并） | G4 沙箱截图（归档留待 G6） | G4 | 已实现，已用户验收（2026-07-16，隔离沙箱 schema v5；截图归档留待 G6） |
 | §12 | 可接受/修改/拒绝/稍后处理的提案审核 | Proposal Review | 求职策略（提案审核、版本历史） | `server/strategy-window` | 五态决议、幂等复用、stale 失效、窗口到期不可接受、edit-and-accept 重校验门禁、AI overlay 结构化输出守卫 | G5 沙箱浏览器验收（AI 生成→接受激活→正式 V1；截图归档留待 G6） | G5 | 已实现，已用户验收（2026-07-16，隔离沙箱 schema v6） |
 | §5.3、§13 | 7–14 天阶段策略 | StrategyWindow | 求职策略（当前窗口、三类边界、策略总览、行动清单、实验计划） | `server/strategy-window` | 三档窗口映射、DecisionGate→动作门禁、分配比例合计 100、可逆性、单变量实验、无证据城市探索性、AI 不可篡改窗口/门禁/计数/inputHash | G5 沙箱浏览器验收（证据收集窗口、三类边界、行动清单、实验计划、版本历史；截图归档留待 G6） | G5 | 已实现，已用户验收（2026-07-16，隔离沙箱 schema v6） |
-| §22、§25、§27、§29 | 产品级最终验收与发布 | Release evidence | 全部产品页 | 全部正式 API | 全量 Gate + 产品 Eval | 发布截图包与验收记录 | R5 | 未实现 |
+| §22、§25、§27、§29 | 产品级最终验收与发布 | Release evidence | 全部产品页 | 全部正式 API | 全量 Gate + 产品 Eval；G6-A 迁移/晋升/回滚演练 | 最终验收矩阵、Snapshot 裁决、切换/回滚手册、演练报告（真实库未改） | G6 | G6-A 完成待用户裁决；G6-B 真实切换尚未开始 |
 
 ## 2. B0–B8 边界映射
 
