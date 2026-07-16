@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiGet } from './client';
+import { ApiError, ApiNetworkError, apiGet } from './client';
 
 describe('可取消读取 API', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -24,6 +24,11 @@ describe('可取消读取 API', () => {
   it('非 2xx 仍产生 ApiError，旧调用无需 options', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('missing', { status: 404 })));
     await expect(apiGet('/jobs/missing')).rejects.toMatchObject({ status: 404 } satisfies Partial<ApiError>);
+  });
+
+  it('连接被拒绝（fetch 抛出 TypeError）时包装为 ApiNetworkError', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    await expect(apiGet('/health')).rejects.toBeInstanceOf(ApiNetworkError);
   });
 
   it('保留结构化错误体供领域适配器按 code 决策', async () => {

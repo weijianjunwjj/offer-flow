@@ -14,6 +14,12 @@ export class ApiError extends Error {
   }
 }
 
+export class ApiNetworkError extends Error {
+  constructor(readonly originalError: unknown) {
+    super('Network request failed');
+  }
+}
+
 export interface ReadOptions {
   signal?: AbortSignal;
 }
@@ -41,7 +47,15 @@ export async function apiSend<T>(
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(buildApiUrl(path), init);
+  let response: Response;
+  try {
+    response = await fetch(buildApiUrl(path), init);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error;
+    }
+    throw new ApiNetworkError(error);
+  }
   if (!response.ok) {
     const responseText = await response.text();
     let body: unknown;

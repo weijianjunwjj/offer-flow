@@ -4,8 +4,9 @@ import {
   NAlert, NButton, NCard, NCollapse, NCollapseItem, NEmpty, NList, NListItem,
   NModal, NSpace, NSpin, NTabPane, NTabs, NTag, NText, NTimeline, NTimelineItem,
 } from 'naive-ui';
-import { ApiError } from '../api/client';
+import { ApiError, ApiNetworkError } from '../api/client';
 import { marketPositionApi } from '../api/marketPositionApi';
+import { features } from '../config/features';
 import {
   createEmptyMarketPositionDraft,
   cloneMarketPositionDraft,
@@ -74,6 +75,12 @@ function expectedVersion(): number {
   return state.value?.stateVersion ?? 0;
 }
 function describeError(error: unknown): string {
+  if (error instanceof ApiNetworkError) {
+    if (features.g4SandboxEnabled) {
+      return 'G4 隔离环境后端未启动或已退出，请重新启动 dev:g4-sandbox。';
+    }
+    return '网络请求失败，请检查后端服务是否可用';
+  }
   if (error instanceof ApiError) {
     const code = (error.body as { code?: string } | undefined)?.code;
     if (code === 'MARKET_POSITION_AI_UNAVAILABLE') return 'AI 服务尚未配置或暂不可用，可改用手工建立市场位置提案';

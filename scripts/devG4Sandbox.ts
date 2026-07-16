@@ -42,28 +42,50 @@ async function main(): Promise<void> {
 
   let closing = false;
   let vite: ViteDevServer | null = null;
-  const closeAndExit = (signal: NodeJS.Signals): void => {
+  const teardown = (exitCode: number): void => {
     if (closing) return;
     closing = true;
     Promise.resolve()
       .then(() => vite?.close())
       .then(() => app.close())
       .then(() => {
-        process.exit(signal === 'SIGINT' ? 130 : 143);
+        process.exit(exitCode);
       })
       .catch((error: unknown) => {
         console.error(error);
         process.exit(1);
       });
   };
-  process.once('SIGINT', () => closeAndExit('SIGINT'));
-  process.once('SIGTERM', () => closeAndExit('SIGTERM'));
+  process.once('SIGINT', () => teardown(130));
+  process.once('SIGTERM', () => teardown(143));
 
-  const apiUrl = await app.listen({ host: DEV_HOST, port: DEV_API_PORT });
+  let apiUrl: string;
+  try {
+    apiUrl = await app.listen({ host: DEV_HOST, port: DEV_API_PORT });
+  } catch (error) {
+    console.error('[G4 沙箱验收] 后端 API 启动失败，前端不会启动：', error);
+    throw error;
+  }
   console.log(`[G4 沙箱验收] API: ${apiUrl}`);
+  app.server.on('close', () => {
+    if (closing) return;
+    console.error('[G4 沙箱验收] 后端进程意外退出，正在关闭前端 Vite 并终止整个沙箱进程...');
+    teardown(1);
+  });
 
-  vite = await createViteServer(g4SandboxViteConfig(apiUrl));
-  await vite.listen();
+  try {
+    vite = await createViteServer(g4SandboxViteConfig(apiUrl));
+    await vite.listen();
+  } catch (error) {
+    console.error('[G4 沙箱验收] 前端 Vite 启动失败，正在关闭后端 API...', error);
+    await app.close();
+    throw error;
+  }
+  vite.httpServer?.on('close', () => {
+    if (closing) return;
+    console.error('[G4 沙箱验收] 前端 Vite 意外退出，正在关闭后端 API 并终止整个沙箱进程...');
+    teardown(1);
+  });
   console.log(`[G4 沙箱验收] Web: http://${DEV_HOST}:${DEV_WEB_PORT}/#/market-position`);
   console.log('[G4 沙箱验收] 页面顶部会显示隔离验收环境横幅；所有提案/版本写入只影响沙箱副本。');
 }

@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter, type Router } from 'vue-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '../api/client';
+import { ApiError, ApiNetworkError } from '../api/client';
 import type {
   MarketPositionAiGenerationMetadata,
   MarketPositionProposal,
@@ -22,6 +22,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../api/marketPositionApi', () => ({ marketPositionApi: mocks }));
+
+const featuresMock = vi.hoisted(() => ({ features: { g4SandboxEnabled: false } }));
+vi.mock('../config/features', () => featuresMock);
 
 function version(id: string, proposalId: string): MarketPositionVersion {
   const draft = makeMarketPositionDraftFixture();
@@ -338,6 +341,28 @@ describe('MarketPositionPage · AI 生成市场位置提案', () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="mp-error"]').text()).toContain('刷新后重新生成');
     wrapper.unmount();
+  });
+
+  it('后端连接被拒绝（非 G4 沙箱）：展示通用网络错误提示', async () => {
+    mocks.get.mockResolvedValue(emptyView());
+    mocks.generateProposal.mockRejectedValue(new ApiNetworkError(new TypeError('Failed to fetch')));
+    const { wrapper } = await mountPage();
+    await wrapper.find('[data-testid="mp-ai-generate"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="mp-error"]').text()).toContain('网络请求失败');
+    wrapper.unmount();
+  });
+
+  it('后端连接被拒绝（G4 沙箱）：提示重新启动 dev:g4-sandbox', async () => {
+    featuresMock.features.g4SandboxEnabled = true;
+    mocks.get.mockResolvedValue(emptyView());
+    mocks.generateProposal.mockRejectedValue(new ApiNetworkError(new TypeError('Failed to fetch')));
+    const { wrapper } = await mountPage();
+    await wrapper.find('[data-testid="mp-ai-generate"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="mp-error"]').text()).toContain('G4 隔离环境后端未启动或已退出，请重新启动 dev:g4-sandbox。');
+    wrapper.unmount();
+    featuresMock.features.g4SandboxEnabled = false;
   });
 
   it('相同输入已有待审核提案：自动打开提案审核并高亮既有提案', async () => {
