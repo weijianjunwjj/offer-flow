@@ -1,7 +1,7 @@
 # OfferFlow v0.7 Snapshot 契约发布裁决材料
 
 - 日期：2026-07-16
-- 状态：**用户已于 2026-07-16 裁决采用方案 B 并在 G6-B 落实**（旧 Snapshot 对 schema>2 明确拒绝发布，未修改 `SNAPSHOT_SCHEMA_VERSION`/导出结构；正式恢复机制为 G6-B 的 pre-cutover schema v4 备份与 post-cutover schema v6 一致性备份）
+- 状态：**方案 B 已于 2026-07-16 正式采用并随 G6 最终验收封板**（用户裁决采用方案 B 并在 G6-B 落实；旧 Snapshot 对 schema>2 明确拒绝发布，未修改 `SNAPSHOT_SCHEMA_VERSION`/导出结构；正式恢复机制为 G6-B 的 pre-cutover schema v4 备份与 post-cutover schema v6 一致性备份，均已验证）
 - 现状：Snapshot 契约（`server/sync/exportSnapshot.ts`、`SNAPSHOT_SCHEMA_VERSION`）仍为 Job Memory v2 设计，只支持 database schema 2；真实库当前 schema v4（G6-B 后为 v6），导出会被直接拒绝。
 - 硬约束：**禁止简单提高 `SNAPSHOT_SCHEMA_VERSION` 冒充兼容。** 本轮未修改任何 Snapshot 代码、版本常量或导出结构。
 

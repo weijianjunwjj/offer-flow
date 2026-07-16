@@ -49,3 +49,7 @@
 - 只读 verifier：schema=6、G1~G5 可读、G5 窗口=证据收集窗口、verifierBusinessWrites=0、DB hash 不变。
 - post 备份：`offerflow-schema-v6-post-cutover-2026-07-16T15-18-29-194Z.sqlite3`（schema=6，hashMatchesReal，作为新生产基线）。
 - 未发生失败，未触发回滚。未 push、未合并 main、未 Tag、未 Release。
+
+### 最终生产验收（2026-07-16）
+
+用户已在真实生产环境完成最终人工验收，反馈“测试过了没啥问题。”：G4 正式 V1、G5 求职策略（证据收集窗口/行动清单/实验计划/版本历史）、G1~G3 数据（岗位台账 15 条、漏斗 9 条）在真实环境均正常，页面无 sandbox/rehearsal 横幅。**G6 正式验收通过并封板，OfferFlow v0.7 产品与生产验收完成。** 详见 `docs/handoffs/offerflow-v0.7-final-acceptance-2026-07-16.md`。仍未授权 push / 合并 main / Tag / Release，App 版本仍 `0.6.2`。

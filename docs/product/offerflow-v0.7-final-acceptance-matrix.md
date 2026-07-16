@@ -64,10 +64,12 @@
 | 不存在自动降薪/迁移/辞职/放弃方向 | engineeringVerified | G5 门禁与禁止措辞守卫 |
 | AI 只在明确点击时调用 | engineeringVerified | 服务不在启动/测试中调用真实模型 |
 
-## 真实生产项（G6-B，2026-07-16 已执行）
+## 真实生产项（G6-B 已执行 + G6 用户最终验收，2026-07-16）
 
 | 验收点 | 状态 | 证据 |
 |---|---|---|
+| 用户最终生产验收 | userAccepted | 用户 2026-07-16 真实环境反馈“测试过了没啥问题。”（见 `offerflow-v0.7-final-acceptance-2026-07-16.md`） |
+| G1~G5 全链路（真实环境）用户确认 | userAccepted | 岗位台账 15 条、G4 正式 V1、G5 证据收集窗口/行动/实验/版本历史、漏斗 9 条、无 sandbox 横幅，均由用户在真实环境确认 |
 | 真实库 schema v6 | productionVerified | 升级后只读校验 schema=6、migrations=[1..6]、integrity=ok、fk=0 |
 | 真实库 v4→v6 受控升级 | productionVerified | `db:upgrade-real --confirm --expected-source-fingerprint cdc214c8`，fromVersion 4→toVersion 6，仅新增 v5/v6，core counts preserved |
 | G4/G5 正式版本晋升 | productionVerified | 晋升包导入：G4 `BCO_OHOKj4z4SZ7fkBaTC`、G5 `WBvQlz3yIigQ4o2bPv8Wj`、window `sw-069343080027d893`；generationMode=ai、decisionDiff 保留、G5→G4 引用正确；重复导入 alreadyApplied |
@@ -77,4 +79,6 @@
 | Job/Application/FeedbackEvent 非回归 | productionVerified | 升级/导入前后 jobs=15、applications=9、feedback_events=11，businessHash 不变 |
 | Snapshot 方案 B 落实 | productionVerified | schema>2 时旧 Snapshot 发布明确拒绝并给出方案 B 说明；未改 `SNAPSHOT_SCHEMA_VERSION`/导出结构 |
 
-仍**不得**标记为通过（未授权）：push 已授权 / main 已合并 / Tag 已创建 / Release 已发布 —— 用户明确不授权 push、合并 main、Tag、Release。G6 最终生产验收仍待用户在真实环境确认。
+**G6 已于 2026-07-16 经用户最终生产验收通过并封板**；OfferFlow v0.7 产品与生产验收完成。
+
+仍**不得**标记为完成（未授权）：`pushed` / `mergedToMain` / `tagCreated` / `releasePublished` —— 用户明确未授权 push、合并 main、Tag、Release；“验收完成”不等于“已发布”，每项发布动作须用户单独明确授权。

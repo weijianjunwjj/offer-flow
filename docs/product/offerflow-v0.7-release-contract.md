@@ -4,7 +4,7 @@
 - 日期：2026-07-14
 - 产品依据：`docs/prd/offerflow-v0.7.md`
 - 当前 App 版本：`0.6.2`
-- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency（含 AI 生成提案路径）已于 2026-07-16 在隔离沙箱中经用户正式验收；G5 StrategyWindow 与正式策略 Proposal Review 已于 2026-07-16 在隔离沙箱（schema v6）经用户正式验收并封板；G6-A（发布准备与生产迁移演练）已于 2026-07-16 完成；**G6-B（真实生产切换）已于 2026-07-16 经用户授权执行：真实数据库已从 schema v4 受控升级到 schema v6，G4/G5 正式版本晋升包已导入，正式生产入口已开放 G4 市场位置画像与 G5 求职策略，Snapshot 采用方案 B（一致性备份为恢复机制）**；G6 等待用户最终生产验收；App 版本仍 `0.6.2`，仍未授权 push、合并 main、Tag、Release；禁止发布**
+- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency（含 AI 生成提案路径）已于 2026-07-16 在隔离沙箱中经用户正式验收；G5 StrategyWindow 与正式策略 Proposal Review 已于 2026-07-16 在隔离沙箱（schema v6）经用户正式验收并封板；G6-A（发布准备与生产迁移演练）已于 2026-07-16 完成；G6-B（真实生产切换）已于 2026-07-16 执行（真实库 v4→v6、G4/G5 正式版本晋升、正式入口开放、Snapshot 方案 B）；**G6 已于 2026-07-16 经用户最终生产验收通过并封板（用户反馈“测试过了没啥问题。”），OfferFlow v0.7 产品与生产验收完成**；但“验收完成”不等于“已发布”——App 版本仍 `0.6.2`，push、合并 main、Tag、Release 均尚未授权，各自须用户单独明确授权**
 
 ## 1. 契约目的
 
