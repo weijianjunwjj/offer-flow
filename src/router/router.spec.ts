@@ -116,4 +116,28 @@ describe('OfferFlow Router', () => {
     await router.isReady();
     expect(router.currentRoute.value.name).toBe('market-position');
   });
+
+  it('求职策略（G5）默认关闭时深链接安全重定向到岗位台账', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      strategyWindowEnabled: false,
+    });
+    await router.push('/strategy-window');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('jobs');
+    expect(router.currentRoute.value.query.feature).toBe('strategy-window-disabled');
+    const disabledRecord = router.getRoutes().find((route) => route.path === '/strategy-window');
+    expect(disabledRecord?.components).toBeUndefined();
+    expect(disabledRecord?.redirect).toBeDefined();
+  });
+
+  it('显式开启时注册 /strategy-window（仅 G5 沙箱环境）', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      strategyWindowEnabled: true,
+    });
+    await router.push('/strategy-window');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('strategy-window');
+  });
 });

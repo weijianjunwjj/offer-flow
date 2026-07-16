@@ -12,6 +12,7 @@ import {
   runMigrations,
   SCHEMA_MIGRATIONS,
   type SchemaMigration,
+  STRATEGY_WINDOW_SCHEMA_VERSION,
 } from '../server/migrations';
 import { JOB_MEMORY_SCHEMA_V2_SQL } from '../server/migrations/jobMemorySchemaV2';
 import { initSchema } from '../server/schema';
@@ -362,9 +363,10 @@ function assertForeignKeyViolation(action: () => void): void {
 try {
   assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
   assert.equal(CURRENT_SCHEMA_VERSION, PRODUCTION_SCHEMA_VERSION);
-  // G2 能力基线新增 v3、G3 历史补录与漏斗新增 v4、G4 市场位置画像新增 v5；LATEST 与 PRODUCTION 有意区分。
-  assert.equal(LATEST_SCHEMA_VERSION, 5);
+  // G2 能力基线新增 v3、G3 历史补录与漏斗新增 v4、G4 市场位置画像新增 v5、G5 求职策略窗口新增 v6；LATEST 与 PRODUCTION 有意区分。
+  assert.equal(LATEST_SCHEMA_VERSION, 6);
   assert.equal(MARKET_POSITION_SCHEMA_VERSION, 5);
+  assert.equal(STRATEGY_WINDOW_SCHEMA_VERSION, 6);
   assert.equal(SCHEMA_MIGRATIONS.at(-1)?.version, LATEST_SCHEMA_VERSION);
   assert.equal(SCHEMA_MIGRATIONS.length, LATEST_SCHEMA_VERSION);
   assert.equal(SNAPSHOT_SCHEMA_VERSION, 2);
@@ -1169,6 +1171,187 @@ try {
           `INSERT INTO market_position_receipts
             (idempotency_key, command_type, target_id, result_id, request_hash, created_at)
            VALUES ('   ', 'manual_proposal', NULL, NULL, 'hash-3', 300)`,
+        )
+        .run(),
+    );
+
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+
+  // v5 → v6 升级：纯新增 G5 求职策略窗口表，不破坏任何已有 v1/v2/v3/v4/v5 业务数据。
+  const STRATEGY_WINDOW_TABLES = [
+    'strategy_meta',
+    'strategy_proposals',
+    'strategy_versions',
+    'strategy_receipts',
+  ] as const;
+  const STRATEGY_WINDOW_INDEXES = [
+    'strategy_proposals_status_idx',
+    'strategy_versions_status_idx',
+  ] as const;
+
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 5 });
+    seedV1BusinessData(db);
+    const resumeId = insertResumeVersion(db, { id: 'resume-v6-upgrade' });
+    const applicationId = insertApplication(db, { id: 'application-v6-upgrade', resumeVersionId: resumeId });
+    insertFeedbackEvent(db, { id: 'event-v6-upgrade', applicationId });
+
+    const v1DataBefore = readV1BusinessData(db);
+    const jobMemoryBefore = {
+      resumeVersions: db.prepare('SELECT * FROM resume_versions ORDER BY id').all(),
+      applications: db.prepare('SELECT * FROM applications ORDER BY id').all(),
+      feedbackEvents: db.prepare('SELECT * FROM feedback_events ORDER BY id').all(),
+    };
+    for (const table of STRATEGY_WINDOW_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+
+    const result = initSchema(db, { targetVersion: 6 });
+    assert.deepEqual(result, {
+      currentVersion: 6,
+      appliedVersions: [1, 2, 3, 4, 5, 6],
+      newlyAppliedVersions: [6],
+    });
+    assert.equal(schemaVersion(db), 6);
+    assert.deepEqual(migrationRecords(db), [
+      { version: 1, name: '001_v0_6_baseline' },
+      { version: 2, name: '002_v0_7_job_memory_schema' },
+      { version: 3, name: '003_v0_7_capability_baseline_schema' },
+      { version: 4, name: '004_v0_7_history_funnel_schema' },
+      { version: 5, name: '005_v0_7_market_position_schema' },
+      { version: 6, name: '006_v0_7_strategy_window_schema' },
+    ]);
+    for (const table of STRATEGY_WINDOW_TABLES) {
+      assert.equal(tableNames(db).includes(table), true);
+      assert.equal(rowCount(db, table), 0);
+    }
+    for (const index of STRATEGY_WINDOW_INDEXES) {
+      assert.equal(indexNames(db).includes(index), true);
+    }
+
+    // 所有已有 v1/v2/v3/v4/v5 业务数据必须逐字节保留。
+    assert.deepEqual(readV1BusinessData(db), v1DataBefore);
+    assert.deepEqual(db.prepare('SELECT * FROM resume_versions ORDER BY id').all(), jobMemoryBefore.resumeVersions);
+    assert.deepEqual(db.prepare('SELECT * FROM applications ORDER BY id').all(), jobMemoryBefore.applications);
+    assert.deepEqual(db.prepare('SELECT * FROM feedback_events ORDER BY id').all(), jobMemoryBefore.feedbackEvents);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+
+    // 升级可重复执行且幂等。
+    assert.deepEqual(initSchema(db, { targetVersion: 6 }).newlyAppliedVersions, []);
+    assert.equal(schemaVersion(db), 6);
+
+    // 默认 initSchema 仍停留在生产 v2，不会自动拉到 v6。
+    assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
+  });
+
+  // 默认 target（生产 v2）不会创建 G5 求职策略窗口表。
+  withTempDatabase((db) => {
+    initSchema(db);
+    assert.equal(schemaVersion(db), 2);
+    for (const table of STRATEGY_WINDOW_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+  });
+
+  // CHECK/FK 约束：求职策略窗口提案 / 正式版本 / 命令回执表。
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 6 });
+    seedV1BusinessData(db);
+
+    db.prepare(
+      `INSERT INTO strategy_meta (id, state_version, active_version_id, updated_at)
+       VALUES ('default', 0, NULL, 400)`,
+    ).run();
+    assert.equal(rowCount(db, 'strategy_meta'), 1);
+    assertCheckViolation(() =>
+      db
+        .prepare(
+          `INSERT INTO strategy_meta (id, state_version, active_version_id, updated_at)
+           VALUES ('not-default', 0, NULL, 400)`,
+        )
+        .run(),
+    );
+    assertCheckViolation(() =>
+      db
+        .prepare(
+          `UPDATE strategy_meta SET state_version = -1 WHERE id = 'default'`,
+        )
+        .run(),
+    );
+
+    const insertProposal = (overrides: Partial<Record<string, unknown>> = {}) => {
+      const id = (overrides.id as string) ?? nextId('strategy-proposal');
+      const fixture = {
+        id,
+        status: 'proposed',
+        generatedBy: 'manual',
+        inputFingerprint: `fingerprint-${id}`,
+        dataJson: '{}',
+        createdAt: 400,
+        ...overrides,
+      };
+      db.prepare(
+        `INSERT INTO strategy_proposals
+          (id, status, generated_by, input_fingerprint, data_json, created_at)
+         VALUES (@id, @status, @generatedBy, @inputFingerprint, @dataJson, @createdAt)`,
+      ).run(fixture);
+      return id;
+    };
+
+    const proposalId = insertProposal();
+    assert.equal(rowCount(db, 'strategy_proposals'), 1);
+    assertCheckViolation(() => insertProposal({ status: 'invalid_status' }));
+    assertCheckViolation(() => insertProposal({ generatedBy: 'invalid_source' }));
+    assertCheckViolation(() => insertProposal({ inputFingerprint: '   ' }));
+
+    const insertVersion = (overrides: Partial<Record<string, unknown>> = {}) => {
+      const id = (overrides.id as string) ?? nextId('strategy-version');
+      const fixture = {
+        id,
+        version: 1,
+        status: 'active',
+        proposalId,
+        dataJson: '{}',
+        createdAt: 400,
+        activatedAt: 400,
+        ...overrides,
+      };
+      db.prepare(
+        `INSERT INTO strategy_versions
+          (id, version, status, proposal_id, data_json, created_at, activated_at)
+         VALUES (@id, @version, @status, @proposalId, @dataJson, @createdAt, @activatedAt)`,
+      ).run(fixture);
+      return id;
+    };
+
+    insertVersion();
+    assert.equal(rowCount(db, 'strategy_versions'), 1);
+    assertCheckViolation(() => insertVersion({ version: 0 }));
+    assertCheckViolation(() => insertVersion({ status: 'invalid_status' }));
+    assertCheckViolation(() => insertVersion({ proposalId: '   ' }));
+
+    db.prepare(
+      `INSERT INTO strategy_receipts
+        (idempotency_key, command_type, target_id, result_id, request_hash, created_at)
+       VALUES ('strategy-receipt-1', 'manual_proposal', NULL, ?, 'hash-1', 400)`,
+    ).run(proposalId);
+    assert.equal(rowCount(db, 'strategy_receipts'), 1);
+    assertCheckViolation(() =>
+      db
+        .prepare(
+          `INSERT INTO strategy_receipts
+            (idempotency_key, command_type, target_id, result_id, request_hash, created_at)
+           VALUES ('strategy-receipt-2', 'invalid_command', NULL, NULL, 'hash-2', 400)`,
+        )
+        .run(),
+    );
+    assertCheckViolation(() =>
+      db
+        .prepare(
+          `INSERT INTO strategy_receipts
+            (idempotency_key, command_type, target_id, result_id, request_hash, created_at)
+           VALUES ('   ', 'manual_proposal', NULL, NULL, 'hash-3', 400)`,
         )
         .run(),
     );
