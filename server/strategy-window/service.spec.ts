@@ -101,8 +101,7 @@ function fakeOutput(overrides: Record<string, unknown> = {}): string {
     objective: '在证据范围内补充样本并有限试探',
     summary: '当前保守推进，等待人工审核后执行',
     uncertainties: ['当前样本有限，判断为阶段性'],
-    actions: [],
-    citedEvidenceIds: [],
+    actionNarratives: [],
     ...overrides,
   });
 }
@@ -173,14 +172,55 @@ describe('StrategyService', () => {
     expect(harness.generateCalls()).toBe(1);
   });
 
-  it('AI 输出携带确定性字段（strict schema 外字段）被拒绝，不保存半成品', async () => {
-    const bad = fakeOutput({ actions: [{ actionType: 'collect_market_evidence', city: null, title: 't', rationale: 'r', successSignals: [], failureSignals: [], evidenceLevel: 'supported' }] });
+  it('AI 顶层携带 citedEvidenceIds 等未知字段被拒绝，不保存半成品', async () => {
+    const bad = fakeOutput({ citedEvidenceIds: ['ev-x'] });
     const { app } = createHarness({ level: 'insufficient', rawText: bad });
     const res = await generate(app, 'k1');
     expect(res.status).toBe(422);
     expect(res.body.code).toBe('STRATEGY_AI_OUTPUT_INVALID');
     const view = (await app.inject({ method: 'GET', url: '/strategy/current' })).json();
     expect(view.state.proposals).toHaveLength(0);
+  });
+
+  it('AI 行动叙事携带确定性字段（priority/allocationShare）被拒绝，不保存半成品', async () => {
+    const bad = fakeOutput({ actionNarratives: [{ actionId: 'sw-1', title: 't', rationale: 'r', successSignals: [], failureSignals: [], priority: 'high', allocationShare: 50 }] });
+    const { app } = createHarness({ level: 'insufficient', rawText: bad });
+    const res = await generate(app, 'k1');
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('STRATEGY_AI_OUTPUT_INVALID');
+    expect((await app.inject({ method: 'GET', url: '/strategy/current' })).json().state.proposals).toHaveLength(0);
+  });
+
+  it('AI 数组字段被返回为字符串（字符串化数组）被拒绝，不保存半成品', async () => {
+    const bad = fakeOutput({ uncertainties: '["样本有限"]' });
+    const { app } = createHarness({ level: 'insufficient', rawText: bad });
+    const res = await generate(app, 'k1');
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('STRATEGY_AI_OUTPUT_INVALID');
+    expect((await app.inject({ method: 'GET', url: '/strategy/current' })).json().state.proposals).toHaveLength(0);
+  });
+
+  it('AI 引用不存在的 actionId 被拒绝，不保存半成品', async () => {
+    const bad = fakeOutput({ actionNarratives: [{ actionId: 'does-not-exist', title: 't', rationale: 'r', successSignals: [], failureSignals: [] }] });
+    const { app } = createHarness({ level: 'insufficient', rawText: bad });
+    const res = await generate(app, 'k1');
+    expect(res.status).toBe(422);
+    expect(res.body.code).toBe('STRATEGY_AI_OUTPUT_INVALID');
+    expect((await app.inject({ method: 'GET', url: '/strategy/current' })).json().state.proposals).toHaveLength(0);
+  });
+
+  it('合并后行动集合、sourceEvidenceIds、窗口与门禁均不变', async () => {
+    const { app } = createHarness({ level: 'insufficient' });
+    const gen = await generate(app, 'k1');
+    const view = gen.body;
+    const proposal = view.state.proposals[0];
+    // 行动集合与确定性草稿一致（AI 不能新增/删除），sourceEvidenceIds 保持原值。
+    expect(proposal.payload.actions.length).toBeGreaterThan(0);
+    expect(proposal.payload.actions.every((a: any) => Array.isArray(a.sourceEvidenceIds) && a.sourceEvidenceIds.length === 0)).toBe(true);
+    // 窗口与决策门快照来自确定性计算，与 currentWindow 一致。
+    expect(proposal.window.windowType).toBe('evidence_collection');
+    expect(proposal.window.decisionGateSnapshot).toEqual(view.currentWindow.decisionGateSnapshot);
+    expect(proposal.window.blockedActionTypes).toEqual(view.currentWindow.blockedActionTypes);
   });
 
   it('AI 建议降薪 / 放弃 / 搬迁等禁止措辞被拒绝', async () => {
