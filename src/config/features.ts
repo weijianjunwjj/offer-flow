@@ -26,4 +26,10 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_G3_SANDBOX,
     false,
   ),
+  // G4 隔离验收环境（dev:g4-sandbox）专用标记：市场位置画像仅在该沙箱环境下可见，
+  // 真实生产入口不启用 G4，因此该标记默认关闭。
+  g4SandboxEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_G4_SANDBOX,
+    false,
+  ),
 });

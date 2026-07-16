@@ -17,12 +17,15 @@ const route = useRoute();
 const router = useRouter();
 const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
 const historyImportNavigationEnabled = computed(() => router.hasRoute('history-import'));
+const marketPositionNavigationEnabled = computed(() => router.hasRoute('market-position'));
 const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
+const g4SandboxBannerVisible = computed(() => features.g4SandboxEnabled);
 const activeSection = computed(() => {
   if (route.name === 'job-match-profile') return 'job-match-profile';
   if (route.name === 'capability-baseline') return 'capability-baseline';
   if (route.name === 'market-funnel') return 'market-funnel';
   if (route.name === 'history-import') return 'history-import';
+  if (route.name === 'market-position') return 'market-position';
   if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
   return 'jobs';
 });
@@ -58,6 +61,10 @@ function goMarketFunnel(): void {
 
 function goHistoryImport(): void {
   void router.push({ name: 'history-import' });
+}
+
+function goMarketPosition(): void {
+  void router.push({ name: 'market-position' });
 }
 
 function goJobs(): void {
@@ -151,6 +158,16 @@ const contentStyle =
               历史补录
             </n-button>
             <n-button
+              v-if="marketPositionNavigationEnabled"
+              :type="activeSection === 'market-position' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'market-position'"
+              size="small"
+              data-testid="nav-market-position"
+              @click="goMarketPosition"
+            >
+              市场位置画像
+            </n-button>
+            <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"
               :ghost="activeSection === 'jobs'"
               size="small"
@@ -170,6 +187,15 @@ const contentStyle =
             style="margin-bottom: 16px;"
           >
             当前为 G3 隔离验收环境，所有补录操作只写入测试副本，不会修改真实求职数据。
+          </n-alert>
+          <n-alert
+            v-if="g4SandboxBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g4-sandbox-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G4 隔离验收环境，市场位置画像只读取测试副本数据，不会修改真实求职数据，也不会在真实生产入口开启。
           </n-alert>
           <RouterView v-slot="{ Component }">
             <component :is="Component" :key="routeViewKey()" />

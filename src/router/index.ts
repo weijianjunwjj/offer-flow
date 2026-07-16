@@ -10,6 +10,7 @@ import JobMatchProfilePage from '../pages/JobMatchProfilePage.vue';
 import CapabilityBaselinePage from '../pages/CapabilityBaselinePage.vue';
 import HistoryImportPage from '../pages/HistoryImportPage.vue';
 import MarketFunnelPage from '../pages/MarketFunnelPage.vue';
+import MarketPositionPage from '../pages/MarketPositionPage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -27,6 +28,7 @@ export function normalizeJobId(value: unknown): string | null {
 export interface RouterFeatureOptions {
   jobMemoryV2Enabled: boolean;
   historyImportEnabled?: boolean;
+  marketPositionEnabled?: boolean;
 }
 
 export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
@@ -42,6 +44,13 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
         path: '/history-import',
         name: 'history-import-disabled',
         redirect: { name: 'jobs', query: { feature: 'history-import-disabled' } },
+      },
+    options.marketPositionEnabled
+      ? { path: '/market-position', name: 'market-position', component: MarketPositionPage }
+      : {
+        path: '/market-position',
+        name: 'market-position-disabled',
+        redirect: { name: 'jobs', query: { feature: 'market-position-disabled' } },
       },
     options.jobMemoryV2Enabled
       ? {
@@ -68,7 +77,11 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
 
 export function createOfferFlowRouter(
   history: RouterHistory = createWebHashHistory(),
-  options: RouterFeatureOptions = features,
+  options: RouterFeatureOptions = {
+    jobMemoryV2Enabled: features.jobMemoryV2Enabled,
+    historyImportEnabled: features.historyImportEnabled,
+    marketPositionEnabled: features.g4SandboxEnabled,
+  },
 ): Router {
   return createRouter({ history, routes: createRoutes(options) });
 }
