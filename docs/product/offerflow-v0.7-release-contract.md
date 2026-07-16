@@ -4,7 +4,7 @@
 - 日期：2026-07-14
 - 产品依据：`docs/prd/offerflow-v0.7.md`
 - 当前 App 版本：`0.6.2`
-- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency 尚未开始；阶段策略（G5）尚未完成；禁止发布**
+- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency 工程实现已完成，尚待用户验收；阶段策略（G5）尚未完成；禁止发布**
 
 ## 1. 契约目的
 
@@ -76,8 +76,8 @@
 | API / 领域 | MarketPositionProfile、MarketPositionProfileVersion、MarketBand、CityEvidenceReference。 |
 | 自动化测试 | 四城隔离、跨城能力复用、市场证据禁止混算、借用来源与降权、画像版本切换。 |
 | 截图验收 | 四城切换与对比画面；每城展示冲刺/主攻/稳妥、薪资和公司偏好、证据/反证、置信度与更新时间。 |
-| 当前状态 | **本项未整项验收**。G1 全局岗位匹配画像 MVP 已实现并经用户验收（2026-07-15），提供全局画像 + 苏州/无锡/上海/杭州四城市视图 + 手工/AI 提案 + Proposal Review + 版本历史；但这仅是用户可见的 MVP 子集，正式 MarketPositionProfile 与 EvidenceSufficiency 仍属 G4（对应本契约 R3），尚未完成。 |
-| 阻塞项 | 本项 2.5 仍未整项验收：正式 MarketPositionProfile、MarketBand、CityEvidenceReference 与四城多维充分性门禁（G4）尚未开始；G1 的 MVP 视图不得冒充正式城市市场画像，现有单岗位机会雷达和静态目标画像分数亦不得冒充城市市场画像。 |
+| 当前状态 | **本项未整项验收**。G1 全局岗位匹配画像 MVP 已实现并经用户验收（2026-07-15），提供全局画像 + 苏州/无锡/上海/杭州四城市视图 + 手工/AI 提案 + Proposal Review + 版本历史；这仅是用户可见的 MVP 子集。正式 MarketPositionProfile 与 EvidenceSufficiency（G4，对应本契约 R3）工程实现已完成：统一 G1/G2/G3 输入的全局+四城独立画像、EvidenceSufficiency（insufficient/directional/supported）、7 类 DecisionGate（含 abandon_direction/relocation_decision 永不 decision_ready）、Proposal→Review→正式版本流程，均已在隔离沙箱（schema v5，仅 tmp/g4-sandbox，真实库仍为 v2）完成自动化测试与浏览器验证；尚待用户验收，未在真实生产入口开启。 |
+| 阻塞项 | 本项 2.5 仍未整项验收：G4 工程实现已完成但未经用户验收，不得视为已完成；G1 的 MVP 视图不得冒充正式城市市场画像，现有单岗位机会雷达和静态目标画像分数亦不得冒充城市市场画像；真实生产库与生产入口均未启用 G4，若用户验收通过，仍需另行决定是否升级真实库到 schema v5 及何时在生产开放。 |
 
 ### 2.6 样本充分性与拒绝越权
 
@@ -89,8 +89,8 @@
 | API / 领域 | EvidenceSufficiency、SufficiencyDimension、DecisionGate；返回充分性等级、缺口与允许/禁止的结论类型。 |
 | 自动化测试 | 独立雇主数、有效流程数、事件强度、时间跨度、渠道代表性、同源去重、城市隔离、时间衰减和高影响结论阻断。 |
 | 截图验收 | 至少覆盖“样本不足”“探索性结论”“可行动结论”三态；不足态必须展示置信度低、缺失证据和禁止动作。 |
-| 当前状态 | **未实现**。 |
-| 阻塞项 | R3 尚未开始；不得以固定投递次数替代多维充分性。G1 岗位匹配画像的样本不足/探索性/可行动三种置信状态只是 MVP 展示，不代表 G4 的正式 EvidenceSufficiency 多维充分性门禁已完成。 |
+| 当前状态 | **工程实现已完成，尚待用户验收**。EvidenceSufficiency 基于确定性规则计算 evidenceLevel（insufficient/directional/supported），DecisionGate 覆盖角色定位/城市优先级/薪资定位/简历有效性/渠道有效性/放弃当前方向/搬迁决策 7 类，其中放弃当前方向与搬迁决策无论证据等级如何均不可达 decision_ready；已在隔离沙箱完成自动化测试与浏览器验证。 |
+| 阻塞项 | 尚待用户验收；不得以固定投递次数替代多维充分性。G1 岗位匹配画像的样本不足/探索性/可行动三种置信状态只是 MVP 展示，不等同于本项已验收的 G4 EvidenceSufficiency 门禁。 |
 
 ### 2.7 阶段策略与 Proposal Review
 
@@ -138,6 +138,8 @@ G1（全局岗位匹配画像 MVP）已于 2026-07-15 经用户验收，进入 G
 
 G2（CandidateEvidence 与 CapabilityBaseline）已于 2026-07-15 经用户人工测试验收：候选能力证据审核、正式证据库、AI/手工能力基线提案、无正式证据时阻止生成基线、支持证据/反证/待验证项同时保留、接受/修改后接受/拒绝/稍后处理、能力基线版本历史与版本激活均已验收；截图归档尚未完成，列为 G6 统一归档项；未发现阻塞 G3 的产品问题。G2 只覆盖第 2.4 项长期能力基线，不解除其余产品结果的发布阻塞。
 
-G3（历史补录与基础漏斗）已于 2026-07-15 经用户正式验收通过：真实数据库已受控升级到 schema v4；历史补录已在正式环境开放（不再局限于隔离 sandbox）；基础漏斗已基于真实数据验证；空 draft 会话丢弃交互缺口已补齐。G3 只覆盖第 2.3 项历史补录与基础统计，不解除其余产品结果的发布阻塞。当前 Snapshot 契约仍为 Job Memory v2（`SNAPSHOT_SCHEMA_VERSION=2`），不支持 database schema 4；Snapshot v4 是独立的基础设施任务，不是 G3 遗留缺陷，不阻塞 G4 开始，但在 v0.7 最终发布前必须由用户另行裁决其范围。现进入 G4（MarketPositionProfile 与 EvidenceSufficiency），**G4 尚未开始**。
+G3（历史补录与基础漏斗）已于 2026-07-15 经用户正式验收通过：真实数据库已受控升级到 schema v4；历史补录已在正式环境开放（不再局限于隔离 sandbox）；基础漏斗已基于真实数据验证；空 draft 会话丢弃交互缺口已补齐。G3 只覆盖第 2.3 项历史补录与基础统计，不解除其余产品结果的发布阻塞。当前 Snapshot 契约仍为 Job Memory v2（`SNAPSHOT_SCHEMA_VERSION=2`），不支持 database schema 4；Snapshot v4 是独立的基础设施任务，不是 G3 遗留缺陷，不阻塞 G4 开始，但在 v0.7 最终发布前必须由用户另行裁决其范围。
 
-G3 签收不代表 v0.7 可以发布、合并 main、创建 Tag 或 Release。v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release，App 版本继续保持 `0.6.2`。
+G4（MarketPositionProfile 与 EvidenceSufficiency）工程实现已完成，**尚未经用户验收，不构成签收**：统一 G1（岗位匹配画像）/G2（能力基线）/G3（历史漏斗）输入，产出全局+苏州/无锡/上海/杭州四城独立画像；EvidenceSufficiency 限定 insufficient/directional/supported 三档；DecisionGate 覆盖 7 类，其中放弃当前方向与搬迁决策无论证据等级如何均不可达 decision_ready；Proposal→Review→正式版本流程与 G1/G2 模式一致，正式版本需人工确认才生效。工程验证：schema v5 仅创建于隔离 sandbox（`tmp/g4-sandbox`），真实数据库全程保持 schema v2 且哈希前后一致；已完成 HTTP 路由测试、页面组件测试、迁移 selftest（v4→v5 升级与新表 CHECK/FK 约束）与沙箱浏览器验证（建立提案→接受并激活→四城市证据等级展示）；未在真实生产入口开启（`server/index.ts` 默认 `marketPosition.enabled=false`）。此项完成的是工程实现，产品验收仍需用户另行确认后才能在追踪矩阵中标记为“已验收”。
+
+G3 签收、G4 工程实现完成均不代表 v0.7 可以发布、合并 main、创建 Tag 或 Release。v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release，App 版本继续保持 `0.6.2`；真实数据库继续保持 schema v2，真实生产入口不开启 G4。
