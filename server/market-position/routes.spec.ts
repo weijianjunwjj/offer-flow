@@ -116,14 +116,14 @@ function manualPayload(overrides: Partial<MarketPositionDraft> = {}): MarketPosi
 }
 
 describe('GET /market-position', () => {
-  it('空状态：无正式版本，llmConfigured 恒为 false（G4 不接入 AI）', async () => {
+  it('空状态：无正式版本，state 为初始状态', async () => {
     const { app } = createHarness();
     const response = await app.inject({ method: 'GET', url: '/market-position' });
     expect(response.statusCode).toBe(200);
     const body = response.json() as MarketPositionView;
     expect(body.activeVersion).toBeNull();
-    expect(body.llmConfigured).toBe(false);
     expect(body.state.stateVersion).toBe(0);
+    expect(typeof body.llmConfigured).toBe('boolean');
   });
 });
 
