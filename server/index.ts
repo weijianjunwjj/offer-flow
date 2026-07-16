@@ -208,13 +208,16 @@ export function buildServer(
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // 真实服务入口显式开启 G2 能力基线（schema v3）与基础漏斗只读聚合（无需迁移，默认开启）。
-  // G3 历史补录：真实生产库已通过显式授权命令（db:upgrade-real --confirm）升级到 schema v4
-  // 并完成升级后校验，现正式在真实入口开启；服务启动仍不会自动迁移真实库，
-  // schema 低于所需版本或高于本代码支持版本时均会按 schemaStartup 的拒绝逻辑直接报错退出。
+  // 真实服务入口显式开启 G2 能力基线（schema v3）、基础漏斗（无需迁移）、G3 历史补录（schema v4）。
+  // G6-B 生产切换：真实生产库已通过显式授权命令（db:upgrade-real --confirm）升级到 schema v6
+  // 并导入 G4/G5 正式版本晋升包，现正式在真实入口开启 G4 市场位置画像（需 schema v5）与
+  // G5 求职策略（需 schema v6）；服务启动仍不会自动迁移真实库，schema 低于所需版本或高于本代码
+  // 支持版本时均会按 schemaStartup 的拒绝逻辑直接报错退出（启动门禁为固定能力版本，不依赖浮动 LATEST）。
   const app = buildServer({
     capabilityBaseline: { enabled: true },
     historyImport: { enabled: true },
+    marketPosition: { enabled: true },
+    strategyWindow: { enabled: true },
   });
   let isClosing = false;
   const closeAndExit = (signal: NodeJS.Signals): void => {

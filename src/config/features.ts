@@ -45,4 +45,14 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_G6_REHEARSAL,
     false,
   ),
+  // G6-B 生产切换后，真实库已升级到 schema v6 并导入 G4/G5 正式版本，
+  // 市场位置画像（G4）与求职策略（G5）正式在真实入口开启；仍可通过环境变量显式关闭。
+  marketPositionEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_MARKET_POSITION,
+    true,
+  ),
+  strategyWindowEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_STRATEGY_WINDOW,
+    true,
+  ),
 });

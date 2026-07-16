@@ -23,7 +23,9 @@ function openProductionDb(dbPath: string): Database.Database {
   if (schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
     db.close();
     throw new Error(
-      `official snapshot requires database schema ${SNAPSHOT_SCHEMA_VERSION}; current version is ${schemaVersion}`,
+      `official snapshot requires database schema ${SNAPSHOT_SCHEMA_VERSION}; current version is ${schemaVersion}. `
+      + `当前 Snapshot 契约仅支持 schema ${SNAPSHOT_SCHEMA_VERSION}；v0.7 使用已验证的数据库一致性备份作为恢复机制，`
+      + `不发布、不伪造 schema v${schemaVersion} 的 Snapshot。`,
     );
   }
   return db;
