@@ -62,6 +62,18 @@
 
 Schema v5 仅允许出现在临时/内存/G4 sandbox 数据库中；真实数据库（schema v4）不得被本阶段升级；`npm run dev` 默认行为不变；真实生产环境不得启用 G4；`server/index.ts` 底部真实生产入口不得添加 MarketPosition capability。
 
-## 9. 当前阶段结论
+## 9. AI 生成市场位置提案（G4 收尾）
 
-G4 工程实现进行中；本文件冻结范围与架构复用决策，不代表任何验收结论。G4 完成工程实现后仍需用户在 sandbox 中人工验收，验收前不得声称 G4 已完成或已验收，不得据此推进 v0.7 发布、合并 main 或创建 Tag/Release。
+在手工提案基础上新增 AI 辅助生成路径（`POST /market-position/proposals/generate`），仅在用户主动点击时调用；复用 G1/G2 既有共享 LLM Provider 模式，不新增第二套 AI Provider、不新增 API Key 页面、不引入 BYOK。
+
+- 服务端先以确定性规则计算 EvidenceSufficiency/DecisionGate 并冻结输入快照（`inputHash`），AI 只允许润色 headline/positioning/strengths/weaknesses/signals/uncertainties/nextEvidenceActions 等中文叙述字段；AI 输出经服务端结构化校验（失败最多修复一次，二次失败返回稳定错误码，不假成功、不无限重试），再与确定性草稿合并（`mergeAiNarrativeIntoDraft`），从不直接保存模型原始对象。
+- AI 不可生成/篡改任何计数、evidenceLevel、DecisionGate 状态、allowedClaims/blockedClaims、城市范围、Evidence ID、版本号或提案状态。
+- 相同 `inputHash` 若已存在未处理提案，直接返回既有提案（`409 MARKET_POSITION_PROPOSAL_ALREADY_EXISTS`），不重复调用模型、不产生重复提案。
+- 无数据城市固定展示："当前没有该城市的正式市场反馈，不能判断该城市是否适合你。"
+- 提案元数据在既有 v5 JSON payload 内记录 `generationMode`/`provider`/`model`/`generatedAt`/`inputHash`/`promptVersion`/`deterministicRuleVersion`，未新增 schema v6。
+- 前端新增主按钮"AI 生成市场位置提案"，与既有次按钮"手工建立市场位置提案"并列；生成成功后自动切换到"提案审核"并高亮标注"AI 生成"；AI 失败后手工提案路径仍可用。
+- 已在 G4 隔离沙箱（`npm run g4:sandbox:prepare` + `npm run dev:g4-sandbox`）完成浏览器验证：真实调用一次 DeepSeek 模型（有一次网络层自动重试后成功），生成提案的 EvidenceSufficiency/DecisionGate 与确定性计算一致，四城市叙述（含上海无数据固定文案）正确展示，幂等重复请求返回 409 无重复调用，拒绝/稍后处理流程正常，真实数据库哈希前后一致。
+
+## 10. 当前阶段结论
+
+G4 工程实现（含手工提案与 AI 生成提案两条路径）已完成；本文件冻结范围与架构复用决策，不代表任何验收结论。G4 完成工程实现后仍需用户在 sandbox 中人工验收，验收前不得声称 G4 已完成或已验收，不得据此推进 v0.7 发布、合并 main 或创建 Tag/Release。
