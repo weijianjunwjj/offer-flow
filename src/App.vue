@@ -21,9 +21,10 @@ const marketPositionNavigationEnabled = computed(() => router.hasRoute('market-p
 const strategyWindowNavigationEnabled = computed(() => router.hasRoute('strategy-window'));
 const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
 // G5 沙箱会同时启用 G4 能力与数据，但只展示 G5 环境横幅，避免重复提示；
-// 因此 G4 横幅仅在“开了 G4 但未开 G5”时显示。
-const g4SandboxBannerVisible = computed(() => features.g4SandboxEnabled && !features.g5SandboxEnabled);
-const g5SandboxBannerVisible = computed(() => features.g5SandboxEnabled);
+// G6 演练环境启用 G1~G5，只展示 G6 演练横幅，抑制 G4/G5 沙箱横幅。
+const g4SandboxBannerVisible = computed(() => features.g4SandboxEnabled && !features.g5SandboxEnabled && !features.g6RehearsalEnabled);
+const g5SandboxBannerVisible = computed(() => features.g5SandboxEnabled && !features.g6RehearsalEnabled);
+const g6RehearsalBannerVisible = computed(() => features.g6RehearsalEnabled);
 const activeSection = computed(() => {
   if (route.name === 'job-match-profile') return 'job-match-profile';
   if (route.name === 'capability-baseline') return 'capability-baseline';
@@ -224,6 +225,15 @@ const contentStyle =
             style="margin-bottom: 16px;"
           >
             当前为 G5 隔离验收环境，策略提案只写入测试副本，不会修改真实求职数据，也不会自动执行投递、联系、降薪、迁移或放弃方向。
+          </n-alert>
+          <n-alert
+            v-if="g6RehearsalBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g6-rehearsal-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G6 生产迁移演练环境，数据来自真实库副本及已验收 G4/G5 正式版本晋升包，不会修改真实求职数据。
           </n-alert>
           <RouterView v-slot="{ Component }">
             <component :is="Component" :key="routeViewKey()" />

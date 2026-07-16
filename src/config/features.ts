@@ -38,4 +38,11 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_G5_SANDBOX,
     false,
   ),
+  // G6 生产迁移演练环境（dev:g6-rehearsal）专用标记：正式启用 G1~G5 路由，
+  // 但只显示一条 G6 演练横幅（不显示 G4/G5 沙箱双横幅）。数据来自真实库副本 + 晋升包，
+  // 不连接真实数据库。真实生产入口不启用，默认关闭。
+  g6RehearsalEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_G6_REHEARSAL,
+    false,
+  ),
 });

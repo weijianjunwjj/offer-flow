@@ -12,6 +12,8 @@
     "g4:sandbox:prepare": "tsx scripts/g4SandboxPrepare.ts",
     "dev:g5-sandbox": "tsx scripts/devG5Sandbox.ts",
     "g5:sandbox:prepare": "tsx scripts/g5SandboxPrepare.ts",
+    "dev:g6-rehearsal": "tsx scripts/devG6Rehearsal.ts",
+    "g6:rehearsal:prepare": "tsx scripts/g6RehearsalPrepare.ts",
     "web": "vite",
     "server": "tsx server/index.ts",
     "db:init": "tsx server/schema.ts",

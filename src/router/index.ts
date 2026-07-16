@@ -89,8 +89,8 @@ export function createOfferFlowRouter(
   options: RouterFeatureOptions = {
     jobMemoryV2Enabled: features.jobMemoryV2Enabled,
     historyImportEnabled: features.historyImportEnabled,
-    marketPositionEnabled: features.g4SandboxEnabled,
-    strategyWindowEnabled: features.g5SandboxEnabled,
+    marketPositionEnabled: features.g4SandboxEnabled || features.g6RehearsalEnabled,
+    strategyWindowEnabled: features.g5SandboxEnabled || features.g6RehearsalEnabled,
   },
 ): Router {
   return createRouter({ history, routes: createRoutes(options) });
