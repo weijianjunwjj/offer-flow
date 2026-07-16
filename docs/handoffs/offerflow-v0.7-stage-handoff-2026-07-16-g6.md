@@ -3,10 +3,22 @@
 ## 1. 阶段状态
 
 - G1（2026-07-15）、G2（2026-07-15）、G3（2026-07-15）、G4（2026-07-16）、G5（2026-07-16）**均已用户验收**。
-- **G6-A（发布准备与生产迁移演练）工程与演练完成，等待用户裁决。**
-- **G6-B（真实生产切换）尚未开始**，必须由用户再次明确授权后才能执行。
-- 真实数据库仍为 **schema v4**；正式 G4/G5 仍关闭；Snapshot 未裁决；**v0.7 不可发布**。
-- **不得**写为：G6 已验收 / 生产切换完成 / v0.7 已发布 / main 可合并 / 可以 push。
+- **G6-A（发布准备与生产迁移演练）已完成。**
+- **G6-B（真实生产切换）已于 2026-07-16 经用户授权执行**：真实数据库已从 schema v4 受控升级到 **schema v6**，G4/G5 正式版本晋升包已导入，正式生产入口已开放 G4/G5，Snapshot 采用方案 B，全链路生产烟测通过。
+- **G6 等待用户最终生产验收**；App 版本仍 `0.6.2`；**仍未授权 push、合并 main、Tag、Release**。
+- **不得**写为：G6 已最终验收 / v0.7 已发布 / main 已合并 / 已 push / 已创建 Tag/Release。
+
+## 1b. G6-B 执行结果（2026-07-16）
+
+- 用户授权原文：“确认采用 Snapshot 方案 B，并授权执行 G6-B 真实生产切换；不授权 push、合并 main、Tag 或 Release。”
+- 升级前基线：schema v4，SHA-256 `cdc214c8…`，jobs=15/applications=9/feedback_events=11。
+- pre-cutover 备份：`backups/v0.7-production-cutover/offerflow-schema-v4-pre-cutover-*.sqlite3`（hash `cdc214c8…`，一次性回滚验证通过）。
+- 升级：`db:upgrade-real --confirm --expected-source-fingerprint cdc214c8`，v4→v6，integrity=ok/fk=0/counts preserved；升级后 hash `020f69f7…`。
+- 晋升导入：G4 `BCO_OHOKj4z4SZ7fkBaTC`、G5 `WBvQlz3yIigQ4o2bPv8Wj`、window `sw-069343080027d893`；generationMode=ai、decisionDiff 保留、G5→G4 引用正确；重复导入 alreadyApplied；导入后 hash `3a57ec78…`。
+- 只读 verifier：schema=6、G1~G5 可读、证据收集窗口、writes=0。
+- post-cutover 备份：`offerflow-schema-v6-post-cutover-*.sqlite3`（schema v6 新生产基线）。
+- 恢复机制（方案 B）：Snapshot 对 schema>2 明确拒绝发布，未改 `SNAPSHOT_SCHEMA_VERSION`；正式恢复点为 pre-cutover v4 备份 + post-cutover v6 备份。
+- 未发生失败与回滚；备份、候选、晋升包、日志、`.claude/launch.json` 未提交。
 
 ## 2. 分支与起点
 

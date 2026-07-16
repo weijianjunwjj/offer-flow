@@ -64,12 +64,17 @@
 | 不存在自动降薪/迁移/辞职/放弃方向 | engineeringVerified | G5 门禁与禁止措辞守卫 |
 | AI 只在明确点击时调用 | engineeringVerified | 服务不在启动/测试中调用真实模型 |
 
-## 真实生产项（G6-B，本轮不得标为通过）
+## 真实生产项（G6-B，2026-07-16 已执行）
 
-| 验收点 | 状态 |
-|---|---|
-| 真实库 v4→v6 受控升级 | productionRequired |
-| 正式生产入口开启 G4/G5 | productionRequired |
-| 真实环境全链路烟测 | productionRequired |
-| Snapshot 契约裁决执行 | productionRequired |
-| 发布授权（push / main / Tag / Release） | productionRequired |
+| 验收点 | 状态 | 证据 |
+|---|---|---|
+| 真实库 schema v6 | productionVerified | 升级后只读校验 schema=6、migrations=[1..6]、integrity=ok、fk=0 |
+| 真实库 v4→v6 受控升级 | productionVerified | `db:upgrade-real --confirm --expected-source-fingerprint cdc214c8`，fromVersion 4→toVersion 6，仅新增 v5/v6，core counts preserved |
+| G4/G5 正式版本晋升 | productionVerified | 晋升包导入：G4 `BCO_OHOKj4z4SZ7fkBaTC`、G5 `WBvQlz3yIigQ4o2bPv8Wj`、window `sw-069343080027d893`；generationMode=ai、decisionDiff 保留、G5→G4 引用正确；重复导入 alreadyApplied |
+| 正式 G4/G5 路由入口开放 | productionVerified | `server/index.ts` 真实入口启用 marketPosition/strategyWindow；前端默认显示市场位置/求职策略且无 sandbox/rehearsal 横幅 |
+| G1~G5 全链路生产烟测 | productionVerified | `npm run dev` 真实 v6 库只读烟测（见 cutover runbook 执行记录） |
+| 数据库备份与恢复点 | productionVerified | pre-cutover v4 备份（hash=cdc214c8，可精确回滚）+ post-cutover v6 备份（hashMatchesReal） |
+| Job/Application/FeedbackEvent 非回归 | productionVerified | 升级/导入前后 jobs=15、applications=9、feedback_events=11，businessHash 不变 |
+| Snapshot 方案 B 落实 | productionVerified | schema>2 时旧 Snapshot 发布明确拒绝并给出方案 B 说明；未改 `SNAPSHOT_SCHEMA_VERSION`/导出结构 |
+
+仍**不得**标记为通过（未授权）：push 已授权 / main 已合并 / Tag 已创建 / Release 已发布 —— 用户明确不授权 push、合并 main、Tag、Release。G6 最终生产验收仍待用户在真实环境确认。
