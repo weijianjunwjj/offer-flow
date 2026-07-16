@@ -45,14 +45,20 @@ function submit(): void {
       每个城市的证据必须来自该城市自身的投递/回复/面试记录，不得借用其它城市或全局数据作为该城市的市场验证。
     </NAlert>
     <NTabs v-model:value="activeTab" type="line" animated>
-      <NTabPane name="global" tab="全局">
+      <NTabPane name="global" tab="全局" display-directive="show">
         <MarketPositionScopeProfileEditor
           ref="globalEditor"
           :model-value="modelValue.global"
           title="全局市场位置"
         />
       </NTabPane>
-      <NTabPane v-for="city in MARKET_POSITION_CITY_CODES" :key="city" :name="city" :tab="MARKET_POSITION_CITY_LABELS[city]">
+      <NTabPane
+        v-for="city in MARKET_POSITION_CITY_CODES"
+        :key="city"
+        :name="city"
+        :tab="MARKET_POSITION_CITY_LABELS[city]"
+        display-directive="show"
+      >
         <MarketPositionScopeProfileEditor
           :ref="(el) => setCityEditorRef(city, el as InstanceType<typeof MarketPositionScopeProfileEditor> | null)"
           :model-value="modelValue.cityProfiles.find((profile) => profile.scope.city === city)!"

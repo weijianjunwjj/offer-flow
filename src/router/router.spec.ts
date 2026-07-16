@@ -92,4 +92,28 @@ describe('OfferFlow Router', () => {
     await router.isReady();
     expect(router.currentRoute.value.name).toBe('history-import');
   });
+
+  it('市场位置画像（G4）默认关闭时深链接安全重定向到岗位台账', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      marketPositionEnabled: false,
+    });
+    await router.push('/market-position');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('jobs');
+    expect(router.currentRoute.value.query.feature).toBe('market-position-disabled');
+    const disabledRecord = router.getRoutes().find((route) => route.path === '/market-position');
+    expect(disabledRecord?.components).toBeUndefined();
+    expect(disabledRecord?.redirect).toBeDefined();
+  });
+
+  it('显式开启时注册 /market-position（仅 G4 沙箱环境）', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      marketPositionEnabled: true,
+    });
+    await router.push('/market-position');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('market-position');
+  });
 });
