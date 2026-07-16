@@ -78,3 +78,6 @@ tmp/g3-sandbox/
 
 # G4 隔离验收沙箱数据库副本（仅本地测试，不入库）
 tmp/g4-sandbox/
+
+# G5 隔离验收沙箱数据库副本（仅本地测试，不入库）
+tmp/g5-sandbox/
