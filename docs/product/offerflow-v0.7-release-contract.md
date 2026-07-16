@@ -4,7 +4,7 @@
 - 日期：2026-07-14
 - 产品依据：`docs/prd/offerflow-v0.7.md`
 - 当前 App 版本：`0.6.2`
-- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency（含 AI 生成提案路径）已于 2026-07-16 在隔离沙箱中经用户正式验收；阶段策略（G5）尚未完成；真实数据库仍为 schema v4，真实生产环境仍未开启 G4；禁止发布**
+- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency（含 AI 生成提案路径）已于 2026-07-16 在隔离沙箱中经用户正式验收；阶段策略（G5 StrategyWindow 与 Proposal Review）工程实现已于 2026-07-16 完成、等待用户 sandbox 验收（尚未验收）；真实数据库仍为 schema v4，真实生产环境仍未开启 G4/G5；禁止发布**
 
 ## 1. 契约目的
 
@@ -102,8 +102,8 @@
 | API / 领域 | StrategyWindow、StrategyProposal、ProposalReviewDecision、AIRun；正式策略只由用户决议产生。 |
 | 自动化测试 | 五种决议、指纹去重、冷却、到期、被新提案替代、重大新证据重启、拒绝防骚扰、未确认不影响正式策略。 |
 | 截图验收 | 提案证据/反证/原因、7–14 天分配、四种用户动作、冷却提示、历史决议均可见；不得存在自动接受或自动执行。 |
-| 当前状态 | **未实现**。 |
-| 阻塞项 | R4 尚未开始；现有 JD 导入 Review 和 `deriveDecision` 不是 Proposal Review/StrategyWindow。G1 已验收的 Proposal Review 只是岗位匹配画像提案审核（接受/修改后接受/拒绝/稍后处理），不代表 G5 的 StrategyWindow 阶段策略与其冷却、失效、反骚扰机制已完成。 |
+| 当前状态 | **G5 工程实现完成，等待用户 sandbox 验收（2026-07-16）**。StrategyWindow 完全由确定性规则从 G4 active 市场位置版本的 evidenceLevel/DecisionGate 生成（insufficient→证据收集 / directional→受控实验 / supported→有限优化），AI 只在窗口边界内生成叙述文案与既有行动的润色（不可改窗口类型、门禁、分配比例、证据引用），服务端对合并后草稿重新执行门禁校验；提案→审核（接受/修改后接受/拒绝/稍后处理）→正式版本流程与 G4 一致，接受前不改正式版本、不修改 Job/Application/FeedbackEvent、不执行任何行动；相同 inputHash 复用既有提案（`reused`），输入变化或窗口到期使旧提案失效且不可接受。已在 G5 隔离沙箱（schema v6，`tmp/g5-sandbox`，从已验收的 G4 v5 沙箱副本升级而来，真实库全程 schema v4 且哈希前后一致）完成域/服务端/页面自动化测试与浏览器读侧验证（导航、隔离横幅、证据收集窗口、三类边界、禁止动作不出现在"现在可以做"）；未在真实生产入口开启（`strategyWindow.enabled=false`）。 |
+| 阻塞项 | **G5 尚未经用户验收**，工程完成不构成产品验收，不解除任何发布阻塞；真实数据库仍为 schema v4，真实生产入口未开启 G4/G5；G5 生产切换属于后续独立的受控数据库升级与发布任务。现有 JD 导入 Review 和 `deriveDecision` 不是 Proposal Review/StrategyWindow。 |
 
 ## 3. 全局发布门禁
 
@@ -145,3 +145,5 @@ G4（MarketPositionProfile 与 EvidenceSufficiency）**已于 2026-07-16 在隔�
 在手工提案基础上，G4 收尾新增的 AI 生成市场位置提案路径同样已经用户验收：复用 G1/G2 既有共享 LLM Provider，不新增第二套 AI Provider、不新增 API Key 页面、不引入 BYOK；仅用户主动点击时调用；服务端先以确定性规则计算 EvidenceSufficiency/DecisionGate 并冻结输入哈希，AI 只允许润色中文叙述字段，结构化输出校验失败最多自动修复一次，二次失败返回稳定错误码而非假成功；相同输入已有未处理提案时直接复用（`reused: true`），验证不重复调用模型、不产生重复提案；提案元数据记录在既有 v5 payload 内，未新增 schema v6。已在同一隔离沙箱完成 ≥16 项服务端/域测试、≥10 项页面测试（均使用 Fake Provider，测试不调用真实模型）与用户浏览器验收：AI 市场位置提案真实生成成功（真实调用一次 DeepSeek 模型），生成结果的 EvidenceSufficiency/DecisionGate 与确定性计算一致，四城市叙述含上海无数据固定文案，幂等重复请求复用既有提案，拒绝流程正常，真实数据库哈希前后一致；未在真实生产入口开启。
 
 G3、G4 均已签收，均不代表 v0.7 可以发布、合并 main、创建 Tag 或 Release。v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release，App 版本继续保持 `0.6.2`；真实数据库继续保持 schema v4，真实生产入口不开启 G4；G4 生产切换（真实库受控升级到 schema v5 并在生产开放）属于后续独立的受控数据库升级与发布任务，需用户另行裁决；Snapshot 契约升级仍是独立的基础设施任务，独立于 G4 签收之外，须由用户另行裁决范围。
+
+G5（StrategyWindow 与正式策略 Proposal Review）**工程实现已于 2026-07-16 完成，等待用户 sandbox 验收**：StrategyWindow 由确定性规则从 G4 active 市场位置版本的 evidenceLevel/DecisionGate 生成三档窗口（证据收集/受控实验/有限优化），DecisionGate→动作门禁集中确定性实现；AI 复用 G4 既有共享 LLM Provider（无新 Provider/BYOK），仅用户点击时调用，只生成受约束的中文叙述与既有行动润色，服务端对合并草稿重新校验门禁，绝不允许 AI 修改窗口类型、门禁、分配比例、证据引用或自动激活正式版本；提案→审核→正式版本流程与 G4 一致，接受前不改正式版本、不修改 Job/Application/FeedbackEvent、不执行任何行动，相同 inputHash 复用既有提案，输入变化或窗口到期使旧提案失效且不可接受。schema v6 仅创建于隔离沙箱（`tmp/g5-sandbox`，从已验收 G4 v5 沙箱副本升级），真实数据库全程保持 schema v4 且哈希前后一致；已完成域/服务端/页面自动化测试、`migrations.selftest` v5→v6 扩展、router smoke 与沙箱浏览器读侧验证；未在真实生产入口开启（`strategyWindow.enabled=false`）。**G5 工程完成不构成用户验收**，不解除任何发布阻塞；v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release；G6 尚未开始。
