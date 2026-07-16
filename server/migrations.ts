@@ -3,6 +3,7 @@ import { createJobMemorySchemaV2 } from './migrations/jobMemorySchemaV2';
 import { createCapabilityBaselineSchemaV3 } from './migrations/capabilityBaselineSchemaV3';
 import { createHistoryFunnelSchemaV4 } from './migrations/historyFunnelSchemaV4';
 import { createMarketPositionSchemaV5 } from './migrations/marketPositionSchemaV5';
+import { createStrategyWindowSchemaV6 } from './migrations/strategyWindowSchemaV6';
 
 export interface SchemaMigration {
   version: number;
@@ -24,15 +25,21 @@ export interface MigrationRunOptions {
 
 // 可信求职记忆（Job Memory v2）生产底座仍固定在 v2：快照、恢复与生产验证机器都以 v2 为准。
 export const PRODUCTION_SCHEMA_VERSION = 2;
-// G2 能力基线新增 v3、G3 历史补录与基础漏斗新增 v4、G4 市场位置画像新增 v5；
-// LATEST 与 PRODUCTION 有意区分，v3/v4/v5 均为纯新增表，不改动 v2 生产语义。
-// v5 仅限沙箱/临时库使用，真实生产库不得升级到 v5。
-export const LATEST_SCHEMA_VERSION = 5;
+// G2 能力基线新增 v3、G3 历史补录与基础漏斗新增 v4、G4 市场位置画像新增 v5、
+// G5 求职策略窗口新增 v6；LATEST 与 PRODUCTION 有意区分，v3/v4/v5/v6 均为纯新增表，
+// 不改动 v2 生产语义。v5/v6 仅限沙箱/临时库使用，真实生产库不得升级。
+export const LATEST_SCHEMA_VERSION = 6;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 // G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
 export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
+// G3 历史补录与基础漏斗单独所需的最低 schema 版本（v4）。历史补录表在 v4 引入，
+// 因此其启动门禁固定要求 v4，不随 LATEST 上浮——否则每引入一个更高沙箱版本
+// 都会错误抬高真实生产（schema v4）启动所需的版本。
+export const HISTORY_IMPORT_SCHEMA_VERSION = 4;
 // G4 市场位置画像单独所需的最低 schema 版本（v5），仅限沙箱使用。
 export const MARKET_POSITION_SCHEMA_VERSION = 5;
+// G5 求职策略窗口单独所需的最低 schema 版本（v6），仅限沙箱使用。
+export const STRATEGY_WINDOW_SCHEMA_VERSION = 6;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -100,6 +107,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 5,
     name: '005_v0_7_market_position_schema',
     up: createMarketPositionSchemaV5,
+  },
+  {
+    version: 6,
+    name: '006_v0_7_strategy_window_schema',
+    up: createStrategyWindowSchemaV6,
   },
 ];
 
