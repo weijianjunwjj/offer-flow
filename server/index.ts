@@ -8,15 +8,18 @@ import type { JobMemoryServiceDeps } from './job-memory/jobMemoryService';
 import type { JobMatchProfileServiceDeps } from './job-match-profile/service';
 import type { CapabilityBaselineServiceDeps } from './capability-baseline/service';
 import type { HistoryImportServiceDeps } from './history-import/service';
+import type { MarketPositionServiceDeps } from './market-position/service';
 import { registerJobMatchProfileRoutes } from './job-match-profile/routes';
 import { registerCapabilityBaselineRoutes } from './capability-baseline/routes';
 import { registerHistoryImportRoutes } from './history-import/routes';
 import { registerFunnelRoutes } from './funnel/routes';
+import { registerMarketPositionRoutes } from './market-position/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
 import {
   CAPABILITY_BASELINE_SCHEMA_VERSION,
   getDatabaseSchemaVersion,
   LATEST_SCHEMA_VERSION,
+  MARKET_POSITION_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
 } from './migrations';
 import { planSchemaStartup, schemaRefusalMessage } from './schemaStartup';
@@ -53,6 +56,11 @@ export interface FunnelCapability {
   enabled?: boolean;
 }
 
+export interface MarketPositionCapability {
+  enabled?: boolean;
+  serviceDeps?: MarketPositionServiceDeps;
+}
+
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
@@ -61,6 +69,7 @@ export interface BuildServerOptions {
   capabilityBaseline?: CapabilityBaselineCapability;
   historyImport?: HistoryImportCapability;
   funnel?: FunnelCapability;
+  marketPosition?: MarketPositionCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -82,6 +91,9 @@ export function buildServer(
   // 基础漏斗默认开启：只读聚合正式 applications / feedback_events（schema v2 起已存在），
   // 不需要任何额外迁移，因此可以安全在真实入口默认开启。
   const funnelEnabled = options.funnel?.enabled ?? true;
+  // 市场位置画像（G4）默认关闭：需要 schema v5 的沙箱专用表，且真实生产入口
+  // 明确不启用 G4，仅在沙箱脚本与自身测试中显式开启，届时才把库升级到 v5。
+  const marketPositionEnabled = options.marketPosition?.enabled ?? false;
   const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
@@ -96,11 +108,13 @@ export function buildServer(
   if (jobMemoryV2.enabled) {
     // 每个能力只升级到自己需要的最低 schema 版本，不因为 v4 存在就顺带把只开了
     // 能力基线（G2）的场景也拉到 v4——两者的 requiredVersion 相互独立。
-    const requiredVersion = historyImportEnabled
-      ? LATEST_SCHEMA_VERSION
-      : capabilityBaselineEnabled
-        ? CAPABILITY_BASELINE_SCHEMA_VERSION
-        : PRODUCTION_SCHEMA_VERSION;
+    const requiredVersion = marketPositionEnabled
+      ? MARKET_POSITION_SCHEMA_VERSION
+      : historyImportEnabled
+        ? LATEST_SCHEMA_VERSION
+        : capabilityBaselineEnabled
+          ? CAPABILITY_BASELINE_SCHEMA_VERSION
+          : PRODUCTION_SCHEMA_VERSION;
     // 真实生产库（data/offerflow.sqlite3）禁止在服务启动时自动迁移；
     // 仅临时文件库 / 注入的测试库 / 内存库允许自动初始化到所需 schema。
     const isRealProductionDb = ownsDb && dbPath === getDbPath();
@@ -166,6 +180,9 @@ export function buildServer(
     }
     if (funnelEnabled) {
       registerFunnelRoutes(app);
+    }
+    if (marketPositionEnabled) {
+      registerMarketPositionRoutes(app, options.marketPosition?.serviceDeps);
     }
   }
   return app;
