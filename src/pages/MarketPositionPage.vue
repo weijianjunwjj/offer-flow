@@ -10,6 +10,7 @@ import { features } from '../config/features';
 import {
   createEmptyMarketPositionDraft,
   cloneMarketPositionDraft,
+  marketPositionDraftFromVersion,
   MARKET_POSITION_CITY_CODES,
   type MarketPositionCityCode,
   type MarketPositionDraft,
@@ -152,7 +153,7 @@ async function generateProposal(): Promise<void> {
 
 function openManualDraft(): void {
   draftSeed.value = activeVersion.value !== null
-    ? cloneMarketPositionDraft(activeVersion.value)
+    ? cloneMarketPositionDraft(marketPositionDraftFromVersion(activeVersion.value))
     : createEmptyMarketPositionDraft();
   draftEditorMode.value = { kind: 'manual' };
 }
