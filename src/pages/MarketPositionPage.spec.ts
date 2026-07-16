@@ -96,12 +96,13 @@ function emptyView(): MarketPositionView {
     state: { stateVersion: 0, activeVersionId: null, versions: [], proposals: [], commandReceipts: [] },
     activeVersion: null,
     llmConfigured: false,
+    reused: false,
   };
 }
 
 function populatedView(): MarketPositionView {
   const active = version('v1', 'p-decided');
-  const pending = proposal('p-pending');
+  const pending = proposal('p-pending', 'proposed', { generatedBy: 'ai', modelInfo: 'deepseek-chat', aiGeneration: aiMeta() });
   return {
     state: {
       stateVersion: 2,
@@ -112,6 +113,7 @@ function populatedView(): MarketPositionView {
     },
     activeVersion: active,
     llmConfigured: false,
+    reused: false,
   };
 }
 
@@ -338,15 +340,15 @@ describe('MarketPositionPage · AI 生成市场位置提案', () => {
     wrapper.unmount();
   });
 
-  it('相同输入已有待审核提案：提示用户先处理该提案', async () => {
+  it('相同输入已有待审核提案：自动打开提案审核并高亮既有提案', async () => {
     mocks.get.mockResolvedValue(emptyView());
-    mocks.generateProposal.mockRejectedValue(
-      new ApiError('相同输入已有待审核的 AI 生成提案', 409, { code: 'MARKET_POSITION_PROPOSAL_ALREADY_EXISTS' }),
-    );
+    const existing = populatedView();
+    mocks.generateProposal.mockResolvedValue({ ...existing, reused: true });
     const { wrapper } = await mountPage();
     await wrapper.find('[data-testid="mp-ai-generate"]').trigger('click');
     await flushPromises();
-    expect(wrapper.find('[data-testid="mp-error"]').text()).toContain('已有待审核的 AI 生成提案');
+    expect(wrapper.find('[data-testid="mp-error"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="mp-notice"]').text()).toContain('已自动打开该提案');
     wrapper.unmount();
   });
 

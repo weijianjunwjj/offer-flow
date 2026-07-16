@@ -124,9 +124,17 @@ async function generateProposal(): Promise<void> {
     view.value = await marketPositionApi.generateProposal({
       idempotencyKey: newKey(), expectedStateVersion: expectedVersion(),
     });
-    notice.value = '已生成待审核的 AI 市场位置提案，请审核后确认';
-    const created = (state.value?.proposals ?? []).find((p) => !before.has(p.id) && p.generatedBy === 'ai');
-    highlightedProposalId.value = created?.id ?? null;
+    if (view.value.reused) {
+      notice.value = '相同输入已有待审核的 AI 生成提案，已自动打开该提案';
+      const existing = (state.value?.proposals ?? [])
+        .filter((p) => p.generatedBy === 'ai' && p.status === 'proposed')
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+      highlightedProposalId.value = existing?.id ?? null;
+    } else {
+      notice.value = '已生成待审核的 AI 市场位置提案，请审核后确认';
+      const created = (state.value?.proposals ?? []).find((p) => !before.has(p.id) && p.generatedBy === 'ai');
+      highlightedProposalId.value = created?.id ?? null;
+    }
     activeTab.value = 'review';
   } catch (error) {
     errorText.value = describeError(error);

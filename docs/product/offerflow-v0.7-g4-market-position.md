@@ -68,7 +68,7 @@ Schema v5 仅允许出现在临时/内存/G4 sandbox 数据库中；真实数据
 
 - 服务端先以确定性规则计算 EvidenceSufficiency/DecisionGate 并冻结输入快照（`inputHash`），AI 只允许润色 headline/positioning/strengths/weaknesses/signals/uncertainties/nextEvidenceActions 等中文叙述字段；AI 输出经服务端结构化校验（失败最多修复一次，二次失败返回稳定错误码，不假成功、不无限重试），再与确定性草稿合并（`mergeAiNarrativeIntoDraft`），从不直接保存模型原始对象。
 - AI 不可生成/篡改任何计数、evidenceLevel、DecisionGate 状态、allowedClaims/blockedClaims、城市范围、Evidence ID、版本号或提案状态。
-- 相同 `inputHash` 若已存在未处理提案，直接返回既有提案（`409 MARKET_POSITION_PROPOSAL_ALREADY_EXISTS`），不重复调用模型、不产生重复提案。
+- 相同 `inputHash` 若已存在未处理提案，直接返回既有提案并携带 `reused: true`（`200`，不再是 `409`），不重复调用模型、不产生重复提案；前端据此自动打开提案审核并高亮既有提案。
 - 无数据城市固定展示："当前没有该城市的正式市场反馈，不能判断该城市是否适合你。"
 - 提案元数据在既有 v5 JSON payload 内记录 `generationMode`/`provider`/`model`/`generatedAt`/`inputHash`/`promptVersion`/`deterministicRuleVersion`，未新增 schema v6。
 - 前端新增主按钮"AI 生成市场位置提案"，与既有次按钮"手工建立市场位置提案"并列；生成成功后自动切换到"提案审核"并高亮标注"AI 生成"；AI 失败后手工提案路径仍可用。

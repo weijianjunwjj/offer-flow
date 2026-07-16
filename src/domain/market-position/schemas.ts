@@ -226,6 +226,7 @@ export const MarketPositionViewSchema = z.strictObject({
   state: MarketPositionStateSchema,
   activeVersion: MarketPositionVersionSchema.nullable(),
   llmConfigured: z.boolean(),
+  reused: z.boolean().default(false),
 });
 
 export const MarketPositionCommandBaseSchema = z.strictObject({

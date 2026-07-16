@@ -80,7 +80,7 @@ export class MarketPositionService {
     this.aiProvider = deps.aiProvider ?? deepSeekMarketPositionProvider;
   }
 
-  getView(): MarketPositionView {
+  getView(reused = false): MarketPositionView {
     const state = this.repo.getState();
     return MarketPositionViewSchema.parse({
       state,
@@ -88,6 +88,7 @@ export class MarketPositionService {
         ? null
         : state.versions.find(({ id }) => id === state.activeVersionId) ?? null,
       llmConfigured: this.aiProvider.isConfigured(),
+      reused,
     });
   }
 
@@ -124,11 +125,7 @@ export class MarketPositionService {
       && proposal.inputSnapshot.inputHash === snapshot.inputHash
     ));
     if (existingOpenProposal !== undefined) {
-      return Promise.reject(new MarketPositionError(
-        409, 'MARKET_POSITION_PROPOSAL_ALREADY_EXISTS', '相同输入已有待审核的 AI 生成提案', {
-          proposalId: existingOpenProposal.id,
-        },
-      ));
+      return Promise.resolve(this.getView(true));
     }
     const pendingInputKey = `${snapshot.inputHash}:${this.aiProvider.modelName()}`;
     const pendingIdempotency = this.pendingInputHashes.get(pendingInputKey);

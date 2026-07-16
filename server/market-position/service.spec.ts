@@ -167,10 +167,34 @@ describe('MarketPositionService · AI 生成提案', () => {
     expect(calls).toBe(1);
     const stateVersion = (first.json() as MarketPositionView).state.stateVersion;
 
+    const firstProposalId = (first.json() as MarketPositionView).state.proposals[0]!.id;
     const second = await generate(app, 'gen-2', stateVersion);
-    expect(second.statusCode).toBe(409);
-    expect(second.json()).toMatchObject({ code: 'MARKET_POSITION_PROPOSAL_ALREADY_EXISTS' });
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json() as MarketPositionView;
+    expect(secondBody.reused).toBe(true);
+    expect(secondBody.state.proposals).toHaveLength(1);
+    expect(secondBody.state.proposals[0]!.id).toBe(firstProposalId);
     expect(calls).toBe(1);
+  });
+
+  it('AI 生成提案被接受：只创建一个正式版本，且保留 generationMode=ai', async () => {
+    const { app } = createHarness();
+    await seedApplication(app, 'job-1', '苏州', 'app-1');
+    const generated = await generate(app, 'gen-accept-1');
+    const body = generated.json() as MarketPositionView;
+    const proposal = body.state.proposals[0]!;
+    const accept = await app.inject({
+      method: 'POST',
+      url: `/market-position/proposals/${proposal.id}/accept`,
+      payload: { idempotencyKey: 'accept-1', expectedStateVersion: body.state.stateVersion },
+    });
+    expect(accept.statusCode).toBe(200);
+    const acceptedBody = accept.json() as MarketPositionView;
+    expect(acceptedBody.state.versions).toHaveLength(1);
+    expect(acceptedBody.activeVersion?.proposalId).toBe(proposal.id);
+    const acceptedProposal = acceptedBody.state.proposals.find((p) => p.id === proposal.id)!;
+    expect(acceptedProposal.generatedBy).toBe('ai');
+    expect(acceptedProposal.aiGeneration).not.toBeNull();
   });
 
   it('AI 输出中携带确定性字段（如 evidenceLevel）会被结构校验拒绝，不创建提案', async () => {

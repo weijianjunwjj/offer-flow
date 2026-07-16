@@ -209,4 +209,5 @@ export interface MarketPositionView {
   state: MarketPositionState;
   activeVersion: MarketPositionVersion | null;
   llmConfigured: boolean;
+  reused: boolean;
 }
