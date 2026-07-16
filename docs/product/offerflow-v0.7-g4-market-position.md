@@ -4,7 +4,7 @@
 - 上位契约：`docs/product/offerflow-v0.7-release-contract.md` §2.5、§2.6
 - 追踪矩阵：`docs/product/offerflow-v0.7-traceability.md`（R3 条目）
 - 对应阶段：R3（MarketPositionProfile 与 EvidenceSufficiency）
-- 当前结论：G4 工程开始，尚未完成，尚未验收；v0.7 继续禁止发布
+- 当前结论：G4 已于 2026-07-16 在隔离沙箱中经用户正式验收；v0.7 继续禁止发布
 
 ## 1. G4 目的
 
@@ -76,4 +76,6 @@ Schema v5 仅允许出现在临时/内存/G4 sandbox 数据库中；真实数据
 
 ## 10. 当前阶段结论
 
-G4 工程实现（含手工提案与 AI 生成提案两条路径）已完成；本文件冻结范围与架构复用决策，不代表任何验收结论。G4 完成工程实现后仍需用户在 sandbox 中人工验收，验收前不得声称 G4 已完成或已验收，不得据此推进 v0.7 发布、合并 main 或创建 Tag/Release。
+G4 工程实现（含手工提案与 AI 生成提案两条路径）已完成，并已于 **2026-07-16** 在 G4 隔离沙箱（schema v5，`tmp/g4-sandbox`，独立于真实数据库）中经**用户正式验收通过**：AI 市场位置提案真实生成成功；EvidenceSufficiency 与 DecisionGate 由确定性规则锁定，AI 仅生成受约束叙事；AI 提案经用户接受并激活为正式 V1 可见；相同输入复用已有待审核提案，未重复调用模型；G4 sandbox 前后端生命周期联动与连接失败提示已由提交 `51bb7f1` 补齐。详见 [`offerflow-v0.7-stage-handoff-2026-07-16-g4.md`](../handoffs/offerflow-v0.7-stage-handoff-2026-07-16-g4.md)。
+
+真实数据库仍为 schema v4，真实生产环境仍未开启 G4；G4 生产切换（真实库受控升级到 schema v5 并在生产开放）属于后续独立的受控数据库升级与发布任务，需用户另行裁决。G4 产品签收允许 G5（StrategyWindow 与正式策略 Proposal Review）开始，但 **G5 尚未开始**。G4 签收不代表 v0.7 可以发布、合并 main 或创建 Tag/Release；v0.7 仍禁止发布，App 版本继续保持 `0.6.2`；Snapshot 契约升级仍是独立的基础设施任务。

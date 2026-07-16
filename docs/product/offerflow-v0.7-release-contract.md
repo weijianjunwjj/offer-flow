@@ -4,7 +4,7 @@
 - 日期：2026-07-14
 - 产品依据：`docs/prd/offerflow-v0.7.md`
 - 当前 App 版本：`0.6.2`
-- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency 工程实现已完成，尚待用户验收；阶段策略（G5）尚未完成；禁止发布**
+- 当前发布结论：**v0.7 产品实施中；可信求职记忆底座已完成；G1 全局岗位匹配画像 MVP、G2 CandidateEvidence 与 CapabilityBaseline、G3 历史补录与基础漏斗均已经用户验收（2026-07-15）；G4 MarketPositionProfile 与 EvidenceSufficiency（含 AI 生成提案路径）已于 2026-07-16 在隔离沙箱中经用户正式验收；阶段策略（G5）尚未完成；真实数据库仍为 schema v4，真实生产环境仍未开启 G4；禁止发布**
 
 ## 1. 契约目的
 
@@ -76,8 +76,8 @@
 | API / 领域 | MarketPositionProfile、MarketPositionProfileVersion、MarketBand、CityEvidenceReference。 |
 | 自动化测试 | 四城隔离、跨城能力复用、市场证据禁止混算、借用来源与降权、画像版本切换。 |
 | 截图验收 | 四城切换与对比画面；每城展示冲刺/主攻/稳妥、薪资和公司偏好、证据/反证、置信度与更新时间。 |
-| 当前状态 | **本项未整项验收**。G1 全局岗位匹配画像 MVP 已实现并经用户验收（2026-07-15），提供全局画像 + 苏州/无锡/上海/杭州四城市视图 + 手工/AI 提案 + Proposal Review + 版本历史；这仅是用户可见的 MVP 子集。正式 MarketPositionProfile 与 EvidenceSufficiency（G4，对应本契约 R3）工程实现已完成：统一 G1/G2/G3 输入的全局+四城独立画像、EvidenceSufficiency（insufficient/directional/supported）、7 类 DecisionGate（含 abandon_direction/relocation_decision 永不 decision_ready）、Proposal→Review→正式版本流程，均已在隔离沙箱（schema v5，仅 tmp/g4-sandbox，真实库仍为 v2）完成自动化测试与浏览器验证；尚待用户验收，未在真实生产入口开启。手工提案基础上新增的 AI 生成提案路径（复用 G1/G2 既有 LLM Provider，仅在用户主动点击时调用一次真实模型，确定性计算先行、AI 只润色叙述、幂等去重、失败最多一次自动修复）已在同一隔离沙箱完成自动化测试与浏览器验证，同样尚待用户验收。 |
-| 阻塞项 | 本项 2.5 仍未整项验收：G4 工程实现已完成但未经用户验收，不得视为已完成；G1 的 MVP 视图不得冒充正式城市市场画像，现有单岗位机会雷达和静态目标画像分数亦不得冒充城市市场画像；真实生产库与生产入口均未启用 G4，若用户验收通过，仍需另行决定是否升级真实库到 schema v5 及何时在生产开放。 |
+| 当前状态 | **G4 已于 2026-07-16 在隔离沙箱中经用户正式验收**。G1 全局岗位匹配画像 MVP 已实现并经用户验收（2026-07-15），提供全局画像 + 苏州/无锡/上海/杭州四城市视图 + 手工/AI 提案 + Proposal Review + 版本历史；这仅是用户可见的 MVP 子集。正式 MarketPositionProfile 与 EvidenceSufficiency（G4，对应本契约 R3）：统一 G1/G2/G3 输入的全局+四城独立画像、EvidenceSufficiency（insufficient/directional/supported）、7 类 DecisionGate（含 abandon_direction/relocation_decision 永不 decision_ready）、Proposal→Review→正式版本流程，已在隔离沙箱（schema v5，仅 tmp/g4-sandbox，真实库仍为 v4）完成自动化测试、浏览器验证与用户人工验收：用户已完成 AI proposal → 接受并激活 → 正式 V1 可见的完整验收链路。手工提案基础上新增的 AI 生成提案路径（复用 G1/G2 既有 LLM Provider，仅在用户主动点击时调用一次真实模型，确定性计算先行、AI 只润色叙述、幂等去重、失败最多一次自动修复）已在同一隔离沙箱真实生成成功并经用户验收；相同输入复用已有待审核提案，未重复调用模型。G4 沙箱前后端生命周期联动与连接失败提示已由提交 `51bb7f1` 补齐。未在真实生产入口开启。 |
+| 阻塞项 | G4 已验收，但**不解除**本项 2.5 其余发布阻塞：真实生产库与生产入口均未启用 G4（真实数据库仍为 schema v4），G4 生产切换属于后续独立的受控数据库升级与发布任务，需用户另行裁决时间与方式；G1 的 MVP 视图不得冒充正式城市市场画像，现有单岗位机会雷达和静态目标画像分数亦不得冒充城市市场画像。 |
 
 ### 2.6 样本充分性与拒绝越权
 
@@ -89,8 +89,8 @@
 | API / 领域 | EvidenceSufficiency、SufficiencyDimension、DecisionGate；返回充分性等级、缺口与允许/禁止的结论类型。 |
 | 自动化测试 | 独立雇主数、有效流程数、事件强度、时间跨度、渠道代表性、同源去重、城市隔离、时间衰减和高影响结论阻断。 |
 | 截图验收 | 至少覆盖“样本不足”“探索性结论”“可行动结论”三态；不足态必须展示置信度低、缺失证据和禁止动作。 |
-| 当前状态 | **工程实现已完成，尚待用户验收**。EvidenceSufficiency 基于确定性规则计算 evidenceLevel（insufficient/directional/supported），DecisionGate 覆盖角色定位/城市优先级/薪资定位/简历有效性/渠道有效性/放弃当前方向/搬迁决策 7 类，其中放弃当前方向与搬迁决策无论证据等级如何均不可达 decision_ready；已在隔离沙箱完成自动化测试与浏览器验证。 |
-| 阻塞项 | 尚待用户验收；不得以固定投递次数替代多维充分性。G1 岗位匹配画像的样本不足/探索性/可行动三种置信状态只是 MVP 展示，不等同于本项已验收的 G4 EvidenceSufficiency 门禁。 |
+| 当前状态 | **已于 2026-07-16 在隔离沙箱中经用户正式验收**。EvidenceSufficiency 基于确定性规则计算 evidenceLevel（insufficient/directional/supported），DecisionGate 覆盖角色定位/城市优先级/薪资定位/简历有效性/渠道有效性/放弃当前方向/搬迁决策 7 类，其中放弃当前方向与搬迁决策无论证据等级如何均不可达 decision_ready；EvidenceSufficiency 与 DecisionGate 均由确定性规则锁定，AI 仅生成受约束的中文叙述，不能篡改上述计算结果；已在隔离沙箱完成自动化测试、浏览器验证与用户人工验收。 |
+| 阻塞项 | G4 已验收，但不得以固定投递次数替代多维充分性；不解除本项其余及其他产品结果的发布阻塞。G1 岗位匹配画像的样本不足/探索性/可行动三种置信状态只是 MVP 展示，不等同于本项已验收的 G4 EvidenceSufficiency 门禁。 |
 
 ### 2.7 阶段策略与 Proposal Review
 
@@ -140,8 +140,8 @@ G2（CandidateEvidence 与 CapabilityBaseline）已于 2026-07-15 经用户人�
 
 G3（历史补录与基础漏斗）已于 2026-07-15 经用户正式验收通过：真实数据库已受控升级到 schema v4；历史补录已在正式环境开放（不再局限于隔离 sandbox）；基础漏斗已基于真实数据验证；空 draft 会话丢弃交互缺口已补齐。G3 只覆盖第 2.3 项历史补录与基础统计，不解除其余产品结果的发布阻塞。当前 Snapshot 契约仍为 Job Memory v2（`SNAPSHOT_SCHEMA_VERSION=2`），不支持 database schema 4；Snapshot v4 是独立的基础设施任务，不是 G3 遗留缺陷，不阻塞 G4 开始，但在 v0.7 最终发布前必须由用户另行裁决其范围。
 
-G4（MarketPositionProfile 与 EvidenceSufficiency）工程实现已完成，**尚未经用户验收，不构成签收**：统一 G1（岗位匹配画像）/G2（能力基线）/G3（历史漏斗）输入，产出全局+苏州/无锡/上海/杭州四城独立画像；EvidenceSufficiency 限定 insufficient/directional/supported 三档；DecisionGate 覆盖 7 类，其中放弃当前方向与搬迁决策无论证据等级如何均不可达 decision_ready；Proposal→Review→正式版本流程与 G1/G2 模式一致，正式版本需人工确认才生效。工程验证：schema v5 仅创建于隔离 sandbox（`tmp/g4-sandbox`），真实数据库全程保持 schema v2 且哈希前后一致；已完成 HTTP 路由测试、页面组件测试、迁移 selftest（v4→v5 升级与新表 CHECK/FK 约束）与沙箱浏览器验证（建立提案→接受并激活→四城市证据等级展示）；未在真实生产入口开启（`server/index.ts` 默认 `marketPosition.enabled=false`）。此项完成的是工程实现，产品验收仍需用户另行确认后才能在追踪矩阵中标记为”已验收”。
+G4（MarketPositionProfile 与 EvidenceSufficiency）**已于 2026-07-16 在隔离沙箱（schema v5，`tmp/g4-sandbox`）中经用户正式验收**：统一 G1（岗位匹配画像）/G2（能力基线）/G3（历史漏斗）输入，产出全局+苏州/无锡/上海/杭州四城独立画像；EvidenceSufficiency 限定 insufficient/directional/supported 三档，由确定性规则锁定计算；DecisionGate 覆盖 7 类，其中放弃当前方向与搬迁决策无论证据等级如何均不可达 decision_ready；AI 仅生成受确定性规则约束的中文叙述，不能篡改 EvidenceSufficiency/DecisionGate 计算结果；Proposal→Review→正式版本流程与 G1/G2 模式一致，AI 提案必须经过人工接受（接受/修改后接受）才生成正式版本，用户已完成 AI proposal → 接受并激活 → 正式 V1 可见的完整验收链路。工程与验收证据：schema v5 仅创建于隔离 sandbox（`tmp/g4-sandbox`），真实数据库全程保持 schema v4 且哈希前后一致；已完成 HTTP 路由测试、页面组件测试、迁移 selftest（v4→v5 升级与新表 CHECK/FK 约束）与沙箱浏览器验证（建立提案→接受并激活→四城市证据等级展示）；G4 沙箱前后端生命周期联动与连接失败提示已由提交 `51bb7f1` 补齐；未在真实生产入口开启（`server/index.ts` 默认 `marketPosition.enabled=false`）。
 
-在手工提案基础上，G4 收尾新增 AI 生成市场位置提案路径：复用 G1/G2 既有共享 LLM Provider，不新增第二套 AI Provider、不新增 API Key 页面、不引入 BYOK；仅用户主动点击时调用；服务端先以确定性规则计算 EvidenceSufficiency/DecisionGate 并冻结输入哈希，AI 只允许润色中文叙述字段，结构化输出校验失败最多自动修复一次，二次失败返回稳定错误码而非假成功；相同输入已有未处理提案时返回 409 而不重复调用模型；提案元数据记录在既有 v5 payload 内，未新增 schema v6。已在同一隔离沙箱完成 ≥16 项服务端/域测试、≥10 项页面测试（均使用 Fake Provider，测试不调用真实模型）与浏览器验收：浏览器验收中真实调用一次 DeepSeek 模型（含一次网络层自动重试后成功），生成结果的 EvidenceSufficiency/DecisionGate 与确定性计算一致，四城市叙述含上海无数据固定文案，幂等重复请求返回 409，拒绝流程正常，真实数据库哈希前后一致；同样尚待用户验收，未在真实生产入口开启。
+在手工提案基础上，G4 收尾新增的 AI 生成市场位置提案路径同样已经用户验收：复用 G1/G2 既有共享 LLM Provider，不新增第二套 AI Provider、不新增 API Key 页面、不引入 BYOK；仅用户主动点击时调用；服务端先以确定性规则计算 EvidenceSufficiency/DecisionGate 并冻结输入哈希，AI 只允许润色中文叙述字段，结构化输出校验失败最多自动修复一次，二次失败返回稳定错误码而非假成功；相同输入已有未处理提案时直接复用（`reused: true`），验证不重复调用模型、不产生重复提案；提案元数据记录在既有 v5 payload 内，未新增 schema v6。已在同一隔离沙箱完成 ≥16 项服务端/域测试、≥10 项页面测试（均使用 Fake Provider，测试不调用真实模型）与用户浏览器验收：AI 市场位置提案真实生成成功（真实调用一次 DeepSeek 模型），生成结果的 EvidenceSufficiency/DecisionGate 与确定性计算一致，四城市叙述含上海无数据固定文案，幂等重复请求复用既有提案，拒绝流程正常，真实数据库哈希前后一致；未在真实生产入口开启。
 
-G3 签收、G4 工程实现完成均不代表 v0.7 可以发布、合并 main、创建 Tag 或 Release。v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release，App 版本继续保持 `0.6.2`；真实数据库继续保持 schema v2，真实生产入口不开启 G4。
+G3、G4 均已签收，均不代表 v0.7 可以发布、合并 main、创建 Tag 或 Release。v0.7 仍禁止发布、禁止合并 main、禁止升级版本或创建 PR/Tag/Release，App 版本继续保持 `0.6.2`；真实数据库继续保持 schema v4，真实生产入口不开启 G4；G4 生产切换（真实库受控升级到 schema v5 并在生产开放）属于后续独立的受控数据库升级与发布任务，需用户另行裁决；Snapshot 契约升级仍是独立的基础设施任务，独立于 G4 签收之外，须由用户另行裁决范围。
