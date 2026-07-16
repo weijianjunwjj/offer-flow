@@ -4,7 +4,7 @@
 - 上位契约：`docs/product/offerflow-v0.7-release-contract.md` §2.7
 - 追踪矩阵：`docs/product/offerflow-v0.7-traceability.md`（R4 条目）
 - 对应阶段：R4（Proposal Review 与 StrategyWindow）
-- 当前结论：G5 工程实现完成，等待用户 sandbox 验收；v0.7 继续禁止发布
+- 当前结论：G5 已于 2026-07-16 在隔离沙箱（schema v6）经用户正式验收并封板；v0.7 继续禁止发布
 
 ## 1. G5 目的
 
@@ -92,6 +92,6 @@ G5 依赖 G4 已验收 active version，因此 G5 sandbox 从已验收的 G4 san
 
 ## 13. 当前阶段结论
 
-G5 工程实现（StrategyWindow 确定性规则 + DecisionGate 动作门禁 + 提案审核与版本服务 + AI 生成路径 + 页面）已完成，等待用户在 G5 隔离沙箱（schema v6，`tmp/g5-sandbox`，独立于真实数据库）验收。
+G5 工程实现（StrategyWindow 确定性规则 + DecisionGate 动作门禁 + 提案审核与版本服务 + AI 生成路径 + 页面）已完成，并已于 **2026-07-16** 在 G5 隔离沙箱（schema v6，`tmp/g5-sandbox`，独立于真实数据库）经**用户正式验收通过并封板**：当前 StrategyWindow 正确显示为“证据收集窗口”，三类边界（现在可以做 / 只能观察或实验 / 当前不能做）清晰；AI 成功生成受约束求职策略提案（以增加可靠样本、补充结果记录、城市/岗位族探索、简历与渠道 A/B、项目及面试证据优化为主，未输出直接降薪、搬迁、辞职、放弃方向、自动投递或 Offer 概率预测），结构化输出经修复后成功创建 pending proposal；用户完成 AI 生成 → 提案审核 → 接受并激活 → 正式 V1 的完整链路，行动清单（含目标数量、成功/失败信号、停止条件、可逆性）、实验计划（简历 A/B、渠道 A/B）与版本历史均可见，待审核提案已清空；相同输入复用已有开放提案、不重复调用模型；G5 只写入 sandbox，真实数据库未升级、未修改，也不会自动执行投递、联系、降薪、迁移或放弃方向。AI overlay 结构化输出契约已由提交 `2038e54`、`6ba6c9d` 收口，AI 不能修改 StrategyWindow/EvidenceSufficiency/DecisionGate/sourceEvidenceIds/正式计数/输入版本与 inputHash。详见 [`offerflow-v0.7-stage-handoff-2026-07-16-g5.md`](../handoffs/offerflow-v0.7-stage-handoff-2026-07-16-g5.md)。
 
-真实数据库仍为 schema v4；G4/G5 正式生产入口仍未开启；Snapshot 契约升级仍是独立基础设施任务；v0.7 仍禁止发布、禁止合并 main、禁止创建 Tag/Release，App 版本继续保持 `0.6.2`。**G5 尚未经用户验收**，不得提前写为已验收；G6 尚未开始。
+G5 产品结果正式完成。真实数据库仍为 schema v4；G4/G5 正式生产入口仍未开启；G4/G5 生产切换属于 G6 的受控数据库升级与发布裁决范围；Snapshot 契约升级仍是独立基础设施任务；v0.7 仍禁止发布、禁止合并 main、禁止创建 Tag/Release、禁止升级真实数据库、禁止发布 Snapshot，App 版本继续保持 `0.6.2`。**G5 签收不代表 v0.7 可以发布**；下一阶段为 G6 `v0.7 最终验收、生产切换与发布裁决`，**G6 尚未开始**。
