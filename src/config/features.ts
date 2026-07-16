@@ -32,4 +32,10 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_G4_SANDBOX,
     false,
   ),
+  // G5 隔离验收环境（dev:g5-sandbox）专用标记：求职策略页面仅在该沙箱环境下可见，
+  // 真实生产入口不启用 G5，因此该标记默认关闭。
+  g5SandboxEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_G5_SANDBOX,
+    false,
+  ),
 });

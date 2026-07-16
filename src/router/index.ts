@@ -11,6 +11,7 @@ import CapabilityBaselinePage from '../pages/CapabilityBaselinePage.vue';
 import HistoryImportPage from '../pages/HistoryImportPage.vue';
 import MarketFunnelPage from '../pages/MarketFunnelPage.vue';
 import MarketPositionPage from '../pages/MarketPositionPage.vue';
+import StrategyWindowPage from '../pages/StrategyWindowPage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -29,6 +30,7 @@ export interface RouterFeatureOptions {
   jobMemoryV2Enabled: boolean;
   historyImportEnabled?: boolean;
   marketPositionEnabled?: boolean;
+  strategyWindowEnabled?: boolean;
 }
 
 export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
@@ -51,6 +53,13 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
         path: '/market-position',
         name: 'market-position-disabled',
         redirect: { name: 'jobs', query: { feature: 'market-position-disabled' } },
+      },
+    options.strategyWindowEnabled
+      ? { path: '/strategy-window', name: 'strategy-window', component: StrategyWindowPage }
+      : {
+        path: '/strategy-window',
+        name: 'strategy-window-disabled',
+        redirect: { name: 'jobs', query: { feature: 'strategy-window-disabled' } },
       },
     options.jobMemoryV2Enabled
       ? {
@@ -81,6 +90,7 @@ export function createOfferFlowRouter(
     jobMemoryV2Enabled: features.jobMemoryV2Enabled,
     historyImportEnabled: features.historyImportEnabled,
     marketPositionEnabled: features.g4SandboxEnabled,
+    strategyWindowEnabled: features.g5SandboxEnabled,
   },
 ): Router {
   return createRouter({ history, routes: createRoutes(options) });

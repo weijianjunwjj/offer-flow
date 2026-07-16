@@ -18,14 +18,17 @@ const router = useRouter();
 const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
 const historyImportNavigationEnabled = computed(() => router.hasRoute('history-import'));
 const marketPositionNavigationEnabled = computed(() => router.hasRoute('market-position'));
+const strategyWindowNavigationEnabled = computed(() => router.hasRoute('strategy-window'));
 const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
 const g4SandboxBannerVisible = computed(() => features.g4SandboxEnabled);
+const g5SandboxBannerVisible = computed(() => features.g5SandboxEnabled);
 const activeSection = computed(() => {
   if (route.name === 'job-match-profile') return 'job-match-profile';
   if (route.name === 'capability-baseline') return 'capability-baseline';
   if (route.name === 'market-funnel') return 'market-funnel';
   if (route.name === 'history-import') return 'history-import';
   if (route.name === 'market-position') return 'market-position';
+  if (route.name === 'strategy-window') return 'strategy-window';
   if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
   return 'jobs';
 });
@@ -65,6 +68,10 @@ function goHistoryImport(): void {
 
 function goMarketPosition(): void {
   void router.push({ name: 'market-position' });
+}
+
+function goStrategyWindow(): void {
+  void router.push({ name: 'strategy-window' });
 }
 
 function goJobs(): void {
@@ -168,6 +175,16 @@ const contentStyle =
               市场位置画像
             </n-button>
             <n-button
+              v-if="strategyWindowNavigationEnabled"
+              :type="activeSection === 'strategy-window' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'strategy-window'"
+              size="small"
+              data-testid="nav-strategy-window"
+              @click="goStrategyWindow"
+            >
+              求职策略
+            </n-button>
+            <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"
               :ghost="activeSection === 'jobs'"
               size="small"
@@ -196,6 +213,15 @@ const contentStyle =
             style="margin-bottom: 16px;"
           >
             当前为 G4 隔离验收环境，市场位置画像只读取测试副本数据，不会修改真实求职数据，也不会在真实生产入口开启。
+          </n-alert>
+          <n-alert
+            v-if="g5SandboxBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g5-sandbox-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G5 隔离验收环境，策略提案只写入测试副本，不会修改真实求职数据，也不会自动执行投递、联系、降薪、迁移或放弃方向。
           </n-alert>
           <RouterView v-slot="{ Component }">
             <component :is="Component" :key="routeViewKey()" />
