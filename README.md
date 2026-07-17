@@ -14,6 +14,22 @@ OfferFlow 将分散的岗位信息、个人履历、能力证据、求职反馈�
 - 全量测试 **635 / 635** 通过
 - 采用经过验证的 SQLite 一致性备份与恢复方案
 
+## 当前状态
+
+- 已发布：v0.7.0
+- 规划中：v0.8.0 —— 可解释岗位雷达与 JD 采集桥
+- 当前阶段：V8-0 文档审阅与冻结
+- v0.8 实施状态：尚未开始
+
+v0.8 权威文档：
+
+- [docs/prd/offerflow-v0.8.md](docs/prd/offerflow-v0.8.md)
+- [docs/product/offerflow-v0.8-release-contract.md](docs/product/offerflow-v0.8-release-contract.md)
+- [docs/technical/offerflow-v0.8-technical-design.md](docs/technical/offerflow-v0.8-technical-design.md)
+- [docs/product/offerflow-v0.8-traceability.md](docs/product/offerflow-v0.8-traceability.md)
+
+请不要把规划中的 v0.8 能力当作已经实现的能力；以下内容仍然是 v0.7.0 当前已发布的真实能力。
+
 ## 核心产品闭环
 
 ```txt

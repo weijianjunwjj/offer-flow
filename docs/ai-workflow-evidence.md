@@ -1,5 +1,7 @@
 # OfferFlow AI Workflow 工程化证据表
 
+> **状态说明**：本文档描述的是 v0.7 及更早版本已经实现的能力，不包含尚未实施的 v0.8 岗位雷达能力。v0.8 实现并通过验收后再补充对应 Demo 和工程证据。
+
 | 能力 | 当前证据 | 文件路径 | 面试表达 |
 |---|---|---|---|
 | 结构化 Prompt | `buildAnalysisPrompt()` 将求职者信息、岗位 JD、公司补充拼成 One-Shot Prompt，并要求输出 Markdown + JSON | `src/app/prompt.ts` | 我不是直接把 JD 丢给模型，而是先把输入模板化，让模型按固定任务和字段输出。 |

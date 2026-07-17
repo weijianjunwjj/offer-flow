@@ -1,5 +1,18 @@
 # LLM 分析链路：Prompt / Schema / Eval 工程化说明
 
+> **状态说明**
+>
+> 本文档主要描述现有 v0.6～v0.7 的 `OFFER_FLOW_JSON` / Prompt / Parser / Eval 工作流。
+>
+> OfferFlow v0.8 岗位雷达分析引入独立的 `JobMatchAiPayload` 和服务端 Analysis Envelope 契约。
+>
+> 两套契约不得静默合并或互相替代使用。
+>
+> v0.8 相关内容请参见：
+>
+> - `docs/technical/offerflow-v0.8-technical-design.md`
+> - `docs/evaluation/offerflow-v0.8-evaluation-plan.md`
+
 本文档说明 OfferFlow 的 LLM 分析链路是如何工程化的：Prompt 如何构造、输出如何约束、解析如何容错、如何用固定样本集验证链路没有退化，以及 AI 输出最终如何经过人工保存门禁。
 
 ## 1. 链路目标与边界
