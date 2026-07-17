@@ -3,6 +3,16 @@ import type { JobCreateInput, JobRecord } from '../../src/storage';
 import { emptyCompanyInput } from '../../src/storage';
 import { withJobRecordDefaults, type StoredJobRecord } from '../../src/storage/defaults';
 import type { SqliteDatabase } from '../db';
+import {
+  changedLegacyFields,
+  legacyFieldsPresent,
+  LegacyCommunicationWriteError,
+  nonDefaultLegacyFields,
+} from './legacyCommunicationGuard';
+
+export interface JobRepositoryOptions {
+  legacyCommunicationWriteDisabled?: boolean;
+}
 
 function matchScoreToInteger(value: string): number | null {
   const match = value.match(/\d+/);
@@ -53,7 +63,10 @@ function makeJob(input: JobCreateInput & Partial<JobRecord> = {}): JobRecord {
 }
 
 export class JobRepository {
-  constructor(private readonly db: SqliteDatabase) {}
+  constructor(
+    private readonly db: SqliteDatabase,
+    private readonly options: JobRepositoryOptions = {},
+  ) {}
 
   list(): JobRecord[] {
     const rows = this.db
@@ -71,6 +84,10 @@ export class JobRepository {
 
   create(input: JobCreateInput & Partial<JobRecord>): JobRecord {
     const job = makeJob(input);
+    if (this.options.legacyCommunicationWriteDisabled === true) {
+      const fields = nonDefaultLegacyFields(job);
+      if (fields.length > 0) throw new LegacyCommunicationWriteError(fields);
+    }
     this.write(job);
     return job;
   }
@@ -79,6 +96,17 @@ export class JobRepository {
     const current = this.get(id);
     const createdAt = current?.createdAt ?? input.createdAt ?? Date.now();
     const next = makeJob({ ...input, id, createdAt, updatedAt: Date.now() });
+    if (this.options.legacyCommunicationWriteDisabled === true) {
+      const fields = current === null
+        ? nonDefaultLegacyFields(next)
+        : changedLegacyFields(current, next);
+      if (
+        current !== null
+        && this.hasApplication(id)
+        && current.draftMessageText !== next.draftMessageText
+      ) fields.push('draftMessageText');
+      if (fields.length > 0) throw new LegacyCommunicationWriteError(fields);
+    }
     this.write(next);
     return next;
   }
@@ -87,6 +115,13 @@ export class JobRepository {
     const current = this.get(id);
     if (current === null) {
       return null;
+    }
+    if (this.options.legacyCommunicationWriteDisabled === true) {
+      const fields = legacyFieldsPresent(patch);
+      if (this.hasApplication(id) && Object.prototype.hasOwnProperty.call(patch, 'draftMessageText')) {
+        fields.push('draftMessageText');
+      }
+      if (fields.length > 0) throw new LegacyCommunicationWriteError(fields);
     }
     const next: JobRecord = {
       ...current,
@@ -100,12 +135,32 @@ export class JobRepository {
   }
 
   upsert(job: JobRecord): JobRecord {
-    this.write(withJobRecordDefaults(job as StoredJobRecord));
-    return job;
+    const normalized = withJobRecordDefaults(job as StoredJobRecord);
+    if (this.options.legacyCommunicationWriteDisabled === true) {
+      const current = this.get(job.id);
+      const fields = current === null
+        ? nonDefaultLegacyFields(normalized)
+        : changedLegacyFields(current, normalized);
+      if (
+        current !== null
+        && this.hasApplication(job.id)
+        && current.draftMessageText !== normalized.draftMessageText
+      ) fields.push('draftMessageText');
+      if (fields.length > 0) throw new LegacyCommunicationWriteError(fields);
+    }
+    this.write(normalized);
+    return normalized;
   }
 
   delete(id: string): void {
     this.db.prepare('DELETE FROM jobs WHERE id = ?').run(id);
+  }
+
+  private hasApplication(jobId: string): boolean {
+    const row = this.db.prepare(
+      'SELECT 1 AS found FROM applications WHERE job_id = ? LIMIT 1',
+    ).get(jobId) as { found: 1 } | undefined;
+    return row !== undefined;
   }
 
   private write(job: JobRecord): void {

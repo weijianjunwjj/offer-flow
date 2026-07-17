@@ -1,9 +1,16 @@
 import { pathToFileURL } from 'node:url';
 import { openDb, type SqliteDatabase } from './db';
-import { runMigrations } from './migrations';
+import {
+  runMigrations,
+  type MigrationRunOptions,
+  type MigrationRunResult,
+} from './migrations';
 
-export function initSchema(db: SqliteDatabase): void {
-  runMigrations(db);
+export function initSchema(
+  db: SqliteDatabase,
+  options: MigrationRunOptions = {},
+): MigrationRunResult {
+  return runMigrations(db, options);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

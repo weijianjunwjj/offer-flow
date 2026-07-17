@@ -4,7 +4,7 @@
 // 排序：更新时间 / 机会分 / 目标画像。筛选排序仅影响前端展示，不改持久化数据。
 // 指标分层（DEC-019）：机会分为唯一主指标（大数字 + 默认排序）；目标画像为「是否我的菜」辅助徽章；
 // 人岗匹配（综合匹配度）不在列表常驻，收进主战场雷达卡。
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { NSelect } from 'naive-ui';
 import type {
@@ -14,7 +14,12 @@ import type {
   ApplyAdvice,
   OpportunityRadar,
 } from '../storage';
-import { deriveDecision, type DerivedDecision } from '../decision';
+import {
+  deriveDecision,
+  resolveDecisionOpportunityFacts,
+  type DecisionOpportunityFacts,
+  type DerivedDecision,
+} from '../decision';
 import { isPendingReview } from '../review/reviewWorkflow';
 import { COMMUNICATION_STATUS_LABELS, COMMUNICATION_STATUS_OPTIONS } from '../app/labels';
 import {
@@ -31,6 +36,16 @@ import { calculateTargetProfileScore, getTargetProfileLevel } from '../app/targe
 import { getOpportunityScoreLevel } from '../app/opportunityScore';
 import { opportunityTone, profileTone, applyAdviceTone } from '../app/scoreVisuals';
 import OpportunityMiniBars from '../components/OpportunityMiniBars.vue';
+import { features } from '../config/features';
+import { jobMemoryApi } from '../api/jobMemoryApi';
+import type { JobSummary } from '../domain/job-memory';
+import {
+  formatApplicationChannelLabel,
+  formatApplicationOutcomeLabel,
+  formatApplicationStageLabel,
+  formatDateTime,
+  formatImportedRecommendationLabel,
+} from '../domain/presentation';
 
 const router = useRouter();
 
@@ -44,6 +59,14 @@ function openJob(jobId: string): void {
 
 const jobs = ref<JobRecord[]>([]);
 const loadError = ref('');
+const summaries = ref<JobSummary[]>([]);
+const summaryLoadError = ref('');
+const summaryLoading = ref(false);
+const summariesReady = ref(false);
+let jobsLoadGeneration = 0;
+let summariesLoadGeneration = 0;
+let jobsController: AbortController | null = null;
+let summariesController: AbortController | null = null;
 
 // 筛选 / 排序状态（仅前端展示，空串 / 0 表示不筛选）。
 const cityFilter = ref<string>('');
@@ -56,25 +79,86 @@ const sortKey = ref<SortKey>('opportunity');
 const decisionFilter = ref<DecisionFilter>('');
 
 async function load(): Promise<void> {
+  const runId = ++jobsLoadGeneration;
+  jobsController?.abort();
+  const controller = new AbortController();
+  jobsController = controller;
+  loadError.value = '';
+  const summaryPromise = features.jobMemoryV2Enabled ? loadSummaries() : Promise.resolve();
   try {
-    jobs.value = await jobsApi.list();
+    const candidate = await jobsApi.list({ signal: controller.signal });
+    if (!controller.signal.aborted && runId === jobsLoadGeneration) jobs.value = candidate;
   } catch (error) {
-    loadError.value = (error as Error).message;
+    if ((error as Error).name !== 'AbortError' && runId === jobsLoadGeneration) {
+      loadError.value = (error as Error).message;
+    }
+  } finally {
+    if (jobsController === controller) jobsController = null;
   }
+  await summaryPromise;
 }
 
 onMounted(load);
+onBeforeUnmount(() => {
+  jobsLoadGeneration += 1;
+  summariesLoadGeneration += 1;
+  jobsController?.abort();
+  summariesController?.abort();
+});
+
+async function loadSummaries(): Promise<void> {
+  if (!features.jobMemoryV2Enabled) return;
+  const runId = ++summariesLoadGeneration;
+  summariesController?.abort();
+  const controller = new AbortController();
+  summariesController = controller;
+  summaryLoading.value = true;
+  summariesReady.value = false;
+  summaryLoadError.value = '';
+  try {
+    const candidate = await jobMemoryApi.getJobSummaries({ signal: controller.signal });
+    if (!controller.signal.aborted && runId === summariesLoadGeneration) {
+      summaries.value = candidate;
+      summariesReady.value = true;
+    }
+  } catch (error) {
+    if ((error as Error).name !== 'AbortError' && runId === summariesLoadGeneration) {
+      summaryLoadError.value = (error as Error).message;
+    }
+  } finally {
+    if (runId === summariesLoadGeneration) summaryLoading.value = false;
+    if (summariesController === controller) summariesController = null;
+  }
+}
+
+const summaryByJobId = computed(() => new Map(summaries.value.map((summary) => [summary.job.id, summary])));
+
+function summaryFor(jobId: string): JobSummary | null {
+  return summaryByJobId.value.get(jobId) ?? null;
+}
+
+function summaryStatus(summary: JobSummary): string {
+  if (summary.applicationCount === 0) return '未记录流程';
+  if (summary.defaultApplication === null) {
+    return summary.projectionDiagnostics.some(({ projectionStatus }) => projectionStatus === 'invalid')
+      ? '流程投影不可用'
+      : '无可用流程';
+  }
+  const projection = summary.defaultApplication.projection;
+  return `${formatApplicationStageLabel(projection.stage)} / ${formatApplicationOutcomeLabel(projection.outcome)}`;
+}
 
 function isImportedDraft(job: JobRecord): boolean {
   return job.importStatus === 'imported_draft' || job.importedDraft !== undefined;
 }
 
 function isPendingReviewJob(job: JobRecord): boolean {
-  return isPendingReview(job);
+  const communicationStatus = effectiveCommunicationStatus(job) ?? 'not_contacted';
+  return isPendingReview({ ...job, communicationStatus });
 }
 
 function importCategoryLabel(job: JobRecord): string {
-  return job.importedDraft?.recommendedCategory ?? 'wait_review';
+  return formatImportedRecommendationLabel(job.importedDraft?.recommendedCategory ?? 'wait_review');
 }
 
 function importConfidenceLabel(job: JobRecord): string {
@@ -148,15 +232,66 @@ function adviceToneOf(job: JobRecord): string {
 function adviceLabelOf(job: JobRecord): string {
   return APPLY_ADVICE_LABELS[adviceOf(job)];
 }
+const decisionFactsById = computed(() => {
+  const map = new Map<string, DecisionOpportunityFacts>();
+  for (const job of jobs.value) {
+    if (!features.jobMemoryV2Enabled) {
+      map.set(job.id, resolveDecisionOpportunityFacts({
+        job, selectedApplication: null, defaultApplication: null, jobMemoryV2Enabled: false,
+      }));
+      continue;
+    }
+    const summary = summaryFor(job.id);
+    if (!summariesReady.value || summary === null || hasInvalidDefaultProjection(summary)) {
+      map.set(job.id, { source: 'opportunity_only', job, application: null, legacyCommunication: null });
+      continue;
+    }
+    map.set(job.id, resolveDecisionOpportunityFacts({
+      job,
+      selectedApplication: null,
+      defaultApplication: summary.defaultApplication,
+      availableApplications: summary.defaultApplication === null ? [] : [summary.defaultApplication],
+      jobMemoryV2Enabled: true,
+    }));
+  }
+  return map;
+});
+function decisionUnavailable(job: JobRecord): boolean {
+  if (!features.jobMemoryV2Enabled) return false;
+  const summary = summaryFor(job.id);
+  return !summariesReady.value
+    || summary === null
+    || hasInvalidDefaultProjection(summary);
+}
+function hasInvalidDefaultProjection(summary: JobSummary): boolean {
+  return summary.defaultApplication === null
+    && summary.projectionDiagnostics.some(({ projectionStatus }) => projectionStatus === 'invalid');
+}
 const decisionById = computed(() => {
   const map = new Map<string, DerivedDecision>();
+  const companyOpportunities = [...decisionFactsById.value.values()];
   for (const job of jobs.value) {
-    map.set(job.id, deriveDecision(job, jobs.value));
+    const facts = decisionFactsById.value.get(job.id);
+    if (facts === undefined) continue;
+    if (decisionUnavailable(job)) {
+      map.set(job.id, {
+        strategy: 'cautious_watch', nextAction: 'manual_review', stopLoss: false,
+        scenario: 'first_greeting', flowNotice: '求职流程摘要不可用，暂不生成流程建议。',
+      });
+      continue;
+    }
+    map.set(job.id, deriveDecision(facts, {
+      companyOpportunities,
+      companyWarningMode: features.jobMemoryV2Enabled ? 'trusted' : 'legacy',
+    }));
   }
   return map;
 });
 function decisionOf(job: JobRecord): DerivedDecision {
-  return decisionById.value.get(job.id) ?? deriveDecision(job, jobs.value);
+  return decisionById.value.get(job.id) ?? {
+    strategy: 'cautious_watch', nextAction: 'manual_review', stopLoss: false,
+    scenario: 'first_greeting',
+  };
 }
 function decisionActionLabel(job: JobRecord): string {
   return nextActionLabel(decisionOf(job).nextAction);
@@ -165,14 +300,28 @@ function decisionActionKey(job: JobRecord): string {
   return decisionOf(job).nextAction ?? 'done';
 }
 function isWaitingForReply(job: JobRecord, decision: DerivedDecision): boolean {
+  const status = effectiveCommunicationStatus(job);
   return (
     decision.nextAction === 'wait' &&
     (
-      job.communicationStatus === 'greeted_unread' ||
-      job.communicationStatus === 'greeted_read_no_reply' ||
-      job.communicationStatus === 'paused'
+      status === 'greeted_unread' ||
+      status === 'greeted_read_no_reply' ||
+      status === 'paused'
     )
   );
+}
+function effectiveCommunicationStatus(job: JobRecord): CommunicationStatus | null {
+  if (!features.jobMemoryV2Enabled) return job.communicationStatus;
+  if (decisionUnavailable(job)) return null;
+  const facts = decisionFactsById.value.get(job.id);
+  if (facts?.source === 'application_projection') return facts.application.projection.communicationStatus;
+  if (facts?.source === 'legacy_job_fallback') return facts.legacyCommunication.communicationStatus;
+  return null;
+}
+function effectiveStatusLabel(job: JobRecord): string {
+  const status = effectiveCommunicationStatus(job);
+  if (status !== null) return COMMUNICATION_STATUS_LABELS[status];
+  return decisionUnavailable(job) ? '流程状态不可用' : '尚无流程';
 }
 function matchesDecisionFilter(job: JobRecord): boolean {
   if (decisionFilter.value === '') {
@@ -269,7 +418,7 @@ const filteredJobs = computed(() => {
   const list = jobs.value.filter((j) => {
     if (cityFilter.value !== '' && j.city.trim() !== cityFilter.value) return false;
     if (sizeFilter.value !== '' && effectiveSizeTier(j) !== sizeFilter.value) return false;
-    if (statusFilter.value !== '' && j.communicationStatus !== statusFilter.value) return false;
+    if (statusFilter.value !== '' && effectiveCommunicationStatus(j) !== statusFilter.value) return false;
     if (!matchesDecisionFilter(j)) return false;
     if (minScore.value > 0) {
       const s = opportunityScoreOf(j);
@@ -306,7 +455,10 @@ function dash(value: string): string {
   return value.trim() === '' ? '—' : value;
 }
 function formatTime(ts: number): string {
-  return new Date(ts).toLocaleString();
+  return formatDateTime(ts);
+}
+function formatOptionalTime(ts: number | null): string {
+  return formatDateTime(ts, '发生时间未知');
 }
 </script>
 
@@ -323,6 +475,10 @@ function formatTime(ts: number): string {
     <p v-if="loadError" class="banner banner-error" role="alert">
       读取岗位列表失败：{{ loadError }}
     </p>
+    <p v-if="features.jobMemoryV2Enabled && summaryLoadError" class="banner banner-error" role="alert">
+      求职流程摘要读取失败，岗位列表仍可使用：{{ summaryLoadError }}
+      <button type="button" class="link-btn" @click="loadSummaries">重试摘要</button>
+    </p>
 
     <section v-if="jobs.length === 0" class="empty" role="status">
       <p class="empty-title">还没有岗位记录</p>
@@ -333,7 +489,7 @@ function formatTime(ts: number): string {
         <li>录入 Boss 岗位信息与 JD</li>
         <li>点击「AI 分析 JD」调用 LLM 分析（也可手动粘贴外部 AI 结果作为备用）</li>
         <li>检查 AI 分析结果，确认后保存</li>
-        <li>若是外部导入草稿，再通过 confirm / defer / reject 完成 Review</li>
+        <li>若是外部导入草稿，再通过确认、稍后处理或拒绝完成审核</li>
         <li>维护沟通状态，面试前随时回看</li>
       </ol>
       <button class="new-btn" @click="createJob">+ 新建岗位</button>
@@ -466,6 +622,26 @@ function formatTime(ts: number): string {
               </span>
             </div>
             <div class="ac-context">{{ contextLine(job) }}</div>
+            <div v-if="features.jobMemoryV2Enabled" class="application-summary" data-application-summary>
+              <span v-if="summaryLoading && !summaryFor(job.id)">流程摘要读取中…</span>
+              <template v-else v-for="summary in [summaryFor(job.id)]" :key="job.id">
+                <template v-if="summary">
+                  <strong>{{ summaryStatus(summary) }}</strong>
+                  <span v-if="summary.applicationCount > 0">
+                    共 {{ summary.applicationCount }} 次流程 · {{ summary.activeApplicationCount }} 次进行中
+                  </span>
+                  <span v-if="summary.defaultApplication">
+                    {{ formatApplicationChannelLabel(summary.defaultApplication.record.channel, summary.defaultApplication.record.channelOtherLabel) }}
+                    · {{ summary.defaultResumeVersionName ?? '未知历史简历' }}
+                    · 最近事实 {{ formatOptionalTime(summary.defaultApplication.projection.lastMeaningfulEventAt) }}
+                  </span>
+                  <span v-if="summary.projectionDiagnostics.length" class="summary-warning">
+                    {{ summary.projectionDiagnostics.length }} 条流程存在投影警告/错误
+                  </span>
+                </template>
+                <span v-else-if="summaryLoadError">流程摘要暂不可用</span>
+              </template>
+            </div>
             <div v-if="isImportedDraft(job)" class="ac-import-note">
               <span class="import-chip">{{ importCategoryLabel(job) }}</span>
               <span class="import-chip">置信度 {{ importConfidenceLabel(job) }}</span>
@@ -478,8 +654,8 @@ function formatTime(ts: number): string {
             </div>
           </div>
           <div class="ac-side">
-            <span class="ac-status" :data-status="job.communicationStatus">
-              {{ COMMUNICATION_STATUS_LABELS[job.communicationStatus] }}
+            <span class="ac-status" :data-status="effectiveCommunicationStatus(job) ?? 'none'">
+              {{ effectiveStatusLabel(job) }}
             </span>
             <span class="ac-time">{{ formatTime(job.updatedAt) }}</span>
           </div>
@@ -843,6 +1019,19 @@ function formatTime(ts: number): string {
   font-size: 12px;
   color: var(--of-muted);
 }
+.application-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+}
+.application-summary strong { color: #0f172a; }
+.summary-warning { color: #b45309; }
 .ac-import-note {
   display: flex;
   flex-wrap: wrap;

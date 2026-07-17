@@ -19,6 +19,7 @@ export interface LlmOptions {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface LlmStreamChunk {
@@ -120,16 +121,22 @@ async function fetchWithRetry(
   startTime: number,
   attempt: number,
   maxRetries: number,
+  externalSignal?: AbortSignal,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), init.timeoutMs);
+  const abortFromExternal = (): void => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) controller.abort(externalSignal.reason);
+  externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
 
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
     return response;
   } catch (error) {
     clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
     const err = error as Error & { cause?: unknown };
 
     if (err.name === 'AbortError') {
@@ -140,7 +147,7 @@ async function fetchWithRetry(
       const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
       console.log('[llm] retry', { attempt: attempt + 1, maxRetries, delayMs: delay, error: err.message });
       await sleep(delay);
-      return fetchWithRetry(url, init, startTime, attempt + 1, maxRetries);
+      return fetchWithRetry(url, init, startTime, attempt + 1, maxRetries, externalSignal);
     }
 
     throw err;
@@ -155,12 +162,20 @@ interface BuildFetchOptionsResult {
   promptChars: number;
 }
 
+function resolveMaxTokens(explicit: number | undefined): number {
+  const HARD_MIN = 800;
+  const HARD_MAX = 8192;
+  const clamp = (value: number): number => Math.max(HARD_MIN, Math.min(HARD_MAX, value));
+  if (explicit !== undefined) return clamp(explicit);
+  return readEnvInt('OFFERFLOW_LLM_MAX_TOKENS', 1800, HARD_MIN, HARD_MAX);
+}
+
 function buildFetchOptions(
   systemPrompt: string,
   userMessage: string,
   options: LlmOptions | undefined,
 ): BuildFetchOptionsResult {
-  const maxTokens = readEnvInt('OFFERFLOW_LLM_MAX_TOKENS', options?.maxTokens ?? 1800, 800, 4096);
+  const maxTokens = resolveMaxTokens(options?.maxTokens);
   const temperature = readEnvFloat('OFFERFLOW_LLM_TEMPERATURE', options?.temperature ?? 0.2, 0, 1);
   const timeoutMs = readEnvInt('OFFERFLOW_LLM_TIMEOUT_MS', options?.timeoutMs ?? 30000, 5000, 60000);
 
@@ -225,6 +240,7 @@ export async function chatCompletion(
       startTime,
       0,
       maxRetries,
+      options?.signal,
     );
 
     const upstreamElapsed = Date.now() - fetchStart;
@@ -347,6 +363,7 @@ export async function* chatCompletionStream(
       startTime,
       0,
       maxRetries,
+      options?.signal,
     );
   } catch (error) {
     const totalElapsed = Date.now() - startTime;

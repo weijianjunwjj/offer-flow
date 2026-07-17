@@ -1,4 +1,9 @@
 import type { SqliteDatabase } from './db';
+import { createJobMemorySchemaV2 } from './migrations/jobMemorySchemaV2';
+import { createCapabilityBaselineSchemaV3 } from './migrations/capabilityBaselineSchemaV3';
+import { createHistoryFunnelSchemaV4 } from './migrations/historyFunnelSchemaV4';
+import { createMarketPositionSchemaV5 } from './migrations/marketPositionSchemaV5';
+import { createStrategyWindowSchemaV6 } from './migrations/strategyWindowSchemaV6';
 
 export interface SchemaMigration {
   version: number;
@@ -12,7 +17,29 @@ export interface MigrationRunResult {
   newlyAppliedVersions: number[];
 }
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export interface MigrationRunOptions {
+  targetVersion?: number;
+  migrations?: readonly SchemaMigration[];
+  transactionMode?: 'per-migration' | 'caller-managed';
+}
+
+// 可信求职记忆（Job Memory v2）生产底座仍固定在 v2：快照、恢复与生产验证机器都以 v2 为准。
+export const PRODUCTION_SCHEMA_VERSION = 2;
+// G2 能力基线新增 v3、G3 历史补录与基础漏斗新增 v4、G4 市场位置画像新增 v5、
+// G5 求职策略窗口新增 v6；LATEST 与 PRODUCTION 有意区分，v3/v4/v5/v6 均为纯新增表，
+// 不改动 v2 生产语义。v5/v6 仅限沙箱/临时库使用，真实生产库不得升级。
+export const LATEST_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
+// G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
+export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
+// G3 历史补录与基础漏斗单独所需的最低 schema 版本（v4）。历史补录表在 v4 引入，
+// 因此其启动门禁固定要求 v4，不随 LATEST 上浮——否则每引入一个更高沙箱版本
+// 都会错误抬高真实生产（schema v4）启动所需的版本。
+export const HISTORY_IMPORT_SCHEMA_VERSION = 4;
+// G4 市场位置画像单独所需的最低 schema 版本（v5），仅限沙箱使用。
+export const MARKET_POSITION_SCHEMA_VERSION = 5;
+// G5 求职策略窗口单独所需的最低 schema 版本（v6），仅限沙箱使用。
+export const STRATEGY_WINDOW_SCHEMA_VERSION = 6;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -61,6 +88,31 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       db.exec(BASELINE_SCHEMA_SQL);
     },
   },
+  {
+    version: 2,
+    name: '002_v0_7_job_memory_schema',
+    up: createJobMemorySchemaV2,
+  },
+  {
+    version: 3,
+    name: '003_v0_7_capability_baseline_schema',
+    up: createCapabilityBaselineSchemaV3,
+  },
+  {
+    version: 4,
+    name: '004_v0_7_history_funnel_schema',
+    up: createHistoryFunnelSchemaV4,
+  },
+  {
+    version: 5,
+    name: '005_v0_7_market_position_schema',
+    up: createMarketPositionSchemaV5,
+  },
+  {
+    version: 6,
+    name: '006_v0_7_strategy_window_schema',
+    up: createStrategyWindowSchemaV6,
+  },
 ];
 
 function validateMigrations(migrations: readonly SchemaMigration[]): void {
@@ -87,6 +139,21 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   applied_at INTEGER NOT NULL
 );
 `);
+}
+
+function validateTargetVersion(
+  targetVersion: number,
+  migrations: readonly SchemaMigration[],
+): void {
+  if (!Number.isSafeInteger(targetVersion) || targetVersion < 1) {
+    throw new Error(`schema target version must be a positive safe integer: ${String(targetVersion)}`);
+  }
+  const latestKnownVersion = migrations.at(-1)?.version ?? 0;
+  if (targetVersion > latestKnownVersion) {
+    throw new Error(
+      `schema target version ${targetVersion} is newer than the latest known migration ${latestKnownVersion}`,
+    );
+  }
 }
 
 function readAppliedMigrations(
@@ -122,24 +189,47 @@ function validateAppliedMigrations(
   }
 }
 
+export function getDatabaseSchemaVersion(db: SqliteDatabase): number {
+  const migrationTable = db
+    .prepare("SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = 'schema_migrations'")
+    .get() as { present: number } | undefined;
+  if (migrationTable === undefined) return 0;
+  const applied = readAppliedMigrations(db);
+  validateAppliedMigrations(applied, SCHEMA_MIGRATIONS);
+  return applied.at(-1)?.version ?? 0;
+}
+
 export function runMigrations(
   db: SqliteDatabase,
-  migrations: readonly SchemaMigration[] = SCHEMA_MIGRATIONS,
+  options: MigrationRunOptions = {},
 ): MigrationRunResult {
+  const migrations = options.migrations ?? SCHEMA_MIGRATIONS;
+  const targetVersion = options.targetVersion ?? PRODUCTION_SCHEMA_VERSION;
+  const transactionMode = options.transactionMode ?? 'per-migration';
   validateMigrations(migrations);
+  validateTargetVersion(targetVersion, migrations);
   ensureMigrationTable(db);
 
   const appliedBefore = readAppliedMigrations(db);
   validateAppliedMigrations(appliedBefore, migrations);
+  const currentVersionBefore = appliedBefore.at(-1)?.version ?? 0;
+  if (targetVersion < currentVersionBefore) {
+    throw new Error(
+      `database schema version ${currentVersionBefore} cannot be downgraded to target version ${targetVersion}`,
+    );
+  }
   const appliedVersions = new Set(appliedBefore.map((record) => record.version));
   const newlyAppliedVersions: number[] = [];
 
   for (const migration of migrations) {
+    if (migration.version > targetVersion) {
+      break;
+    }
     if (appliedVersions.has(migration.version)) {
       continue;
     }
 
-    const applyMigration = db.transaction(() => {
+    const applyMigration = (): void => {
       migration.up(db);
       const appliedAt = Date.now();
       db.prepare(
@@ -150,9 +240,13 @@ export function runMigrations(
          VALUES ('schema_version', ?, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
       ).run(String(migration.version), appliedAt);
-    });
+    };
 
-    applyMigration();
+    if (transactionMode === 'caller-managed') {
+      applyMigration();
+    } else {
+      db.transaction(applyMigration)();
+    }
     appliedVersions.add(migration.version);
     newlyAppliedVersions.push(migration.version);
   }

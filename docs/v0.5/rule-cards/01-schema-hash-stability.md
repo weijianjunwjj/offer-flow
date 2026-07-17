@@ -3,7 +3,7 @@
 来源项目：
 
 ```txt
-D:\VSCode\activity-config-miniapp
+<workspace>
 ```
 
 参考文件：

@@ -4,6 +4,24 @@ import type {
   JobReport,
   JobSeekerProfile,
 } from '../storage';
+import type {
+  JobDetailBundleV2,
+  JobMemoryBundle,
+} from '../domain/job-memory';
+import type { ApplicationApiPort } from '../api/jobMemoryApi';
+import type {
+  AppendFeedbackEventRequest,
+  CreateApplicationRequest,
+  UpdateApplicationMetadataRequest,
+  VoidFeedbackEventRequest,
+  VoidApplicationRequest,
+} from '../../server/job-memory/dtoSchemas';
+import type { ApplicationDraftState } from '../pages/job-detail/applicationSectionModel';
+import type {
+  FeedbackEventDraft,
+  FeedbackEventVoidDraft,
+  TimelineUiState,
+} from '../pages/job-detail/feedbackTimelineModel';
 
 export interface JobEditDraft {
   company: string;
@@ -14,11 +32,17 @@ export interface JobEditDraft {
   companyInput: CompanyInput;
 }
 
-export interface JobDetailBundle {
+export interface JobDetailBundleV1 {
   jobId: string;
   job: JobRecord;
   profile: JobSeekerProfile | null;
   allJobs: JobRecord[];
+}
+
+export type JobDetailBundle = JobDetailBundleV1 | JobDetailBundleV2;
+
+export function isJobDetailBundleV2(bundle: JobDetailBundle): bundle is JobDetailBundleV2 {
+  return 'memory' in bundle;
 }
 
 export interface AnalysisDraft {
@@ -44,12 +68,14 @@ export interface JobDetailApiPorts {
   profile: {
     get(options?: { signal?: AbortSignal }): Promise<JobSeekerProfile | null>;
   };
+  jobMemory?: ApplicationApiPort;
 }
 
 export interface JobDetailScopeInjection {
   jobId: string;
   api: JobDetailApiPorts;
   runtimeEnabled?: boolean;
+  jobMemoryV2Enabled?: boolean;
 }
 
 export interface AcceptUpdatedJobOptions {
@@ -62,6 +88,13 @@ export interface JobDetailState {
   analysisDraft: AnalysisDraft;
   loadError: PageLoadError | null;
   actionStatus: Record<string, 'idle' | 'loading' | 'done' | 'error'>;
+  selectedApplicationId: string | null;
+  applicationDrafts: ApplicationDraftState;
+  eventDraft: FeedbackEventDraft | null;
+  eventVoidDraft: FeedbackEventVoidDraft | null;
+  eventDraftBaselineFingerprint: string;
+  timelineUi: TimelineUiState;
+  decisionJobPreview: JobRecord | null;
 }
 
 export interface JobDetailSource {
@@ -70,4 +103,20 @@ export interface JobDetailSource {
 
 export interface SaveGreetingInput {
   report: JobReport;
+}
+
+export interface ApplicationWriteActions {
+  acceptMemoryBundle(memory: JobMemoryBundle): void;
+  createApplication(input: CreateApplicationRequest): Promise<JobMemoryBundle>;
+  updateApplication(
+    applicationId: string,
+    input: UpdateApplicationMetadataRequest,
+  ): Promise<JobMemoryBundle>;
+  voidApplication(applicationId: string, input: VoidApplicationRequest): Promise<JobMemoryBundle>;
+  appendFeedbackEvent(
+    applicationId: string,
+    input: AppendFeedbackEventRequest,
+  ): Promise<JobMemoryBundle>;
+  voidFeedbackEvent(eventId: string, input: VoidFeedbackEventRequest): Promise<JobMemoryBundle>;
+  resetEventDrafts(): void;
 }

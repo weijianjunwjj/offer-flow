@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { getDbPath, openDb } from '../db';
+import { getDatabaseSchemaVersion } from '../migrations';
 import { initSchema } from '../schema';
 import { backupDatabase } from './backup';
 import { doctorDatabase } from './doctor';
@@ -33,7 +34,11 @@ function parseJsonFile<T>(filePath: string): T {
 }
 
 function assertSnapshotShape(value: OfferFlowSnapshot): void {
-  if (value.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || typeof value.tables !== 'object') {
+  if (
+    value.schemaVersion !== SNAPSHOT_SCHEMA_VERSION
+    || value.databaseSchemaVersion !== SNAPSHOT_SCHEMA_VERSION
+    || typeof value.tables !== 'object'
+  ) {
     throw new Error(`unsupported snapshot schemaVersion: ${String(value.schemaVersion)}`);
   }
 }
@@ -41,6 +46,7 @@ function assertSnapshotShape(value: OfferFlowSnapshot): void {
 function assertManifestShape(value: SnapshotManifest): void {
   if (
     value.schemaVersion !== SNAPSHOT_SCHEMA_VERSION ||
+    value.databaseSchemaVersion !== SNAPSHOT_SCHEMA_VERSION ||
     typeof value.snapshotHash !== 'string' ||
     value.snapshotHash === ''
   ) {
@@ -124,6 +130,16 @@ function mergeTable(
       continue;
     }
 
+    if (table === 'app_meta') {
+      if (JSON.stringify(orderRowColumns(localRow, columns)) === JSON.stringify(row)) {
+        result.skipped += 1;
+      } else {
+        insertOrReplaceRow(db, table, columns, primaryKey, row);
+        result.updated += 1;
+      }
+      continue;
+    }
+
     const remoteUpdatedAt = updatedAtValue(row);
     const localUpdatedAt = updatedAtValue(localRow);
     if (remoteUpdatedAt !== null && localUpdatedAt !== null) {
@@ -183,7 +199,12 @@ export function importSnapshot(
 
   const db = openDb(dbPath);
   try {
-    initSchema(db);
+    const currentVersion = getDatabaseSchemaVersion(db);
+    if (currentVersion === 1) {
+      throw new Error('schema v1 数据库必须先完成授权 B7-B 升级，禁止普通 snapshot import 自动迁移');
+    }
+    if (currentVersion === 0) initSchema(db, { targetVersion: 2 });
+    if (getDatabaseSchemaVersion(db) !== 2) throw new Error('snapshot v2 import 目标 schema 不为 2');
     const result: ImportSnapshotResult = {
       inserted: 0,
       updated: 0,
@@ -192,6 +213,7 @@ export function importSnapshot(
       snapshotHash,
     };
     const merge = db.transaction(() => {
+      db.pragma('defer_foreign_keys = ON');
       for (const table of SYNC_TABLES) {
         const snapshotTable = snapshot.tables[table];
         if (snapshotTable !== undefined) {

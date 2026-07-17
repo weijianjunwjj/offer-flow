@@ -2,14 +2,21 @@
 
 ## 1. 文档状态
 
-- **状态**：待人工审阅
-- **日期**：2026-07-13
+- **状态**：B0–B8 可信求职记忆技术阶段已完成；v0.7 产品仍在实施，动态画像与策略尚未完成，禁止发布
+- **日期**：2026-07-14
 - **产品输入**：`docs/prd/offerflow-v0.7.md` Draft 0.4
 - **实施状态输入**：`docs/handoffs/offerflow-v0.7-stage-handoff-2026-07-13.md`
 - **页面基建输入**：`docs/architecture/offerflow-v0.7.0-a-technical-design.md`
 - **设计基线**：main `8484d10a91d9e79bb973ded9dfac1c40270ba42a`
 - **App 版本**：`0.6.2`
-- **本轮输出**：技术设计，不包含业务代码、migration、schema、snapshot 或版本修改
+- **设计文档初始输出**：技术设计，不包含当时的业务代码、migration、schema、snapshot 或版本修改
+- **B2 启用边界**：Job Memory repositories 和 API 已实现，但默认 Server 不启用 v2 capability；B2 测试只通过显式 Server option 和显式 schema target v2 的临时数据库启用，真实数据库正式启用仍留到 B7
+- **B3 启用边界**：ResumeVersion 页面与前端 API adapter 已实现，但默认生产前端入口保持关闭；只有专用临时联调命令会在系统临时目录新建 schema v2 SQLite，并同时显式开启后端 capability 与前端 flag。真实数据库和生产入口仍留到 B7。
+- **B4 完成边界**：统一的 Job Memory v2 前端 capability、JobDetail 聚合 Bundle、ApplicationSection、同岗位多次 Application、上下文纠正与作废、JobList 最小流程摘要和临时库 smoke 已完成。B4 只消费后端投影并保留事件 source，不展示 FeedbackTimeline，也不提供普通事件录入、事件纠错或事件作废 UI。
+- **B5 完成边界**：FeedbackEvent 时间线、手工事实录入、事件作废和可选替代事件已完成。正式事实继续由用户确认后写入，历史事件不原地覆盖。
+- **B6 完成边界**：v2 模式的决策输入已切换到 ApplicationProjection；存在 Application 时不再读取 Job legacy 沟通状态，零 Application 的历史岗位只允许只读 legacy fallback。v2 capability 已禁用新的 legacy 沟通事实写入，默认 v1 模式保持兼容。
+- **B7 完成边界**：B7-B 已绑定批准备份 `20260714-102807-b7a-6f0ac3d1` 完成正式升级：真实数据库 schema 1→2，Job 13、Application 7、FeedbackEvent 7、ResumeVersion 0，保守 skip 6、manual review 0，Projection degraded 7/invalid 0，Job canonical hash changes 0；Snapshot v2 consistency/roundtrip 通过，pre-apply checkpoint 为 `20260714-112449-b7a-8d54a08b`，升级后备份为 `20260714-112746-b7b-475bd682`。生产默认 schema、后端 capability、前端 flag 与 Snapshot 已切换到 v2；Job legacy 字段和显式 v1 兼容入口继续保留。
+- **B8 完成边界**：可信求职记忆底座的工程审计、三份备份复核、真实数据只读验证、v1/v2 隔离恢复、数据库已提交但 Snapshot 待续发、事务前/事务中失败、生产默认、事实源、Human-in-the-loop、隐私和范围 Gate 已覆盖；完整测试和关键 Gate 双跑通过。恢复演练未触碰真实数据库，App 版本仍为 0.6.2，main 未合并。该结论只证明 B 技术切片通过，不代表 PRD 产品发布验收通过。
 
 正式 PRD 决定产品范围，阶段交接决定实际完成状态。A 技术设计仍保留实施前的 Draft 和历史依赖事实；B 以 main 中已经完成的 Hash Router、Page Scope、Runtime Gate 1 与生命周期保护为真实基线，不将 A 文档中的历史“待安装”状态解释为当前事实。
 
@@ -227,6 +234,10 @@ Application 不设置业务自然唯一键。合法重复投递必须被允许�
 - Job/JD 相似、名称相似或 AI 去重建议只显示提示，用户确认前不合并、不覆盖。
 - Job 有 Application 后，Job 删除返回 409；先处理或作废关联流程，仍不级联删除历史。
 
+作废事实源不变量：`Application.voidedAt/voidReason` 是生命周期当前正式事实；`application_voided` 是修改该事实时同一事务追加的审计事件，不能独立决定作废状态。投影以 Application 行为准：行已作废但缺少审计事件，或只有审计事件但行未作废，都输出 degraded warning。B2 必须在同一 SQLite transaction 中同时更新 Application 行并追加审计事件。
+
+元数据纠正不变量：Application 行保存当前正式上下文；`application_metadata_corrected` 只记录修改审计，不是第二套当前值来源。投影不得根据 correction event 覆盖 Application 当前字段。
+
 ### 6.5 去重与招聘主体裁定
 
 | 场景 | B 的唯一处理 |
@@ -373,7 +384,7 @@ B6 完成后 Job PATCH 禁止写 `communicationStatus/followupCount/lastGreetedA
 | hr reply/resume request/phone screen | `replied` |
 | interview scheduled/completed/advanced | `interviewing` |
 | recruitment paused/frozen | `paused` |
-| user withdrew/position closed/marked stale/offer accepted/declined/application voided | `closed` |
+| Application.voidedAt 非空，或 user withdrew/position closed/marked stale/offer accepted/declined | `closed` |
 | rejected | `rejected` |
 | offer received 且未结束 | `replied`，新 UI 以 stage=`offer` 展示，不显示为普通回复 |
 
@@ -435,6 +446,7 @@ interface ApplicationProjection {
   lastFollowUpAt: number | null
   nextAllowedFollowUpAt: number | null
   isClosed: boolean
+  isVoided: boolean
   statusSourceEventId: string | null
   projectionStatus: 'valid' | 'degraded' | 'invalid'
   warnings: string[]
@@ -449,6 +461,7 @@ interface ApplicationProjection {
 | FeedbackEvent | feedback_events 表正式事实 |
 | stage/outcome/communicationStatus/followUpCount/时间 | 查询时纯函数投影 |
 | nextAllowedFollowUpAt/isClosed | 查询时派生 |
+| isVoided | 由 Application.voidedAt 派生；审计事件不单独决定 |
 | statusSourceEventId/warnings | 投影诊断信息 |
 | selectedApplicationId | Page Scope UI 状态 |
 | projection 缓存表 | B 不创建 |
@@ -578,6 +591,9 @@ CREATE INDEX feedback_events_reason_idx
 
 ### 12.1 安全原则
 
+- B1 将默认 migration target 固定为当前生产安全版本 v1；schema v2 只允许通过显式 `targetVersion: 2` 门禁在临时数据库中执行。
+- 默认应用启动、默认 `db:init`、默认 selftest 和用户数据路径不得因 B1 自动升级到 schema v2。
+- 正式用户数据库启用 v2 的唯一入口留到 B7；启用前必须完成备份、dry-run、分类报告和用户确认。
 - schema v2 migration 只在单个 SQLite transaction 中创建空表、索引和外键并记录 schema_migrations，不自动分类真实 Job。
 - B7 的数据 backfill 是显式升级步骤：先创建 SQLite 与 snapshot 备份并输出 dry-run 分类；备份失败则拒绝执行。
 - 正式 backfill 在单个 SQLite transaction 中保守创建 Application/Event 并写 audit import_log；任一步失败整体回滚。
@@ -879,32 +895,32 @@ B1 只能先在临时数据库验证；B7 才允许在明确备份和 audit 后�
 
 ### 21.1 模型与事实
 
-- [ ] Job 可以有零个、一个或多个 Application，未投递 Job 不自动建流程。
-- [ ] 重复投递、换渠道、换简历和独立招聘流程不会覆盖旧 Application。
-- [ ] ResumeVersion 内容不可变，旧 Application 的版本归属不受后续修改影响。
-- [ ] FeedbackEvent 不原地修改或删除，纠错可审计且投影稳定。
-- [ ] stage/outcome/communicationStatus 只有事件投影一个正式来源。
+- [x] Job 可以有零个、一个或多个 Application，未投递 Job 不自动建流程。
+- [x] 重复投递、换渠道、换简历和独立招聘流程不会覆盖旧 Application。
+- [x] ResumeVersion 内容不可变，旧 Application 的版本归属不受后续修改影响。
+- [x] FeedbackEvent 不原地修改或删除，纠错可审计且投影稳定。
+- [x] stage/outcome/communicationStatus 只有事件投影一个正式来源。
 
 ### 21.2 兼容与迁移
 
-- [ ] 8 态 communicationStatus 有确定投影，deriveDecision 读取 projection。
-- [ ] 零 Application 旧 Job 可继续做岗位级决策，但不进入市场统计。
-- [ ] unknown 与 false、user_withdrew 与 rejected、no response 与 rejection 分离。
-- [ ] migration 决策表、幂等、中断回滚、备份和 audit report 全部验证。
-- [ ] snapshot v2 同步三张新表并通过 consistency/roundtrip。
+- [x] 8 态 communicationStatus 有确定投影，deriveDecision 读取 projection。
+- [x] 零 Application 旧 Job 可继续做岗位级决策，但不进入市场统计。
+- [x] unknown 与 false、user_withdrew 与 rejected、no response 与 rejection 分离。
+- [x] migration 决策表、幂等、中断回滚、备份和 audit report 全部验证。
+- [x] snapshot v2 同步三张新表并通过 consistency/roundtrip。
 
 ### 21.3 API、页面与安全
 
-- [ ] API 有 runtime validation、404/409/422、idempotency、expectedVersion 和事务测试。
-- [ ] `/profile-versions`、ApplicationSection、FeedbackTimelineSection 和 JobList 摘要可用。
-- [ ] 写操作是普通 Action，不注册 Runtime Task；`loadJobBundle` 保持只读、可取消、无旧写。
-- [ ] AI/OCR 未确认候选不能进入正式事实或统计；现有 import review 保持原语义。
-- [ ] 没有实现 C、v0.7.1、v0.7.2、Runtime SSE Gate 2、自动投递或自动沟通。
+- [x] API 有 runtime validation、404/409/422、idempotency、expectedVersion 和事务测试。
+- [x] `/profile-versions`、ApplicationSection、FeedbackTimelineSection 和 JobList 摘要可用。
+- [x] 写操作是普通 Action，不注册 Runtime Task；`loadJobBundle` 保持只读、可取消、无旧写。
+- [x] AI/OCR 未确认候选不能进入正式事实或统计；现有 import review 保持原语义。
+- [x] 没有实现 C、v0.7.1、v0.7.2、Runtime SSE Gate 2、自动投递或自动沟通。
 
 ### 21.4 回归 Gate
 
-- [ ] typecheck、build、Vitest、selftest、OfferFlow JSON eval 全部通过。
-- [ ] migration、repository/API、snapshot 和 Browser Router smoke 通过。
-- [ ] Router smoke 连续两次退出码 0 且端口释放。
-- [ ] 测试只使用临时 SQLite，不调用真实 LLM/OCR，不改真实用户数据。
-- [ ] 完整差异、数据安全和发布前审计通过后，才可将 B 标记完成。
+- [x] typecheck、build、Vitest、selftest、OfferFlow JSON eval 全部通过。
+- [x] migration、repository/API、snapshot 和 Browser Router smoke 通过。
+- [x] Router smoke 连续两次退出码 0 且端口释放。
+- [x] 测试只使用临时 SQLite，不调用真实 LLM/OCR，不改真实用户数据。
+- [x] 完整差异、数据安全和发布前审计通过后，才可将 B 标记完成。

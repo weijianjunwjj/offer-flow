@@ -13,10 +13,35 @@ interface PendingRead {
   reject(error: unknown): void;
 }
 
+interface PendingBundleRead {
+  jobId: string;
+  signal: AbortSignal | undefined;
+  resolve(bundle: unknown): void;
+  reject(error: unknown): void;
+}
+
 const apiMocks = vi.hoisted(() => ({
   pending: [] as PendingRead[],
   respectAbort: true,
   patch: vi.fn(),
+  pendingBundles: [] as PendingBundleRead[],
+  features: { runtimeJobBundleEnabled: true, jobMemoryV2Enabled: false },
+}));
+
+vi.mock('../config/features', () => ({ features: apiMocks.features }));
+
+vi.mock('../api/jobMemoryApi', () => ({
+  jobMemoryApi: {
+    getJobDetailBundle(jobId: string, options?: { signal?: AbortSignal }) {
+      return new Promise((resolve, reject) => {
+        apiMocks.pendingBundles.push({ jobId, signal: options?.signal, resolve, reject });
+        if (apiMocks.respectAbort) {
+          options?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+        }
+      });
+    },
+    getJobSummaries: vi.fn(), createApplication: vi.fn(), updateApplication: vi.fn(), voidApplication: vi.fn(),
+  },
 }));
 
 vi.mock('../api/jobsApi', () => ({
@@ -112,9 +137,56 @@ async function runRace(respectAbort: boolean): Promise<void> {
   errorSpy.mockRestore();
 }
 
+async function runV2Race(respectAbort: boolean): Promise<void> {
+  apiMocks.features.jobMemoryV2Enabled = true;
+  apiMocks.respectAbort = respectAbort;
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/jobs', component: { render: () => h('p', 'list') } },
+      { path: '/jobs/:jobId', component: JobDetailPage, props: true },
+    ],
+  });
+  const Host = defineComponent({
+    setup() {
+      return () => h(RouterView, null, {
+        default: ({ Component, route }: { Component: unknown; route: { params: { jobId?: string } } }) =>
+          h(Component as never, { key: route.params.jobId ?? 'list' }),
+      });
+    },
+  });
+  await router.push('/jobs/A');
+  await router.isReady();
+  const wrapper = mount(Host, { global: { plugins: [router] } });
+  await flushPromises();
+  await router.push('/jobs/B');
+  await flushPromises();
+  await router.push('/jobs/C');
+  await flushPromises();
+  const reads = Object.fromEntries(apiMocks.pendingBundles.map((read) => [read.jobId, read]));
+  expect(reads.A?.signal?.aborted).toBe(true);
+  expect(reads.B?.signal?.aborted).toBe(true);
+  const bundle = (id: string) => ({
+    jobId: id, job: makeJob(id), profile: null, allJobs: [makeJob(id)],
+    applicationSummariesByJob: { [id]: [] },
+    memory: { applications: [], resumeVersions: [], activeResumeVersionId: null },
+  });
+  reads.C?.resolve(bundle('C'));
+  await flushPromises();
+  reads.B?.resolve(bundle('B'));
+  reads.A?.resolve(bundle('A'));
+  await flushPromises();
+  expect(wrapper.get('[data-current-job]').text()).toBe('C');
+  expect(apiMocks.pending).toHaveLength(0);
+  expect(scopeRegistry.get('job-detail')?.$source.bundle.job.id).toBe('C');
+  wrapper.unmount();
+}
+
 beforeEach(() => {
   apiMocks.pending.length = 0;
+  apiMocks.pendingBundles.length = 0;
   apiMocks.patch.mockReset();
+  apiMocks.features.jobMemoryV2Enabled = false;
 });
 
 afterEach(() => {
@@ -128,5 +200,9 @@ describe('JobDetailPage A→B→C 竞态', () => {
 
   it('底层请求忽略 abort 且迟到返回时仍只提交 C', async () => {
     await runRace(false);
+  });
+
+  it.each([true, false])('v2 聚合 Bundle 尊重 abort=%s，A→B→C 仍只提交 C', async (respectAbort) => {
+    await runV2Race(respectAbort);
   });
 });

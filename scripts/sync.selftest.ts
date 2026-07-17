@@ -119,6 +119,7 @@ function rewriteSnapshot(mutator: (snapshot: Record<string, unknown>) => void): 
   fs.writeFileSync(paths.snapshotPath, snapshotJson, 'utf8');
   const manifest = {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+    databaseSchemaVersion: SNAPSHOT_SCHEMA_VERSION,
     exportedAt: String(snapshot.exportedAt),
     deviceId: String(snapshot.deviceId),
     appVersion: String(snapshot.appVersion),

@@ -125,10 +125,11 @@ export function applyLocalStorageBackup(
   db: SqliteDatabase,
   input: unknown,
   source = 'localstorage-json',
+  options: { legacyCommunicationWriteDisabled?: boolean } = {},
 ): ImportApplyResult {
   const parsed = parseLocalStorageBackup(input);
   const profiles = new ProfileRepository(db);
-  const jobs = new JobRepository(db);
+  const jobs = new JobRepository(db, options);
   const importLogId = nanoid();
 
   const apply = db.transaction(() => {

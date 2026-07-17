@@ -1,8 +1,4 @@
 <script setup lang="ts">
-// 应用根组件 + 最小导航壳。
-// Task 2 引入 Naive UI 基础壳：n-config-provider（默认浅色主题）+ n-message-provider，建立浅色高级科技感外壳。
-// 视觉方向：浅色、干净、高级，类 Linear / Vercel / 飞书多维表格的清爽感，不做暗黑驾驶舱。
-// v0.7.0-A：页面身份由 URL 与 Vue Router 管理，App 只保留全局 provider 和导航壳。
 import { computed } from 'vue';
 import { RouterView, useRoute, useRouter } from 'vue-router';
 import type { GlobalThemeOverrides } from 'naive-ui';
@@ -14,12 +10,32 @@ import {
   NLayoutContent,
   NButton,
   NSpace,
+  NAlert,
 } from 'naive-ui';
+import { features } from './config/features';
 const route = useRoute();
 const router = useRouter();
-const activeSection = computed(() => (route.name === 'profile' ? 'profile' : 'jobs'));
+const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-versions'));
+const historyImportNavigationEnabled = computed(() => router.hasRoute('history-import'));
+const marketPositionNavigationEnabled = computed(() => router.hasRoute('market-position'));
+const strategyWindowNavigationEnabled = computed(() => router.hasRoute('strategy-window'));
+const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
+// G5 沙箱会同时启用 G4 能力与数据，但只展示 G5 环境横幅，避免重复提示；
+// G6 演练环境启用 G1~G5，只展示 G6 演练横幅，抑制 G4/G5 沙箱横幅。
+const g4SandboxBannerVisible = computed(() => features.g4SandboxEnabled && !features.g5SandboxEnabled && !features.g6RehearsalEnabled);
+const g5SandboxBannerVisible = computed(() => features.g5SandboxEnabled && !features.g6RehearsalEnabled);
+const g6RehearsalBannerVisible = computed(() => features.g6RehearsalEnabled);
+const activeSection = computed(() => {
+  if (route.name === 'job-match-profile') return 'job-match-profile';
+  if (route.name === 'capability-baseline') return 'capability-baseline';
+  if (route.name === 'market-funnel') return 'market-funnel';
+  if (route.name === 'history-import') return 'history-import';
+  if (route.name === 'market-position') return 'market-position';
+  if (route.name === 'strategy-window') return 'strategy-window';
+  if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
+  return 'jobs';
+});
 
-// 浅色高级科技感主题微调：蓝 / 青蓝主色，浅色底，深灰黑文字，圆角克制。
 const themeOverrides: GlobalThemeOverrides = {
   common: {
     primaryColor: '#2563eb',
@@ -37,8 +53,36 @@ function goProfile(): void {
   void router.push({ name: 'profile' });
 }
 
+function goJobMatchProfile(): void {
+  void router.push({ name: 'job-match-profile' });
+}
+
+function goCapabilityBaseline(): void {
+  void router.push({ name: 'capability-baseline' });
+}
+
+function goMarketFunnel(): void {
+  void router.push({ name: 'market-funnel' });
+}
+
+function goHistoryImport(): void {
+  void router.push({ name: 'history-import' });
+}
+
+function goMarketPosition(): void {
+  void router.push({ name: 'market-position' });
+}
+
+function goStrategyWindow(): void {
+  void router.push({ name: 'strategy-window' });
+}
+
 function goJobs(): void {
   void router.push({ name: 'jobs' });
+}
+
+function goProfileVersions(): void {
+  void router.push({ name: 'profile-versions' });
 }
 
 function routeViewKey(): string {
@@ -48,7 +92,6 @@ function routeViewKey(): string {
   return String(route.name ?? route.fullPath);
 }
 
-// content 内边距与最大宽度，最大宽度由全局设计令牌统一控制。
 const contentStyle =
   'box-sizing: border-box; width: 100%; padding: 24px; max-width: var(--of-content-max-width); margin: 0 auto;';
 </script>
@@ -63,10 +106,10 @@ const contentStyle =
             <div class="brand-text">
               <div class="brand-line">
                 <strong class="brand">OfferFlow · Offer来了</strong>
-                <span class="brand-ver">v0.6.2</span>
+                <span class="brand-ver">v0.7.0</span>
               </div>
               <span class="tagline">
-                Backend + SQLite · DeepSeek LLM / SSE 流式分析 · 人工确认，不做 Boss 自动化
+                Backend + SQLite · AI 只生成提案 · 人工确认，不做 Boss 自动化
               </span>
             </div>
           </div>
@@ -80,6 +123,71 @@ const contentStyle =
               简历配置
             </n-button>
             <n-button
+              v-if="resumeVersionNavigationEnabled"
+              :type="route.name === 'profile-versions' ? 'primary' : 'tertiary'"
+              :ghost="route.name === 'profile-versions'"
+              size="small"
+              @click="goProfileVersions"
+            >
+              简历版本
+            </n-button>
+            <n-button
+              :type="activeSection === 'job-match-profile' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'job-match-profile'"
+              size="small"
+              @click="goJobMatchProfile"
+            >
+              岗位匹配画像
+            </n-button>
+            <n-button
+              :type="activeSection === 'capability-baseline' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'capability-baseline'"
+              size="small"
+              data-testid="nav-capability-baseline"
+              @click="goCapabilityBaseline"
+            >
+              能力基线
+            </n-button>
+            <n-button
+              :type="activeSection === 'market-funnel' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'market-funnel'"
+              size="small"
+              data-testid="nav-market-funnel"
+              @click="goMarketFunnel"
+            >
+              基础漏斗
+            </n-button>
+            <n-button
+              v-if="historyImportNavigationEnabled"
+              :type="activeSection === 'history-import' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'history-import'"
+              size="small"
+              data-testid="nav-history-import"
+              @click="goHistoryImport"
+            >
+              历史补录
+            </n-button>
+            <n-button
+              v-if="marketPositionNavigationEnabled"
+              :type="activeSection === 'market-position' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'market-position'"
+              size="small"
+              data-testid="nav-market-position"
+              @click="goMarketPosition"
+            >
+              市场位置画像
+            </n-button>
+            <n-button
+              v-if="strategyWindowNavigationEnabled"
+              :type="activeSection === 'strategy-window' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'strategy-window'"
+              size="small"
+              data-testid="nav-strategy-window"
+              @click="goStrategyWindow"
+            >
+              求职策略
+            </n-button>
+            <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"
               :ghost="activeSection === 'jobs'"
               size="small"
@@ -91,6 +199,42 @@ const contentStyle =
         </n-layout-header>
 
         <n-layout-content class="app-content" :content-style="contentStyle">
+          <n-alert
+            v-if="g3SandboxBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g3-sandbox-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G3 隔离验收环境，所有补录操作只写入测试副本，不会修改真实求职数据。
+          </n-alert>
+          <n-alert
+            v-if="g4SandboxBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g4-sandbox-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G4 隔离验收环境，市场位置画像只读取测试副本数据，不会修改真实求职数据，也不会在真实生产入口开启。
+          </n-alert>
+          <n-alert
+            v-if="g5SandboxBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g5-sandbox-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G5 隔离验收环境，策略提案只写入测试副本，不会修改真实求职数据，也不会自动执行投递、联系、降薪、迁移或放弃方向。
+          </n-alert>
+          <n-alert
+            v-if="g6RehearsalBannerVisible"
+            type="warning"
+            :bordered="true"
+            data-testid="g6-rehearsal-banner"
+            style="margin-bottom: 16px;"
+          >
+            当前为 G6 生产迁移演练环境，数据来自真实库副本及已验收 G4/G5 正式版本晋升包，不会修改真实求职数据。
+          </n-alert>
           <RouterView v-slot="{ Component }">
             <component :is="Component" :key="routeViewKey()" />
           </RouterView>
@@ -101,7 +245,6 @@ const contentStyle =
 </template>
 
 <style>
-/* 浅色高级科技感设计令牌（全局，供各页面 scoped 样式复用）。 */
 :root {
   color-scheme: light;
   --of-bg: #f6f8fc;
@@ -133,7 +276,6 @@ body,
 <style scoped>
 .app-shell {
   height: 100%;
-  /* 浅色克制高光：低饱和蓝 / 青蓝，营造干净清爽的科技感（类 Linear / Vercel），不做荧光。 */
   background:
     radial-gradient(1200px 600px at 82% -12%, rgba(37, 99, 235, 0.06), transparent 60%),
     radial-gradient(900px 500px at -8% 8%, rgba(14, 165, 233, 0.05), transparent 55%),
@@ -177,7 +319,6 @@ body,
 .brand {
   font-size: 16px;
   letter-spacing: 0.3px;
-  /* 保留渐变品牌字，但克制不荧光：蓝 → 青蓝。 */
   background: linear-gradient(90deg, var(--of-brand), var(--of-brand-2));
   -webkit-background-clip: text;
   background-clip: text;

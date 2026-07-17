@@ -3,7 +3,7 @@
 来源项目：
 
 ```txt
-D:\VSCode\offer-pilot
+<workspace>
 ```
 
 参考文件：

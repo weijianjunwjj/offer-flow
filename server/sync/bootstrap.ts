@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import { getDbPath } from '../db';
+import { getDatabaseSchemaVersion } from '../migrations';
 import { ensureInitializedDatabase } from './database';
 import { doctorDatabase } from './doctor';
 import { exportSnapshot } from './exportSnapshot';
@@ -45,6 +47,20 @@ export function runStartupSync(dbPath = getDbPath()): BootstrapSyncResult {
 
   if (!fs.existsSync(dbPath)) {
     ensureInitializedDatabase(dbPath);
+  }
+
+  const schemaProbe = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const schemaVersion = getDatabaseSchemaVersion(schemaProbe);
+    if (schemaVersion === 1) {
+      throw new Error('检测到 schema v1 遗留数据库；必须先运行绑定备份授权的 B7-B 正式升级');
+    }
+    // 生产快照/同步底座仍以 v2 为准；G2 能力基线的 v3 为纯新增表，允许 >= 2 的库正常启动。
+    if (schemaVersion < 2) {
+      throw new Error(`不支持的生产数据库 schema version：${schemaVersion}`);
+    }
+  } finally {
+    schemaProbe.close();
   }
 
   let doctor = doctorDatabase(dbPath);
