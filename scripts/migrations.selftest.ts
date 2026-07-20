@@ -9,6 +9,7 @@ import {
   LATEST_SCHEMA_VERSION,
   MARKET_POSITION_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
+  RADAR_DOMAIN_SCHEMA_VERSION,
   runMigrations,
   SCHEMA_MIGRATIONS,
   type SchemaMigration,
@@ -363,10 +364,12 @@ function assertForeignKeyViolation(action: () => void): void {
 try {
   assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
   assert.equal(CURRENT_SCHEMA_VERSION, PRODUCTION_SCHEMA_VERSION);
-  // G2 能力基线新增 v3、G3 历史补录与漏斗新增 v4、G4 市场位置画像新增 v5、G5 求职策略窗口新增 v6；LATEST 与 PRODUCTION 有意区分。
-  assert.equal(LATEST_SCHEMA_VERSION, 6);
+  // G2 能力基线新增 v3、G3 历史补录与漏斗新增 v4、G4 市场位置画像新增 v5、G5 求职策略窗口新增 v6、
+  // v0.8 V8-1 雷达领域新增 v7；LATEST 与 PRODUCTION 有意区分。
+  assert.equal(LATEST_SCHEMA_VERSION, 7);
   assert.equal(MARKET_POSITION_SCHEMA_VERSION, 5);
   assert.equal(STRATEGY_WINDOW_SCHEMA_VERSION, 6);
+  assert.equal(RADAR_DOMAIN_SCHEMA_VERSION, 7);
   assert.equal(SCHEMA_MIGRATIONS.at(-1)?.version, LATEST_SCHEMA_VERSION);
   assert.equal(SCHEMA_MIGRATIONS.length, LATEST_SCHEMA_VERSION);
   assert.equal(SNAPSHOT_SCHEMA_VERSION, 2);
@@ -1354,6 +1357,239 @@ try {
            VALUES ('   ', 'manual_proposal', NULL, NULL, 'hash-3', 400)`,
         )
         .run(),
+    );
+
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+
+  // v6 → v7 升级：纯新增 v0.8 V8-1 雷达领域表，不破坏任何已有 v1~v6 业务数据。
+  const RADAR_DOMAIN_TABLES = [
+    'radar_capture_sessions',
+    'radar_capture_snapshots',
+    'radar_source_records',
+    'radar_candidates',
+    'radar_candidate_versions',
+    'radar_candidate_sources',
+    'radar_rule_assessments',
+    'analysis_tasks',
+    'job_match_analysis_records',
+    'radar_recommendation_batches',
+    'radar_actions',
+    'radar_promotions',
+  ] as const;
+  const RADAR_DOMAIN_INDEXES = [
+    'radar_capture_snapshots_provider_idx',
+    'radar_capture_snapshots_source_url_idx',
+    'radar_capture_snapshots_content_hash_idx',
+    'radar_capture_snapshots_captured_at_idx',
+    'radar_candidates_lifecycle_idx',
+    'radar_candidate_versions_candidate_idx',
+    'radar_rule_assessments_version_idx',
+    'analysis_tasks_entity_idx',
+    'analysis_tasks_status_idx',
+    'job_match_analysis_records_candidate_idx',
+    'radar_actions_candidate_idx',
+    'radar_promotions_candidate_idx',
+  ] as const;
+
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 6 });
+    seedV1BusinessData(db);
+    const resumeId = insertResumeVersion(db, { id: 'resume-v7-upgrade' });
+    const applicationId = insertApplication(db, { id: 'application-v7-upgrade', resumeVersionId: resumeId });
+    insertFeedbackEvent(db, { id: 'event-v7-upgrade', applicationId });
+
+    const v1DataBefore = readV1BusinessData(db);
+    const jobMemoryBefore = {
+      resumeVersions: db.prepare('SELECT * FROM resume_versions ORDER BY id').all(),
+      applications: db.prepare('SELECT * FROM applications ORDER BY id').all(),
+      feedbackEvents: db.prepare('SELECT * FROM feedback_events ORDER BY id').all(),
+    };
+    for (const table of RADAR_DOMAIN_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+
+    const result = initSchema(db, { targetVersion: 7 });
+    assert.deepEqual(result, {
+      currentVersion: 7,
+      appliedVersions: [1, 2, 3, 4, 5, 6, 7],
+      newlyAppliedVersions: [7],
+    });
+    assert.equal(schemaVersion(db), 7);
+    assert.deepEqual(migrationRecords(db), [
+      { version: 1, name: '001_v0_6_baseline' },
+      { version: 2, name: '002_v0_7_job_memory_schema' },
+      { version: 3, name: '003_v0_7_capability_baseline_schema' },
+      { version: 4, name: '004_v0_7_history_funnel_schema' },
+      { version: 5, name: '005_v0_7_market_position_schema' },
+      { version: 6, name: '006_v0_7_strategy_window_schema' },
+      { version: 7, name: '007_v0_8_radar_domain_schema' },
+    ]);
+    for (const table of RADAR_DOMAIN_TABLES) {
+      assert.equal(tableNames(db).includes(table), true);
+      assert.equal(rowCount(db, table), 0);
+    }
+    for (const index of RADAR_DOMAIN_INDEXES) {
+      assert.equal(indexNames(db).includes(index), true);
+    }
+
+    // 所有已有 v1~v6 业务数据必须逐字节保留。
+    assert.deepEqual(readV1BusinessData(db), v1DataBefore);
+    assert.deepEqual(db.prepare('SELECT * FROM resume_versions ORDER BY id').all(), jobMemoryBefore.resumeVersions);
+    assert.deepEqual(db.prepare('SELECT * FROM applications ORDER BY id').all(), jobMemoryBefore.applications);
+    assert.deepEqual(db.prepare('SELECT * FROM feedback_events ORDER BY id').all(), jobMemoryBefore.feedbackEvents);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+
+    // 升级可重复执行且幂等。
+    assert.deepEqual(initSchema(db, { targetVersion: 7 }).newlyAppliedVersions, []);
+    assert.equal(schemaVersion(db), 7);
+
+    // 默认 initSchema 仍停留在生产 v2，不会自动拉到 v7。
+    assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
+  });
+
+  // 默认 target（生产 v2）不会创建 v0.8 雷达领域表。
+  withTempDatabase((db) => {
+    initSchema(db);
+    assert.equal(schemaVersion(db), 2);
+    for (const table of RADAR_DOMAIN_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+  });
+
+  // CHECK/FK 约束：雷达领域循环外键、候选版本不可变、promotion 一致性。
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 7 });
+    seedV1BusinessData(db);
+    const resumeId = insertResumeVersion(db, { id: 'resume-v7-check' });
+
+    db.prepare(`
+      INSERT INTO radar_capture_snapshots
+        (id, capture_method, visible_text, raw_snapshot_json, raw_content_hash, captured_at, created_at)
+      VALUES ('radar-snap-1', 'pasted_text', 'text', '{}', 'hash-1', 500, 500)
+    `).run();
+
+    db.prepare(`
+      INSERT INTO radar_source_records
+        (id, latest_snapshot_id, first_seen_at, last_seen_at, source_status, created_at, updated_at)
+      VALUES ('radar-source-1', 'radar-snap-1', 500, 500, 'active', 500, 500)
+    `).run();
+
+    // Candidate ↔ CandidateVersion 循环外键：先建 candidate（active_version_id=NULL），
+    // 再建 version 指回 candidate，最后回填 active_version_id。
+    db.prepare(`
+      INSERT INTO radar_candidates (id, primary_source_record_id, active_version_id, lifecycle_status, created_at, updated_at)
+      VALUES ('radar-cand-1', 'radar-source-1', NULL, 'active', 500, 500)
+    `).run();
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidates (id, active_version_id, lifecycle_status, merged_into_candidate_id, created_at, updated_at)
+        VALUES ('radar-cand-bad', NULL, 'merged', NULL, 500, 500)
+      `).run(),
+    );
+    db.prepare(`
+      INSERT INTO radar_candidate_versions
+        (id, candidate_id, version_no, normalized_json, quality_issues_json, source_snapshot_ids_json,
+         content_hash, origin_type, created_at)
+      VALUES ('radar-ver-1', 'radar-cand-1', 1, '${JSON.stringify({
+        company: null, role: null, city: null, district: null, salaryMinK: null, salaryMaxK: null,
+        salaryPeriod: null, experienceRequirement: null, educationRequirement: null, companySize: null,
+        industry: null, jobNature: null, workMode: null, technicalStack: [], responsibilities: [],
+        requirements: [], publishedAt: null, rawDescription: '',
+      }).replace(/'/g, "''")}', '[]', '["radar-snap-1"]', 'hash-1', 'captured', 500)
+    `).run();
+    db.prepare(`UPDATE radar_candidates SET active_version_id = 'radar-ver-1' WHERE id = 'radar-cand-1'`).run();
+    assert.equal(rowCount(db, 'radar_candidates'), 1);
+    assert.equal(rowCount(db, 'radar_candidate_versions'), 1);
+
+    assertForeignKeyViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_versions
+          (id, candidate_id, version_no, normalized_json, quality_issues_json, source_snapshot_ids_json, content_hash, origin_type, created_at)
+        VALUES ('radar-ver-orphan', 'candidate-missing', 1, '{}', '[]', '[]', 'hash-x', 'captured', 500)
+      `).run(),
+    );
+
+    db.prepare(`
+      INSERT INTO radar_rule_assessments
+        (id, candidate_id, candidate_version_id, rule_version, rule_key, category, severity, result, explanation, created_at)
+      VALUES ('radar-assess-1', 'radar-cand-1', 'radar-ver-1', 'rules-v1', 'salary_floor', 'hard_constraint', 'blocking', 'hit', 'below floor', 500)
+    `).run();
+    assert.equal(rowCount(db, 'radar_rule_assessments'), 1);
+
+    db.prepare(`
+      INSERT INTO analysis_tasks (id, task_type, entity_type, entity_id, status, input_hash, input_snapshot_json, created_at, updated_at)
+      VALUES ('radar-task-1', 'job_match_analysis', 'radar_candidate_version', 'radar-ver-1', 'queued', 'input-hash-1', '{}', 500, 500)
+    `).run();
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO analysis_tasks (id, task_type, entity_type, entity_id, status, input_hash, input_snapshot_json, started_at, created_at, updated_at)
+        VALUES ('radar-task-bad', 'job_match_analysis', 'x', 'y', 'queued', 'h', '{}', 100, 500, 500)
+      `).run(),
+    );
+
+    db.prepare(`
+      INSERT INTO job_match_analysis_records
+        (id, candidate_id, candidate_version_id, resume_version_id, job_match_profile_version_id,
+         rule_version, prompt_version, analysis_policy_version, model_provider, model_name,
+         input_hash, recommendation, confidence, payload_json, created_at)
+      VALUES ('radar-record-1', 'radar-cand-1', 'radar-ver-1', ?, 'profile-v1',
+        'rules-v1', 'prompt-v1', 'policy-v1', 'openai', 'gpt', 'analysis-input-1', 'apply_now', 'high', '{}', 500)
+    `).run(resumeId);
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO job_match_analysis_records
+          (id, candidate_id, candidate_version_id, resume_version_id, job_match_profile_version_id,
+           rule_version, prompt_version, analysis_policy_version, model_provider, model_name,
+           input_hash, recommendation, confidence, payload_json, created_at)
+        VALUES ('radar-record-bad', 'radar-cand-1', 'radar-ver-1', ?, 'profile-v1',
+          'rules-v1', 'prompt-v1', 'policy-v1', 'openai', 'gpt', 'analysis-input-2', 'invalid_rec', 'high', '{}', 500)
+      `).run(resumeId),
+    );
+
+    db.prepare(`
+      INSERT INTO radar_recommendation_batches
+        (id, batch_key, status, scope_json, candidate_version_ids_json, selected_candidate_version_ids_json,
+         profile_versions_json, rule_version, recommendation_rule_version, analysis_policy_version,
+         handled_state_hash, diagnosis_status, generated_at, created_at)
+      VALUES ('radar-batch-1', 'batch-key-1', 'succeeded', '{}', '["radar-ver-1"]', '["radar-ver-1"]',
+        '{}', 'rules-v1', 'rec-rules-v1', 'policy-v1', 'handled-1', 'formed', 500, 500)
+    `).run();
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_recommendation_batches
+          (id, batch_key, status, scope_json, candidate_version_ids_json, selected_candidate_version_ids_json,
+           profile_versions_json, rule_version, recommendation_rule_version, analysis_policy_version,
+           handled_state_hash, diagnosis_status, generated_at, created_at)
+        VALUES ('radar-batch-2', 'batch-key-2', 'invalid_status', '{}', '[]', '[]',
+          '{}', 'rules-v1', 'rec-rules-v1', 'policy-v1', 'handled-2', 'insufficient_evidence', 500, 500)
+      `).run(),
+    );
+
+    db.prepare(`
+      INSERT INTO radar_actions (id, candidate_id, candidate_version_id, action_type, metadata_json, occurred_at, created_at)
+      VALUES ('radar-action-1', 'radar-cand-1', 'radar-ver-1', 'saved', '{}', 500, 500)
+    `).run();
+    assert.equal(rowCount(db, 'radar_actions'), 1);
+
+    db.prepare(`
+      INSERT INTO radar_promotions
+        (id, candidate_id, candidate_version_id, promotion_type, job_id, idempotency_key, created_at)
+      VALUES ('radar-promo-1', 'radar-cand-1', 'radar-ver-1', 'job_only', 'job-a', 'radar-promo-key-1', 500)
+    `).run();
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_promotions
+          (id, candidate_id, candidate_version_id, promotion_type, job_id, idempotency_key, created_at)
+        VALUES ('radar-promo-2', 'radar-cand-1', 'radar-ver-1', 'application', 'job-a', 'radar-promo-key-2', 500)
+      `).run(),
+    );
+    assertForeignKeyViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_promotions
+          (id, candidate_id, candidate_version_id, promotion_type, job_id, idempotency_key, created_at)
+        VALUES ('radar-promo-3', 'radar-cand-1', 'radar-ver-1', 'job_only', 'job-missing', 'radar-promo-key-3', 500)
+      `).run(),
     );
 
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);

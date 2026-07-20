@@ -1,0 +1,239 @@
+import { z } from 'zod';
+import {
+  ANALYSIS_TASK_ERROR_CODES,
+  ANALYSIS_TASK_STATUSES,
+  ANALYSIS_TASK_TYPES,
+  JOB_MATCH_CONFIDENCES,
+  JOB_MATCH_RECOMMENDATIONS,
+  RADAR_ACTION_TYPES,
+  RADAR_CANDIDATE_LIFECYCLE_STATUSES,
+  RADAR_CANDIDATE_SOURCE_LINK_REASONS,
+  RADAR_CANDIDATE_VERSION_ORIGIN_TYPES,
+  RADAR_CAPTURE_METHODS,
+  RADAR_CAPTURE_SESSION_STATUSES,
+  RADAR_CAPTURE_SOURCE_TYPES,
+  RADAR_PROMOTION_TYPES,
+  RADAR_RECOMMENDATION_BATCH_STATUSES,
+  RADAR_RECOMMENDATION_DIAGNOSIS_STATUSES,
+  RADAR_RULE_CATEGORIES,
+  RADAR_RULE_RESULTS,
+  RADAR_SOURCE_STATUSES,
+  type AnalysisTask,
+  type JobMatchAnalysisRecord,
+  type RadarAction,
+  type RadarCandidate,
+  type RadarCandidateNormalized,
+  type RadarCandidateSourceLink,
+  type RadarCandidateVersion,
+  type RadarCaptureSession,
+  type RadarCaptureSnapshot,
+  type RadarPromotion,
+  type RadarRecommendationBatch,
+  type RadarRuleAssessment,
+  type RadarSourceRecord,
+} from './types';
+
+const nonBlank = z.string().trim().min(1);
+const timestamp = z.number().finite().int().nonnegative();
+const nullableTimestamp = timestamp.nullable();
+const nullableNonBlank = nonBlank.nullable();
+
+export const RadarCandidateNormalizedSchema: z.ZodType<RadarCandidateNormalized> = z.strictObject({
+  company: z.string().nullable(),
+  role: z.string().nullable(),
+  city: z.string().nullable(),
+  district: z.string().nullable(),
+  salaryMinK: z.number().finite().nullable(),
+  salaryMaxK: z.number().finite().nullable(),
+  salaryPeriod: z.string().nullable(),
+  experienceRequirement: z.string().nullable(),
+  educationRequirement: z.string().nullable(),
+  companySize: z.string().nullable(),
+  industry: z.string().nullable(),
+  jobNature: z.string().nullable(),
+  workMode: z.string().nullable(),
+  technicalStack: z.array(z.string()),
+  responsibilities: z.array(z.string()),
+  requirements: z.array(z.string()),
+  publishedAt: nullableTimestamp,
+  rawDescription: z.string(),
+});
+
+export const RadarCaptureSessionSchema: z.ZodType<RadarCaptureSession> = z.strictObject({
+  id: nonBlank,
+  sourceType: z.enum(RADAR_CAPTURE_SOURCE_TYPES),
+  status: z.enum(RADAR_CAPTURE_SESSION_STATUSES),
+  rawInput: z.unknown(),
+  previewItems: z.unknown(),
+  createdAt: timestamp,
+  expiresAt: timestamp,
+  committedAt: nullableTimestamp,
+});
+
+export const RadarCaptureSnapshotSchema: z.ZodType<RadarCaptureSnapshot> = z.strictObject({
+  id: nonBlank,
+  captureSessionId: nullableNonBlank,
+  captureMethod: z.enum(RADAR_CAPTURE_METHODS),
+  providerKey: z.string().nullable(),
+  providerVersion: z.string().nullable(),
+  sourceDomain: z.string().nullable(),
+  sourceUrl: z.string().nullable(),
+  normalizedSourceUrl: z.string().nullable(),
+  externalRecordId: z.string().nullable(),
+  pageTitle: z.string().nullable(),
+  visibleText: z.string(),
+  rawSnapshot: z.unknown(),
+  rawContentHash: nonBlank,
+  capturedAt: timestamp,
+  createdAt: timestamp,
+});
+
+export const RadarSourceRecordSchema: z.ZodType<RadarSourceRecord> = z.strictObject({
+  id: nonBlank,
+  providerKey: z.string().nullable(),
+  externalRecordId: z.string().nullable(),
+  normalizedSourceUrl: z.string().nullable(),
+  firstSeenAt: timestamp,
+  lastSeenAt: timestamp,
+  lastChangedAt: nullableTimestamp,
+  latestSnapshotId: nonBlank,
+  sourceStatus: z.enum(RADAR_SOURCE_STATUSES),
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+
+export const RadarCandidateSchema: z.ZodType<RadarCandidate> = z.strictObject({
+  id: nonBlank,
+  primarySourceRecordId: nullableNonBlank,
+  activeVersionId: nullableNonBlank,
+  lifecycleStatus: z.enum(RADAR_CANDIDATE_LIFECYCLE_STATUSES),
+  mergedIntoCandidateId: nullableNonBlank,
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+
+export const RadarCandidateVersionSchema: z.ZodType<RadarCandidateVersion> = z.strictObject({
+  id: nonBlank,
+  candidateId: nonBlank,
+  versionNo: z.number().finite().int().min(1),
+  normalized: RadarCandidateNormalizedSchema,
+  qualityIssues: z.array(z.strictObject({ field: nonBlank, issue: nonBlank })),
+  sourceSnapshotIds: z.array(nonBlank),
+  contentHash: nonBlank,
+  originType: z.enum(RADAR_CANDIDATE_VERSION_ORIGIN_TYPES),
+  correctionNote: z.string().nullable(),
+  supersedesVersionId: nullableNonBlank,
+  createdAt: timestamp,
+});
+
+export const RadarCandidateSourceLinkSchema: z.ZodType<RadarCandidateSourceLink> = z.strictObject({
+  candidateId: nonBlank,
+  sourceRecordId: nonBlank,
+  firstLinkedAt: timestamp,
+  lastConfirmedAt: timestamp,
+  linkReason: z.enum(RADAR_CANDIDATE_SOURCE_LINK_REASONS),
+});
+
+export const RadarRuleAssessmentSchema: z.ZodType<RadarRuleAssessment> = z.strictObject({
+  id: nonBlank,
+  candidateId: nonBlank,
+  candidateVersionId: nonBlank,
+  ruleVersion: nonBlank,
+  ruleKey: nonBlank,
+  category: z.enum(RADAR_RULE_CATEGORIES),
+  severity: nonBlank,
+  result: z.enum(RADAR_RULE_RESULTS),
+  matchedText: z.string().nullable(),
+  sourcePath: z.string().nullable(),
+  explanation: z.string(),
+  createdAt: timestamp,
+});
+
+export const AnalysisTaskSchema: z.ZodType<AnalysisTask> = z.strictObject({
+  id: nonBlank,
+  taskType: z.enum(ANALYSIS_TASK_TYPES),
+  entityType: nonBlank,
+  entityId: nonBlank,
+  status: z.enum(ANALYSIS_TASK_STATUSES),
+  inputHash: nonBlank,
+  inputSnapshot: z.unknown(),
+  attemptCount: z.number().finite().int().min(0),
+  maxAttempts: z.number().finite().int().min(1),
+  startedAt: nullableTimestamp,
+  finishedAt: nullableTimestamp,
+  cancelledAt: nullableTimestamp,
+  errorCode: z.enum(ANALYSIS_TASK_ERROR_CODES).nullable(),
+  errorMessage: z.string().nullable(),
+  resultRecordId: nullableNonBlank,
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+
+export const JobMatchAnalysisRecordSchema: z.ZodType<JobMatchAnalysisRecord> = z.strictObject({
+  id: nonBlank,
+  candidateId: nonBlank,
+  candidateVersionId: nonBlank,
+  resumeVersionId: nonBlank,
+  jobMatchProfileVersionId: nonBlank,
+  cityCode: z.string().nullable(),
+  capabilityBaselineVersionId: nullableNonBlank,
+  marketPositionVersionId: nullableNonBlank,
+  strategyVersionId: nullableNonBlank,
+  ruleVersion: nonBlank,
+  promptVersion: nonBlank,
+  analysisPolicyVersion: nonBlank,
+  modelProvider: nonBlank,
+  modelName: nonBlank,
+  modelVersion: z.string().nullable(),
+  inputHash: nonBlank,
+  recommendation: z.enum(JOB_MATCH_RECOMMENDATIONS),
+  confidence: z.enum(JOB_MATCH_CONFIDENCES),
+  payload: z.unknown(),
+  createdAt: timestamp,
+  supersedesAnalysisId: nullableNonBlank,
+});
+
+export const RadarRecommendationBatchSchema: z.ZodType<RadarRecommendationBatch> = z.strictObject({
+  id: nonBlank,
+  batchKey: nonBlank,
+  status: z.enum(RADAR_RECOMMENDATION_BATCH_STATUSES),
+  scope: z.unknown(),
+  candidateVersionIds: z.array(nonBlank),
+  selectedCandidateVersionIds: z.array(nonBlank),
+  profileVersions: z.unknown(),
+  ruleVersion: nonBlank,
+  recommendationRuleVersion: nonBlank,
+  analysisPolicyVersion: nonBlank,
+  handledStateHash: nonBlank,
+  diagnosisStatus: z.enum(RADAR_RECOMMENDATION_DIAGNOSIS_STATUSES),
+  diagnosisPayload: z.unknown().nullable(),
+  emptyReason: z.string().nullable(),
+  generatedAt: timestamp,
+  createdAt: timestamp,
+});
+
+export const RadarActionSchema: z.ZodType<RadarAction> = z.strictObject({
+  id: nonBlank,
+  candidateId: nonBlank,
+  candidateVersionId: nonBlank,
+  actionType: z.enum(RADAR_ACTION_TYPES),
+  reasonCode: z.string().nullable(),
+  reasonText: z.string().nullable(),
+  metadata: z.unknown(),
+  occurredAt: timestamp,
+  revertedByActionId: nullableNonBlank,
+  createdAt: timestamp,
+});
+
+export const RadarPromotionSchema: z.ZodType<RadarPromotion> = z.strictObject({
+  id: nonBlank,
+  candidateId: nonBlank,
+  candidateVersionId: nonBlank,
+  promotionType: z.enum(RADAR_PROMOTION_TYPES),
+  jobId: nonBlank,
+  applicationId: nullableNonBlank,
+  feedbackEventId: nullableNonBlank,
+  triggerActionId: nullableNonBlank,
+  idempotencyKey: nonBlank,
+  createdAt: timestamp,
+});

@@ -16,6 +16,22 @@
 - 发布失败优先恢复完整备份，不编写猜测性逆向业务删除；
 - 真实生产 migration 需要用户明确授权。
 
+### 1.1 schema v7 生产激活时点（V8-1 结单审计补充）
+
+`RADAR_DOMAIN_SCHEMA_VERSION = 7` 在 V8-1 引入后，`PRODUCTION_SCHEMA_VERSION` 与 `buildServer` 的
+真实服务能力链（`requiredVersion`）均**保持不变**，与 v3/v4/v5/v6 引入时的模式一致：schema 定义先行，
+生产默认目标在对应能力真正需要该 schema 时才切换。
+
+真实生产库启动时不会自动迁移到 v7（`server/index.ts` 的 `allowAutoMigrate` 对真实库路径固定为
+`false`）；`initSchema(db)` 不带参数时仍只到 `PRODUCTION_SCHEMA_VERSION = 2`。schema v7（12 张雷达表）
+目前只在显式指定 `targetVersion: 7` 的测试库、演练库,或运行 `npm run db:upgrade-real -- --confirm`
+（会升级到 `LATEST_SCHEMA_VERSION`）时被创建。
+
+**v7 切换为生产默认目标的时点固定在 V8-2**：V8-2 注册雷达采集路由并首次调用 radar Repository 时，
+必须同时在 `buildServer` 的能力链中加入雷达能力标志（把 `requiredVersion` 提升到 7），并要求在该版本
+部署到真实库前先执行 `npm run db:upgrade-real -- --confirm` 完成显式升级。V8-1 阶段不做此切换，因为
+V8-1 尚无任何路由依赖这些表，提前切换没有收益且会扩大 V8-1 的变更面。
+
 ---
 
 ## 2. 准备

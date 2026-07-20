@@ -2,7 +2,7 @@
 
 > **矩阵版本：** 1.0  
 > **对应 PRD：** v2.1  
-> **状态：** 文档基线完成，实施状态全部为 Not Started
+> **状态：** 文档基线完成；RC-04 的 V8-1 migration/域模型/Repository 部分已实施（见下表备注），其余全部为 Not Started
 
 ---
 
@@ -13,7 +13,7 @@
 | RC-01 | BOSS 当前页采集 | 6.1 P0-01 / US-01 | 6.1 / 11.1 | 2.2 / 9 | V8-2 | Not Started | 真实页截图、preview payload |
 | RC-02 | 通用可见文本降级 | 6.1 P0-02 / US-01 | 6.2 | 2.2 / 4 | V8-2 | Not Started | 非 BOSS 页面截图、未知字段验证 |
 | RC-03 | 文本与标准 JSON | 6.1 P0-03 / US-02 | 4.1 / 6.3 | 2.3 / 9 | V8-2 | Not Started | 文本、单 JSON、小数组验收 |
-| RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Not Started | DB 行、版本历史、无 UPDATE 证据 |
+| RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Partial（V8-1 全部子项完成，V8-2 未开始，整体不算完成） | 见下方 RC-04 分项证据 |
 | RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Not Started | fixture、Diff 截图、hash 结果 |
 | RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Not Started | 命中原文、覆盖动作截图 |
 | RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Not Started | Payload、Envelope、证据引用 |
@@ -22,6 +22,28 @@
 | RC-10 | RadarAction | P0-10 / US-08 | 4.11 / 12 | 5.5 | V8-5 | Not Started | 动作流水、撤销、投影 |
 | RC-11 | RadarPromotion | P0-11 / US-09 | 4.12 / 13.4 | 8 | V8-6 | Not Started | 晋升预览、幂等、反向追踪 |
 | RC-12 | 可靠任务与发布闭环 | P0-12 / US-10 / 12.2 | 4.8 / 10 | 6 / 9 | V8-4/6 | Not Started | 故障日志、migration、恢复、截图 |
+
+### 1.1 RC-04 分项证据（区分实现层次，不得合并为单一完成结论）
+
+| 分项 | 状态 | 证据 |
+|---|---|---|
+| Schema / migration 实现 | Done | `server/migrations/radarDomainSchemaV7.ts`（12 表、FK/CHECK 约束、10 个索引）；`server/migrations.ts` 注册 v7；`RADAR_DOMAIN_SCHEMA_VERSION=7`，`PRODUCTION_SCHEMA_VERSION` 仍为 2，不影响生产默认路径 |
+| 域模型 / Repository 实现 | Done | `src/domain/radar/`、`server/radar/`；`radar.spec.ts` 覆盖循环 FK 三步事务、Repository 不暴露 update/updateVersion |
+| 自动化测试 | Done | `scripts/migrations.selftest.ts` v7 升级/幂等/约束测试块；`server/radar/radar.spec.ts`；全量 `vitest run` |
+| 生产数据库副本迁移演练 | Done（本次执行） | 对生产库只读副本执行：一致性备份 → 复制为演练库 → 正式 `initSchema` 入口从 v6 升到 v7 → 12 张雷达表/10 个索引存在且为空 → 全部 v0.7 业务表行数与内容 hash 保持不变（仅 `schema_migrations` 按预期新增 1 行、`app_meta.schema_version` 按预期由 6 更新为 7）→ `integrity_check=ok`、`foreign_key_check` 无异常 → 再次运行 migration 确认幂等 → 循环 FK 三步事务与 `marked_applied_pending` Action 数据冒烟通过，未产生正式 Application → 生产库文件 hash 全程不变。演练全部在系统临时目录中进行，未提交、未保留任何数据库文件 |
+| 备份与恢复验证 | Done（本次执行） | 对迁移前一致性副本（非生产库本身）执行项目现有正式备份机制 `backupDatabase()`（`VACUUM INTO` + `doctorDatabase` 校验），恢复到独立临时位置后验证 schema version、`integrity_check=ok`、`foreign_key_check` 无异常，核心 v0.7 表行数与 hash 与备份源一致；备份/恢复均使用临时 `OFFERFLOW_BACKUP_DIR`/`OFFERFLOW_SYNC_DIR`，未写入真实 `backups/`、`sync/` 目录，事后已清理 |
+| V8-2 真实采集写入 DB 行与截图 | Not Started | 依赖浏览器采集桥，属于 V8-2 范围，本次未实施、未提前实施 |
+
+RC-04 作为整体用户结果仍标记 **Partial**：V8-1 范围内的六项子证据全部完成，但 RC-04 定义本身包含"手动纠错和实质变化均创建新版本"的用户可见行为，其真实输入来源（BOSS 采集/降级采集/文本导入）在 V8-2 才会交付，因此在 V8-2 完成前不得将 RC-04 整行标记为 Done。
+
+### 1.2 schema v7 生产激活时点（V8-1 结单前审计）
+
+已审计 `initSchema` 实际调用链、`PRODUCTION_SCHEMA_VERSION`/`LATEST_SCHEMA_VERSION` 分工与真实生产库
+当前状态，结论：当前策略安全且与 v3~v6 历史模式一致，**未修改任何代码**。`PRODUCTION_SCHEMA_VERSION`
+保持 2 不变；schema v7（12 张雷达表）目前只在显式指定 `targetVersion: 7` 的测试/演练库中创建，真实生产
+库启动不会自动迁移到 v7。v7 切换为生产默认目标的时点固定在 **V8-2**（届时才会有路由调用 radar
+Repository，需要这些表真实存在）。详细证据与调用链见
+`docs/runbooks/offerflow-v0.8-migration-recovery.md` 第 1.1 节。
 
 ---
 

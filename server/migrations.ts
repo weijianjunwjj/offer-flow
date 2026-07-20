@@ -4,6 +4,7 @@ import { createCapabilityBaselineSchemaV3 } from './migrations/capabilityBaselin
 import { createHistoryFunnelSchemaV4 } from './migrations/historyFunnelSchemaV4';
 import { createMarketPositionSchemaV5 } from './migrations/marketPositionSchemaV5';
 import { createStrategyWindowSchemaV6 } from './migrations/strategyWindowSchemaV6';
+import { createRadarDomainSchemaV7 } from './migrations/radarDomainSchemaV7';
 
 export interface SchemaMigration {
   version: number;
@@ -26,9 +27,9 @@ export interface MigrationRunOptions {
 // 可信求职记忆（Job Memory v2）生产底座仍固定在 v2：快照、恢复与生产验证机器都以 v2 为准。
 export const PRODUCTION_SCHEMA_VERSION = 2;
 // G2 能力基线新增 v3、G3 历史补录与基础漏斗新增 v4、G4 市场位置画像新增 v5、
-// G5 求职策略窗口新增 v6；LATEST 与 PRODUCTION 有意区分，v3/v4/v5/v6 均为纯新增表，
-// 不改动 v2 生产语义。v5/v6 仅限沙箱/临时库使用，真实生产库不得升级。
-export const LATEST_SCHEMA_VERSION = 6;
+// G5 求职策略窗口新增 v6、v0.8 V8-1 雷达领域新增 v7；LATEST 与 PRODUCTION 有意区分，
+// v3~v7 均为纯新增表，不改动 v2 生产语义。v5/v6/v7 仅限沙箱/临时库使用，真实生产库不得升级。
+export const LATEST_SCHEMA_VERSION = 7;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 // G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
 export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
@@ -40,6 +41,8 @@ export const HISTORY_IMPORT_SCHEMA_VERSION = 4;
 export const MARKET_POSITION_SCHEMA_VERSION = 5;
 // G5 求职策略窗口单独所需的最低 schema 版本（v6），仅限沙箱使用。
 export const STRATEGY_WINDOW_SCHEMA_VERSION = 6;
+// v0.8 V8-1 雷达领域单独所需的最低 schema 版本（v7），仅限沙箱/演练库使用。
+export const RADAR_DOMAIN_SCHEMA_VERSION = 7;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -112,6 +115,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 6,
     name: '006_v0_7_strategy_window_schema',
     up: createStrategyWindowSchemaV6,
+  },
+  {
+    version: 7,
+    name: '007_v0_8_radar_domain_schema',
+    up: createRadarDomainSchemaV7,
   },
 ];
 
