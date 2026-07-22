@@ -103,10 +103,10 @@ v0.8 当前定位为：
 
 * PRD 版本：v2.1，已冻结；
 * V8-1 已有本地检查点 `043dca7`；
-* V8-2：`FROZEN / CLOSEOUT IN PROGRESS`；
-* V8-3：`APPROVED / NOT STARTED / GATED_BY_V8_2_CLOSEOUT`；
-* 具体实施状态以 `docs/product/offerflow-v0.8-traceability.md` 与最新阶段交接为准；
-* 未经用户批准不得进入 V8-3 业务代码、修改真实生产数据库、push、merge、Tag、Release 或 PR。
+* V8-2：`CLOSED / FROZEN`；生产数据库已受控激活到 schema v7，Radar 正式入口仍关闭；
+* V8-3：`APPROVED / DESIGN ALLOWED / IMPLEMENTATION NOT STARTED`；
+* 具体实施状态以 `docs/product/offerflow-v0.8-traceability.md` 为准；
+* 未经用户批准不得进入 V8-3 业务代码、再次修改真实生产数据库、push、merge、Tag、Release 或 PR。
 
 ---
 
@@ -115,10 +115,11 @@ v0.8 当前定位为：
 当前阶段为：
 
 ```text
-V8-2：当前页采集桥与导入预览收口
+V8-2：CLOSED / FROZEN
+V8-3：仅允许设计，业务代码尚未授权
 ```
 
-V8-2 收口完成并满足 Gate 后，才可进入：
+后续实施波次为：
 
 ```text
 V8-3：标准化、质量、重复、变化与规则预检
@@ -816,15 +817,10 @@ AI 不得因为“判断明显”而绕过确认。
 
 ### 当前 P0
 
-* 完成 V8-2 两项取消输入能力的产品/UI/处理器/文档/验收收缩；
-* 补齐普通页通用降级、OfferFlow 未启动明确报错、最终 BOSS 批量 Preview 汇总截图三项人工证据；
-* 完成中文本地 checkpoint commit 与两轮全量质量门；
-* 在全部前置门槛满足后，按 Runbook 评估真实生产 schema v7 受控激活；
-* Radar 正式入口继续关闭，不自动创建 Radar 数据。
-
-### V8-2 收口后
-
-先提交 V8-3 设计稿等待用户批准；不得直接编写 V8-3 业务代码。
+* V8-2 已正式关闭并冻结；
+* 真实生产数据库已受控激活到 schema v7，Radar 12 张表保持为空；
+* Radar 正式入口继续关闭，不自动创建 Radar 数据；
+* 只允许准备 V8-3 设计稿并等待用户审核，不得直接编写 V8-3 业务代码。
 
 ### 持续禁止擅自开展
 

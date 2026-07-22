@@ -24,13 +24,18 @@
 
 真实生产库启动时不会自动迁移到 v7（`server/index.ts` 的 `allowAutoMigrate` 对真实库路径固定为
 `false`）；`initSchema(db)` 不带参数时仍只到 `PRODUCTION_SCHEMA_VERSION = 2`。schema v7（12 张雷达表）
-目前只在显式指定 `targetVersion: 7` 的测试库、演练库,或运行 `npm run db:upgrade-real -- --confirm`
-（会升级到 `LATEST_SCHEMA_VERSION`）时被创建。
+只能通过显式指定 `targetVersion: 7` 的测试/演练路径，或经授权运行
+`npm run db:upgrade-real -- --confirm` 创建。
 
 **v7 切换为生产默认目标的时点固定在 V8-2**：V8-2 注册雷达采集路由并首次调用 radar Repository 时，
 必须同时在 `buildServer` 的能力链中加入雷达能力标志（把 `requiredVersion` 提升到 7），并要求在该版本
 部署到真实库前先执行 `npm run db:upgrade-real -- --confirm` 完成显式升级。V8-1 阶段不做此切换，因为
 V8-1 尚无任何路由依赖这些表，提前切换没有收益且会扩大 V8-1 的变更面。
+
+**2026-07-22 激活结果：** 用户明确授权后，真实生产库已按本 Runbook 从 schema v6 受控升级到 v7。
+升级前备份、独立恢复验证、生产副本 dry-run、故障原子性探针、真实升级、完整性/外键/行数核验和
+Radar 关闭状态下的启动冒烟均通过；12 张 Radar 表保持为空，Radar 前后端正式入口仍关闭。非敏感证据见
+`docs/evidence/offerflow-v0.8-schema-v7-activation-2026-07-22.md`。
 
 ---
 

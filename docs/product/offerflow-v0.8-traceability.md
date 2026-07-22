@@ -2,7 +2,7 @@
 
 > **矩阵版本：** 1.0  
 > **对应 PRD：** v2.1  
-> **状态：** 文档基线完成；RC-04 的 V8-1 migration/域模型/Repository 部分已实施；V8-2 采集桥/预览/确认写入闭环代码、自动化测试与最终真实 BOSS 批量 Preview 证据完成。2026-07-22 最终范围收缩为扩展当前页采集、BOSS 单条/批量、通用可见文本降级、预览纠错/取消/确认、幂等重放与终态；手工 JD 文本、“链接 + 文本”和 JSON 对象/数组输入均从产品入口、前端 API 包装、写入 DTO 和验收中删除，仅保留数据库枚举、历史数据读取与 Preview/Snapshot 反序列化兼容；扩展继续使用 JSON HTTP body 的 browser/boss/generic 协议。RC-01/02/03 已完成；RC-04 的实现、演练和真实采集证据完成，但真实生产库仍未升级，生产 schema v7 激活须在本地 checkpoint 与第二轮质量门后单独裁决。
+> **状态：** V8-2 `CLOSED / FROZEN`。采集桥、预览、确认写入闭环、自动化测试、最终真实 BOSS 批量 Preview 与生产 schema v7 受控激活均已完成；Radar 正式入口保持关闭。2026-07-22 最终范围收缩为扩展当前页采集、BOSS 单条/批量、通用可见文本降级、预览纠错/取消/确认、幂等重放与终态；手工 JD 文本、“链接 + 文本”和 JSON 对象/数组输入均从产品入口、前端 API 包装、写入 DTO 和验收中删除，仅保留数据库枚举、历史数据读取与 Preview/Snapshot 反序列化兼容；扩展继续使用 JSON HTTP body 的 browser/boss/generic 协议。RC-01～RC-04 均为 Done。
 
 ---
 
@@ -13,7 +13,7 @@
 | RC-01 | BOSS 当前页采集 | 6.1 P0-01 / US-01 | 6.1 / 11.1 | 2.2 / 9 | V8-2 | Done（真实单条与批量链路、最终 2 项 Preview、来源身份、字段与 JD 不串位均已验证；停在 Preview 未确认写入） | 用户截图 `artifacts/v0.8-v8-2/2026-07-22-boss-batch-preview.png`（Git 忽略）及同目录只读 audit JSON；session `686a0ef7…` |
 | RC-02 | 通用可见文本降级 | 6.1 P0-02 / US-01 | 6.2 | 2.2 / 4 | V8-2 | Done（真实 MV3 popup + 注入抽取通过；受控动态 loopback mock 打开 Preview；服务端集成测试独立证明 Preview 前零正式写入） | `test-results/extension-e2e/*generic*/generic-fallback-{preview.png,result.json}`、同目录 `trace.zip`；`server/radar/routes.spec.ts` |
 | RC-03 | 采集入口收敛与统一预览 | 6.1 P0-03 / US-02 | 4.1 / 6.3 | 2.3 / 9 | V8-2 | Done（只保留扩展会话预览；无手工 JD textarea/按钮/状态/handler/帮助文案/前端 API 包装；JSON 专用 route 为 404；共享写入 DTO 拒绝全部 legacy 输入值） | UI 删除契约、路由 404/422、引用审计、generic fallback 回归 |
-| RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Partial（V8-1 全部子项、V8-2 写入闭环、真实采集写入和最终 Preview 零写入证据完成；真实生产 schema v7 尚未激活） | 见下方 RC-04 分项证据与生产激活裁决 |
+| RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Done（实现、写入闭环、真实采集、最终 Preview 零写入及生产 schema v7 受控激活全部通过） | 见下方 RC-04 分项证据与生产激活记录 |
 | RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Not Started | fixture、Diff 截图、hash 结果 |
 | RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Not Started | 命中原文、覆盖动作截图 |
 | RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Not Started | Payload、Envelope、证据引用 |
@@ -27,7 +27,8 @@
 
 | 分项 | 状态 | 证据 |
 |---|---|---|
-| Schema / migration 实现 | Done | `server/migrations/radarDomainSchemaV7.ts`（12 表、FK/CHECK 约束、10 个索引）；`server/migrations.ts` 注册 v7；`RADAR_DOMAIN_SCHEMA_VERSION=7`，`PRODUCTION_SCHEMA_VERSION` 仍为 2，不影响生产默认路径 |
+| Schema / migration 实现 | Done | `server/migrations/radarDomainSchemaV7.ts`（12 表、FK/CHECK 约束、12 个显式索引）；`server/migrations.ts` 注册 v7；`RADAR_DOMAIN_SCHEMA_VERSION=7`，`PRODUCTION_SCHEMA_VERSION` 仍为 2，不影响生产默认路径 |
+| 生产 schema v7 受控激活 | Done（2026-07-22） | 停写后锁定真实库 v6 指纹；原始备份与独立恢复副本 hash、schema、全部既有表行数一致；生产副本 dry-run 仅新增 migration 7、12 张 Radar 表和 12 个显式索引，重复执行为 noop，故障注入完整回滚；真实库使用同一已提交 migration 入口升级到 v7，既有表行数不变、Radar 表全为 0、`integrity_check=ok`、FK 异常 0；Radar 关闭状态下旧 API/页面启动冒烟通过，停服后库 hash/行数未变化。见 `docs/evidence/offerflow-v0.8-schema-v7-activation-2026-07-22.md`。 |
 | 域模型 / Repository 实现 | Done | `src/domain/radar/`、`server/radar/`；`radar.spec.ts` 覆盖循环 FK 三步事务、Repository 不暴露 update/updateVersion |
 | 自动化测试 | Done | `scripts/migrations.selftest.ts` v7 升级/幂等/约束测试块；`server/radar/radar.spec.ts`；全量 `vitest run` |
 | 生产数据库副本迁移演练 | Done（本次执行） | 对生产库只读副本执行：一致性备份 → 复制为演练库 → 正式 `initSchema` 入口从 v6 升到 v7 → 12 张雷达表/10 个索引存在且为空 → 全部 v0.7 业务表行数与内容 hash 保持不变（仅 `schema_migrations` 按预期新增 1 行、`app_meta.schema_version` 按预期由 6 更新为 7）→ `integrity_check=ok`、`foreign_key_check` 无异常 → 再次运行 migration 确认幂等 → 循环 FK 三步事务与 `marked_applied_pending` Action 数据冒烟通过，未产生正式 Application → 生产库文件 hash 全程不变。演练全部在系统临时目录中进行，未提交、未保留任何数据库文件 |
@@ -53,21 +54,19 @@
 | V8-2 学历要求与招聘者活跃度快照 | Done（代码与自动化测试）；待用户真实页复验 | 学历沿用既有 `educationRequirement` 结构化字段，不改 DTO/schema：抽取按具体限定优先，保留“统招本科/全日制本科/本科及以上/大专”等标签原文，并在预览页增加可编辑字段。招聘者活跃度只从当前岗位右侧 `.job-boss-info` 内受控活跃时间节点读取，作为 `extractionMetadata.activityStatus` 随 raw snapshot 保存并在预览中只读展示；不进入 recognizedFields/normalized CandidateVersion，不因活跃状态变化产生岗位新版本。招聘者姓名、自由文本、超长文本均不读取。新增 extractor、batch payload、metadata reader 与预览组件测试。未改 server DTO/API/schema/migration、数据库或正式记忆。 |
 | V8-2 活跃度真实节点兼容 | Done（真实诊断定向修复 + 自动化测试）；待用户重载扩展复验 | 用户真实诊断证明当前页状态 class 为 `.boss-online-tag`、页面原文为“在线”，旧 selector 未命中。最小修复为在已确认当前岗位的 `.job-boss-info` 内接受 class 表明 online/active/status 的状态节点，并原样保留不超过 30 字的短文本，不再使用活跃文案枚举；仍明确排除 `.name`/`.boss-name`/`.boss-info-attr`、招聘者节点及隐藏节点，不读取整个招聘者区域。未改 server DTO/API/schema/migration、数据库或正式记忆。 |
 | V8-2 活跃状态嵌套结构回归修复 | Done（第二份真实诊断定向修复 + 自动化测试）；待用户重载扩展复验 | 第二次真实复验仍全空。诊断显示 `.boss-online-tag` 与 `.name` 同属招聘者行；根因是隐私过滤使用 `closest('.job-boss-info .name')`，把嵌套在姓名行内的合法状态 tag 一并拒绝。修复为只拒绝命中节点本身是姓名/机构属性的情况；状态 tag 即使嵌套于 `.name` 仍只读取自身 `textContent`，不读取姓名祖先。新增真实嵌套 DOM 回归并断言结果为“在线”且不含招聘者姓名。未改 server DTO/API/schema/migration、数据库或正式记忆。 |
-| V8-2 可自动化沙箱验收（§六） | Done（本次执行） | 扩展产物与注入路径一致；沙箱 schema v7、DB 在系统临时目录、后端 Radar + 前端 flag 开启；扩展 Capture Item 的 preview/correction/commit/idempotent replay/cancel/expiry 复用同一链路；浏览器预览验证地址栏 sessionId 即时移除、刷新恢复、committed 后刷新不恢复；临时 DB 脱敏计数与截断 ID 已核对。真实生产库仍未升级。 |
+| V8-2 可自动化沙箱验收（§六） | Done（本次执行） | 扩展产物与注入路径一致；沙箱 schema v7、DB 在系统临时目录、后端 Radar + 前端 flag 开启；扩展 Capture Item 的 preview/correction/commit/idempotent replay/cancel/expiry 复用同一链路；浏览器预览验证地址栏 sessionId 即时移除、刷新恢复、committed 后刷新不恢复；临时 DB 脱敏计数与截断 ID 已核对。生产激活结果另见本表“生产 schema v7 受控激活”。 |
 | V8-2 普通页 generic fallback 自动证据 | Done（2026-07-22） | Playwright 使用真实 MV3 action popup 和真实注入抽取打开非 BOSS fixture；fixture 同时含标题、正文、导航、hidden/inline hidden/CSS hidden/style/script 噪声。结果为 `generic_visible_text`，sourceUrl/title 正确、可见正文存在、隐藏/style/script 噪声缺失、`recognizedFields=null`；扩展 HTTP 与 Preview 使用动态隔离 loopback 受控 mock，服务端零正式写入由 API 集成测试独立验证。截图、trace、结构化 JSON 保存在被 Git 忽略的 `test-results/extension-e2e/*generic*/`，不纳入 checkpoint。 |
 | V8-2 OfferFlow 未启动自动证据 | Done（2026-07-22） | Playwright 临时扩展副本改写为动态分配后立即释放的未监听 loopback 端口；popup 保持打开并提示“OfferFlow 未启动…启动后重试”，未打开 Preview、未产生 session/add item、无残留注入 UI、page/popup 未处理异常均为 0。截图、trace、结构化 JSON 保存在 `test-results/extension-e2e/*OfferFlo*/`，未停止或访问用户真实 OfferFlow。 |
 | V8-2 最终真实 BOSS 批量 Preview 与只读数据库核验 | Done（2026-07-22，用户普通 Chrome） | 最新 session `686a0ef7…` 为 `browser/preview`、2 items、`committedAt=null`；两项 item index 0/1 是 background 按 `selectionOrder` 排序后的持久化顺序（metadata 未重复保存显式 `selectionOrder`）；岗位分别为“厨芯科技/全栈侧重前端/15-25K/3-5年/本科”和“苏州安辰拓海科技/全栈无侧重/15-20K/5-10年/大专”，均苏州、在线；两项 externalRecordId、right-panel ID、canonical/source URL 一致，`identityMatch=true`、`commitBlocked=false`；JD 指纹分别为“微信小程序/前端”和“AI 数字人/后端”，无串位。SQLite 以 `readonly + query_only` 核验：目标 Snapshot=0，从 Preview 创建时刻起 Source/Candidate/Version/Link/Job/Application/FeedbackEvent 新增均为 0，`integrity_check=ok`、FK 异常 0。截图和 audit JSON 归档在 Git 忽略的 `artifacts/v0.8-v8-2/`。 |
 
-RC-04 作为整体用户结果仍标记 **Partial**：V8-1/V8-2 的实现、自动测试、迁移/恢复演练、真实 BOSS 写入和最终 Preview 零写入证据均已完成；剩余门槛仅为真实生产 schema v7 是否激活。该动作需要 checkpoint 后第二轮质量门和独立安全裁决，不能由沙箱通过自动推导为已执行。
+RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测试、迁移/恢复演练、真实 BOSS 写入、最终 Preview 零写入证据和真实生产 schema v7 受控激活均已完成。Radar 正式入口仍关闭，升级本身没有创建任何 Radar 数据。
 
 ### 1.2 schema v7 生产激活时点（V8-1 结单前审计）
 
 已审计 `initSchema` 实际调用链、`PRODUCTION_SCHEMA_VERSION`/`LATEST_SCHEMA_VERSION` 分工与真实生产库
-当前状态，结论：当前策略安全且与 v3~v6 历史模式一致，**未修改任何代码**。`PRODUCTION_SCHEMA_VERSION`
-保持 2 不变；schema v7（12 张雷达表）目前只在显式指定 `targetVersion: 7` 的测试/演练库中创建，真实生产
-库启动不会自动迁移到 v7。v7 切换为生产默认目标的时点固定在 **V8-2**（届时才会有路由调用 radar
-Repository，需要这些表真实存在）。详细证据与调用链见
-`docs/runbooks/offerflow-v0.8-migration-recovery.md` 第 1.1 节。
+状态。`PRODUCTION_SCHEMA_VERSION` 保持 2 不变，真实库启动仍不会自动迁移；2026-07-22 经用户单独明确授权，
+通过 `db:upgrade-real -- --confirm` 将真实库从 v6 显式升级到 v7。升级后 Radar 前后端正式入口仍为 disabled，
+12 张 Radar 表为空。详细流程见 `docs/runbooks/offerflow-v0.8-migration-recovery.md` 第 1.1 节和激活证据记录。
 
 ---
 
