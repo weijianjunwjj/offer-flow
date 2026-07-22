@@ -50,6 +50,14 @@ export class RadarCaptureRepository {
     return result.changes === 1;
   }
 
+  updateSessionContent(id: string, rawInput: unknown, previewItems: unknown): boolean {
+    const result = this.db.prepare(`
+      UPDATE radar_capture_sessions SET raw_input_json = @rawInputJson, preview_items_json = @previewItemsJson
+      WHERE id = @id
+    `).run({ id, rawInputJson: JSON.stringify(rawInput), previewItemsJson: JSON.stringify(previewItems) });
+    return result.changes === 1;
+  }
+
   insertSnapshot(snapshot: RadarCaptureSnapshot): void {
     this.db.prepare(`
       INSERT INTO radar_capture_snapshots (

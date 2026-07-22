@@ -24,8 +24,10 @@ import {
   LATEST_SCHEMA_VERSION,
   MARKET_POSITION_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
+  RADAR_DOMAIN_SCHEMA_VERSION,
   STRATEGY_WINDOW_SCHEMA_VERSION,
 } from './migrations';
+import { registerRadarCaptureRoutes, type RadarCaptureServiceDeps } from './radar/routes';
 import { planSchemaStartup, schemaRefusalMessage } from './schemaStartup';
 import { initSchema } from './schema';
 import { registerProfileRoutes } from './routes/profile';
@@ -70,6 +72,11 @@ export interface StrategyWindowCapability {
   serviceDeps?: StrategyServiceDeps;
 }
 
+export interface RadarCapability {
+  enabled?: boolean;
+  serviceDeps?: RadarCaptureServiceDeps;
+}
+
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
@@ -80,6 +87,7 @@ export interface BuildServerOptions {
   funnel?: FunnelCapability;
   marketPosition?: MarketPositionCapability;
   strategyWindow?: StrategyWindowCapability;
+  radar?: RadarCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -108,6 +116,10 @@ export function buildServer(
   // 明确不启用 G5，仅在沙箱脚本与自身测试中显式开启，届时才把库升级到 v6。
   // G5 依赖 G4 的 active 市场位置版本，因此开启 G5 时必然一并开启 G4。
   const strategyWindowEnabled = options.strategyWindow?.enabled ?? false;
+  // 岗位雷达（V8-2 当前页采集桥）默认关闭：需要 schema v7 的雷达领域表，且真实生产入口
+  // 明确不启用（前后端 flag 默认 false），仅在显式注入 v7 库的开发/测试场景中开启，
+  // 届时才把库升级到 v7；真实库升级与真实入口启用均需用户另行明确授权。
+  const radarEnabled = options.radar?.enabled ?? false;
   const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
@@ -122,15 +134,17 @@ export function buildServer(
   if (jobMemoryV2.enabled) {
     // 每个能力只升级到自己需要的最低 schema 版本，不因为 v4 存在就顺带把只开了
     // 能力基线（G2）的场景也拉到 v4——两者的 requiredVersion 相互独立。
-    const requiredVersion = strategyWindowEnabled
-      ? STRATEGY_WINDOW_SCHEMA_VERSION
-      : marketPositionEnabled
-        ? MARKET_POSITION_SCHEMA_VERSION
-        : historyImportEnabled
-          ? HISTORY_IMPORT_SCHEMA_VERSION
-          : capabilityBaselineEnabled
-            ? CAPABILITY_BASELINE_SCHEMA_VERSION
-            : PRODUCTION_SCHEMA_VERSION;
+    const requiredVersion = radarEnabled
+      ? RADAR_DOMAIN_SCHEMA_VERSION
+      : strategyWindowEnabled
+        ? STRATEGY_WINDOW_SCHEMA_VERSION
+        : marketPositionEnabled
+          ? MARKET_POSITION_SCHEMA_VERSION
+          : historyImportEnabled
+            ? HISTORY_IMPORT_SCHEMA_VERSION
+            : capabilityBaselineEnabled
+              ? CAPABILITY_BASELINE_SCHEMA_VERSION
+              : PRODUCTION_SCHEMA_VERSION;
     // 真实生产库（data/offerflow.sqlite3）禁止在服务启动时自动迁移；
     // 仅临时文件库 / 注入的测试库 / 内存库允许自动初始化到所需 schema。
     const isRealProductionDb = ownsDb && dbPath === getDbPath();
@@ -160,7 +174,7 @@ export function buildServer(
   app.addHook('onRequest', async (request, reply) => {
     reply.header('Access-Control-Allow-Origin', request.headers.origin ?? '*');
     reply.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    reply.header('Access-Control-Allow-Headers', 'content-type');
+    reply.header('Access-Control-Allow-Headers', 'content-type,x-offerflow-capture-client');
     if (request.method === 'OPTIONS') {
       return reply.code(204).send();
     }
@@ -202,6 +216,9 @@ export function buildServer(
     }
     if (strategyWindowEnabled) {
       registerStrategyWindowRoutes(app, options.strategyWindow?.serviceDeps);
+    }
+    if (radarEnabled) {
+      registerRadarCaptureRoutes(app, { serviceDeps: options.radar?.serviceDeps });
     }
   }
   return app;

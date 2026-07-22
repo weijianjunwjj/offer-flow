@@ -55,6 +55,13 @@ export class RadarCandidateRepository {
     return row === undefined ? null : rowToRadarCandidate(row);
   }
 
+  findByPrimarySourceRecordId(sourceRecordId: string): RadarCandidate | null {
+    const row = this.db
+      .prepare(`SELECT ${CANDIDATE_COLUMNS} FROM radar_candidates WHERE primary_source_record_id = ?`)
+      .get(sourceRecordId) as RadarCandidateRow | undefined;
+    return row === undefined ? null : rowToRadarCandidate(row);
+  }
+
   listActiveCandidates(): RadarCandidate[] {
     const rows = this.db
       .prepare(`SELECT ${CANDIDATE_COLUMNS} FROM radar_candidates WHERE lifecycle_status = 'active' ORDER BY updated_at DESC, id`)

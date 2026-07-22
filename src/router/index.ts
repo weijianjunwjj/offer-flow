@@ -12,6 +12,7 @@ import HistoryImportPage from '../pages/HistoryImportPage.vue';
 import MarketFunnelPage from '../pages/MarketFunnelPage.vue';
 import MarketPositionPage from '../pages/MarketPositionPage.vue';
 import StrategyWindowPage from '../pages/StrategyWindowPage.vue';
+import RadarImportPage from '../pages/RadarImportPage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -31,6 +32,7 @@ export interface RouterFeatureOptions {
   historyImportEnabled?: boolean;
   marketPositionEnabled?: boolean;
   strategyWindowEnabled?: boolean;
+  radarEnabled?: boolean;
 }
 
 export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
@@ -60,6 +62,18 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
         path: '/strategy-window',
         name: 'strategy-window-disabled',
         redirect: { name: 'jobs', query: { feature: 'strategy-window-disabled' } },
+      },
+    options.radarEnabled
+      ? {
+        path: '/radar/import',
+        name: 'radar-import',
+        component: RadarImportPage,
+        props: (route) => ({ sessionId: typeof route.query.sessionId === 'string' ? route.query.sessionId : null }),
+      }
+      : {
+        path: '/radar/import',
+        name: 'radar-import-disabled',
+        redirect: { name: 'jobs', query: { feature: 'radar-import-disabled' } },
       },
     options.jobMemoryV2Enabled
       ? {
@@ -91,6 +105,7 @@ export function createOfferFlowRouter(
     historyImportEnabled: features.historyImportEnabled,
     marketPositionEnabled: features.marketPositionEnabled || features.g4SandboxEnabled || features.g6RehearsalEnabled,
     strategyWindowEnabled: features.strategyWindowEnabled || features.g5SandboxEnabled || features.g6RehearsalEnabled,
+    radarEnabled: features.radarEnabled,
   },
 ): Router {
   return createRouter({ history, routes: createRoutes(options) });

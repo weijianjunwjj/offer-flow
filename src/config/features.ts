@@ -55,4 +55,10 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_STRATEGY_WINDOW,
     true,
   ),
+  // V8-2 岗位雷达当前页采集桥：真实生产入口默认不启用（需要 schema v7 且未经批准不得
+  // 升级真实库），仅在显式注入 v7 库的开发/测试场景中通过环境变量开启。
+  radarEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_RADAR,
+    false,
+  ),
 });

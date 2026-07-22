@@ -22,14 +22,19 @@ export class ApiNetworkError extends Error {
 
 export interface ReadOptions {
   signal?: AbortSignal;
+  headers?: Record<string, string>;
 }
 
 export interface SendOptions {
   signal?: AbortSignal;
+  headers?: Record<string, string>;
 }
 
 export async function apiGet<T>(path: string, options: ReadOptions = {}): Promise<T> {
-  return apiRequest<T>(path, { signal: options.signal });
+  return apiRequest<T>(path, {
+    ...(options.headers === undefined ? {} : { headers: options.headers }),
+    signal: options.signal,
+  });
 }
 
 export async function apiSend<T>(
@@ -40,7 +45,10 @@ export async function apiSend<T>(
 ): Promise<T> {
   return apiRequest<T>(path, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: {
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...options.headers,
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });

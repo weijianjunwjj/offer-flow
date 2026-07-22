@@ -17,6 +17,16 @@
         "OFFERFLOW_G3_SANDBOX_API_PORT": "17466",
         "OFFERFLOW_G3_SANDBOX_WEB_PORT": "5273"
       }
+    },
+    {
+      "name": "offerflow-radar-sandbox",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "scripts/devRadarSandbox.ts", "--web-port=17375", "--api-port=17376"],
+      "port": 17375,
+      "env": {
+        "OFFERFLOW_RADAR_SANDBOX_API_PORT": "17376",
+        "OFFERFLOW_RADAR_SANDBOX_WEB_PORT": "17375"
+      }
     }
   ]
 }

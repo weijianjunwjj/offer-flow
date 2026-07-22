@@ -1,3 +1,4 @@
+/** pasted_text/shared_link_and_text/json 仅保留为已落库枚举的 legacy compatibility；当前产品入口只创建 browser。 */
 export const RADAR_CAPTURE_SOURCE_TYPES = ['browser', 'pasted_text', 'shared_link_and_text', 'json'] as const;
 export type RadarCaptureSourceType = (typeof RADAR_CAPTURE_SOURCE_TYPES)[number];
 
@@ -7,6 +8,7 @@ export type RadarCaptureSessionStatus = (typeof RADAR_CAPTURE_SESSION_STATUSES)[
 export const RADAR_CAPTURE_METHODS = [
   'boss_current_page',
   'generic_visible_text',
+  // legacy compatibility：以下值不再由当前产品入口创建。
   'pasted_text',
   'shared_link_and_text',
   'json_import',
