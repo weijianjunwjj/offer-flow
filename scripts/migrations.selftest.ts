@@ -9,6 +9,7 @@ import {
   LATEST_SCHEMA_VERSION,
   MARKET_POSITION_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
+  RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION,
   RADAR_DOMAIN_SCHEMA_VERSION,
   runMigrations,
   SCHEMA_MIGRATIONS,
@@ -365,11 +366,12 @@ try {
   assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
   assert.equal(CURRENT_SCHEMA_VERSION, PRODUCTION_SCHEMA_VERSION);
   // G2 能力基线新增 v3、G3 历史补录与漏斗新增 v4、G4 市场位置画像新增 v5、G5 求职策略窗口新增 v6、
-  // v0.8 V8-1 雷达领域新增 v7；LATEST 与 PRODUCTION 有意区分。
-  assert.equal(LATEST_SCHEMA_VERSION, 7);
+  // v0.8 V8-1 雷达领域新增 v7、V8-3 候选关系新增 v8；LATEST 与 PRODUCTION 有意区分。
+  assert.equal(LATEST_SCHEMA_VERSION, 8);
   assert.equal(MARKET_POSITION_SCHEMA_VERSION, 5);
   assert.equal(STRATEGY_WINDOW_SCHEMA_VERSION, 6);
   assert.equal(RADAR_DOMAIN_SCHEMA_VERSION, 7);
+  assert.equal(RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION, 8);
   assert.equal(SCHEMA_MIGRATIONS.at(-1)?.version, LATEST_SCHEMA_VERSION);
   assert.equal(SCHEMA_MIGRATIONS.length, LATEST_SCHEMA_VERSION);
   assert.equal(SNAPSHOT_SCHEMA_VERSION, 2);
@@ -1593,6 +1595,244 @@ try {
     );
 
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+
+  // v7 → v8 升级：新增候选关系表 + 最小扩展 radar_actions.action_type，不破坏任何既有数据。
+  const V8_NEW_TABLES = ['radar_candidate_relations'] as const;
+  const V8_NEW_INDEXES = [
+    'radar_candidate_relations_low_idx',
+    'radar_candidate_relations_high_idx',
+    'radar_candidate_relations_status_idx',
+  ] as const;
+
+  // 在 v7 库上铺设最小 radar 领域行（两个 candidate + version + 一条既有 action），用于验证升级保真。
+  function seedRadarForRelations(db: Database.Database): { candLow: string; candHigh: string } {
+    db.prepare(`
+      INSERT INTO radar_capture_snapshots
+        (id, capture_method, visible_text, raw_snapshot_json, raw_content_hash, captured_at, created_at)
+      VALUES ('rel-snap-1', 'pasted_text', 'text', '{}', 'rel-hash-1', 600, 600)
+    `).run();
+    db.prepare(`
+      INSERT INTO radar_source_records
+        (id, latest_snapshot_id, first_seen_at, last_seen_at, source_status, created_at, updated_at)
+      VALUES ('rel-source-1', 'rel-snap-1', 600, 600, 'active', 600, 600)
+    `).run();
+    // 两个候选，ID 有意让 'cand-aaa' < 'cand-bbb'（字典序）。
+    const normalized = JSON.stringify({
+      company: null, role: null, city: null, district: null, salaryMinK: null, salaryMaxK: null,
+      salaryPeriod: null, experienceRequirement: null, educationRequirement: null, companySize: null,
+      industry: null, jobNature: null, workMode: null, technicalStack: [], responsibilities: [],
+      requirements: [], publishedAt: null, rawDescription: '',
+    }).replace(/'/g, "''");
+    for (const [cand, ver] of [['cand-aaa', 'ver-aaa'], ['cand-bbb', 'ver-bbb'], ['cand-ccc', 'ver-ccc']] as const) {
+      db.prepare(`
+        INSERT INTO radar_candidates (id, primary_source_record_id, active_version_id, lifecycle_status, created_at, updated_at)
+        VALUES (?, 'rel-source-1', NULL, 'active', 600, 600)
+      `).run(cand);
+      db.prepare(`
+        INSERT INTO radar_candidate_versions
+          (id, candidate_id, version_no, normalized_json, quality_issues_json, source_snapshot_ids_json,
+           content_hash, origin_type, created_at)
+        VALUES (?, ?, 1, '${normalized}', '[]', '["rel-snap-1"]', ?, 'captured', 600)
+      `).run(ver, cand, `content-${cand}`);
+      db.prepare(`UPDATE radar_candidates SET active_version_id = ? WHERE id = ?`).run(ver, cand);
+    }
+    // 一条既有 action（升级前存在，必须逐字节保留）。
+    db.prepare(`
+      INSERT INTO radar_actions (id, candidate_id, candidate_version_id, action_type, reason_code, reason_text, metadata_json, occurred_at, created_at)
+      VALUES ('rel-action-old', 'cand-aaa', 'ver-aaa', 'saved', NULL, NULL, '{"note":"preserve"}', 600, 600)
+    `).run();
+    return { candLow: 'cand-aaa', candHigh: 'cand-bbb' };
+  }
+
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 7 });
+    seedV1BusinessData(db);
+    seedRadarForRelations(db);
+
+    const actionsBefore = db.prepare('SELECT * FROM radar_actions ORDER BY id').all();
+    const v1DataBefore = readV1BusinessData(db);
+    for (const table of V8_NEW_TABLES) {
+      assert.equal(tableNames(db).includes(table), false);
+    }
+
+    const result = initSchema(db, { targetVersion: 8 });
+    assert.deepEqual(result, {
+      currentVersion: 8,
+      appliedVersions: [1, 2, 3, 4, 5, 6, 7, 8],
+      newlyAppliedVersions: [8],
+    });
+    assert.equal(schemaVersion(db), 8);
+    assert.equal(
+      migrationRecords(db).at(-1)?.name,
+      '008_v0_8_radar_candidate_relations_schema',
+    );
+    for (const table of V8_NEW_TABLES) {
+      assert.equal(tableNames(db).includes(table), true);
+      assert.equal(rowCount(db, table), 0);
+    }
+    for (const index of V8_NEW_INDEXES) {
+      assert.equal(indexNames(db).includes(index), true);
+    }
+
+    // 既有 radar_actions 行逐字节保留（含 ID/时间/metadata）。
+    assert.deepEqual(db.prepare('SELECT * FROM radar_actions ORDER BY id').all(), actionsBefore);
+    // 既有 v1 业务数据逐字节保留。
+    assert.deepEqual(readV1BusinessData(db), v1DataBefore);
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+
+    // 扩展后的 action_type：新旧值均可插入。
+    for (const [id, type] of [
+      ['rel-action-dc', 'duplicate_confirmed'],
+      ['rel-action-dr', 'duplicate_rejected'],
+      ['rel-action-drev', 'duplicate_decision_reverted'],
+      ['rel-action-drc', 'duplicate_recheck_requested'],
+      ['rel-action-saved2', 'unsaved'],
+    ] as const) {
+      db.prepare(`
+        INSERT INTO radar_actions (id, candidate_id, candidate_version_id, action_type, metadata_json, occurred_at, created_at)
+        VALUES (?, 'cand-aaa', 'ver-aaa', ?, '{}', 601, 601)
+      `).run(id, type);
+    }
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_actions (id, candidate_id, candidate_version_id, action_type, metadata_json, occurred_at, created_at)
+        VALUES ('rel-action-bad', 'cand-aaa', 'ver-aaa', 'not_a_real_action', '{}', 601, 601)
+      `).run(),
+    );
+
+    // 候选关系表：合法插入（low < high）。
+    db.prepare(`
+      INSERT INTO radar_candidate_relations
+        (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, created_at, updated_at)
+      VALUES ('rel-1', 'cand-aaa', 'cand-bbb', 'suspected_duplicate', '{}', 700, 700, 700, 700)
+    `).run();
+    assert.equal(rowCount(db, 'radar_candidate_relations'), 1);
+
+    // 同一候选对（无论顺序）唯一：重复插入被拒。
+    assert.throws(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_relations
+          (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, created_at, updated_at)
+        VALUES ('rel-dup', 'cand-aaa', 'cand-bbb', 'confirmed_distinct', '{}', 701, 701, 701, 701)
+      `).run(),
+    /UNIQUE constraint failed/);
+
+    // 自环拒绝。
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_relations
+          (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, created_at, updated_at)
+        VALUES ('rel-self', 'cand-aaa', 'cand-aaa', 'suspected_duplicate', '{}', 700, 700, 700, 700)
+      `).run(),
+    );
+
+    // 未按稳定顺序写入（low > high）被拒，强制调用方归一化。
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_relations
+          (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, created_at, updated_at)
+        VALUES ('rel-unordered', 'cand-bbb', 'cand-aaa', 'suspected_duplicate', '{}', 700, 700, 700, 700)
+      `).run(),
+    );
+
+    // status CHECK。
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_relations
+          (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, created_at, updated_at)
+        VALUES ('rel-badstatus', 'cand-aaa', 'cand-bbb', 'invalid_status', '{}', 700, 700, 700, 700)
+      `).run(),
+    );
+
+    // 两个候选 ID 均外键关联 radar_candidates。
+    assertForeignKeyViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_relations
+          (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, created_at, updated_at)
+        VALUES ('rel-fk', 'cand-aaa', 'cand-missing', 'suspected_duplicate', '{}', 700, 700, 700, 700)
+      `).run(),
+    );
+
+    // resolution_action_id 外键关联 radar_actions（用未占用的合法候选对 aaa<ccc）。
+    assertForeignKeyViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_relations
+          (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, resolution_action_id, created_at, updated_at)
+        VALUES ('rel-fk2', 'cand-aaa', 'cand-ccc', 'confirmed_distinct', '{}', 700, 700, 'action-missing', 700, 700)
+      `).run(),
+    );
+
+    // last_detected_at >= first_detected_at（用未占用的合法候选对 bbb<ccc）。
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_candidate_relations
+          (id, candidate_id_low, candidate_id_high, status, signals_json, first_detected_at, last_detected_at, created_at, updated_at)
+        VALUES ('rel-time', 'cand-bbb', 'cand-ccc', 'suspected_duplicate', '{}', 700, 699, 700, 700)
+      `).run(),
+    );
+
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+
+    // 升级幂等：重复执行不新增迁移、不改数据。
+    assert.deepEqual(initSchema(db, { targetVersion: 8 }).newlyAppliedVersions, []);
+    assert.equal(schemaVersion(db), 8);
+
+    // 默认 initSchema 仍停留在生产 v2，不会自动拉到 v8。
+    assert.equal(PRODUCTION_SCHEMA_VERSION, 2);
+  });
+
+  // 全新库直达 v8。
+  withTempDatabase((db) => {
+    const result = initSchema(db, { targetVersion: 8 });
+    assert.equal(result.currentVersion, 8);
+    assert.equal(schemaVersion(db), 8);
+    assert.equal(tableNames(db).includes('radar_candidate_relations'), true);
+    assert.equal(rowCount(db, 'radar_candidate_relations'), 0);
+    // radar_actions 扩展后的 action_type 在全新库同样可用。
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+
+  // 默认 target（生产 v2）不会创建候选关系表。
+  withTempDatabase((db) => {
+    initSchema(db);
+    assert.equal(schemaVersion(db), 2);
+    assert.equal(tableNames(db).includes('radar_candidate_relations'), false);
+  });
+
+  // v8 迁移故障注入：事务回滚后仍为 v7，候选关系表不存在，radar_actions 保持原状。
+  withTempDatabase((db) => {
+    initSchema(db, { targetVersion: 7 });
+    seedV1BusinessData(db);
+    seedRadarForRelations(db);
+    const actionsBefore = db.prepare('SELECT * FROM radar_actions ORDER BY id').all();
+    const officialV8 = SCHEMA_MIGRATIONS[7];
+    assert.ok(officialV8);
+    const failingV8: SchemaMigration = {
+      ...officialV8,
+      up(database) {
+        officialV8.up(database);
+        throw new Error('v8 rollback probe');
+      },
+    };
+    assert.throws(
+      () => runMigrations(db, { migrations: [...SCHEMA_MIGRATIONS.slice(0, 7), failingV8], targetVersion: 8 }),
+      /v8 rollback probe/,
+    );
+    assert.equal(schemaVersion(db), 7);
+    assert.equal(tableNames(db).includes('radar_candidate_relations'), false);
+    // radar_actions 未被半重建：行与 CHECK 均保持 v7 原状（新 action_type 仍被拒）。
+    assert.deepEqual(db.prepare('SELECT * FROM radar_actions ORDER BY id').all(), actionsBefore);
+    assertCheckViolation(() =>
+      db.prepare(`
+        INSERT INTO radar_actions (id, candidate_id, candidate_version_id, action_type, metadata_json, occurred_at, created_at)
+        VALUES ('rel-action-rb', 'cand-aaa', 'ver-aaa', 'duplicate_confirmed', '{}', 601, 601)
+      `).run(),
+    );
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+    // 回滚后仍可正常升级到 v8。
+    assert.deepEqual(initSchema(db, { targetVersion: 8 }).newlyAppliedVersions, [8]);
+    assert.equal(schemaVersion(db), 8);
   });
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
