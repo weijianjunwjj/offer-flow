@@ -88,8 +88,22 @@ export const RADAR_ACTION_TYPES = [
   'rule_override_set',
   'rule_override_reverted',
   'promotion_requested',
+  // V8-3 重复裁决审计事件（仅用于人工裁决留痕，非 V8-5 通用交互）。
+  'duplicate_confirmed',
+  'duplicate_rejected',
+  'duplicate_decision_reverted',
+  'duplicate_recheck_requested',
 ] as const;
 export type RadarActionType = (typeof RADAR_ACTION_TYPES)[number];
+
+export const RADAR_CANDIDATE_RELATION_STATUSES = [
+  'suspected_duplicate',
+  'confirmed_same',
+  'confirmed_distinct',
+  'needs_recheck',
+  'superseded',
+] as const;
+export type RadarCandidateRelationStatus = (typeof RADAR_CANDIDATE_RELATION_STATUSES)[number];
 
 export const RADAR_PROMOTION_TYPES = ['job_only', 'application', 'feedback'] as const;
 export type RadarPromotionType = (typeof RADAR_PROMOTION_TYPES)[number];
@@ -194,6 +208,28 @@ export interface RadarCandidateSourceLink {
   firstLinkedAt: number;
   lastConfirmedAt: number;
   linkReason: RadarCandidateSourceLinkReason;
+}
+
+/**
+ * V8-3 候选之间的关系（疑似重复 / 已确认相同 / 已判定非重复 / 待复审）。
+ * 候选对按 (candidateIdLow, candidateIdHigh) 稳定排序，(A,B) 与 (B,A) 归一为同一关系。
+ * 当前关系状态存本表；每次人工裁决/撤销/重判的追加式事件存 RadarAction（状态与审计分离）。
+ */
+export interface RadarCandidateRelation {
+  id: string;
+  candidateIdLow: string;
+  candidateIdHigh: string;
+  status: RadarCandidateRelationStatus;
+  reasonCode: string | null;
+  /** 原始疑似信号（公司/岗位名/URL 接近度等），非相似度分数驱动合并。 */
+  signals: unknown;
+  firstDetectedAt: number;
+  lastDetectedAt: number;
+  resolvedAt: number | null;
+  resolutionActionId: string | null;
+  supersededByRelationId: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface RadarRuleAssessment {

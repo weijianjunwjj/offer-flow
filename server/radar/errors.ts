@@ -89,3 +89,18 @@ export function radarCommitConflict(): RadarCaptureError {
     message: '会话已提交，且本次提交内容与首次不一致，拒绝重复提交',
   });
 }
+
+export function radarRelationNotFound(): RadarCaptureError {
+  return new RadarCaptureError(404, { code: 'RELATION_NOT_FOUND', message: '候选关系不存在' });
+}
+
+export function radarSameCandidateRelation(): RadarCaptureError {
+  return new RadarCaptureError(422, { code: 'SAME_CANDIDATE_RELATION', message: '候选不能与自身建立关系' });
+}
+
+export function radarRelationRecheckNotAllowed(reason: string): RadarCaptureError {
+  return new RadarCaptureError(409, {
+    code: 'RELATION_RECHECK_NOT_ALLOWED',
+    message: `无新实质证据，不允许重新提示该候选对：${reason}`,
+  });
+}

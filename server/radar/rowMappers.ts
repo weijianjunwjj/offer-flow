@@ -2,6 +2,7 @@ import {
   AnalysisTaskSchema,
   JobMatchAnalysisRecordSchema,
   RadarActionSchema,
+  RadarCandidateRelationSchema,
   RadarCandidateSchema,
   RadarCandidateSourceLinkSchema,
   RadarCandidateVersionSchema,
@@ -15,6 +16,7 @@ import {
   type JobMatchAnalysisRecord,
   type RadarAction,
   type RadarCandidate,
+  type RadarCandidateRelation,
   type RadarCandidateSourceLink,
   type RadarCandidateVersion,
   type RadarCaptureSession,
@@ -253,6 +255,50 @@ export function radarCandidateSourceLinkToParams(link: RadarCandidateSourceLink)
     firstLinkedAt: record.firstLinkedAt,
     lastConfirmedAt: record.lastConfirmedAt,
     linkReason: record.linkReason,
+  };
+}
+
+export interface RadarCandidateRelationRow {
+  id: unknown; candidate_id_low: unknown; candidate_id_high: unknown; status: unknown;
+  reason_code: unknown; signals_json: unknown; first_detected_at: unknown; last_detected_at: unknown;
+  resolved_at: unknown; resolution_action_id: unknown; superseded_by_relation_id: unknown;
+  created_at: unknown; updated_at: unknown;
+}
+
+export function rowToRadarCandidateRelation(row: RadarCandidateRelationRow): RadarCandidateRelation {
+  return parseStored('RadarCandidateRelation', () => RadarCandidateRelationSchema.parse({
+    id: row.id,
+    candidateIdLow: row.candidate_id_low,
+    candidateIdHigh: row.candidate_id_high,
+    status: row.status,
+    reasonCode: row.reason_code,
+    signals: parseJsonColumn('radar_candidate_relations.signals_json', row.signals_json),
+    firstDetectedAt: row.first_detected_at,
+    lastDetectedAt: row.last_detected_at,
+    resolvedAt: row.resolved_at,
+    resolutionActionId: row.resolution_action_id,
+    supersededByRelationId: row.superseded_by_relation_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function radarCandidateRelationToParams(relation: RadarCandidateRelation): Record<string, unknown> {
+  const record = RadarCandidateRelationSchema.parse(relation);
+  return {
+    id: record.id,
+    candidateIdLow: record.candidateIdLow,
+    candidateIdHigh: record.candidateIdHigh,
+    status: record.status,
+    reasonCode: record.reasonCode,
+    signalsJson: JSON.stringify(record.signals ?? null),
+    firstDetectedAt: record.firstDetectedAt,
+    lastDetectedAt: record.lastDetectedAt,
+    resolvedAt: record.resolvedAt,
+    resolutionActionId: record.resolutionActionId,
+    supersededByRelationId: record.supersededByRelationId,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
   };
 }
 

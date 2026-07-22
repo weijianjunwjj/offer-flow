@@ -2,6 +2,7 @@ export * from './errors';
 export * from './captureRepository';
 export * from './sourceRecordRepository';
 export * from './candidateRepository';
+export * from './candidateRelationRepository';
 export * from './ruleAssessmentRepository';
 export * from './analysisTaskRepository';
 export * from './analysisRecordRepository';
