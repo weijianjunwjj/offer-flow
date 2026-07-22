@@ -4,6 +4,7 @@ export * from './sourceRecordRepository';
 export * from './candidateRepository';
 export * from './candidateRelationRepository';
 export * from './ruleAssessmentRepository';
+export * from './ruleEvidenceService';
 export * from './analysisTaskRepository';
 export * from './analysisRecordRepository';
 export * from './recommendationBatchRepository';
