@@ -2,7 +2,7 @@
 
 > **技术设计版本：** 1.0  
 > **对应 PRD：** v2.1  
-> **状态：** 待用户批准冻结  
+> **状态：** 已冻结；V8-2 收口中
 > **原则：** SQLite + Node.js + Vue 3；不引入独立 Worker、消息队列或平行业务体系
 
 ---
@@ -93,6 +93,9 @@ created_at
 expires_at
 committed_at
 ```
+
+其中 `pasted_text` / `shared_link_and_text` / `json` 仅为已落库枚举和历史数据读取的 legacy compatibility。
+当前产品入口只创建 `browser` 会话，不再暴露任何手工 JD 文本、链接组合或 JSON 导入入口。
 
 约束：
 
@@ -503,10 +506,11 @@ v0.8 不承诺岗位下架生命周期。
 ### 6.1 P0 Provider
 
 - `boss_current_page`：定向解析；
-- `generic_visible_text`：通用降级；
-- `pasted_text`；
-- `shared_link_and_text`；
-- `json_import`。
+- `generic_visible_text`：通用降级。
+
+`pasted_text` / `shared_link_and_text` / `json_import` 仅保留为历史数据读取、Preview/Snapshot
+反序列化与 schema 枚举兼容；当前 create/add 写入 DTO 明确拒绝这些值。扩展仍使用 JSON HTTP body
+并复用统一的 session/item route 与 service；删除产品入口不得破坏 `visibleText` 或 generic fallback。
 
 猎聘专用适配为 P1。
 
@@ -519,18 +523,13 @@ v0.8 不承诺岗位下架生命周期。
 - 不执行页面脚本提供的指令；
 - 不读取页面存储和凭据。
 
-### 6.3 JSON 输入
+### 6.3 采集入口边界
 
-```ts
-type RadarJsonImport = RadarImportItem | RadarImportItem[]
-```
-
-要求：
-
-- 数组上限由服务端常量控制；
-- 每项独立 Zod 校验；
-- 预览会话返回成功、警告和失败；
-- commit 只提交用户确认项；
+- 用户可见入口只有浏览器扩展当前页采集；
+- BOSS 定向与 generic visible-text item 复用 `add item → preview → correction → commit`；
+- 空文本和超长文本由服务端 Zod 校验明确拒绝；
+- 用户确认前不创建 Candidate；
+- 页面、前端 API 包装和帮助文案均不得暴露手工 JD 输入；
 - 不持久化独立导入批次领域。
 
 ---
@@ -817,7 +816,7 @@ create snapshot
 → update candidate active_version_id
 ```
 
-数组导入按项独立事务；单项失败不污染其他项。
+单条扩展 Capture Item 按单项事务提交；BOSS 批量 Preview 仍在一个 commit 事务中处理确认项。
 
 ### 13.2 分析
 
