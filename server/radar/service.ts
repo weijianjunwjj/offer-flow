@@ -23,6 +23,10 @@ import {
   radarValidationError,
 } from './errors';
 import { normalizeSourceUrl } from './normalize';
+import { normalizeCandidateFields } from './fieldNormalization';
+import { resolveIdentity } from './identityResolution';
+import { decideCommit } from './commitDecision';
+import type { CommitDecisionSummary, CommitDecisionType } from './candidateChangeSet';
 import {
   AddCaptureItemRequestSchema,
   CancelCaptureSessionRequestSchema,
@@ -32,7 +36,6 @@ import {
   RadarPreviewItemSchema,
   type AddCaptureItemRequest,
   type CommitCaptureSessionRequest,
-  type RadarCaptureRecognizedFields,
   type RadarPreviewItem,
 } from './dtoSchemas';
 
@@ -59,11 +62,24 @@ export interface CaptureSessionView {
 
 export interface CommitOutcomeItem {
   index: number;
-  candidateId: string;
-  candidateVersionId: string;
-  sourceRecordId: string;
+  /** identity_conflict / ambiguous / regression 等未落候选时可能为 null。 */
+  candidateId: string | null;
+  /** 未创建/未切换版本时为当前 active 版本或 null。 */
+  candidateVersionId: string | null;
+  sourceRecordId: string | null;
   snapshotId: string;
+  /**
+   * V8-2 兼容字段：created | unchanged | new_version。
+   * 新增判定类型（snapshot_only/extraction_regression/ambiguous_change/identity_conflict）
+   * 映射到最接近的兼容值（见 legacyKind），并由 decisionType 提供精确语义。
+   */
   kind: 'created' | 'unchanged' | 'new_version';
+  /** V8-3 精确决策类型。 */
+  decisionType: CommitDecisionType;
+  /** 是否具备后续分析资格（V8-4，本轮不触发）。 */
+  analysisEligible: boolean;
+  /** 结构化决策摘要（changedFields / needsConfirmation / blockingIssues / conflictReason）。 */
+  decision: CommitDecisionSummary;
 }
 
 export interface CommitCaptureSessionResult {
@@ -71,37 +87,27 @@ export interface CommitCaptureSessionResult {
   outcomes: CommitOutcomeItem[];
 }
 
-function buildNormalized(
-  recognizedFields: RadarCaptureRecognizedFields | null,
-  rawDescription: string,
-): RadarCandidateNormalized {
-  return {
-    company: recognizedFields?.company ?? null,
-    role: recognizedFields?.role ?? null,
-    city: recognizedFields?.city ?? null,
-    district: null,
-    salaryMinK: recognizedFields?.salaryMinK ?? null,
-    salaryMaxK: recognizedFields?.salaryMaxK ?? null,
-    salaryPeriod: recognizedFields?.salaryPeriod ?? null,
-    experienceRequirement: recognizedFields?.experienceRequirement ?? null,
-    educationRequirement: recognizedFields?.educationRequirement ?? null,
-    companySize: null,
-    industry: null,
-    jobNature: null,
-    workMode: null,
-    technicalStack: [],
-    responsibilities: [],
-    requirements: [],
-    publishedAt: null,
-    rawDescription,
-  };
+/** V8-2 兼容映射：把 V8-3 精确决策类型折算到旧 kind（created|unchanged|new_version）。 */
+function legacyKind(decisionType: CommitDecisionType): CommitOutcomeItem['kind'] {
+  switch (decisionType) {
+    case 'new_identity':
+      return 'created';
+    case 'material_change':
+      return 'new_version';
+    // 未创建新版本的判定（无变化 / 仅快照 / 退化 / 待确认 / 冲突）对旧客户端表现为 unchanged。
+    case 'no_change':
+    case 'snapshot_only':
+    case 'extraction_regression':
+    case 'ambiguous_change':
+    case 'identity_conflict':
+      return 'unchanged';
+  }
 }
 
 /**
- * V8-2 当前页采集桥：preview → correction → commit 的最小闭环。
- * 只负责 CaptureSnapshot / SourceRecord / Candidate / CandidateVersion 的落地，
- * 不实现 V8-3 的标准化、重复判定与相似度算法——重复判定仅按稳定来源 ID /
- * 规范化 URL / 内容 hash 做幂等，不做启发式相似度合并。
+ * V8-3 采集提交：preview → correction → commit，经确定性标准化、身份解析、fingerprint 与
+ * 材料变化判定，产出不可变 CandidateVersion 决策。重复判定只用稳定来源身份 / provider-aware
+ * canonical URL / 材料指纹，不做启发式相似度合并。
  */
 export class RadarCaptureService {
   private readonly captures: RadarCaptureRepository;
@@ -270,9 +276,135 @@ export class RadarCaptureService {
     return items.map((item) => byIndex.get(item.index) ?? item);
   }
 
+  /**
+   * V8-3 决策链（§四）：
+   * (1) 保存不可变 Snapshot；(2) 标准化字段；(3) 解析 exact identity（provider-aware，多命中→冲突）；
+   * (4) 加载已有 active 版本；(5) fingerprint v1 + 材料变化判定；(6) 决策分类；
+   * (7) 按 decisionType 执行不可变版本决策并原子切换 activeVersionId。
+   * 全程在 commit 的单一事务内执行，任一步抛错整批回滚。
+   */
   private materializeItem(sessionId: string, item: RadarPreviewItem): CommitOutcomeItem {
     const now = this.deps.now();
-    const snapshot: RadarCaptureSnapshot = {
+
+    // (1) 不可变 Snapshot：无论后续是否建版本，只要 commit 合法即写入。
+    const snapshot = this.buildSnapshot(sessionId, item, now);
+    this.captures.insertSnapshot(snapshot);
+
+    // (2) 确定性标准化。
+    const norm = normalizeCandidateFields({
+      recognizedFields: item.recognizedFields,
+      rawDescription: item.visibleText,
+    });
+
+    // (3) exact identity（provider-aware；Tier2 多命中→identity_conflict）。
+    const identity = resolveIdentity(
+      { providerKey: item.providerKey, externalRecordId: item.externalRecordId, sourceUrl: item.sourceUrl },
+      {
+        findByProviderKey: (pk, ext) => this.sourceRecords.findByProviderKey(pk, ext),
+        findAllByProviderAndUrl: (pk, url) => this.sourceRecords.findAllByProviderAndUrl(pk, url),
+      },
+    );
+
+    // (4) 加载已有 active 版本（仅 exact_existing 且已挂主来源候选时）。
+    const existingSourceRecord = identity.matched;
+    const existingCandidate = existingSourceRecord === null
+      ? null
+      : this.candidates.findByPrimarySourceRecordId(existingSourceRecord.id);
+    const previousVersion = existingCandidate !== null && existingCandidate.activeVersionId !== null
+      ? this.candidates.getVersion(existingCandidate.activeVersionId)
+      : null;
+
+    // (5)+(6) fingerprint + 材料变化 → 决策分类。
+    const decided = decideCommit({
+      identity,
+      previousNormalized: previousVersion?.normalized ?? null,
+      nextNormalized: norm.normalized,
+      ambiguousFields: norm.ambiguousFields,
+      snapshotId: snapshot.id,
+    });
+    const decisionType = decided.summary.decisionType;
+
+    const outcome = (over: Partial<CommitOutcomeItem>): CommitOutcomeItem => ({
+      index: item.index,
+      candidateId: existingCandidate?.id ?? null,
+      candidateVersionId: existingCandidate?.activeVersionId ?? null,
+      sourceRecordId: existingSourceRecord?.id ?? null,
+      snapshotId: snapshot.id,
+      kind: legacyKind(decisionType),
+      decisionType,
+      analysisEligible: decided.summary.analysisEligible,
+      decision: decided.summary,
+      ...over,
+    });
+
+    // (7) identity_conflict：只留 Snapshot，不建候选/版本、不更新来源。
+    if (decisionType === 'identity_conflict') {
+      return outcome({ candidateId: null, candidateVersionId: null, sourceRecordId: null });
+    }
+
+    // 已有来源：刷新 last_seen；material_change 才更新 last_changed。
+    if (existingSourceRecord !== null) {
+      const changed = decisionType === 'material_change';
+      this.sourceRecords.updateLatestSnapshot(
+        existingSourceRecord.id, snapshot.id, now, changed ? now : existingSourceRecord.lastChangedAt, now,
+      );
+    }
+
+    // 已有候选路径：no_change / snapshot_only / extraction_regression / ambiguous_change 不建版本；
+    // material_change 建新不可变版本并原子切换 active。
+    if (existingCandidate !== null && previousVersion !== null) {
+      if (decisionType === 'material_change') {
+        const version = this.insertNewVersion(existingCandidate, norm.normalized, decided.fingerprint, [snapshot.id], now, 'source_change');
+        return outcome({ candidateVersionId: version.id });
+      }
+      // 其余判定：保留 active 版本不变。
+      return outcome({ candidateVersionId: existingCandidate.activeVersionId });
+    }
+
+    // 新身份：建 SourceRecord（若无）+ Candidate + 首版 + primary SourceLink。
+    const sourceRecord: RadarSourceRecord = existingSourceRecord ?? {
+      id: this.deps.createId(),
+      providerKey: item.providerKey,
+      externalRecordId: item.externalRecordId,
+      normalizedSourceUrl: identity.canonicalSourceUrl ?? item.normalizedSourceUrl,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      lastChangedAt: null,
+      latestSnapshotId: snapshot.id,
+      sourceStatus: 'active',
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (existingSourceRecord === null) this.sourceRecords.insert(sourceRecord);
+
+    const candidate: RadarCandidate = {
+      id: this.deps.createId(),
+      primarySourceRecordId: sourceRecord.id,
+      activeVersionId: null,
+      lifecycleStatus: 'active',
+      createdAt: now,
+      updatedAt: now,
+      mergedIntoCandidateId: null,
+    };
+    this.candidates.insertCandidate(candidate);
+    const version = this.insertNewVersion(candidate, norm.normalized, decided.fingerprint, [snapshot.id], now, 'captured');
+    this.candidates.linkSource({
+      candidateId: candidate.id,
+      sourceRecordId: sourceRecord.id,
+      firstLinkedAt: now,
+      lastConfirmedAt: now,
+      linkReason: 'primary',
+    });
+
+    return outcome({
+      candidateId: candidate.id,
+      candidateVersionId: version.id,
+      sourceRecordId: sourceRecord.id,
+    });
+  }
+
+  private buildSnapshot(sessionId: string, item: RadarPreviewItem, now: number): RadarCaptureSnapshot {
+    return {
       id: this.deps.createId(),
       captureSessionId: sessionId,
       captureMethod: item.captureMethod,
@@ -287,96 +419,12 @@ export class RadarCaptureService {
       rawSnapshot: {
         captureMethod: item.captureMethod,
         visibleText: item.visibleText,
-        // §四：完整 rich extraction（district/详细地址/每字段 source/confidence/qualityIssues）
-        // 作为原始快照旁注，不进入结构化八字段，也不写入 normalized city。
+        // 完整 rich extraction 作为原始快照旁注，不进入结构化八字段。
         extractionMetadata: item.extractionMetadata ?? null,
       },
       rawContentHash: item.rawContentHash,
       capturedAt: item.capturedAt,
       createdAt: now,
-    };
-    this.captures.insertSnapshot(snapshot);
-
-    const existingSourceRecord = this.findExistingSourceRecord(item);
-    const normalized = buildNormalized(item.recognizedFields, item.visibleText);
-    const contentHash = sha256RequestHash(normalized);
-
-    if (existingSourceRecord !== null) {
-      this.sourceRecords.updateLatestSnapshot(
-        existingSourceRecord.id,
-        snapshot.id,
-        now,
-        existingSourceRecord.latestSnapshotId === snapshot.id ? null : now,
-        now,
-      );
-      const existingCandidate = this.candidates.findByPrimarySourceRecordId(existingSourceRecord.id);
-      if (existingCandidate !== null && existingCandidate.activeVersionId !== null) {
-        const existingVersion = this.candidates.findVersionByContentHash(existingCandidate.id, contentHash);
-        if (existingVersion !== null) {
-          return {
-            index: item.index,
-            candidateId: existingCandidate.id,
-            candidateVersionId: existingVersion.id,
-            sourceRecordId: existingSourceRecord.id,
-            snapshotId: snapshot.id,
-            kind: 'unchanged',
-          };
-        }
-        const version = this.insertNewVersion(existingCandidate, normalized, contentHash, [snapshot.id], now);
-        return {
-          index: item.index,
-          candidateId: existingCandidate.id,
-          candidateVersionId: version.id,
-          sourceRecordId: existingSourceRecord.id,
-          snapshotId: snapshot.id,
-          kind: 'new_version',
-        };
-      }
-    }
-
-    const sourceRecord: RadarSourceRecord = existingSourceRecord ?? {
-      id: this.deps.createId(),
-      providerKey: item.providerKey,
-      externalRecordId: item.externalRecordId,
-      normalizedSourceUrl: item.normalizedSourceUrl,
-      firstSeenAt: now,
-      lastSeenAt: now,
-      lastChangedAt: null,
-      latestSnapshotId: snapshot.id,
-      sourceStatus: 'active',
-      createdAt: now,
-      updatedAt: now,
-    };
-    if (existingSourceRecord === null) {
-      this.sourceRecords.insert(sourceRecord);
-    }
-
-    const candidate: RadarCandidate = {
-      id: this.deps.createId(),
-      primarySourceRecordId: sourceRecord.id,
-      activeVersionId: null,
-      lifecycleStatus: 'active',
-      createdAt: now,
-      updatedAt: now,
-      mergedIntoCandidateId: null,
-    };
-    this.candidates.insertCandidate(candidate);
-    const version = this.insertNewVersion(candidate, normalized, contentHash, [snapshot.id], now);
-    this.candidates.linkSource({
-      candidateId: candidate.id,
-      sourceRecordId: sourceRecord.id,
-      firstLinkedAt: now,
-      lastConfirmedAt: now,
-      linkReason: 'primary',
-    });
-
-    return {
-      index: item.index,
-      candidateId: candidate.id,
-      candidateVersionId: version.id,
-      sourceRecordId: sourceRecord.id,
-      snapshotId: snapshot.id,
-      kind: 'created',
     };
   }
 
@@ -386,6 +434,7 @@ export class RadarCaptureService {
     contentHash: string,
     sourceSnapshotIds: string[],
     now: number,
+    originType: 'captured' | 'source_change',
   ): RadarCandidateVersion {
     const version: RadarCandidateVersion = {
       id: this.deps.createId(),
@@ -395,7 +444,7 @@ export class RadarCaptureService {
       qualityIssues: [],
       sourceSnapshotIds,
       contentHash,
-      originType: candidate.activeVersionId === null ? 'captured' : 'source_change',
+      originType,
       correctionNote: null,
       supersedesVersionId: candidate.activeVersionId,
       createdAt: now,
@@ -403,19 +452,6 @@ export class RadarCaptureService {
     this.candidates.insertVersion(version);
     this.candidates.setActiveVersionId(candidate.id, version.id, now);
     return version;
-  }
-
-  /** 幂等判定仅按稳定来源 ID 或规范化 URL 查找已有来源记录，不做内容相似度启发式（V8-3 范围外）。 */
-  private findExistingSourceRecord(item: RadarPreviewItem): RadarSourceRecord | null {
-    if (item.providerKey !== null && item.externalRecordId !== null) {
-      const byProvider = this.sourceRecords.findByProviderKey(item.providerKey, item.externalRecordId);
-      if (byProvider !== null) return byProvider;
-    }
-    if (item.normalizedSourceUrl !== null) {
-      const byUrl = this.sourceRecords.findByNormalizedSourceUrl(item.normalizedSourceUrl);
-      if (byUrl !== null) return byUrl;
-    }
-    return null;
   }
 
   private readItems(session: RadarCaptureSession): RadarPreviewItem[] {
