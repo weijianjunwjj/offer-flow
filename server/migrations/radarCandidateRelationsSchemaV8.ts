@@ -3,8 +3,12 @@ import type { SqliteDatabase } from '../db';
 /**
  * v0.8 V8-3 候选关系 schema（v8，仅限沙箱/测试/演练库）。
  *
- * 纯新增 1 张候选关系表 `radar_candidate_relations`，并最小扩展 `radar_actions.action_type`
- * 以承载重复裁决审计事件；不修改 v1-v7 既有表的语义与数据。
+ * 三项变更：
+ * (1) 纯新增候选关系表 `radar_candidate_relations`；
+ * (2) 最小扩展 `radar_actions.action_type` 以承载重复裁决审计事件；
+ * (3) 为 `radar_rule_assessments` 增加最小 JSON 证据载体 `evidence_json TEXT NULL`
+ *     （RC-06 P0，BR-2 方案 A）——旧行保持 NULL、不 backfill、不造空证据对象。
+ * 不修改 v1-v7 既有表的其余语义与数据。
  *
  * 设计依据：docs/technical/offerflow-v0.8-v8-3-normalization-dedup-change-design.md §14b。
  *
@@ -106,6 +110,15 @@ CREATE INDEX radar_actions_candidate_idx
   ON radar_actions(candidate_id, occurred_at DESC);
 `;
 
+/**
+ * 为 radar_rule_assessments 增加最小 JSON 证据载体（BR-2 方案 A）。
+ * 采用 ADD COLUMN（不重建该表）：旧行 evidence_json 自动为 NULL，既有 scalar 字段不变，
+ * 无需 backfill；不引入第二次表重建。
+ */
+const ADD_RULE_EVIDENCE_COLUMN_SQL = `
+ALTER TABLE radar_rule_assessments ADD COLUMN evidence_json TEXT;
+`;
+
 export function createRadarCandidateRelationsSchemaV8(db: SqliteDatabase): void {
   // radar_actions 重建需 DROP+RENAME 一张被 radar_promotions 引用的表；
   // foreign_keys 已由 runMigrations 在事务外关闭。legacy_alter_table=ON 使 RENAME
@@ -116,5 +129,6 @@ export function createRadarCandidateRelationsSchemaV8(db: SqliteDatabase): void 
   } finally {
     db.pragma('legacy_alter_table = OFF');
   }
+  db.exec(ADD_RULE_EVIDENCE_COLUMN_SQL);
   db.exec(CREATE_CANDIDATE_RELATIONS_SQL);
 }

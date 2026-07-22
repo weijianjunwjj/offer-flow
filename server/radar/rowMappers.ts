@@ -260,10 +260,15 @@ export interface RadarRuleAssessmentRow {
   id: unknown; candidate_id: unknown; candidate_version_id: unknown;
   rule_version: unknown; rule_key: unknown; category: unknown; severity: unknown;
   result: unknown; matched_text: unknown; source_path: unknown;
-  explanation: unknown; created_at: unknown;
+  explanation: unknown; evidence_json?: unknown; created_at: unknown;
 }
 
 export function rowToRadarRuleAssessment(row: RadarRuleAssessmentRow): RadarRuleAssessment {
+  // evidence_json 可能不在 SELECT 列中（旧查询）或为 NULL（旧行）：一律映射为 null，
+  // 由上层按契约优先解析 evidence_json、NULL 时回退 scalar 字段。
+  const evidenceJson = row.evidence_json === undefined || row.evidence_json === null
+    ? null
+    : String(row.evidence_json);
   return parseStored('RadarRuleAssessment', () => RadarRuleAssessmentSchema.parse({
     id: row.id,
     candidateId: row.candidate_id,
@@ -276,6 +281,7 @@ export function rowToRadarRuleAssessment(row: RadarRuleAssessmentRow): RadarRule
     matchedText: row.matched_text,
     sourcePath: row.source_path,
     explanation: row.explanation,
+    evidenceJson,
     createdAt: row.created_at,
   }));
 }
@@ -294,6 +300,7 @@ export function radarRuleAssessmentToParams(assessment: RadarRuleAssessment): Re
     matchedText: record.matchedText,
     sourcePath: record.sourcePath,
     explanation: record.explanation,
+    evidenceJson: record.evidenceJson,
     createdAt: record.createdAt,
   };
 }

@@ -146,6 +146,7 @@ export const RadarRuleAssessmentSchema: z.ZodType<RadarRuleAssessment> = z.stric
   matchedText: z.string().nullable(),
   sourcePath: z.string().nullable(),
   explanation: z.string(),
+  evidenceJson: z.string().nullable(),
   createdAt: timestamp,
 });
 

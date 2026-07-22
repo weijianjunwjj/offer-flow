@@ -208,6 +208,12 @@ export interface RadarRuleAssessment {
   matchedText: string | null;
   sourcePath: string | null;
   explanation: string;
+  /**
+   * V8-3 / RC-06 权威规则证据（evidence_json 原文，未解析）。
+   * 旧行为 null（回退到 matchedText/sourcePath/explanation）；新行写入合法 evidence_json。
+   * 解析与校验由 ruleEvidenceContract 负责，domain 层只持有原文字符串。
+   */
+  evidenceJson: string | null;
   createdAt: number;
 }
 
