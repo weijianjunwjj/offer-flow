@@ -14,8 +14,8 @@
 | RC-02 | 通用可见文本降级 | 6.1 P0-02 / US-01 | 6.2 | 2.2 / 4 | V8-2 | Done（真实 MV3 popup + 注入抽取通过；受控动态 loopback mock 打开 Preview；服务端集成测试独立证明 Preview 前零正式写入） | `test-results/extension-e2e/*generic*/generic-fallback-{preview.png,result.json}`、同目录 `trace.zip`；`server/radar/routes.spec.ts` |
 | RC-03 | 采集入口收敛与统一预览 | 6.1 P0-03 / US-02 | 4.1 / 6.3 | 2.3 / 9 | V8-2 | Done（只保留扩展会话预览；无手工 JD textarea/按钮/状态/handler/帮助文案/前端 API 包装；JSON 专用 route 为 404；共享写入 DTO 拒绝全部 legacy 输入值） | UI 删除契约、路由 404/422、引用审计、generic fallback 回归 |
 | RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Done（实现、写入闭环、真实采集、最终 Preview 零写入及生产 schema v7 受控激活全部通过） | 见下方 RC-04 分项证据与生产激活记录 |
-| RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Not Started | fixture、Diff 截图、hash 结果 |
-| RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Not Started | 命中原文、覆盖动作截图 |
+| RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Design in Review（实施未开始；设计见 `docs/technical/offerflow-v0.8-v8-3-normalization-dedup-change-design.md`） | fixture、Diff 截图、hash 结果 |
+| RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Design in Review（实施未开始；设计见 `docs/technical/offerflow-v0.8-v8-3-normalization-dedup-change-design.md`） | 命中原文、覆盖动作截图 |
 | RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Not Started | Payload、Envelope、证据引用 |
 | RC-08 | 0～8 条推荐 | P0-09 / US-06 | 4.10 / 13.3 | 7 | V8-5 | Not Started | 正常批次与空推荐截图 |
 | RC-09 | 误区或证据不足 | 4.8 / 11.3 / US-07 | 9 | 5.4 / 7 | V8-5 | Not Started | formed/insufficient 两类样本 |
@@ -67,6 +67,16 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 状态。`PRODUCTION_SCHEMA_VERSION` 保持 2 不变，真实库启动仍不会自动迁移；2026-07-22 经用户单独明确授权，
 通过 `db:upgrade-real -- --confirm` 将真实库从 v6 显式升级到 v7。升级后 Radar 前后端正式入口仍为 disabled，
 12 张 Radar 表为空。详细流程见 `docs/runbooks/offerflow-v0.8-migration-recovery.md` 第 1.1 节和激活证据记录。
+
+### 1.3 V8-3 设计状态（标准化 / 去重 / 变化识别）
+
+- **状态：** `DESIGN IN REVIEW` — `IMPLEMENTATION NOT STARTED`。
+- **范围：** 覆盖 RC-05（重复与变化）、RC-06（透明规则）的设计，含字段标准化矩阵、exact/疑似重复、no-change fingerprint（`radar-candidate-version:v1`）、material change、规则证据契约、用户覆盖审计、影响文件与 P0 测试计划、schema 边界与开放决策。
+- **设计文档：** `docs/technical/offerflow-v0.8-v8-3-normalization-dedup-change-design.md`。
+- **schema 边界（2026-07 产品裁决，纠正上一版矛盾）：** schema v7 足够支撑标准化、exact identity、no-change、material-change、Snapshot 保留与基础规则证据；**完整 V8-3 需要最小化 schema v8**（持久化疑似重复候选对、`confirmed_distinct`、防重复提示、重审状态、duplicate 裁决 action_type），schema v8 为 **V8-3 正式实施前置条件**，不再视为非阻断未来优化。本轮**只设计 v8，不编写 migration、不改生产库、不改 `PRODUCTION_SCHEMA_VERSION`**。
+- **已裁决（原 B1/B2/B3）：** B1 疑似重复用候选关系专用表 `radar_candidate_relations`（不塞入 `radar_candidate_sources`）；B2 `confirmed_distinct` 为 P0 硬需求（持久化、防反复提示、仅新实质证据可复审）；B3 responsibilities/requirements/skillTags 顺序调整不构成实质变化（fingerprint 按规范化集合比较，Snapshot 保留原始顺序）。补充裁决：`unknown→确定值`建版本；`确定值→unknown`默认视为采集质量退化，仅留 Snapshot、不建退化版本。
+- **仍待裁决：** BR-1 schema v8 迁移编写与激活授权；BR-2 §9 规则证据缺口字段是否纳入 v8（RC-06 证据严格性档位）。
+- **边界：** 未编写任何实现、迁移或数据库脚本；未改动 V8-2（CLOSED/FROZEN）、RC-01～RC-04、生产 schema v7 状态或 Radar 正式入口（仍 DISABLED）。V8-3 与 schema v8 全部实施项保持未开始，待用户审核设计并单独授权后再实施。
 
 ---
 
