@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BOSS 列表页确定性测试</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: #f3f5f7; color: #172033; }
+    .boss-topbar { position: fixed; inset: 0 0 auto 0; height: 88px; z-index: 9000; background: #202329; color: #fff; padding: 28px 32px; }
+    .layout { display: grid; grid-template-columns: 420px 1fr; gap: 16px; height: calc(100vh - 88px); padding: 16px; margin-top: 88px; overflow: hidden; }
+    .job-list-container { overflow: auto; background: #fff; border-radius: 12px; padding: 10px; }
+    .job-list-container ul { list-style: none; padding: 0; margin: 0; }
+    .job-card-wrapper, .job-card-item-v2 { position: relative; margin: 8px 0; border: 1px solid #dce3ea; border-radius: 10px; overflow: hidden; background: #fff; }
+    .job-card, .job-card-item-v2 > a { display: block; padding: 14px 16px; color: inherit; text-decoration: none; }
+    .job-card-wrapper.selected, .job-card-item-v2.selected { border-color: #00a6a7; background: #effcfa; }
+    .salary { color: #fe574a; margin-left: 8px; }
+    .company-name { display: block; margin-top: 6px; color: #5b6877; }
+    .tag-list { display: flex; gap: 8px; list-style: none; padding: 6px 0 0; }
+    .detail-column { overflow: hidden; }
+    .job-detail-box { height: 100%; overflow: auto; border-radius: 12px; background: #fff; padding: 24px; }
+    .job-detail-box .job-sec-text { min-height: 120px; }
+    .unsupported { opacity: .85; }
+  </style>
+</head>
+<body>
+  <header class="boss-topbar">BOSS 风格固定顶栏（88px）</header>
+  <main class="layout">
+    <section class="job-list-container" id="job-list" aria-label="岗位列表">
+      <ul id="job-list-items">
+        <li class="job-card-wrapper selected" data-test-job="A">
+          <div class="job-card-box"><a class="job-card" href="/job_detail/A1000001.html?securityId=one">
+            <span class="job-name">前端工程师</span><span class="salary job-salary" style="font-family: kanzhun-mix">&#xE032;&#xE033;-&#xE032;&#xE039;K</span>
+            <span class="company-name">甲科技</span><ul class="tag-list"><li>3-5年</li><li>本科</li></ul>
+          </a></div>
+        </li>
+        <li class="job-card-wrapper" data-test-job="B">
+          <div class="job-card-box"><a class="job-card" href="/job_detail/B2000002.html?securityId=two">
+            <span class="job-name">Java 工程师</span><span class="salary">15-22K</span>
+            <span class="company-name">乙网络</span><ul class="tag-list"><li>5-10年</li><li>本科</li></ul>
+          </a></div>
+        </li>
+        <li class="job-card-box" data-test-job="C">
+          <div class="job-info"><a class="job-name" href="/job_detail/C-300_0003.html?securityId=fixture">测试开发工程师</a>
+            <span>3-5年</span><span>本科</span>
+          </div>
+          <div class="company-info"><span class="company-name">丙信息</span></div>
+        </li>
+        <li class="job-card-wrapper" data-test-job="A-hidden" style="display:none" aria-hidden="true">
+          <div class="job-card-box"><a class="job-card" href="/job_detail/A1000001.html">
+            <span class="job-name">前端工程师</span><span class="salary">12-18K</span><span class="company-name">甲科技</span>
+          </a></div>
+        </li>
+        <li class="job-card-wrapper unsupported" data-test-job="missing-href">
+          <div class="job-card-box"><span class="job-name">无链接岗位</span><span class="salary">10-15K</span><span class="company-name">丁公司</span></div>
+        </li>
+        <li class="job-card-wrapper unsupported" data-test-job="invalid-id">
+          <div class="job-card-box"><a class="job-card" href="/job_detail/.html"><span class="job-name">坏 ID 岗位</span><span class="salary">10-15K</span><span class="company-name">戊公司</span></a></div>
+        </li>
+        <li class="job-card-wrapper unsupported" data-test-job="missing-role">
+          <div class="job-card-box"><a class="job-card" href="/job_detail/E5000005.html"><span class="salary">10-15K</span><span class="company-name">己公司</span></a></div>
+        </li>
+        <li class="job-card-wrapper unsupported" data-test-job="missing-company">
+          <div class="job-card-box"><a class="job-card" href="/job_detail/F6000006.html"><span class="job-name">前端工程师</span><span class="salary">10-15K</span></a></div>
+        </li>
+      </ul>
+    </section>
+    <section class="detail-column">
+      <article class="job-detail-box" data-fingerprint="A1000001:0">
+        <a class="detail-link" href="/job_detail/A1000001.html"><h1 class="job-name">前端工程师</h1></a>
+        <span class="salary job-salary" style="font-family: kanzhun-mix">&#xE032;&#xE033;-&#xE032;&#xE039;K</span><span class="company-name">甲科技</span>
+        <div class="job-boss-info"><span class="name">测试招聘者姓名</span><span class="boss-info-attr">高策华途 · 猎头顾问</span></div>
+        <div class="job-sec-text">职位描述：负责前端工程化和可访问性。</div>
+      </article>
+    </section>
+  </main>
+  <script>
+    (() => {
+      const params = new URL(location.href).searchParams;
+      const list = document.querySelector('#job-list-items');
+      const detail = document.querySelector('.job-detail-box');
+      let cardClickCount = 0;
+      const details = {
+        A1000001: ['前端工程师', '12-18K', '甲科技'], B2000002: ['Java 工程师', '15-22K', '乙网络'],
+        'C-300_0003': ['测试开发工程师', '13-20K', '丙信息'], D4000004: ['数据工程师', '16-24K', '庚数据'],
+      };
+      function bind(card) {
+        card.addEventListener('click', (event) => {
+          const anchor = event.target.closest('a[href*="/job_detail/"]');
+          if (!anchor) return;
+          event.preventDefault();
+          const id = anchor.getAttribute('href').match(/\/job_detail\/([^/.?]+)\.html/)?.[1];
+          if (!id || !details[id]) return;
+          cardClickCount += 1;
+          document.querySelectorAll('[data-test-job]').forEach(el => el.classList.remove('selected'));
+          card.classList.add('selected');
+          const [role, salary, company] = details[id];
+          detail.dataset.fingerprint = `${id}:${cardClickCount}`;
+          detail.innerHTML = `<a class="detail-link" href="/job_detail/${id}.html"><h1 class="job-name">${role}</h1></a>`
+            + `<span class="salary">${salary}</span><span class="company-name">${company}</span>`
+            + `<div class="job-sec-text">职位描述：${role} 的确定性测试正文。</div>`;
+        });
+      }
+      document.querySelectorAll('[data-test-job]').forEach(bind);
+      window.__bossFixture = { get cardClickCount() { return cardClickCount; } };
+
+      if (params.has('zeroHosts')) {
+        list.innerHTML = '<li class="job-card-wrapper unsupported" data-test-job="zero-missing-href">'
+          + '<div class="job-card-box"><span class="job-name">无链接诊断候选</span></div></li>';
+        detail.innerHTML = '<div class="job-sec-text">零 host 诊断场景，不提供岗位详情链接。</div>';
+      }
+
+      if (!params.has('diagnosticStatic') && !params.has('zeroHosts')) setTimeout(() => {
+        const item = document.createElement('li');
+        item.className = 'job-card-wrapper'; item.dataset.testJob = 'D';
+        item.innerHTML = '<div class="job-card-box"><a class="job-card" href="/job_detail/D4000004.html"><span class="job-name">数据工程师</span><span class="salary">16-24K</span><span class="company-name">庚数据</span><ul class="tag-list"><li>3-5年</li><li>本科</li></ul></a></div>';
+        bind(item); list.appendChild(item);
+      }, 1200);
+
+      if (!params.has('diagnosticStatic') && !params.has('zeroHosts')) setTimeout(() => {
+        const old = document.querySelector('[data-test-job="B"]');
+        if (!old) return;
+        const replacement = old.cloneNode(true);
+        replacement.dataset.virtualReplacement = 'true';
+        bind(replacement); old.replaceWith(replacement);
+      }, 2200);
+    })();
+  </script>
+</body>
+</html>
