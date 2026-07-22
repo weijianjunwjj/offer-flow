@@ -240,13 +240,17 @@ export function runMigrations(
   const newlyAppliedVersions: number[] = [];
 
   // 某些迁移（如 v8 修改 radar_actions 的 CHECK 约束）需要按 SQLite 官方"表重建"流程
-  // DROP + RENAME 一张被其它表引用的表。该流程要求在事务外将 foreign_keys 关闭
-  // （PRAGMA foreign_keys 在事务内是 no-op），迁移内部再用 foreign_key_check 自检。
-  // 这里在整个迁移循环外临时关闭 FK 强制，并在结束时无条件恢复原状态；
-  // 迁移循环本身仍在 per-migration 事务中执行，失败照常回滚。纯新增表的旧迁移不受影响。
+  // DROP + RENAME 一张被其它表引用的表。该流程要求 foreign_keys 处于关闭状态执行
+  // （PRAGMA foreign_keys 在事务内是 no-op，因此必须在进入 per-migration 事务之前切换），
+  // 迁移完成后在同一事务内用 foreign_key_check 自检：任何悬挂引用都在 COMMIT 前抛错回滚。
+  //
+  // per-migration 模式：runner 负责在事务外临时关闭 FK 强制、在 finally 中无条件恢复原状态，
+  //   并把 foreign_key_check 放入每个迁移的事务内（提交前），保证 FK 违规触发该迁移完整回滚。
+  // caller-managed 模式：runner 不切换 FK 状态（调用方已管理自己的事务/连接），
+  //   但仍在 applyMigration 内执行 foreign_key_check，使违规在调用方事务提交前被发现。
   const foreignKeysEnabledBefore = Number(db.pragma('foreign_keys', { simple: true })) === 1;
-  const managesForeignKeys = transactionMode === 'per-migration' && foreignKeysEnabledBefore;
-  if (managesForeignKeys) db.pragma('foreign_keys = OFF');
+  const runnerManagesForeignKeys = transactionMode === 'per-migration' && foreignKeysEnabledBefore;
+  if (runnerManagesForeignKeys) db.pragma('foreign_keys = OFF');
 
   try {
     for (const migration of migrations) {
@@ -259,6 +263,14 @@ export function runMigrations(
 
       const applyMigration = (): void => {
         migration.up(db);
+        // 提交前全库外键自检：捕获表重建流程可能遗留的悬挂引用。
+        // foreign_key_check 即使在 FK 强制关闭时也能检出违规；在事务内抛错即回滚该迁移。
+        const violations = db.pragma('foreign_key_check') as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `迁移 ${migration.version}（${migration.name}）外键完整性校验失败：${violations.length} 条违规`,
+          );
+        }
         const appliedAt = Date.now();
         db.prepare(
           'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
@@ -279,15 +291,7 @@ export function runMigrations(
       newlyAppliedVersions.push(migration.version);
     }
   } finally {
-    if (managesForeignKeys) db.pragma('foreign_keys = ON');
-  }
-
-  // 恢复 FK 强制后做一次全库外键自检，捕获重建流程可能遗留的悬挂引用。
-  if (managesForeignKeys && newlyAppliedVersions.length > 0) {
-    const violations = db.pragma('foreign_key_check') as unknown[];
-    if (violations.length > 0) {
-      throw new Error(`迁移后外键完整性校验失败：${violations.length} 条违规`);
-    }
+    if (runnerManagesForeignKeys) db.pragma('foreign_keys = ON');
   }
 
   const appliedAfter = readAppliedMigrations(db);
