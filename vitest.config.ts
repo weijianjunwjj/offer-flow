@@ -7,6 +7,7 @@ export default defineConfig({
     environment: 'happy-dom',
     clearMocks: true,
     restoreMocks: true,
-    include: ['src/**/*.spec.ts', 'server/**/*.spec.ts'],
+    include: ['src/**/*.spec.ts', 'server/**/*.spec.ts', 'browser-extension/**/*.spec.ts'],
+    exclude: ['browser-extension/e2e/**'],
   },
 });

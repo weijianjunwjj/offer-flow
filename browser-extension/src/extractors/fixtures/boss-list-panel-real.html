@@ -1,0 +1,45 @@
+<!--
+  脱敏最小 fixture：BOSS 通用列表页（/web/geek/jobs）左侧岗位列表 + 右侧当前详情面板。
+  复刻真实缺陷特征：
+   - 通用列表页 URL 与通用 pageTitle（不得用于岗位/公司）；
+   - 左侧岗位列表（其它岗位噪声，必须忽略）；
+   - 右侧当前详情容器（含标题/薪资/城市/公司/JD）；
+   - 页内 <style> 反爬规则文本；
+   - 隐藏反爬干扰节点（font-size:0/visibility:hidden/display:none），文本塞入 kanzhun / BOSS直聘；
+   - selected 岗位卡片与详情面板内的 job_detail 稳定链接。
+  不含招聘者姓名、头像、联系方式、Cookie、Token 或完整真实页面。
+-->
+<html>
+<head><title>求职|找工作|招聘信息-BOSS直聘</title></head>
+<body>
+  <nav class="nav-top">首页 职位 公司 校园招聘 海归留学 APP下载</nav>
+  <style>.FrYhQzfSwwjF{display:inline-block;font-size:0!important;width:1em;height:1em;visibility:hidden;line-height:0;}.xfQXCKHkY{display:none!important;}</style>
+
+  <div class="job-list-container">
+    <ul>
+      <li class="job-card"><a href="/job_detail/aaaa1111bbbb2222.html?securityId=x1"><span class="job-name">Java开发工程师</span><span class="company-name">甲公司</span><span class="salary">10-20K</span></a></li>
+      <li class="job-card selected"><a href="/job_detail/2acf60d4c01b82490nF93N68FFtV.html?securityId=lCSbMEY4bstMV&ka=search_list_1"><span class="job-name">资深前端开发工程师</span><span class="salary">12-24K</span></a></li>
+      <li class="job-card"><a href="/job_detail/cccc3333dddd4444.html?securityId=x3"><span class="job-name">测试工程师</span><span class="company-name">乙公司</span><span class="salary">9-15K</span></a></li>
+    </ul>
+  </div>
+
+  <div class="job-detail-box">
+    <a class="job-detail-anchor" href="/job_detail/2acf60d4c01b82490nF93N68FFtV.html?securityId=lCSbMEY4bstMV&ka=detail">查看完整详情</a>
+    <div class="job-name">资深前端开发工程<span class="FrYhQzfSwwjF" style="font-size:0!important;visibility:hidden">kanzhun</span>师</div>
+    <span class="salary">12-24K·14薪</span>
+    <span class="text-city">苏州</span>
+    <ul class="tag-list">
+      <li>1-3年</li>
+      <li>本科</li>
+    </ul>
+    <div class="company-info"><a class="name" href="/gongsi/abc.html">苏州工业园区航星信息技术服务有限公司</a></div>
+    <div class="job-sec">
+      <div class="job-sec-text">岗位职责：1. 负责后台管理系统与数据可视<span class="xfQXCKHkY" style="display:none">BOSS直聘</span>化开发；2. 参与前端架构设计。任职要求：1. 本科及以上；2. 熟悉 Vue3/React 与 TypeScript。</div>
+    </div>
+  </div>
+
+  <div class="recommend-job">推荐岗位：产品经理 运营专员</div>
+  <div class="im-chat">在线沟通 立即沟通</div>
+  <footer class="footer">关于BOSS 用户协议 APP下载</footer>
+</body>
+</html>

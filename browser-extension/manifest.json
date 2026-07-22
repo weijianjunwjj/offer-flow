@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "OfferFlow 当前页采集桥",
+  "version": "0.1.0",
+  "description": "仅在用户点击扩展图标时读取当前标签页并发送到本机 OfferFlow 预览，不做自动搜索、翻页或后台扫描。",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1:17365/*"],
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "采集当前页到 OfferFlow"
+  }
+}

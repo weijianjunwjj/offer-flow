@@ -1,0 +1,46 @@
+<!--
+  脱敏最小 fixture：复刻 V8 真实预览缺陷（当前 session 340b113f 反馈）。
+  关键特征：
+   - 左侧列表存在两个高度相似的前端岗位：selected「中级前端开发工程师/11-13K/易诚互动」
+     与干扰项「资深前端开发工程师/3-5K」——旧逻辑会误取资深岗位；
+   - 右侧详情标题混入可见私用区(PUA)反爬占位符与尾部薪资残片（&#xE011; 等 + "-" 连接符），
+     须经 §六 规范化剥离得到「中级前端开发工程师」，不得残留 □□ / -K·薪；
+   - 右侧「3-5年」经验标签绝不能被解析成薪资（§二）；
+   - selected 卡片自带 /job_detail/<id>.html 稳定链接与公司名，身份/公司只能来自该卡片；
+   - <style> 反爬规则 + 隐藏 kanzhun / BOSS直聘 干扰节点（§八.12 JD 清洗回归）。
+  不含招聘者姓名、头像、联系方式、Cookie、Token 或完整真实页面。
+-->
+<html>
+<head><title>求职|找工作|招聘信息-BOSS直聘</title></head>
+<body>
+  <nav class="nav-top">首页 职位 公司 校园招聘 海归留学 APP下载</nav>
+  <style>.aXbadFont{display:inline-block;font-size:0!important;width:1em;height:1em;visibility:hidden;line-height:0;}.hideNode{display:none!important;}</style>
+
+  <div class="job-list-container">
+    <ul>
+      <li class="job-card"><a href="/job_detail/aaaa1111bbbb2222.html?securityId=x1"><span class="job-name">Java开发工程师</span><span class="salary">10-20K</span><span class="company-name">甲公司</span></a></li>
+      <li class="job-card selected"><a href="/job_detail/2acf60d4c01b82490nF93N68FFtV.html?securityId=lCSbMEY4bstMV&ka=search_list_2"><span class="job-name">中级前端开发工程师</span><span class="salary">11-13K</span><span class="company-name">易诚互动</span></a></li>
+      <li class="job-card"><a href="/job_detail/9999seniorFFFF888.html?securityId=x3"><span class="job-name">资深前端开发工程师</span><span class="salary">3-5K</span><span class="company-name">丙公司</span></a></li>
+    </ul>
+  </div>
+
+  <div class="job-detail-box">
+    <a class="job-detail-anchor" href="/job_detail/2acf60d4c01b82490nF93N68FFtV.html?securityId=lCSbMEY4bstMV&ka=detail">查看完整详情</a>
+    <div class="job-name">中级前端开发工程师&#xE011;&#xE012;-&#xE013;&#xE014;</div>
+    <span class="salary">11-13K</span>
+    <span class="text-city">苏州</span>
+    <ul class="tag-list">
+      <li>3-5年</li>
+      <li>本科</li>
+    </ul>
+    <div class="company-info"><a class="name" href="/gongsi/ychd.html">易诚互动</a></div>
+    <div class="job-sec">
+      <div class="job-sec-text">岗位职责：1. 负责中后台管理系统与数据可视<span class="hideNode" style="display:none">BOSS直聘</span>化开发；2. 参与前端架构设计与组件库建设。任职要求：1. 本科及以上，3-5年前端经验；2. 熟悉 Vue3/React 与 TypeScript。</div>
+    </div>
+  </div>
+
+  <div class="recommend-job">推荐岗位：产品经理 运营专员</div>
+  <div class="im-chat">在线沟通 立即沟通</div>
+  <footer class="footer">关于BOSS 用户协议 APP下载</footer>
+</body>
+</html>

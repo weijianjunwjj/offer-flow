@@ -1,0 +1,50 @@
+<!--
+  脱敏最小 fixture：BOSS 独立 job_detail 详情页，复刻真实缺陷场景——
+  顶部公司卡片被省略号截断，页面 title 中的公司名也被截断，
+  但「工商信息」与「公司介绍」模块含完整企业全称。
+  仅保留字段抽取相关结构节点；不含招聘者姓名、头像、联系方式、法人姓名、Cookie、Token。
+-->
+<html>
+<head><title>资深前端开发工程师_苏州工业园区航星...招聘-BOSS直聘</title></head>
+<body>
+  <nav class="nav-top">首页 职位 公司 校园招聘 海归留学 APP下载</nav>
+
+  <div class="job-banner">
+    <div class="name"><h1>资深前端开发工程师</h1></div>
+    <span class="salary">12-24K·14薪</span>
+    <!-- 顶部卡片被 BOSS 截断：不得作为最终可信公司名 -->
+    <div class="company-info"><a class="name">苏州工业园区航星...</a></div>
+  </div>
+
+  <div class="job-location">
+    <span class="location-address">苏州苏州工业园区新建元数智湾-D座1104</span>
+  </div>
+
+  <ul class="tag-list">
+    <li>1-3年</li>
+    <li>本科</li>
+  </ul>
+
+  <div class="job-detail-section">
+    <div class="job-sec-text">岗位职责：1. 负责后台管理系统与数据可视化开发；2. 参与前端架构设计。任职要求：1. 本科及以上；2. 熟悉 Vue3/React 与 TypeScript。</div>
+  </div>
+
+  <div class="job-detail-company">
+    <div class="job-sec company-info">
+      <h3>公司介绍</h3>
+      <div class="job-sec-text">苏州工业园区航星信息技术服务有限公司是一家专注于金融科技的技术服务商，主要为银行提供数字化解决方案。</div>
+    </div>
+    <div class="business-info">
+      <h3>工商信息</h3>
+      <ul class="level-list">
+        <li><span class="label">公司名称</span><span class="value">苏州工业园区航星信息技术服务有限公司</span></li>
+        <li><span class="label">成立时间</span><span class="value">2015年</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="recommend-job">推荐岗位：Java开发工程师 测试工程师 产品经理</div>
+  <div class="chat-box">在线沟通 立即沟通</div>
+  <footer class="footer">关于BOSS 用户协议 隐私政策 APP下载</footer>
+</body>
+</html>
