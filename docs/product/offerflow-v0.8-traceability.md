@@ -14,8 +14,8 @@
 | RC-02 | 通用可见文本降级 | 6.1 P0-02 / US-01 | 6.2 | 2.2 / 4 | V8-2 | Done（真实 MV3 popup + 注入抽取通过；受控动态 loopback mock 打开 Preview；服务端集成测试独立证明 Preview 前零正式写入） | `test-results/extension-e2e/*generic*/generic-fallback-{preview.png,result.json}`、同目录 `trace.zip`；`server/radar/routes.spec.ts` |
 | RC-03 | 采集入口收敛与统一预览 | 6.1 P0-03 / US-02 | 4.1 / 6.3 | 2.3 / 9 | V8-2 | Done（只保留扩展会话预览；无手工 JD textarea/按钮/状态/handler/帮助文案/前端 API 包装；JSON 专用 route 为 404；共享写入 DTO 拒绝全部 legacy 输入值） | UI 删除契约、路由 404/422、引用审计、generic fallback 回归 |
 | RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Done（实现、写入闭环、真实采集、最终 Preview 零写入及生产 schema v7 受控激活全部通过） | 见下方 RC-04 分项证据与生产激活记录 |
-| RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Partial（代码实现完成、自动化回归通过；沙箱/演练 schema≥v8，生产仍 v7，人工验收 MANUAL ACCEPTANCE PENDING。证据 `docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | fixture、Diff 截图、hash 结果 |
-| RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Partial（代码实现完成、自动化回归通过；沙箱/演练 schema≥v8，生产仍 v7，人工验收 MANUAL ACCEPTANCE PENDING。证据 `docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | 命中原文、覆盖动作截图 |
+| RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-01/MA-02 静态截图受内层滚动容器裁切，能力已由真实浏览器验证 + Review Playwright E2E + 组件/API 测试 + 审计数据共同证明，采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | fixture、Diff 截图、hash 结果 |
+| RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-03/MA-04 静态证据完整；采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | 命中原文、覆盖动作截图 |
 | RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Not Started | Payload、Envelope、证据引用 |
 | RC-08 | 0～8 条推荐 | P0-09 / US-06 | 4.10 / 13.3 | 7 | V8-5 | Not Started | 正常批次与空推荐截图 |
 | RC-09 | 误区或证据不足 | 4.8 / 11.3 / US-07 | 9 | 5.4 / 7 | V8-5 | Not Started | formed/insufficient 两类样本 |
@@ -70,7 +70,7 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 
 ### 1.3 V8-3 设计状态（标准化 / 去重 / 变化识别）
 
-- **状态：** `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`（代码实现完成、自动化回归通过；沙箱/演练 schema≥v8）— schema v8 = IMPLEMENTED IN CODE / NOT ACTIVATED IN PRODUCTION；生产 schema 仍 v7、Radar 正式入口仍 `DISABLED`。RC-05、RC-06 均为 `Partial`（人工验收 MA-01～MA-04 未完成前不得升级）。
+- **状态：** `ACCEPTED / ACTIVATION PENDING`（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8）— schema v8 = IMPLEMENTED IN CODE / NOT ACTIVATED IN PRODUCTION；生产 schema 仍 v7、Radar 正式入口仍 `DISABLED`。RC-05、RC-06 均为 `Done`。**验收采用证据例外：** MA-01/MA-02 静态截图受内层滚动容器裁切，相关能力已由真实浏览器验证、Review Playwright E2E、组件测试、API 测试与审计数据共同证明；MA-03/MA-04 静态证据完整；不再补拍截图，此例外不影响最终验收结论。**生产 v8 激活仍需独立授权（BR-1），本轮未执行。**
 - **范围：** 覆盖 RC-05（重复与变化）、RC-06（透明规则）的实现，含字段标准化、exact/疑似重复、no-change fingerprint（`radar-candidate-version:v1`）、material change、规则证据契约、用户覆盖审计，以及 V8-3 人工评审工作台（只读评审 + 人工裁决 + 规则覆盖，`/radar/review`）。
 - **设计文档：** `docs/technical/offerflow-v0.8-v8-3-normalization-dedup-change-design.md`。
 - **实施证据：** `docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`（含 943 tests / tsc / vue-tsc / extension:typecheck、真实浏览器 E2E、v7 沙箱回归、生产库保护核验）。

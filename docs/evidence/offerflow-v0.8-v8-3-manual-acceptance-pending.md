@@ -1,16 +1,25 @@
-# V8-3 人工评审工作台 · 人工验收证据（待用户复核）· v2
+# V8-3 人工评审工作台 · 人工验收证据（已验收）· v2
 
-**状态：EVIDENCE CAPTURED / USER REVIEW PENDING**
+**状态：ACCEPTED / ACTIVATION PENDING**
 
 本轮 MA-01～MA-04 由受控评审沙箱（schema v8、非生产、会话级临时库）操作采集，
-最终用户复核仍待完成。执行者不得仅凭自身操作报告将验收门改为 Done。
+用户复核已完成，验收结论为 ACCEPTED（采用下述证据例外）。
 
-## 冻结口径（本文件不改变任何状态）
+## 最终验收口径
 
-- V8-3 = IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING
-- RC-05 = Partial；RC-06 = Partial
+- V8-3 = ACCEPTED / ACTIVATION PENDING
+- RC-05 = Done；RC-06 = Done
 - schema v8 = IMPLEMENTED IN CODE / NOT ACTIVATED IN PRODUCTION
 - 生产 schema = v7；Radar 正式入口 = DISABLED
+- 生产 v8 激活仍需独立授权（BR-1），本轮未执行
+
+## 验收证据例外
+
+- MA-01、MA-02 静态截图受内层滚动容器裁切，未能完整呈现全部区域；
+- 相关能力已经由真实浏览器验证、Review Playwright E2E、组件测试、API 测试和审计数据共同证明；
+- MA-03、MA-04 静态证据完整；
+- 不再补拍截图；
+- 此例外不影响最终验收结论。
 
 ## v2 修订说明（相对上一版证据）
 
@@ -95,8 +104,9 @@
 - `radar_candidate_relations` 表不存在（v8 relations schema 未激活）
 - 未执行 migration；未发生写入；仅只读核验
 
-## 待办
+## 验收结论
 
-用户复核上述截图与审计 JSON 后，方可决定是否推进 V8-3 / RC-05 / RC-06 状态。
-在此之前一律保持 Partial / PENDING（`passed=null`）。审计明细见
+用户已复核上述截图与审计 JSON，V8-3 / RC-05 / RC-06 验收结论为 ACCEPTED（采用上述证据例外，
+`passed=true`、`acceptanceStatus=accepted_activation_pending`）。生产 schema 仍为 v7、Radar 正式入口
+仍 DISABLED，生产 v8 激活需独立授权（BR-1）后另行执行。审计明细见
 [offerflow-v0.8-v8-3-manual-acceptance-audit.json](offerflow-v0.8-v8-3-manual-acceptance-audit.json)。

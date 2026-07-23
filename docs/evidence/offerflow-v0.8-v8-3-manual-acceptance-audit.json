@@ -1,7 +1,7 @@
 {
   "captureContext": "controlled review sandbox (schema v8, non-production, session-scoped temp DB, ports 17395/17396)",
   "databaseScope": "sandbox",
-  "status": "EVIDENCE CAPTURED / USER REVIEW PENDING",
+  "status": "ACCEPTED / ACTIVATION PENDING",
   "evidenceRevision": "v2",
   "fixtureNote": "确定性 fixture ID 前缀 rvsb-*；时间戳为可复现的固定基线（3.0xM ms → UI 显示 1970 属预期，非真实钟）",
   "MA01": {
@@ -69,6 +69,11 @@
     { "actionType": "rule_override_set", "assessmentId": "rvsb-77", "reason": "经复核该薪资上限可接受" },
     { "actionType": "rule_override_reverted", "assessmentId": "rvsb-77", "reason": "策略调整，恢复规则默认判定" }
   ],
+  "acceptanceStatus": "accepted_activation_pending",
+  "evidenceException": "MA-01/MA-02 screenshot clipping, compensated by automated and browser evidence",
+  "acceptedAt": "2026-07-23",
+  "productionSchemaVersion": 7,
+  "radarEntryEnabled": false,
   "invariants": {
     "sandbox": {
       "databaseScope": "sandbox", "schemaVersion": 8,
@@ -86,5 +91,5 @@
       "migrationExecuted": false, "rowsChanged": false
     }
   },
-  "passed": null
+  "passed": true
 }
