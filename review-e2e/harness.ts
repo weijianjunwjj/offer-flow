@@ -8,7 +8,7 @@ import { buildServer } from '../server/index';
 import { openDb } from '../server/db';
 import { initSchema } from '../server/schema';
 import { seedReviewFixture } from '../server/radar/reviewFixture';
-import { RUNTIME_DIR, RUNTIME_FILE, type ReviewE2ERuntime } from './runtime';
+import { RUNTIME_DIR, RUNTIME_FILE, tableSignature, type ReviewE2ERuntime } from './runtime';
 
 /**
  * V8-3 人工评审工作台 —— 正式 Playwright E2E 编排器（自包含、无守护进程）。
@@ -93,6 +93,11 @@ export async function startReviewE2E(): Promise<() => Promise<void>> {
     applications: countRow(seedDb, 'applications'),
     feedbackEvents: countRow(seedDb, 'feedback_events'),
     candidates: countRow(seedDb, 'radar_candidates'),
+    candidateVersions: countRow(seedDb, 'radar_candidate_versions'),
+    ruleAssessments: countRow(seedDb, 'radar_rule_assessments'),
+    // 不可变签名：裁决/覆盖只追加 radar_actions，绝不 UPDATE/DELETE 版本与评估行。
+    candidateVersionsSig: tableSignature(seedDb, 'radar_candidate_versions'),
+    ruleAssessmentsSig: tableSignature(seedDb, 'radar_rule_assessments'),
   };
   seedDb.close();
 

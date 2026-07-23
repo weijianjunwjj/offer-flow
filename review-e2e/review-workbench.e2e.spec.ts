@@ -1,6 +1,6 @@
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
 import Database from 'better-sqlite3';
-import { readRuntime } from './runtime';
+import { readRuntime, tableSignature } from './runtime';
 
 const rt = readRuntime();
 const H = { 'x-offerflow-capture-client': 'offerflow-review-e2e' };
@@ -67,6 +67,34 @@ test.describe('V8-3 评审工作台 · 规则证据三态与覆盖', () => {
     await expect(page.getByTestId('evidence-corrupt').first()).toBeVisible();
   });
 
+  test('MA-04 覆盖审计只读展示：assessmentId / 原结果 / 证据哈希 / set + revert 时间线', async ({ page }) => {
+    const { overrideAuditAssessmentId } = rt.fixture;
+    // 该评估的原始结果与证据哈希（只读比对，UI 不得篡改）。
+    const orig = withDb((db) => db.prepare(
+      'SELECT result FROM radar_rule_assessments WHERE id = ?',
+    ).get(overrideAuditAssessmentId) as { result: string });
+
+    await openReview(page);
+    await page.locator('[data-testid="feed-material_change"] [data-testid^="feed-open-"]').first().click();
+    await expect(page.getByTestId('candidate-compare')).toBeVisible();
+
+    // 原评估只读标识：assessmentId + 原始结果 + 证据哈希短摘要。
+    const original = page.getByTestId(`evidence-original-${overrideAuditAssessmentId}`);
+    await expect(original).toContainText(overrideAuditAssessmentId);
+    await expect(original).toContainText(orig.result);
+    await expect(original).toContainText('证据哈希');
+    // 不可变说明（由只读 API 语义支撑，非仅 UI 文案）。
+    await expect(page.getByTestId(`evidence-immutable-${overrideAuditAssessmentId}`))
+      .toContainText('原始规则评估未被覆盖操作修改');
+    // set → revert 两条审计动作同时可见（append-only，终态 none）。
+    const audit = page.getByTestId(`override-audit-${overrideAuditAssessmentId}`);
+    await expect(audit).toBeVisible();
+    await expect(audit).toContainText('设置覆盖');
+    await expect(audit).toContainText('撤销覆盖');
+    await expect(audit).toContainText('经复核该薪资上限可接受');
+    await expect(audit).toContainText('策略调整，恢复规则默认判定');
+  });
+
   test('override set 与 revert：原 RuleAssessment 不删除、追加审计动作', async ({ page }) => {
     const { uncoveredAssessmentId } = rt.fixture;
     const before = withDb((db) => ({
@@ -102,6 +130,35 @@ test.describe('V8-3 评审工作台 · 规则证据三态与覆盖', () => {
   });
 });
 
+test.describe('V8-3 评审工作台 · MA-01 疑似重复并排对比与结构化信号', () => {
+  test('点击 suspected 关系触发详情 API，展示 ≥2 条 signals（类型/双方值/解释）与裁决按钮', async ({ page }) => {
+    const { suspectedRelationId } = rt.fixture;
+    const detailCalls: string[] = [];
+    page.on('request', (req) => {
+      if (/\/radar\/review\/relations\/[^/?]+(\?|$)/.test(req.url())) detailCalls.push(req.url());
+    });
+
+    await openReview(page);
+    await page.getByTestId(`relation-${suspectedRelationId}`).click();
+    await expect(page.getByTestId('candidate-compare')).toBeVisible();
+
+    // 详情 API 确实被调用（GET /radar/review/relations/:id）。
+    await expect.poll(() => detailCalls.some((u) => u.includes(`/relations/${suspectedRelationId}`))).toBe(true);
+
+    // 结构化 signals：至少 2 条，含信号类型、两侧值、解释。
+    await expect(page.getByTestId('signals-list')).toBeVisible();
+    const signalItems = page.locator('[data-testid="signals-list"] [data-testid^="signal-"]');
+    await expect.poll(async () => signalItems.count()).toBeGreaterThanOrEqual(2);
+    await expect(page.getByTestId('signal-company_name_similar')).toContainText('company');
+    await expect(page.getByTestId('signal-company_name_similar')).toContainText('公司名高度相似');
+    await expect(page.getByTestId('signal-role_title_equal')).toContainText('前端工程师');
+
+    // 裁决按钮可见。
+    await expect(page.getByTestId('btn-confirm-same')).toBeVisible();
+    await expect(page.getByTestId('btn-confirm-distinct')).toBeVisible();
+  });
+});
+
 // 这是一次“有状态的人工评审验收旅程”，在同一 sandbox 中依次验证：
 //   A 确认不同 + 刷新保持 → B confirm_same 提示/409 冲突/候选不删 → C 累积不变量。
 // 用例 C 断言的是 A、B 执行后的累积状态（候选未因任一裁决被物理删除），
@@ -131,6 +188,19 @@ test.describe.serial('V8-3 评审工作台 · 关系裁决（有状态验收旅�
     await page.reload();
     await expect(page.getByTestId('relation-list')).toBeVisible();
     await expect(page.getByTestId(`relation-${suspectedRelationId}`)).toHaveCount(0);
+
+    // MA-02：切到“已确认不同”可重开历史，展示用户原因与 duplicate_rejected 审计时间线。
+    await page.getByTestId('filter-confirmed_distinct').click();
+    await expect(page.getByTestId(`relation-${suspectedRelationId}`)).toBeVisible();
+    await page.getByTestId(`relation-${suspectedRelationId}`).click();
+    await expect(page.getByTestId('relation-decision-reason')).toContainText('两家为不同法人主体');
+    await expect(page.getByTestId('relation-audit-timeline')).toBeVisible();
+    await expect(page.getByTestId('relation-audit-duplicate_rejected')).toBeVisible();
+
+    // 再刷新一次，重开仍在（后端持久化，非仅前端状态）。
+    await page.reload();
+    await page.getByTestId('filter-confirmed_distinct').click();
+    await expect(page.getByTestId(`relation-${suspectedRelationId}`)).toBeVisible();
   });
 
   // 用例 B：recheck 关系 —— confirm_same 不物理合并提示 + 409 冲突保留原因 + 候选不删除。
@@ -175,16 +245,25 @@ test.describe.serial('V8-3 评审工作台 · 关系裁决（有状态验收旅�
   });
 
   // 用例 C：全流程后 Job / Application / FeedbackEvent 零新增，Candidate 数不因裁决减少。
-  test('C 零新增 Job/Application/FeedbackEvent 且候选数不减少', async () => {
+  test('C 零新增 Job/Application/FeedbackEvent、候选不减少、版本与评估不可变', async () => {
     const now = withDb((db) => ({
       jobs: (db.prepare('SELECT COUNT(*) c FROM jobs').get() as { c: number }).c,
       applications: (db.prepare('SELECT COUNT(*) c FROM applications').get() as { c: number }).c,
       feedbackEvents: (db.prepare('SELECT COUNT(*) c FROM feedback_events').get() as { c: number }).c,
       candidates: (db.prepare('SELECT COUNT(*) c FROM radar_candidates').get() as { c: number }).c,
+      candidateVersions: (db.prepare('SELECT COUNT(*) c FROM radar_candidate_versions').get() as { c: number }).c,
+      ruleAssessments: (db.prepare('SELECT COUNT(*) c FROM radar_rule_assessments').get() as { c: number }).c,
+      candidateVersionsSig: tableSignature(db, 'radar_candidate_versions'),
+      ruleAssessmentsSig: tableSignature(db, 'radar_rule_assessments'),
     }));
     expect(now.jobs).toBe(rt.baseline.jobs);
     expect(now.applications).toBe(rt.baseline.applications);
     expect(now.feedbackEvents).toBe(rt.baseline.feedbackEvents);
     expect(now.candidates).toBe(rt.baseline.candidates); // confirmed_same 不物理合并 → 候选不减少
+    expect(now.candidateVersions).toBe(rt.baseline.candidateVersions);
+    expect(now.ruleAssessments).toBe(rt.baseline.ruleAssessments); // 覆盖仅追加 radar_actions，评估不删除
+    // 行签名不变：证明关系裁决 + 规则覆盖全程从未 UPDATE 版本或评估（原地修改数量无法发现）。
+    expect(now.candidateVersionsSig).toBe(rt.baseline.candidateVersionsSig);
+    expect(now.ruleAssessmentsSig).toBe(rt.baseline.ruleAssessmentsSig);
   });
 });
