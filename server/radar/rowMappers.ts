@@ -2,6 +2,7 @@ import {
   AnalysisTaskSchema,
   JobMatchAnalysisRecordSchema,
   RadarActionSchema,
+  RadarCandidateRelationSchema,
   RadarCandidateSchema,
   RadarCandidateSourceLinkSchema,
   RadarCandidateVersionSchema,
@@ -15,6 +16,7 @@ import {
   type JobMatchAnalysisRecord,
   type RadarAction,
   type RadarCandidate,
+  type RadarCandidateRelation,
   type RadarCandidateSourceLink,
   type RadarCandidateVersion,
   type RadarCaptureSession,
@@ -256,14 +258,63 @@ export function radarCandidateSourceLinkToParams(link: RadarCandidateSourceLink)
   };
 }
 
+export interface RadarCandidateRelationRow {
+  id: unknown; candidate_id_low: unknown; candidate_id_high: unknown; status: unknown;
+  reason_code: unknown; signals_json: unknown; first_detected_at: unknown; last_detected_at: unknown;
+  resolved_at: unknown; resolution_action_id: unknown; superseded_by_relation_id: unknown;
+  created_at: unknown; updated_at: unknown;
+}
+
+export function rowToRadarCandidateRelation(row: RadarCandidateRelationRow): RadarCandidateRelation {
+  return parseStored('RadarCandidateRelation', () => RadarCandidateRelationSchema.parse({
+    id: row.id,
+    candidateIdLow: row.candidate_id_low,
+    candidateIdHigh: row.candidate_id_high,
+    status: row.status,
+    reasonCode: row.reason_code,
+    signals: parseJsonColumn('radar_candidate_relations.signals_json', row.signals_json),
+    firstDetectedAt: row.first_detected_at,
+    lastDetectedAt: row.last_detected_at,
+    resolvedAt: row.resolved_at,
+    resolutionActionId: row.resolution_action_id,
+    supersededByRelationId: row.superseded_by_relation_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export function radarCandidateRelationToParams(relation: RadarCandidateRelation): Record<string, unknown> {
+  const record = RadarCandidateRelationSchema.parse(relation);
+  return {
+    id: record.id,
+    candidateIdLow: record.candidateIdLow,
+    candidateIdHigh: record.candidateIdHigh,
+    status: record.status,
+    reasonCode: record.reasonCode,
+    signalsJson: JSON.stringify(record.signals ?? null),
+    firstDetectedAt: record.firstDetectedAt,
+    lastDetectedAt: record.lastDetectedAt,
+    resolvedAt: record.resolvedAt,
+    resolutionActionId: record.resolutionActionId,
+    supersededByRelationId: record.supersededByRelationId,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
 export interface RadarRuleAssessmentRow {
   id: unknown; candidate_id: unknown; candidate_version_id: unknown;
   rule_version: unknown; rule_key: unknown; category: unknown; severity: unknown;
   result: unknown; matched_text: unknown; source_path: unknown;
-  explanation: unknown; created_at: unknown;
+  explanation: unknown; evidence_json?: unknown; created_at: unknown;
 }
 
 export function rowToRadarRuleAssessment(row: RadarRuleAssessmentRow): RadarRuleAssessment {
+  // evidence_json 可能不在 SELECT 列中（旧查询）或为 NULL（旧行）：一律映射为 null，
+  // 由上层按契约优先解析 evidence_json、NULL 时回退 scalar 字段。
+  const evidenceJson = row.evidence_json === undefined || row.evidence_json === null
+    ? null
+    : String(row.evidence_json);
   return parseStored('RadarRuleAssessment', () => RadarRuleAssessmentSchema.parse({
     id: row.id,
     candidateId: row.candidate_id,
@@ -276,6 +327,7 @@ export function rowToRadarRuleAssessment(row: RadarRuleAssessmentRow): RadarRule
     matchedText: row.matched_text,
     sourcePath: row.source_path,
     explanation: row.explanation,
+    evidenceJson,
     createdAt: row.created_at,
   }));
 }
@@ -294,6 +346,7 @@ export function radarRuleAssessmentToParams(assessment: RadarRuleAssessment): Re
     matchedText: record.matchedText,
     sourcePath: record.sourcePath,
     explanation: record.explanation,
+    evidenceJson: record.evidenceJson,
     createdAt: record.createdAt,
   };
 }

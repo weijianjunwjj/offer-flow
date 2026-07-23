@@ -5,6 +5,7 @@ import { createHistoryFunnelSchemaV4 } from './migrations/historyFunnelSchemaV4'
 import { createMarketPositionSchemaV5 } from './migrations/marketPositionSchemaV5';
 import { createStrategyWindowSchemaV6 } from './migrations/strategyWindowSchemaV6';
 import { createRadarDomainSchemaV7 } from './migrations/radarDomainSchemaV7';
+import { createRadarCandidateRelationsSchemaV8 } from './migrations/radarCandidateRelationsSchemaV8';
 
 export interface SchemaMigration {
   version: number;
@@ -27,9 +28,11 @@ export interface MigrationRunOptions {
 // 可信求职记忆（Job Memory v2）生产底座仍固定在 v2：快照、恢复与生产验证机器都以 v2 为准。
 export const PRODUCTION_SCHEMA_VERSION = 2;
 // G2 能力基线新增 v3、G3 历史补录与基础漏斗新增 v4、G4 市场位置画像新增 v5、
-// G5 求职策略窗口新增 v6、v0.8 V8-1 雷达领域新增 v7；LATEST 与 PRODUCTION 有意区分，
-// v3~v7 均为纯新增表，不改动 v2 生产语义。v5/v6/v7 仅限沙箱/临时库使用，真实生产库不得升级。
-export const LATEST_SCHEMA_VERSION = 7;
+// G5 求职策略窗口新增 v6、v0.8 V8-1 雷达领域新增 v7、V8-3 候选关系新增 v8；
+// LATEST 与 PRODUCTION 有意区分，v3~v7 均为纯新增表，v8 新增候选关系表并最小扩展
+// radar_actions 的 action_type CHECK（不改行数据），不改动 v2 生产语义。
+// v5/v6/v7/v8 仅限沙箱/临时库使用，真实生产库不得自动升级。
+export const LATEST_SCHEMA_VERSION = 8;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 // G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
 export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
@@ -43,6 +46,8 @@ export const MARKET_POSITION_SCHEMA_VERSION = 5;
 export const STRATEGY_WINDOW_SCHEMA_VERSION = 6;
 // v0.8 V8-1 雷达领域单独所需的最低 schema 版本（v7），仅限沙箱/演练库使用。
 export const RADAR_DOMAIN_SCHEMA_VERSION = 7;
+// v0.8 V8-3 候选关系与重复裁决单独所需的最低 schema 版本（v8），仅限沙箱/演练库使用。
+export const RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION = 8;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -120,6 +125,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 7,
     name: '007_v0_8_radar_domain_schema',
     up: createRadarDomainSchemaV7,
+  },
+  {
+    version: 8,
+    name: '008_v0_8_radar_candidate_relations_schema',
+    up: createRadarCandidateRelationsSchemaV8,
   },
 ];
 
@@ -229,34 +239,59 @@ export function runMigrations(
   const appliedVersions = new Set(appliedBefore.map((record) => record.version));
   const newlyAppliedVersions: number[] = [];
 
-  for (const migration of migrations) {
-    if (migration.version > targetVersion) {
-      break;
-    }
-    if (appliedVersions.has(migration.version)) {
-      continue;
-    }
+  // 某些迁移（如 v8 修改 radar_actions 的 CHECK 约束）需要按 SQLite 官方"表重建"流程
+  // DROP + RENAME 一张被其它表引用的表。该流程要求 foreign_keys 处于关闭状态执行
+  // （PRAGMA foreign_keys 在事务内是 no-op，因此必须在进入 per-migration 事务之前切换），
+  // 迁移完成后在同一事务内用 foreign_key_check 自检：任何悬挂引用都在 COMMIT 前抛错回滚。
+  //
+  // per-migration 模式：runner 负责在事务外临时关闭 FK 强制、在 finally 中无条件恢复原状态，
+  //   并把 foreign_key_check 放入每个迁移的事务内（提交前），保证 FK 违规触发该迁移完整回滚。
+  // caller-managed 模式：runner 不切换 FK 状态（调用方已管理自己的事务/连接），
+  //   但仍在 applyMigration 内执行 foreign_key_check，使违规在调用方事务提交前被发现。
+  const foreignKeysEnabledBefore = Number(db.pragma('foreign_keys', { simple: true })) === 1;
+  const runnerManagesForeignKeys = transactionMode === 'per-migration' && foreignKeysEnabledBefore;
+  if (runnerManagesForeignKeys) db.pragma('foreign_keys = OFF');
 
-    const applyMigration = (): void => {
-      migration.up(db);
-      const appliedAt = Date.now();
-      db.prepare(
-        'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
-      ).run(migration.version, migration.name, appliedAt);
-      db.prepare(
-        `INSERT INTO app_meta (key, value, updated_at)
-         VALUES ('schema_version', ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      ).run(String(migration.version), appliedAt);
-    };
+  try {
+    for (const migration of migrations) {
+      if (migration.version > targetVersion) {
+        break;
+      }
+      if (appliedVersions.has(migration.version)) {
+        continue;
+      }
 
-    if (transactionMode === 'caller-managed') {
-      applyMigration();
-    } else {
-      db.transaction(applyMigration)();
+      const applyMigration = (): void => {
+        migration.up(db);
+        // 提交前全库外键自检：捕获表重建流程可能遗留的悬挂引用。
+        // foreign_key_check 即使在 FK 强制关闭时也能检出违规；在事务内抛错即回滚该迁移。
+        const violations = db.pragma('foreign_key_check') as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `迁移 ${migration.version}（${migration.name}）外键完整性校验失败：${violations.length} 条违规`,
+          );
+        }
+        const appliedAt = Date.now();
+        db.prepare(
+          'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
+        ).run(migration.version, migration.name, appliedAt);
+        db.prepare(
+          `INSERT INTO app_meta (key, value, updated_at)
+           VALUES ('schema_version', ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        ).run(String(migration.version), appliedAt);
+      };
+
+      if (transactionMode === 'caller-managed') {
+        applyMigration();
+      } else {
+        db.transaction(applyMigration)();
+      }
+      appliedVersions.add(migration.version);
+      newlyAppliedVersions.push(migration.version);
     }
-    appliedVersions.add(migration.version);
-    newlyAppliedVersions.push(migration.version);
+  } finally {
+    if (runnerManagesForeignKeys) db.pragma('foreign_keys = ON');
   }
 
   const appliedAfter = readAppliedMigrations(db);

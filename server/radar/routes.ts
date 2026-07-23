@@ -1,7 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
+import { getDatabaseSchemaVersion, RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION } from '../migrations';
 import { IdParamsSchema } from './dtoSchemas';
 import { RadarCaptureError, radarForbiddenOrigin, radarValidationError } from './errors';
 import { RadarCaptureService, type RadarCaptureServiceDeps } from './service';
+import { RadarReviewService } from './reviewService';
+import {
+  AdjudicationRequestSchema,
+  RecheckRequestSchema,
+  RelationListQuerySchema,
+  RuleOverrideRevertRequestSchema,
+  RuleOverrideSetRequestSchema,
+} from './reviewDtoSchemas';
+import type { ZodType } from 'zod';
 
 export type { RadarCaptureServiceDeps };
 
@@ -27,6 +38,12 @@ function parseIdParams(value: unknown): string {
   const result = IdParamsSchema.safeParse(value);
   if (!result.success) throw radarValidationError(result.error);
   return result.data.id;
+}
+
+function parseReviewDto<Output>(schema: ZodType<Output>, value: unknown): Output {
+  const result = schema.safeParse(value);
+  if (!result.success) throw radarValidationError(result.error);
+  return result.data;
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {
@@ -104,6 +121,50 @@ export function registerRadarCaptureRoutes(
     ));
     scopedApp.post('/radar/capture-sessions/:id/cancel', async (request) => (
       service.cancelSession(parseIdParams(request.params), request.body)
+    ));
+
+    // ---- V8-3 人工评审工作台（只读详情 + 关系裁决 + 规则证据/覆盖），共用同一安全网关 ----
+    // 评审依赖 v8 候选关系表（radar_candidate_relations）。采集桥的最低 schema 为 v7；
+    // v8 属受控激活（设计文档 BR-1），未激活前不注册评审路由，避免运行时 "no such table"，
+    // 也不擅自把 Radar 能力整体拉到 v8。schema ≥ v8 时（沙箱/演练/已授权库）才挂载评审接口。
+    if (getDatabaseSchemaVersion(scopedApp.db) < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
+      return;
+    }
+    const review = new RadarReviewService(scopedApp.db, options.serviceDeps ?? { now: Date.now, createId: randomUUID });
+    const actor = 'reviewer';
+
+    scopedApp.get('/radar/review/candidates/:id', async (request) => (
+      review.getCandidateDecisionDetail(parseIdParams(request.params))
+    ));
+    scopedApp.get('/radar/review/candidate-versions/:id/rule-evidence', async (request) => (
+      review.listRuleEvidence(parseIdParams(request.params))
+    ));
+    scopedApp.get('/radar/review/relations', async (request) => (
+      review.listRelations(parseReviewDto(RelationListQuerySchema, request.query ?? {}))
+    ));
+    scopedApp.get('/radar/review/relations/:id', async (request) => (
+      review.getRelationDetail(parseIdParams(request.params))
+    ));
+    scopedApp.get('/radar/review/decision-feed', async () => (
+      review.listDecisionFeed()
+    ));
+    scopedApp.post('/radar/review/relations/confirm-same', async (request) => (
+      review.confirmSame(parseReviewDto(AdjudicationRequestSchema, request.body))
+    ));
+    scopedApp.post('/radar/review/relations/confirm-distinct', async (request) => (
+      review.confirmDistinct(parseReviewDto(AdjudicationRequestSchema, request.body))
+    ));
+    scopedApp.post('/radar/review/relations/revert', async (request) => (
+      review.revertDecision(parseReviewDto(AdjudicationRequestSchema, request.body))
+    ));
+    scopedApp.post('/radar/review/relations/request-recheck', async (request) => (
+      review.requestRecheck(parseReviewDto(RecheckRequestSchema, request.body))
+    ));
+    scopedApp.post('/radar/review/rule-overrides/set', async (request) => (
+      review.setRuleOverride(parseReviewDto(RuleOverrideSetRequestSchema, request.body), actor)
+    ));
+    scopedApp.post('/radar/review/rule-overrides/revert', async (request) => (
+      review.revertRuleOverride(parseReviewDto(RuleOverrideRevertRequestSchema, request.body), actor)
     ));
   });
 }

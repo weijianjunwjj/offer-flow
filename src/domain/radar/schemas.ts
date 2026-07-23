@@ -7,6 +7,7 @@ import {
   JOB_MATCH_RECOMMENDATIONS,
   RADAR_ACTION_TYPES,
   RADAR_CANDIDATE_LIFECYCLE_STATUSES,
+  RADAR_CANDIDATE_RELATION_STATUSES,
   RADAR_CANDIDATE_SOURCE_LINK_REASONS,
   RADAR_CANDIDATE_VERSION_ORIGIN_TYPES,
   RADAR_CAPTURE_METHODS,
@@ -23,6 +24,7 @@ import {
   type RadarAction,
   type RadarCandidate,
   type RadarCandidateNormalized,
+  type RadarCandidateRelation,
   type RadarCandidateSourceLink,
   type RadarCandidateVersion,
   type RadarCaptureSession,
@@ -134,6 +136,22 @@ export const RadarCandidateSourceLinkSchema: z.ZodType<RadarCandidateSourceLink>
   linkReason: z.enum(RADAR_CANDIDATE_SOURCE_LINK_REASONS),
 });
 
+export const RadarCandidateRelationSchema: z.ZodType<RadarCandidateRelation> = z.strictObject({
+  id: nonBlank,
+  candidateIdLow: nonBlank,
+  candidateIdHigh: nonBlank,
+  status: z.enum(RADAR_CANDIDATE_RELATION_STATUSES),
+  reasonCode: z.string().nullable(),
+  signals: z.unknown(),
+  firstDetectedAt: timestamp,
+  lastDetectedAt: timestamp,
+  resolvedAt: nullableTimestamp,
+  resolutionActionId: nullableNonBlank,
+  supersededByRelationId: nullableNonBlank,
+  createdAt: timestamp,
+  updatedAt: timestamp,
+});
+
 export const RadarRuleAssessmentSchema: z.ZodType<RadarRuleAssessment> = z.strictObject({
   id: nonBlank,
   candidateId: nonBlank,
@@ -146,6 +164,7 @@ export const RadarRuleAssessmentSchema: z.ZodType<RadarRuleAssessment> = z.stric
   matchedText: z.string().nullable(),
   sourcePath: z.string().nullable(),
   explanation: z.string(),
+  evidenceJson: z.string().nullable(),
   createdAt: timestamp,
 });
 

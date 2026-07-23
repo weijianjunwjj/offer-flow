@@ -140,4 +140,28 @@ describe('OfferFlow Router', () => {
     await router.isReady();
     expect(router.currentRoute.value.name).toBe('strategy-window');
   });
+
+  it('岗位雷达人工评审（V8-3）默认关闭时深链接安全重定向到岗位台账', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      radarEnabled: false,
+    });
+    await router.push('/radar/review');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('jobs');
+    expect(router.currentRoute.value.query.feature).toBe('radar-review-disabled');
+    const disabledRecord = router.getRoutes().find((route) => route.path === '/radar/review');
+    expect(disabledRecord?.components).toBeUndefined();
+    expect(disabledRecord?.redirect).toBeDefined();
+  });
+
+  it('显式开启 radar 时注册 /radar/review（仅 V8-3 沙箱环境）', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      radarEnabled: true,
+    });
+    await router.push('/radar/review');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('radar-review');
+  });
 });

@@ -30,7 +30,8 @@ function normalizedFixture() {
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 7 });
+  // V8-3：radar 领域 repository 测试运行在 v8（含 evidence_json 与候选关系表）。
+  initSchema(db, { targetVersion: 8 });
 });
 
 afterEach(() => {
@@ -38,8 +39,8 @@ afterEach(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-describe('schema v7', () => {
-  it('creates all 12 radar domain tables and stays FK-consistent', () => {
+describe('schema v8', () => {
+  it('creates all radar domain tables (incl. candidate relations) and stays FK-consistent', () => {
     const tables = (db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all() as Array<{ name: string }>).map((row) => row.name);
@@ -48,9 +49,13 @@ describe('schema v7', () => {
       'radar_candidates', 'radar_candidate_versions', 'radar_candidate_sources',
       'radar_rule_assessments', 'analysis_tasks', 'job_match_analysis_records',
       'radar_recommendation_batches', 'radar_actions', 'radar_promotions',
+      'radar_candidate_relations',
     ]) {
       expect(tables).toContain(table);
     }
+    // v8 为 radar_rule_assessments 增加 evidence_json 列。
+    const cols = (db.prepare('PRAGMA table_info(radar_rule_assessments)').all() as Array<{ name: string }>).map((c) => c.name);
+    expect(cols).toContain('evidence_json');
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });
 
@@ -222,9 +227,13 @@ describe('RadarRuleAssessmentRepository', () => {
       id: 'assess-1', candidateId: 'cand-r1', candidateVersionId: 'ver-r1',
       ruleVersion: 'rules-v1', ruleKey: 'salary_below_floor', category: 'hard_constraint',
       severity: 'blocking', result: 'hit', matchedText: '15K', sourcePath: 'salaryMinK',
-      explanation: 'below floor', createdAt: 100,
+      explanation: 'below floor', evidenceJson: null, createdAt: 100,
     });
-    expect(repo.listByCandidateVersion('ver-r1')).toHaveLength(1);
+    const stored = repo.listByCandidateVersion('ver-r1');
+    expect(stored).toHaveLength(1);
+    // 旧式写入（evidenceJson=null）读回仍为 null，回退 scalar 字段可用。
+    expect(stored[0]?.evidenceJson).toBeNull();
+    expect(stored[0]?.matchedText).toBe('15K');
   });
 });
 
