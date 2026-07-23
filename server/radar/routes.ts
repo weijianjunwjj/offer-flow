@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyError, FastifyInstance, FastifyRequest } from 'fastify';
+import { getDatabaseSchemaVersion, RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION } from '../migrations';
 import { IdParamsSchema } from './dtoSchemas';
 import { RadarCaptureError, radarForbiddenOrigin, radarValidationError } from './errors';
 import { RadarCaptureService, type RadarCaptureServiceDeps } from './service';
@@ -123,6 +124,12 @@ export function registerRadarCaptureRoutes(
     ));
 
     // ---- V8-3 人工评审工作台（只读详情 + 关系裁决 + 规则证据/覆盖），共用同一安全网关 ----
+    // 评审依赖 v8 候选关系表（radar_candidate_relations）。采集桥的最低 schema 为 v7；
+    // v8 属受控激活（设计文档 BR-1），未激活前不注册评审路由，避免运行时 "no such table"，
+    // 也不擅自把 Radar 能力整体拉到 v8。schema ≥ v8 时（沙箱/演练/已授权库）才挂载评审接口。
+    if (getDatabaseSchemaVersion(scopedApp.db) < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
+      return;
+    }
     const review = new RadarReviewService(scopedApp.db, options.serviceDeps ?? { now: Date.now, createId: randomUUID });
     const actor = 'reviewer';
 

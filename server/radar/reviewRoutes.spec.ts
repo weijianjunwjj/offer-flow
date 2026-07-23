@@ -196,4 +196,22 @@ describe('V8-3 review routes: feature gate', () => {
     offDb.close();
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
+
+  it('radar 开启但 schema 仅 v7 时不注册评审路由（404），采集桥仍可用', async () => {
+    // 评审依赖 v8 候选关系表；v7 库（采集桥最低版本）下评审路由必须缺席而非运行时报错。
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-v7-'));
+    const v7Db = openDb(path.join(tempDir, 'v7.sqlite3'));
+    initSchema(v7Db, { targetVersion: 7 });
+    const v7App = buildServer({ db: v7Db, radar: { enabled: true } });
+    const review = await v7App.inject({ method: 'GET', url: '/radar/review/relations', headers: headers() });
+    expect(review.statusCode).toBe(404);
+    // 采集桥主路由仍存在（缺失会话返回 404，但校验错误证明路由已注册且过网关）。
+    const capture = await v7App.inject({
+      method: 'POST', url: '/radar/capture-sessions', headers: headers(), payload: {},
+    });
+    expect(capture.statusCode).not.toBe(404); // 命中路由（422 校验失败），非路由缺失
+    await v7App.close();
+    v7Db.close();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
 });
