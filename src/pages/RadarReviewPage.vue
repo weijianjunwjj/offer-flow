@@ -41,6 +41,11 @@ async function loadRelations(): Promise<void> {
 
 onMounted(loadRelations);
 
+async function loadEvidenceFor(detail: CandidateDecisionDetail | null): Promise<void> {
+  const vid = detail?.activeCandidateVersionId;
+  evidence.value = vid == null ? [] : await radarReviewApi.listRuleEvidence(vid);
+}
+
 async function selectRelation(rel: RelationListItem): Promise<void> {
   selectedRelation.value = rel;
   staleHint.value = '';
@@ -50,12 +55,28 @@ async function selectRelation(rel: RelationListItem): Promise<void> {
   try {
     detailLow.value = await radarReviewApi.getCandidateDetail(rel.candidateIdLow);
     detailHigh.value = await radarReviewApi.getCandidateDetail(rel.candidateIdHigh);
-    const vid = detailLow.value?.activeCandidateVersionId;
-    if (vid != null) evidence.value = await radarReviewApi.listRuleEvidence(vid);
+    await loadEvidenceFor(detailLow.value);
   } catch (error) {
     errorText.value = error instanceof ApiError ? error.message : '加载详情失败';
   }
 }
+
+/** 决策 feed 中带候选的条目：单侧加载详情 + 规则证据（不进入关系裁决）。 */
+async function selectFeedCandidate(candidateId: string | null): Promise<void> {
+  if (candidateId === null) return;
+  selectedRelation.value = null;
+  staleHint.value = '';
+  detailHigh.value = null;
+  evidence.value = [];
+  try {
+    detailLow.value = await radarReviewApi.getCandidateDetail(candidateId);
+    await loadEvidenceFor(detailLow.value);
+  } catch (error) {
+    errorText.value = error instanceof ApiError ? error.message : '加载详情失败';
+  }
+}
+
+const showCompare = computed(() => detailLow.value !== null);
 
 function openConfirm(kind: PendingKind, label: string, impact: string, ctx: Record<string, unknown>): void {
   reasonDraft.value = '';
@@ -144,8 +165,10 @@ function salaryText(s: { salaryMinK: number | null; salaryMaxK: number | null; s
           <NEmpty v-if="feed.length === 0" description="暂无决策记录" />
           <ul v-else class="feed-list" data-testid="decision-feed">
             <li v-for="f in feed" :key="f.snapshotId" :data-testid="`feed-${f.decisionType}`">
-              <NTag size="small" :type="f.analysisEligible ? 'success' : 'error'">{{ f.decisionType }}</NTag>
-              <NText depth="3">{{ f.summary?.company ?? '（无候选）' }}</NText>
+              <NButton text :disabled="f.candidateId === null" :data-testid="`feed-open-${f.snapshotId}`" @click="selectFeedCandidate(f.candidateId)">
+                <NTag size="small" :type="f.analysisEligible ? 'success' : 'error'">{{ f.decisionType }}</NTag>
+                <NText depth="3">{{ f.summary?.company ?? '（无候选）' }}</NText>
+              </NButton>
               <div v-if="f.conflictReason" class="reason" data-testid="feed-conflict-reason">
                 冲突原因：{{ f.conflictReason }}
               </div>
@@ -158,7 +181,7 @@ function salaryText(s: { salaryMinK: number | null; salaryMaxK: number | null; s
       </div>
 
       <!-- 区域 2/3/4：候选对比 + 变化摘要 + 阻断信息（选中关系后展开） -->
-      <NCard v-if="selectedRelation" title="候选对比" size="small" class="mt" data-testid="candidate-compare">
+      <NCard v-if="showCompare" title="候选对比" size="small" class="mt" data-testid="candidate-compare">
         <div class="compare">
           <div v-for="(d, side) in { low: detailLow, high: detailHigh }" :key="side">
             <NText strong>{{ side === 'low' ? '候选 A' : '候选 B' }}</NText>
@@ -207,8 +230,8 @@ function salaryText(s: { salaryMinK: number | null; salaryMaxK: number | null; s
           </div>
         </div>
 
-        <!-- 区域 6：人工操作 -->
-        <div class="mt">
+        <!-- 区域 6：人工操作（仅关系裁决场景；feed 单候选查看不含裁决） -->
+        <div v-if="selectedRelation" class="mt">
           <p class="merge-note" data-testid="merge-note">
             提示：“确认相同”只记录两个候选被人工判断为同一岗位，不会立即删除、合并或迁移历史数据。
           </p>

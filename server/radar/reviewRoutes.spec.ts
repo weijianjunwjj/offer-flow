@@ -36,7 +36,7 @@ afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 async function get(url: string) {
   return app.inject({ method: 'GET', url, headers: headers() });
 }
-async function post(url: string, body: unknown) {
+async function post(url: string, body: Record<string, unknown>) {
   return app.inject({ method: 'POST', url, headers: headers(), payload: body });
 }
 

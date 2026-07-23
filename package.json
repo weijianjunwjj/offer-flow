@@ -15,6 +15,7 @@
     "dev:g6-rehearsal": "tsx scripts/devG6Rehearsal.ts",
     "g6:rehearsal:prepare": "tsx scripts/g6RehearsalPrepare.ts",
     "dev:radar-sandbox": "tsx scripts/devRadarSandbox.ts",
+    "dev:radar-review-sandbox": "tsx scripts/devRadarReviewSandbox.ts",
     "web": "vite",
     "server": "tsx server/index.ts",
     "extension:build": "node browser-extension/build.mjs",

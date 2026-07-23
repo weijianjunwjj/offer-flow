@@ -99,6 +99,32 @@ describe('RadarReviewPage 候选对比 + 变化 + 证据', () => {
     expect(changed.text()).toContain('salaryMinK');
   });
 
+  it('点击决策 feed 中带候选的条目加载单侧详情与证据（无关系裁决按钮）', async () => {
+    setupHappy({}, [{
+      snapshotId: 'snap-m', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',
+      decisionType: 'material_change', analysisEligible: true, blockingIssues: [],
+      needsConfirmation: [], conflictReason: null, changedFieldPaths: ['salaryMinK'], summary: summary('越迁软件'),
+    }]);
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="feed-open-snap-m"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="candidate-compare"]').exists()).toBe(true);
+    expect(mocks.getCandidateDetail).toHaveBeenCalledWith('cand-A');
+    // 单候选查看不应出现关系裁决按钮。
+    expect(wrapper.find('[data-testid="btn-confirm-same"]').exists()).toBe(false);
+  });
+
+  it('决策 feed 中无候选（identity_conflict）条目不可点击', async () => {
+    setupHappy({}, [{
+      snapshotId: 'snap-c', candidateId: null, activeCandidateVersionId: null,
+      decisionType: 'identity_conflict', analysisEligible: false, blockingIssues: ['x'],
+      needsConfirmation: [], conflictReason: 'tier2_multiple_matches', changedFieldPaths: [], summary: null,
+    }]);
+    const wrapper = await mountPage();
+    const btn = wrapper.find('[data-testid="feed-open-snap-c"]');
+    expect(btn.attributes('disabled')).toBeDefined();
+  });
+
   it('规则证据区分 structured / legacy_scalar / corrupt 三态', async () => {
     setupHappy();
     const evidence: RuleEvidenceView[] = [
