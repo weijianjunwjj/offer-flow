@@ -6,7 +6,10 @@
     "relationId": "rvsb-11",
     "candidateA": "rvsb-5",
     "candidateB": "rvsb-10",
-    "note": "suspected_duplicate 并排对比（同城科技 × 同城科技(分部)）"
+    "screenshot": "v8-3-ma-01-duplicate-comparison.png",
+    "screenshotSource": "dedicated evidence sandbox (fresh temp v8 DB, isolated, cleaned up after capture)",
+    "signalsNote": "workbench UI has no discrete 'signals' field; identity signals surface via decisionType tags + relation status",
+    "note": "suspected_duplicate 并排对比（同城科技 × 同城科技(分部)），含全字段与确认相同/确认不同按钮"
   },
   "MA02": {
     "relationId": "rvsb-11",
