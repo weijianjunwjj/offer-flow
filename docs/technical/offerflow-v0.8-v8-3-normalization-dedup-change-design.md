@@ -1,6 +1,8 @@
 # OfferFlow v0.8 V8-3 标准化 / 去重 / 变化识别设计
 
-> 状态：DESIGN IN REVIEW — IMPLEMENTATION NOT STARTED
+> 状态：IMPLEMENTED（沙箱/演练，schema≥v8）— 生产 schema 仍 v7、Radar 正式入口仍 DISABLED
+> 实施证据：`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`
+> 说明：本文为设计基线，正文保留原始设计意图；实施差异与最终边界以上方实施证据为准。
 > 波次：V8-3
 > 权威上游：`docs/technical/offerflow-v0.8-technical-design.md`（§4.5–4.7、§5）、`docs/prd/offerflow-v0.8.md`（P0-06/P0-07、US-03/US-04）、`docs/product/offerflow-v0.8-release-contract.md`（RC-05/RC-06）、`docs/evaluation/offerflow-v0.8-evaluation-plan.md`（§5.1）
 > 目标：把事实整理准确、识别重复和变化、并保留可审计证据。不是开始智能判断。
