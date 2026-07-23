@@ -15,7 +15,7 @@
 ## 采集环境
 
 - 入口：受控评审沙箱 `#/radar/review`（flag 打开、schema v8 临时库，非生产）
-- 生产库 `data/offerflow.sqlite3` 全程未连接、未修改
+- 生产数据库仅进行只读核验，未执行任何写入
 - 关联标识：relation `rvsb-11`；candidate `rvsb-5` / `rvsb-10`；
   material 候选版本 `rvsb-44`；override 评估 `rvsb-76`（education_floor）
 
@@ -76,10 +76,21 @@
 
 ## 数据不变量（只读核验）
 
-- jobs = 0；applications = 0；feedback_events = 0
+两套数据库须分开表述，切勿混淆：
+
+### 人工验收 sandbox（schema v8，会话级临时库，非生产）
+
+- 验收前后 jobs = 0；applications = 0；feedback_events = 0
+- 人工评审操作没有创建正式 Job / Application / FeedbackEvent
 - Candidate 未被 confirmed_same 物理合并（candidates = 11 未减少）
 - 原 RuleAssessment 未被 UPDATE 或删除
-- 生产数据库未修改（schema 仍 v7）
+
+### 真实生产数据库（`data/offerflow.sqlite3`，仅只读核验）
+
+- schema version = 7
+- jobs = 15；applications = 9；feedback_events = 11
+- 原有数据行数未变化；未执行 migration；未发生写入
+- 仅进行只读核验，未执行任何写入
 
 ## 待办
 

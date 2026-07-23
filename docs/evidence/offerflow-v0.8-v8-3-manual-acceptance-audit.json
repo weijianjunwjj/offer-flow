@@ -1,5 +1,6 @@
 {
   "captureContext": "controlled review sandbox (schema v8, non-production, session-scoped temp DB)",
+  "databaseScope": "sandbox",
   "status": "EVIDENCE CAPTURED / USER REVIEW PENDING",
   "MA01": {
     "relationId": "rvsb-11",
@@ -72,12 +73,26 @@
     }
   ],
   "invariants": {
-    "jobs": 0,
-    "applications": 0,
-    "feedbackEvents": 0,
-    "candidates": 11,
-    "originalRuleAssessmentDeletedOrUpdated": false,
-    "productionDbModified": false
+    "databaseScope": "sandbox",
+    "sandbox": {
+      "schemaVersion": 8,
+      "jobs": 0,
+      "applications": 0,
+      "feedbackEvents": 0,
+      "candidates": 11,
+      "originalRuleAssessmentDeletedOrUpdated": false,
+      "note": "0/0/0 属于人工验收 sandbox；人工评审操作没有创建正式 Job/Application/FeedbackEvent"
+    },
+    "production": {
+      "databaseScope": "production",
+      "access": "read-only verification only, no writes",
+      "schemaVersion": 7,
+      "jobs": 15,
+      "applications": 9,
+      "feedbackEvents": 11,
+      "rowsChanged": false,
+      "migrationExecuted": false
+    }
   },
   "passed": null
 }
