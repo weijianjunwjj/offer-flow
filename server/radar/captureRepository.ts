@@ -85,4 +85,15 @@ export class RadarCaptureRepository {
       .all(captureSessionId) as RadarCaptureSnapshotRow[];
     return rows.map(rowToRadarCaptureSnapshot);
   }
+
+  /**
+   * 列出全部 committed 会话（按 committedAt 升序），供只读评审工作台从 committedResult 载体中
+   * 还原「每个候选/快照最近一次 commit 决策」。仅读取本机受控库，不触碰真实生产库。
+   */
+  listCommittedSessions(): RadarCaptureSession[] {
+    const rows = this.db
+      .prepare(`SELECT ${SESSION_COLUMNS} FROM radar_capture_sessions WHERE status = 'committed' ORDER BY committed_at, id`)
+      .all() as RadarCaptureSessionRow[];
+    return rows.map(rowToRadarCaptureSession);
+  }
 }
