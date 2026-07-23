@@ -27,6 +27,12 @@
         "OFFERFLOW_RADAR_SANDBOX_API_PORT": "17376",
         "OFFERFLOW_RADAR_SANDBOX_WEB_PORT": "17375"
       }
+    },
+    {
+      "name": "offerflow-radar-review-sandbox",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "scripts/devRadarReviewSandbox.ts", "--web-port=17365", "--api-port=17366"],
+      "port": 17365
     }
   ]
 }

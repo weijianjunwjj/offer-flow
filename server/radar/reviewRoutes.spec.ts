@@ -41,20 +41,54 @@ async function post(url: string, body: Record<string, unknown>) {
 }
 
 describe('V8-3 review routes: relation listing + detail', () => {
-  it('lists only suspected_duplicate + needs_recheck by default', async () => {
+  it('lists only suspected_duplicate + needs_recheck by default with structured signals', async () => {
     const res = await get('/radar/review/relations');
     expect(res.statusCode).toBe(200);
-    const items = res.json() as Array<{ status: string; signals: Record<string, unknown> }>;
+    const items = res.json() as Array<{ status: string; relationId: string; signals: { state: string; signals: Array<Record<string, unknown>>; corruptReason: string | null } }>;
     const statuses = new Set(items.map((i) => i.status));
     expect(statuses.has('suspected_duplicate')).toBe(true);
     expect(statuses.has('needs_recheck')).toBe(true);
     expect(statuses.has('confirmed_distinct')).toBe(false);
-    // signals 已脱敏：只含白名单键。
-    for (const i of items) {
-      for (const k of Object.keys(i.signals)) {
-        expect(['companyNameSimilar', 'roleTitleSimilar', 'sameSourceDomain', 'sameNormalizedUrlHost', 'reason']).toContain(k);
-      }
+    // signals 为结构化视图：state + 数组，每条仅含白名单键。
+    const suspected = items.find((i) => i.relationId === fixture.suspectedRelationId)!;
+    expect(suspected.signals.state).toBe('present');
+    expect(suspected.signals.signals.length).toBeGreaterThanOrEqual(2);
+    const allowed = ['signalType', 'field', 'candidateAValue', 'candidateBValue', 'strength', 'explanation'];
+    for (const sig of suspected.signals.signals) {
+      for (const k of Object.keys(sig)) expect(allowed).toContain(k);
     }
+    // 绝不透传敏感字段。
+    const serialized = JSON.stringify(items);
+    for (const forbidden of ['securityId', 'cookie', 'token', 'visibleText']) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it('returns full relation detail incl. signals + audit timeline for confirmed_distinct (re-openable)', async () => {
+    const res = await get(`/radar/review/relations/${fixture.distinctRelationId}`);
+    expect(res.statusCode).toBe(200);
+    const detail = res.json() as {
+      status: string; reasonCode: string | null; decisionReason: string | null;
+      decidedAt: number | null; signals: { state: string; signals: unknown[] };
+      auditTimeline: Array<{ actionType: string; reason: string | null; resultingStatus: string; occurredAt: number }>;
+    };
+    expect(detail.status).toBe('confirmed_distinct');
+    expect(detail.decidedAt).not.toBeNull();
+    // 已裁决关系仍可查看 signals（重开历史）。
+    expect(detail.signals.state).toBe('present');
+    expect(detail.signals.signals.length).toBeGreaterThanOrEqual(2);
+    // 审计时间线含用户裁决原因，升序（旧→新）。
+    const rejected = detail.auditTimeline.find((e) => e.actionType === 'duplicate_rejected')!;
+    expect(rejected.reason).toContain('不同法人主体');
+    expect(rejected.resultingStatus).toBe('confirmed_distinct');
+    for (let i = 1; i < detail.auditTimeline.length; i += 1) {
+      expect(detail.auditTimeline[i]!.occurredAt).toBeGreaterThanOrEqual(detail.auditTimeline[i - 1]!.occurredAt);
+    }
+  });
+
+  it('relation detail 404 for unknown relation id', async () => {
+    const res = await get('/radar/review/relations/does-not-exist');
+    expect(res.statusCode).toBe(404);
   });
 
   it('filters by explicit status and caps at limit', async () => {
@@ -148,6 +182,28 @@ describe('V8-3 review routes: rule evidence + override', () => {
     expect(byId.get(fixture.corruptAssessmentId)!.evidenceState).toBe('corrupt');
     expect(byId.get(fixture.coveredAssessmentId)!.overrideState).toBe('pass');
     expect(byId.get(fixture.uncoveredAssessmentId)!.overrideState).toBe('none');
+  });
+
+  it('exposes original assessment identity + evidence hash + append-only override audit (set→revert)', async () => {
+    const res = await get(`/radar/review/candidate-versions/${fixture.evidenceVersionId}/rule-evidence`);
+    const views = res.json() as Array<{
+      assessmentId: string; originalResult: string; evidenceHashShort: string | null;
+      overrideState: string; overrideAudit: Array<{ actionType: string; reason: string | null; previousOverrideState: string; resultingOverrideState: string; occurredAt: number }>;
+    }>;
+    const byId = new Map(views.map((v) => [v.assessmentId, v]));
+    // 原始评估只读标识：result + evidence 短哈希（structured 非空、legacy NULL 无哈希）。
+    expect(byId.get(fixture.structuredAssessmentId)!.originalResult).toBe('hit');
+    expect(byId.get(fixture.structuredAssessmentId)!.evidenceHashShort).toMatch(/^[0-9a-f]{12}$/);
+    expect(byId.get(fixture.legacyAssessmentId)!.evidenceHashShort).toBeNull();
+    // set→revert 审计样例：两条事件，升序，状态 none→pass→none，终态 none。
+    const audit = byId.get(fixture.overrideAuditAssessmentId)!;
+    expect(audit.overrideState).toBe('none');
+    expect(audit.overrideAudit.map((a) => a.actionType)).toEqual(['rule_override_set', 'rule_override_reverted']);
+    expect(audit.overrideAudit[0]!.resultingOverrideState).toBe('pass');
+    expect(audit.overrideAudit[1]!.previousOverrideState).toBe('pass');
+    expect(audit.overrideAudit[1]!.resultingOverrideState).toBe('none');
+    expect(audit.overrideAudit[0]!.reason).toBeTruthy();
+    expect(audit.overrideAudit[1]!.occurredAt).toBeGreaterThanOrEqual(audit.overrideAudit[0]!.occurredAt);
   });
 
   it('set override then revert; original assessment unchanged and RadarActions appended', async () => {

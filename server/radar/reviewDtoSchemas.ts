@@ -17,6 +17,11 @@ export const REVIEW_JD_EXCERPT_MAX = 280;
 export const REVIEW_REASON_MAX = 500;
 export const REVIEW_NOTE_MAX = 1000;
 export const REVIEW_RELATION_LIST_MAX = 50;
+/** 单条脱敏信号字段/值的最大长度与每关系信号条数上限（严格边界，绝不透传任意 JSON）。 */
+export const REVIEW_SIGNAL_VALUE_MAX = 120;
+export const REVIEW_SIGNAL_EXPLANATION_MAX = 200;
+export const REVIEW_SIGNAL_MAX_COUNT = 20;
+export const REVIEW_AUDIT_TIMELINE_MAX = 100;
 
 /* ---------- 请求 DTO ---------- */
 
@@ -127,15 +132,32 @@ export const CandidateDecisionDetailSchema = z.strictObject({
 });
 export type CandidateDecisionDetail = z.infer<typeof CandidateDecisionDetailSchema>;
 
-/** 关系 signals 白名单脱敏视图：只保留少数保守布尔/短字符串信号。 */
-export const RedactedSignalsSchema = z.strictObject({
-  companyNameSimilar: z.boolean().optional(),
-  roleTitleSimilar: z.boolean().optional(),
-  sameSourceDomain: z.boolean().optional(),
-  sameNormalizedUrlHost: z.boolean().optional(),
-  reason: z.string().max(200).optional(),
+/**
+ * 单条脱敏疑似重复信号：从 signals_json 安全解析、严格收窄。
+ * 绝不透传完整 JD / Cookie / Token / securityId / 任意 JSON；字段与值均限长。
+ */
+export const DuplicateSignalSchema = z.strictObject({
+  signalType: z.string().max(REVIEW_SIGNAL_VALUE_MAX),
+  field: z.string().max(REVIEW_SIGNAL_VALUE_MAX),
+  candidateAValue: z.union([z.string().max(REVIEW_SIGNAL_VALUE_MAX), z.number(), z.boolean(), z.null()]),
+  candidateBValue: z.union([z.string().max(REVIEW_SIGNAL_VALUE_MAX), z.number(), z.boolean(), z.null()]),
+  strength: z.number().min(0).max(1).nullable(),
+  explanation: z.string().max(REVIEW_SIGNAL_EXPLANATION_MAX),
 });
-export type RedactedSignals = z.infer<typeof RedactedSignalsSchema>;
+export type DuplicateSignal = z.infer<typeof DuplicateSignalSchema>;
+
+/** signals 解析态：present（≥1 条）/ empty（signals_json 无可展示信号）/ corrupt（存在但非法）。 */
+export const SIGNALS_STATES = ['present', 'empty', 'corrupt'] as const;
+export const SignalsStateSchema = z.enum(SIGNALS_STATES);
+export type SignalsState = z.infer<typeof SignalsStateSchema>;
+
+/** 关系 signals 视图：结构化信号数组（≤20 条）+ 解析态 + 可选损坏原因。 */
+export const RelationSignalsSchema = z.strictObject({
+  state: SignalsStateSchema,
+  signals: z.array(DuplicateSignalSchema).max(REVIEW_SIGNAL_MAX_COUNT),
+  corruptReason: z.string().max(REVIEW_SIGNAL_EXPLANATION_MAX).nullable(),
+});
+export type RelationSignals = z.infer<typeof RelationSignalsSchema>;
 
 export const RelationListItemSchema = z.strictObject({
   relationId: z.string(),
@@ -143,7 +165,7 @@ export const RelationListItemSchema = z.strictObject({
   candidateIdHigh: z.string(),
   status: z.enum(RADAR_CANDIDATE_RELATION_STATUSES),
   reasonCode: z.string().nullable(),
-  signals: RedactedSignalsSchema,
+  signals: RelationSignalsSchema,
   firstDetectedAt: z.number(),
   lastDetectedAt: z.number(),
   lowSummary: CandidateSummarySchema,
@@ -151,6 +173,43 @@ export const RelationListItemSchema = z.strictObject({
   hasPriorDecision: z.boolean(),
 });
 export type RelationListItem = z.infer<typeof RelationListItemSchema>;
+
+/** 关系裁决审计时间线条目：从既有 RadarAction 只读聚合，绝不改写旧事件。 */
+export const RELATION_AUDIT_ACTION_TYPES = [
+  'duplicate_confirmed',
+  'duplicate_rejected',
+  'duplicate_decision_reverted',
+  'duplicate_recheck_requested',
+] as const;
+export const RelationAuditEntrySchema = z.strictObject({
+  actionId: z.string(),
+  actionType: z.enum(RELATION_AUDIT_ACTION_TYPES),
+  reason: z.string().nullable(),
+  evidenceReason: z.string().nullable(),
+  previousStatus: z.enum(RADAR_CANDIDATE_RELATION_STATUSES).nullable(),
+  resultingStatus: z.enum(RADAR_CANDIDATE_RELATION_STATUSES),
+  occurredAt: z.number(),
+  reverted: z.boolean(),
+});
+export type RelationAuditEntry = z.infer<typeof RelationAuditEntrySchema>;
+
+/** 关系详情：当前状态 + 原因码 + 用户裁决原因 + 时间 + signals + 两侧候选 + 审计时间线。 */
+export const RelationDetailSchema = z.strictObject({
+  relationId: z.string(),
+  candidateIdLow: z.string(),
+  candidateIdHigh: z.string(),
+  status: z.enum(RADAR_CANDIDATE_RELATION_STATUSES),
+  reasonCode: z.string().nullable(),
+  decisionReason: z.string().nullable(),
+  signals: RelationSignalsSchema,
+  firstDetectedAt: z.number(),
+  lastDetectedAt: z.number(),
+  decidedAt: z.number().nullable(),
+  lowSummary: CandidateSummarySchema,
+  highSummary: CandidateSummarySchema,
+  auditTimeline: z.array(RelationAuditEntrySchema).max(REVIEW_AUDIT_TIMELINE_MAX),
+});
+export type RelationDetail = z.infer<typeof RelationDetailSchema>;
 
 /** 决策审阅 feed 条目：覆盖有候选的 material/regression/ambiguous 与无候选的 identity_conflict。 */
 export const DecisionFeedItemSchema = z.strictObject({
@@ -167,12 +226,29 @@ export const DecisionFeedItemSchema = z.strictObject({
 });
 export type DecisionFeedItem = z.infer<typeof DecisionFeedItemSchema>;
 
+/** 规则覆盖审计条目：append-only，时间升序；不修改原 RuleAssessment。 */
+export const OverrideAuditEntrySchema = z.strictObject({
+  actionId: z.string(),
+  actionType: z.enum(['rule_override_set', 'rule_override_reverted']),
+  reason: z.string().nullable(),
+  overriddenValue: z.enum(['pass', 'block']).nullable(),
+  previousOverrideState: z.enum(['none', 'pass', 'block']),
+  resultingOverrideState: z.enum(['none', 'pass', 'block']),
+  occurredAt: z.number(),
+  reverted: z.boolean(),
+});
+export type OverrideAuditEntry = z.infer<typeof OverrideAuditEntrySchema>;
+
 export const RuleEvidenceViewSchema = z.strictObject({
   assessmentId: z.string(),
   ruleKey: z.string(),
   evidenceState: z.enum(['structured', 'legacy_scalar', 'corrupt']),
   corruptReason: z.string().nullable(),
   overrideState: z.enum(['none', 'pass', 'block']),
+  // 原始规则评估只读标识（证明覆盖操作从不修改原评估）。
+  originalResult: z.string(),
+  evidenceHashShort: z.string().nullable(),
+  overrideAudit: z.array(OverrideAuditEntrySchema).max(REVIEW_AUDIT_TIMELINE_MAX),
   // structured 时填充，legacy/corrupt 为 null。
   ruleId: z.string().nullable(),
   ruleVersion: z.string().nullable(),

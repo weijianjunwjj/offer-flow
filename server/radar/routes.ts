@@ -142,6 +142,9 @@ export function registerRadarCaptureRoutes(
     scopedApp.get('/radar/review/relations', async (request) => (
       review.listRelations(parseReviewDto(RelationListQuerySchema, request.query ?? {}))
     ));
+    scopedApp.get('/radar/review/relations/:id', async (request) => (
+      review.getRelationDetail(parseIdParams(request.params))
+    ));
     scopedApp.get('/radar/review/decision-feed', async () => (
       review.listDecisionFeed()
     ));

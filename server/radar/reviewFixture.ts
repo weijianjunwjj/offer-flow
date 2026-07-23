@@ -30,6 +30,8 @@ export interface ReviewFixtureResult {
   corruptAssessmentId: string;
   coveredAssessmentId: string;
   uncoveredAssessmentId: string;
+  /** 展示完整 set→revert 覆盖审计时间线（终态 none）的评估，用于 MA-04 静态取证。 */
+  overrideAuditAssessmentId: string;
 }
 
 interface RecognizedFields {
@@ -44,6 +46,22 @@ function fields(over: Partial<NonNullable<Fields>> = {}): NonNullable<Fields> {
     company: 'A公司', role: '前端工程师', city: '苏州',
     salaryMinK: 15, salaryMaxK: 25, salaryPeriod: '月',
     experienceRequirement: '3-5年', educationRequirement: '本科', ...over,
+  };
+}
+
+/**
+ * 生成确定性结构化疑似信号（≥2 条）：写入 signals_json.signals 数组，供工作台 signals 视图展示。
+ * 仅含保守脱敏字段（字段名/双方短值/强度/说明），绝不含 JD 全文 / Cookie / Token。
+ */
+function duplicateSignals(companyA: string, companyB: string): { reasonCode: string; signals: Array<Record<string, unknown>> } {
+  return {
+    reasonCode: 'same_company_role',
+    signals: [
+      { signalType: 'company_name_similar', field: 'company', candidateAValue: companyA, candidateBValue: companyB, strength: 0.86, explanation: '公司名高度相似（编辑距离接近）' },
+      { signalType: 'role_title_equal', field: 'role', candidateAValue: '前端工程师', candidateBValue: '前端工程师', strength: 1, explanation: '岗位标题完全一致' },
+      { signalType: 'same_city', field: 'city', candidateAValue: '苏州', candidateBValue: '苏州', strength: 1, explanation: '工作城市相同' },
+      { signalType: 'same_salary_range', field: 'salary', candidateAValue: '15-25K/月', candidateBValue: '15-25K/月', strength: 1, explanation: '薪资区间相同' },
+    ],
   };
 }
 
@@ -66,21 +84,27 @@ export function seedReviewFixture(db: SqliteDatabase, deps: ReviewFixtureDeps): 
     return capture.commitSession(s.session.id, { confirmedIndexes: [0], corrections: [] }).outcomes[0]!;
   };
 
-  // (1) 独立候选 A/B → 登记疑似重复。
+  // (1) 独立候选 A/B → 登记疑似重复（结构化多信号：公司名近似 / 岗位相同 / 同城 / 同薪资区间）。
   const a = commitBoss('dup-a', 'https://www.zhipin.com/job_detail/dup-a.html', fields({ company: '同城科技' }));
   const b = commitBoss('dup-b', 'https://www.zhipin.com/job_detail/dup-b.html', fields({ company: '同城科技(分部)' }));
-  const suspected = adjudication.registerSuspectedDuplicate(a.candidateId!, b.candidateId!, { companyNameSimilar: true, roleTitleSimilar: true, reason: '公司名高度相似' }, 'same_company_role');
+  const suspected = adjudication.registerSuspectedDuplicate(
+    a.candidateId!, b.candidateId!, duplicateSignals('同城科技', '同城科技(分部)'), 'same_company_role',
+  );
 
-  // (2) confirmed_distinct 一组。
+  // (2) confirmed_distinct 一组（保留 signals 供已裁决关系重开时展示）。
   const c = commitBoss('dist-c', 'https://www.zhipin.com/job_detail/dist-c.html', fields({ company: '蓝鲸网络' }));
   const d = commitBoss('dist-d', 'https://www.zhipin.com/job_detail/dist-d.html', fields({ company: '蓝鲸传媒' }));
-  const distinctRel = adjudication.registerSuspectedDuplicate(c.candidateId!, d.candidateId!, { companyNameSimilar: true }, 'same_company_role');
-  adjudication.confirmDistinct(distinctRel.id, '两家为不同法人主体');
+  const distinctRel = adjudication.registerSuspectedDuplicate(
+    c.candidateId!, d.candidateId!, duplicateSignals('蓝鲸网络', '蓝鲸传媒'), 'same_company_role',
+  );
+  adjudication.confirmDistinct(distinctRel.id, '两家为不同法人主体，虽同名但注册地与招聘主体不同');
 
-  // (3) needs_recheck 一组（先 confirmed_distinct 再新证据 recheck）。
+  // (3) needs_recheck 一组（先 confirmed_distinct 再新证据 recheck，形成多段审计时间线）。
   const e = commitBoss('rc-e', 'https://www.zhipin.com/job_detail/rc-e.html', fields({ company: '橙子云' }));
   const f = commitBoss('rc-f', 'https://www.zhipin.com/job_detail/rc-f.html', fields({ company: '橙子云科技' }));
-  const recheckRel = adjudication.registerSuspectedDuplicate(e.candidateId!, f.candidateId!, { companyNameSimilar: true }, 'same_company_role');
+  const recheckRel = adjudication.registerSuspectedDuplicate(
+    e.candidateId!, f.candidateId!, duplicateSignals('橙子云', '橙子云科技'), 'same_company_role',
+  );
   adjudication.confirmDistinct(recheckRel.id, '暂判不同');
   adjudication.requestRecheck(recheckRel.id, 'new_material_version', '出现新的实质版本，请复核');
 
@@ -131,7 +155,7 @@ function seedEvidence(
   db: SqliteDatabase,
   deps: ReviewFixtureDeps,
   versionId: string,
-): Pick<ReviewFixtureResult, 'evidenceVersionId' | 'structuredAssessmentId' | 'legacyAssessmentId' | 'corruptAssessmentId' | 'coveredAssessmentId' | 'uncoveredAssessmentId'> {
+): Pick<ReviewFixtureResult, 'evidenceVersionId' | 'structuredAssessmentId' | 'legacyAssessmentId' | 'corruptAssessmentId' | 'coveredAssessmentId' | 'uncoveredAssessmentId' | 'overrideAuditAssessmentId'> {
   const ruleEvidence = new RadarRuleEvidenceService(db, deps);
   const assessments = new RadarRuleAssessmentRepository(db);
   const candidateId = (db.prepare('SELECT candidate_id AS c FROM radar_candidate_versions WHERE id = ?').get(versionId) as { c: string }).c;
@@ -182,6 +206,18 @@ function seedEvidence(
     evidence: evidenceFor(candidateId, versionId, 'education_floor', { matchedFieldPath: 'educationRequirement', outcome: 'matched', blocking: false, severity: 'warn' }),
   });
 
+  // 完整 set→revert 覆盖审计样例（structured，终态回到 none；两次原因与时间齐全）。
+  const auditId = deps.createId();
+  ruleEvidence.recordAssessment({
+    id: auditId, candidateId, candidateVersionId: versionId, ruleVersion: 'rules-v1',
+    ruleKey: 'salary_ceiling', category: 'risk', severity: 'warn', result: 'hit',
+    matchedText: '35K', sourcePath: 'salaryMaxK', explanation: '薪资上限规则（set 后又撤销）',
+    evidence: evidenceFor(candidateId, versionId, 'salary_ceiling', { matchedFieldPath: 'salaryMaxK', outcome: 'matched', blocking: false, severity: 'warn' }),
+  });
+  const auditAssessment = assessments.listByCandidateVersion(versionId).find((x) => x.id === auditId)!;
+  const setAction = ruleEvidence.setRuleOverride({ assessment: auditAssessment, decision: 'pass', reason: '经复核该薪资上限可接受', actor: 'reviewer', sourceSnapshotId: null });
+  ruleEvidence.revertRuleOverride({ overrideActionId: setAction.id, reason: '策略调整，恢复规则默认判定', actor: 'reviewer' });
+
   return {
     evidenceVersionId: versionId,
     structuredAssessmentId: structuredId,
@@ -189,5 +225,6 @@ function seedEvidence(
     corruptAssessmentId: corruptId,
     coveredAssessmentId: coveredId,
     uncoveredAssessmentId: uncoveredId,
+    overrideAuditAssessmentId: auditId,
   };
 }

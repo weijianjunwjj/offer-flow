@@ -29,20 +29,31 @@ import { RadarRuleEvidenceService } from './ruleEvidenceService';
 import type { CommitOutcomeItem } from './service';
 import { radarRelationNotFound, RadarCaptureError } from './errors';
 import {
+  REVIEW_SIGNAL_EXPLANATION_MAX,
+  REVIEW_SIGNAL_MAX_COUNT,
+  REVIEW_SIGNAL_VALUE_MAX,
   REVIEW_JD_EXCERPT_MAX,
+  DuplicateSignalSchema,
+  RELATION_AUDIT_ACTION_TYPES,
   type AdjudicationRequest,
   type CandidateDecisionDetail,
   type CandidateSummary,
   type ChangedFieldView,
   type DecisionFeedItem,
+  type DuplicateSignal,
+  type OverrideAuditEntry,
   type RecheckRequest,
-  type RedactedSignals,
+  type RelationAuditEntry,
+  type RelationDetail,
   type RelationListItem,
   type RelationListQuery,
+  type RelationSignals,
   type RuleEvidenceView,
   type RuleOverrideRevertRequest,
   type RuleOverrideSetRequest,
 } from './reviewDtoSchemas';
+import { createHash } from 'node:crypto';
+import type { RadarCandidateRelationStatus } from '../../src/domain/radar';
 
 /** 人工工作台默认只显示待处理关系。 */
 const DEFAULT_REVIEW_STATUSES = ['suspected_duplicate', 'needs_recheck'] as const;
@@ -196,15 +207,84 @@ export class RadarReviewService {
     return items;
   }
 
+  /**
+   * 关系详情（任意状态，含 confirmed_distinct/confirmed_same，供已裁决关系重新打开查看）：
+   * 当前状态 + 原因码 + 用户裁决原因 + 时间 + 结构化 signals + 两侧候选 + 只读审计时间线。
+   */
+  getRelationDetail(relationId: string): RelationDetail {
+    const rel = this.relations.getById(relationId);
+    if (rel === null) throw radarRelationNotFound();
+    const timeline = this.buildRelationAuditTimeline(rel);
+    const latestDecision = [...timeline].reverse().find((e) => e.actionType !== 'duplicate_recheck_requested') ?? null;
+    return {
+      relationId: rel.id,
+      candidateIdLow: rel.candidateIdLow,
+      candidateIdHigh: rel.candidateIdHigh,
+      status: rel.status,
+      reasonCode: rel.reasonCode,
+      decisionReason: latestDecision?.reason ?? null,
+      signals: this.parseSignals(rel.signals),
+      firstDetectedAt: rel.firstDetectedAt,
+      lastDetectedAt: rel.lastDetectedAt,
+      decidedAt: rel.resolvedAt,
+      lowSummary: this.candidateSummary(rel.candidateIdLow),
+      highSummary: this.candidateSummary(rel.candidateIdHigh),
+      auditTimeline: timeline,
+    };
+  }
+
+  /**
+   * 从既有 RadarAction 只读聚合该关系的裁决审计（duplicate_* 事件，时间升序）。
+   * 审计锚定在 candidateIdLow，故按该候选取动作、以 metadata.relationId 过滤本关系；
+   * 绝不改写/删除旧事件，resulting/previous 状态直接读取事件当时的 metadata。
+   */
+  private buildRelationAuditTimeline(rel: RadarCandidateRelation): RelationAuditEntry[] {
+    const auditTypes = new Set<string>(RELATION_AUDIT_ACTION_TYPES);
+    const resulting: Record<string, RadarCandidateRelationStatus> = {
+      duplicate_confirmed: 'confirmed_same',
+      duplicate_rejected: 'confirmed_distinct',
+      duplicate_decision_reverted: 'suspected_duplicate',
+      duplicate_recheck_requested: 'needs_recheck',
+    };
+    const entries: RelationAuditEntry[] = [];
+    for (const action of this.actions.listByCandidate(rel.candidateIdLow)) {
+      if (!auditTypes.has(action.actionType)) continue;
+      const meta = (action.metadata ?? {}) as Record<string, unknown>;
+      if (meta.relationId !== rel.id) continue;
+      const prev = typeof meta.previousStatus === 'string' ? meta.previousStatus : null;
+      entries.push({
+        actionId: action.id,
+        actionType: action.actionType as RelationAuditEntry['actionType'],
+        reason: action.reasonText,
+        evidenceReason: typeof meta.evidenceReason === 'string' ? meta.evidenceReason : null,
+        previousStatus: this.asRelationStatus(prev),
+        resultingStatus: resulting[action.actionType] ?? rel.status,
+        occurredAt: action.occurredAt,
+        reverted: action.revertedByActionId !== null,
+      });
+    }
+    // listByCandidate 为 occurredAt DESC，这里翻转为升序（旧→新）便于阅读全过程。
+    return entries.reverse().slice(0, 100);
+  }
+
+  private asRelationStatus(v: string | null): RadarCandidateRelationStatus | null {
+    const all: readonly string[] = ['suspected_duplicate', 'confirmed_same', 'confirmed_distinct', 'needs_recheck', 'superseded'];
+    return v !== null && all.includes(v) ? (v as RadarCandidateRelationStatus) : null;
+  }
+
   /** 某候选版本的规则证据视图（structured / legacy_scalar / corrupt + 覆盖状态）。 */
   listRuleEvidence(candidateVersionId: string): RuleEvidenceView[] {
     return this.ruleEvidence.listEvidenceByVersion(candidateVersionId).map((view) => {
       const overrideState = this.currentOverrideState(view.assessment.id, view.assessment.candidateId);
+      // 只读附加：原始评估标识 + evidence_json 短哈希 + 覆盖审计时间线（证明原评估从不被修改）。
+      const originalResult = view.assessment.result;
+      const evidenceHashShort = this.evidenceHashShort(view.assessment.evidenceJson);
+      const overrideAudit = this.buildOverrideAudit(view.assessment.id, view.assessment.candidateId);
       if (view.evidenceState === 'structured') {
         const e = view.evidence;
         return {
           assessmentId: view.assessment.id, ruleKey: view.assessment.ruleKey, evidenceState: 'structured' as const,
-          corruptReason: null, overrideState,
+          corruptReason: null, overrideState, originalResult, evidenceHashShort, overrideAudit,
           ruleId: e.ruleId, ruleVersion: e.ruleVersion, outcome: e.outcome,
           matchedFieldPath: e.matchedFieldPath, rawValue: coerceScalar(e.rawValue), normalizedValue: coerceScalar(e.normalizedValue),
           excerpt: e.evidenceExcerpt, explanation: e.explanation, confidence: e.confidence, blocking: e.blocking,
@@ -214,12 +294,53 @@ export class RadarReviewService {
       const corruptReason = view.evidenceState === 'corrupt' ? view.corruptReason : null;
       return {
         assessmentId: view.assessment.id, ruleKey: view.assessment.ruleKey, evidenceState: view.evidenceState,
-        corruptReason, overrideState,
+        corruptReason, overrideState, originalResult, evidenceHashShort, overrideAudit,
         ruleId: null, ruleVersion: null, outcome: null, matchedFieldPath: null,
         rawValue: null, normalizedValue: null, excerpt: null, explanation: null, confidence: null, blocking: null,
         matchedText: view.assessment.matchedText,
       };
     });
+  }
+
+  /** evidence_json 的 SHA-256 前 12 位（稳定短摘要，证明证据未被覆盖操作改动）；NULL 证据返回 null。 */
+  private evidenceHashShort(evidenceJson: string | null): string | null {
+    if (evidenceJson === null) return null;
+    return createHash('sha256').update(evidenceJson, 'utf8').digest('hex').slice(0, 12);
+  }
+
+  /**
+   * 某评估的规则覆盖审计（rule_override_set / reverted，时间升序，append-only）。
+   * previous/resulting 覆盖态由升序遍历推导：set→overriddenValue，reverted→none。
+   */
+  private buildOverrideAudit(assessmentId: string, candidateId: string): OverrideAuditEntry[] {
+    // listByCandidate 为 DESC；翻转升序后遍历以推导状态转移。
+    const actions = [...this.actions.listByCandidate(candidateId)].reverse();
+    const setIds = new Set<string>();
+    const entries: OverrideAuditEntry[] = [];
+    let state: 'none' | 'pass' | 'block' = 'none';
+    for (const action of actions) {
+      const meta = (action.metadata ?? {}) as Record<string, unknown>;
+      if (action.actionType === 'rule_override_set' && meta.ruleAssessmentId === assessmentId) {
+        setIds.add(action.id);
+        const value = meta.overriddenValue === 'pass' || meta.overriddenValue === 'block' ? meta.overriddenValue : null;
+        const previous = state;
+        state = value ?? state;
+        entries.push({
+          actionId: action.id, actionType: 'rule_override_set', reason: action.reasonText,
+          overriddenValue: value, previousOverrideState: previous, resultingOverrideState: state,
+          occurredAt: action.occurredAt, reverted: action.revertedByActionId !== null,
+        });
+      } else if (action.actionType === 'rule_override_reverted' && typeof meta.revertsActionId === 'string' && setIds.has(meta.revertsActionId)) {
+        const previous = state;
+        state = 'none';
+        entries.push({
+          actionId: action.id, actionType: 'rule_override_reverted', reason: action.reasonText,
+          overriddenValue: null, previousOverrideState: previous, resultingOverrideState: state,
+          occurredAt: action.occurredAt, reverted: action.revertedByActionId !== null,
+        });
+      }
+    }
+    return entries.slice(0, 100);
   }
 
   /* ============ 写（乐观并发校验后委托既有 service） ============ */
@@ -285,7 +406,7 @@ export class RadarReviewService {
       candidateIdHigh: rel.candidateIdHigh,
       status: rel.status,
       reasonCode: rel.reasonCode,
-      signals: this.redactSignals(rel.signals),
+      signals: this.parseSignals(rel.signals),
       firstDetectedAt: rel.firstDetectedAt,
       lastDetectedAt: rel.lastDetectedAt,
       lowSummary: this.candidateSummary(rel.candidateIdLow),
@@ -294,17 +415,77 @@ export class RadarReviewService {
     };
   }
 
-  /** signals 白名单脱敏：只保留少数保守布尔/短字符串，丢弃其它任意字段。 */
-  private redactSignals(raw: unknown): RedactedSignals {
-    const out: RedactedSignals = {};
-    if (raw === null || typeof raw !== 'object') return out;
-    const s = raw as Record<string, unknown>;
-    if (typeof s.companyNameSimilar === 'boolean') out.companyNameSimilar = s.companyNameSimilar;
-    if (typeof s.roleTitleSimilar === 'boolean') out.roleTitleSimilar = s.roleTitleSimilar;
-    if (typeof s.sameSourceDomain === 'boolean') out.sameSourceDomain = s.sameSourceDomain;
-    if (typeof s.sameNormalizedUrlHost === 'boolean') out.sameNormalizedUrlHost = s.sameNormalizedUrlHost;
-    if (typeof s.reason === 'string') out.reason = s.reason.slice(0, 200);
+  /**
+   * 从 signals_json 安全解析结构化疑似信号：
+   * - 读取 `signals` 数组（历史布尔对象形态自动归一为结构化条目），逐条严格 Zod 校验；
+   * - 值/字段限长、strength 收窄到 [0,1]，最多 20 条；非法条目丢弃、不静默透传任意 JSON；
+   * - signals_json 存在但完全无法解析出任何信号 → corrupt（明确标记，不当作 empty）。
+   */
+  private parseSignals(raw: unknown): RelationSignals {
+    if (raw === null || raw === undefined) return { state: 'empty', signals: [], corruptReason: null };
+    if (typeof raw !== 'object') {
+      return { state: 'corrupt', signals: [], corruptReason: 'signals_json 不是对象' };
+    }
+    const container = raw as Record<string, unknown>;
+    const rawList = Array.isArray(container.signals)
+      ? container.signals
+      : this.legacyBooleanSignals(container);
+    if (rawList.length === 0) {
+      // 无 signals 数组、也无可归一的历史布尔字段：视为无信号（empty），非损坏。
+      return { state: 'empty', signals: [], corruptReason: null };
+    }
+    const signals: DuplicateSignal[] = [];
+    let rejected = 0;
+    for (const entry of rawList.slice(0, REVIEW_SIGNAL_MAX_COUNT)) {
+      const narrowed = this.narrowSignal(entry);
+      const parsed = DuplicateSignalSchema.safeParse(narrowed);
+      if (parsed.success) signals.push(parsed.data);
+      else rejected += 1;
+    }
+    if (signals.length === 0) {
+      return { state: 'corrupt', signals: [], corruptReason: 'signals_json 存在但无合法信号条目' };
+    }
+    const corruptReason = rejected > 0 ? `已丢弃 ${rejected} 条非法信号条目` : null;
+    return { state: 'present', signals, corruptReason };
+  }
+
+  /** 历史布尔对象（companyNameSimilar 等）→ 结构化信号条目，保证旧数据也可展示。 */
+  private legacyBooleanSignals(s: Record<string, unknown>): unknown[] {
+    const out: unknown[] = [];
+    const push = (type: string, field: string, explanation: string) => {
+      out.push({ signalType: type, field, candidateAValue: true, candidateBValue: true, strength: null, explanation });
+    };
+    if (s.companyNameSimilar === true) push('company_name_similar', 'company', '公司名相似');
+    if (s.roleTitleSimilar === true) push('role_title_similar', 'role', '岗位名相似');
+    if (s.sameSourceDomain === true) push('same_source_domain', 'sourceDomain', '同一来源域名');
+    if (s.sameNormalizedUrlHost === true) push('same_normalized_url_host', 'sourceUrl', '规范化 URL 主机相同');
+    if (typeof s.reason === 'string' && out.length > 0) {
+      (out[0] as { explanation: string }).explanation = s.reason.slice(0, REVIEW_SIGNAL_EXPLANATION_MAX);
+    }
     return out;
+  }
+
+  /** 单条原始信号收窄到 DTO 允许的形状（字段/值限长、strength 数字化），交由 Zod 终校验。 */
+  private narrowSignal(entry: unknown): unknown {
+    if (entry === null || typeof entry !== 'object') return entry;
+    const e = entry as Record<string, unknown>;
+    const clampStr = (v: unknown): string => (typeof v === 'string' ? v.slice(0, REVIEW_SIGNAL_VALUE_MAX) : '');
+    const scalarOrNull = (v: unknown): string | number | boolean | null => {
+      if (v === null || typeof v === 'number' || typeof v === 'boolean') return v;
+      if (typeof v === 'string') return v.slice(0, REVIEW_SIGNAL_VALUE_MAX);
+      return null;
+    };
+    const strength = typeof e.strength === 'number'
+      ? Math.max(0, Math.min(1, e.strength))
+      : (typeof e.confidence === 'number' ? Math.max(0, Math.min(1, e.confidence)) : null);
+    return {
+      signalType: clampStr(e.signalType),
+      field: clampStr(e.field),
+      candidateAValue: scalarOrNull(e.candidateAValue),
+      candidateBValue: scalarOrNull(e.candidateBValue),
+      strength,
+      explanation: typeof e.explanation === 'string' ? e.explanation.slice(0, REVIEW_SIGNAL_EXPLANATION_MAX) : '',
+    };
   }
 
   private candidateSummary(candidateId: string): CandidateSummary {

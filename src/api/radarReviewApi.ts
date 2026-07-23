@@ -53,12 +53,21 @@ export interface CandidateDecisionDetail {
   sourceLinks: Array<{ sourceRecordId: string; linkReason: string; normalizedSourceUrl: string | null }>;
 }
 
-export interface RedactedSignals {
-  companyNameSimilar?: boolean;
-  roleTitleSimilar?: boolean;
-  sameSourceDomain?: boolean;
-  sameNormalizedUrlHost?: boolean;
-  reason?: string;
+export type SignalsState = 'present' | 'empty' | 'corrupt';
+
+export interface DuplicateSignal {
+  signalType: string;
+  field: string;
+  candidateAValue: string | number | boolean | null;
+  candidateBValue: string | number | boolean | null;
+  strength: number | null;
+  explanation: string;
+}
+
+export interface RelationSignals {
+  state: SignalsState;
+  signals: DuplicateSignal[];
+  corruptReason: string | null;
 }
 
 export interface RelationListItem {
@@ -67,12 +76,42 @@ export interface RelationListItem {
   candidateIdHigh: string;
   status: RelationStatus;
   reasonCode: string | null;
-  signals: RedactedSignals;
+  signals: RelationSignals;
   firstDetectedAt: number;
   lastDetectedAt: number;
   lowSummary: CandidateSummary;
   highSummary: CandidateSummary;
   hasPriorDecision: boolean;
+}
+
+export type RelationAuditActionType =
+  | 'duplicate_confirmed' | 'duplicate_rejected' | 'duplicate_decision_reverted' | 'duplicate_recheck_requested';
+
+export interface RelationAuditEntry {
+  actionId: string;
+  actionType: RelationAuditActionType;
+  reason: string | null;
+  evidenceReason: string | null;
+  previousStatus: RelationStatus | null;
+  resultingStatus: RelationStatus;
+  occurredAt: number;
+  reverted: boolean;
+}
+
+export interface RelationDetail {
+  relationId: string;
+  candidateIdLow: string;
+  candidateIdHigh: string;
+  status: RelationStatus;
+  reasonCode: string | null;
+  decisionReason: string | null;
+  signals: RelationSignals;
+  firstDetectedAt: number;
+  lastDetectedAt: number;
+  decidedAt: number | null;
+  lowSummary: CandidateSummary;
+  highSummary: CandidateSummary;
+  auditTimeline: RelationAuditEntry[];
 }
 
 export interface DecisionFeedItem {
@@ -88,12 +127,26 @@ export interface DecisionFeedItem {
   summary: CandidateSummary | null;
 }
 
+export interface OverrideAuditEntry {
+  actionId: string;
+  actionType: 'rule_override_set' | 'rule_override_reverted';
+  reason: string | null;
+  overriddenValue: 'pass' | 'block' | null;
+  previousOverrideState: OverrideState;
+  resultingOverrideState: OverrideState;
+  occurredAt: number;
+  reverted: boolean;
+}
+
 export interface RuleEvidenceView {
   assessmentId: string;
   ruleKey: string;
   evidenceState: EvidenceState;
   corruptReason: string | null;
   overrideState: OverrideState;
+  originalResult: string;
+  evidenceHashShort: string | null;
+  overrideAudit: OverrideAuditEntry[];
   ruleId: string | null;
   ruleVersion: string | null;
   outcome: string | null;
@@ -134,6 +187,9 @@ export const radarReviewApi = {
   listRelations(statuses?: RelationStatus[], options?: ReadOptions): Promise<RelationListItem[]> {
     const qs = statuses && statuses.length > 0 ? `?${statuses.map((s) => `statuses=${encodeURIComponent(s)}`).join('&')}` : '';
     return apiGet(`${base}/relations${qs}`, withHeaders(options));
+  },
+  getRelationDetail(relationId: string, options?: ReadOptions): Promise<RelationDetail> {
+    return apiGet(`${base}/relations/${encodeURIComponent(relationId)}`, withHeaders(options));
   },
   listDecisionFeed(options?: ReadOptions): Promise<DecisionFeedItem[]> {
     return apiGet(`${base}/decision-feed`, withHeaders(options));

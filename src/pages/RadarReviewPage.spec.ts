@@ -2,12 +2,13 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api/client';
 import type {
-  CandidateDecisionDetail, DecisionFeedItem, RelationListItem, RuleEvidenceView,
+  CandidateDecisionDetail, DecisionFeedItem, RelationDetail, RelationListItem, RelationSignals, RuleEvidenceView,
 } from '../api/radarReviewApi';
 import RadarReviewPage from './RadarReviewPage.vue';
 
 const mocks = vi.hoisted(() => ({
   listRelations: vi.fn(),
+  getRelationDetail: vi.fn(),
   listDecisionFeed: vi.fn(),
   getCandidateDetail: vi.fn(),
   listRuleEvidence: vi.fn(),
@@ -29,13 +30,33 @@ function summary(company: string) {
   };
 }
 
+function presentSignals(): RelationSignals {
+  return {
+    state: 'present',
+    signals: [
+      { signalType: 'company_name_similar', field: 'company', candidateAValue: '同城科技', candidateBValue: '同城科技(分部)', strength: 0.86, explanation: '公司名高度相似' },
+      { signalType: 'role_title_equal', field: 'role', candidateAValue: '前端工程师', candidateBValue: '前端工程师', strength: 1, explanation: '岗位标题一致' },
+    ],
+    corruptReason: null,
+  };
+}
+
 function relation(over: Partial<RelationListItem> = {}): RelationListItem {
   return {
     relationId: 'rel-1', candidateIdLow: 'cand-A', candidateIdHigh: 'cand-B',
     status: 'suspected_duplicate', reasonCode: 'same_company_role',
-    signals: { companyNameSimilar: true, reason: '公司名相似' },
+    signals: presentSignals(),
     firstDetectedAt: 1000, lastDetectedAt: 2000,
     lowSummary: summary('A公司'), highSummary: summary('B公司'), hasPriorDecision: false, ...over,
+  };
+}
+
+function relationDetail(over: Partial<RelationDetail> = {}): RelationDetail {
+  return {
+    relationId: 'rel-1', candidateIdLow: 'cand-A', candidateIdHigh: 'cand-B',
+    status: 'suspected_duplicate', reasonCode: 'same_company_role', decisionReason: null,
+    signals: presentSignals(), firstDetectedAt: 1000, lastDetectedAt: 2000, decidedAt: null,
+    lowSummary: summary('A公司'), highSummary: summary('B公司'), auditTimeline: [], ...over,
   };
 }
 
@@ -49,8 +70,9 @@ function detail(over: Partial<CandidateDecisionDetail> = {}): CandidateDecisionD
   };
 }
 
-function setupHappy(relOver: Partial<RelationListItem> = {}, feed: DecisionFeedItem[] = []): void {
+function setupHappy(relOver: Partial<RelationListItem> = {}, feed: DecisionFeedItem[] = [], detailOver: Partial<RelationDetail> = {}): void {
   mocks.listRelations.mockResolvedValue([relation(relOver)]);
+  mocks.getRelationDetail.mockResolvedValue(relationDetail({ status: relOver.status, ...detailOver }));
   mocks.listDecisionFeed.mockResolvedValue(feed);
   mocks.getCandidateDetail.mockResolvedValue(detail());
   mocks.listRuleEvidence.mockResolvedValue([]);
@@ -125,12 +147,84 @@ describe('RadarReviewPage 候选对比 + 变化 + 证据', () => {
     expect(btn.attributes('disabled')).toBeDefined();
   });
 
+  it('选中关系展示结构化 signals 列表（含字段/双方值/说明）', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    expect(mocks.getRelationDetail).toHaveBeenCalledWith('rel-1');
+    expect(wrapper.find('[data-testid="signals-list"]').exists()).toBe(true);
+    const sig = wrapper.find('[data-testid="signal-company_name_similar"]');
+    expect(sig.exists()).toBe(true);
+    expect(sig.text()).toContain('company');
+    expect(sig.text()).toContain('公司名高度相似');
+  });
+
+  it('signals 损坏态渲染 corrupt 提示而非静默', async () => {
+    setupHappy({}, [], { signals: { state: 'corrupt', signals: [], corruptReason: 'signals_json 未通过校验' } });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    const alert = wrapper.find('[data-testid="signals-corrupt"]');
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toContain('signals_json 未通过校验');
+  });
+
+  it('已确认不同的关系仍可查看裁决原因与审计时间线（可重开历史）', async () => {
+    setupHappy({ status: 'confirmed_distinct' }, [], {
+      status: 'confirmed_distinct', decidedAt: 9000, decisionReason: '两家为不同法人主体',
+      auditTimeline: [{
+        actionId: 'act-1', actionType: 'duplicate_rejected', reason: '两家为不同法人主体',
+        evidenceReason: null, previousStatus: 'suspected_duplicate', resultingStatus: 'confirmed_distinct',
+        occurredAt: 9000, reverted: false,
+      }],
+    });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="relation-decision-reason"]').text()).toContain('两家为不同法人主体');
+    const timeline = wrapper.find('[data-testid="relation-audit-timeline"]');
+    expect(timeline.exists()).toBe(true);
+    expect(wrapper.find('[data-testid="relation-audit-duplicate_rejected"]').exists()).toBe(true);
+  });
+
+  it('状态筛选切到已确认不同时按对应状态重新查询', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="filter-confirmed_distinct"]').trigger('click');
+    await flushPromises();
+    expect(mocks.listRelations).toHaveBeenLastCalledWith(['confirmed_distinct']);
+  });
+
+  it('规则证据展示原评估只读标识 + 不可变说明 + override 审计（append-only）', async () => {
+    setupHappy();
+    mocks.listRuleEvidence.mockResolvedValue([{
+      assessmentId: 'a9', ruleKey: 'salary_ceiling', evidenceState: 'structured', corruptReason: null,
+      overrideState: 'none', originalResult: 'hit', evidenceHashShort: 'deadbeef0011',
+      overrideAudit: [
+        { actionId: 's1', actionType: 'rule_override_set', reason: '可接受', overriddenValue: 'pass', previousOverrideState: 'none', resultingOverrideState: 'pass', occurredAt: 100, reverted: true },
+        { actionId: 'r1', actionType: 'rule_override_reverted', reason: '恢复默认', overriddenValue: null, previousOverrideState: 'pass', resultingOverrideState: 'none', occurredAt: 200, reverted: false },
+      ],
+      ruleId: 'salary_ceiling', ruleVersion: 'v1', outcome: 'matched', matchedFieldPath: 'salaryMaxK',
+      rawValue: '35', normalizedValue: 35, excerpt: '摘要', explanation: '说明', confidence: 0.9, blocking: false, matchedText: '35K',
+    }] as RuleEvidenceView[]);
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="evidence-original-a9"]').text()).toContain('deadbeef0011');
+    expect(wrapper.find('[data-testid="evidence-immutable-a9"]').text()).toContain('原始规则评估未被覆盖操作修改');
+    const audit = wrapper.find('[data-testid="override-audit-a9"]');
+    expect(audit.exists()).toBe(true);
+    expect(audit.text()).toContain('设置覆盖');
+    expect(audit.text()).toContain('撤销覆盖');
+  });
+
   it('规则证据区分 structured / legacy_scalar / corrupt 三态', async () => {
     setupHappy();
     const evidence: RuleEvidenceView[] = [
-      { assessmentId: 'a1', ruleKey: 'salary_floor', evidenceState: 'structured', corruptReason: null, overrideState: 'none', ruleId: 'salary_floor', ruleVersion: 'v1', outcome: 'matched', matchedFieldPath: 'salaryMinK', rawValue: '20', normalizedValue: 20, excerpt: '摘要', explanation: '说明', confidence: 0.9, blocking: true, matchedText: '20K' },
-      { assessmentId: 'a2', ruleKey: 'city', evidenceState: 'legacy_scalar', corruptReason: null, overrideState: 'none', ruleId: null, ruleVersion: null, outcome: null, matchedFieldPath: null, rawValue: null, normalizedValue: null, excerpt: null, explanation: null, confidence: null, blocking: null, matchedText: '苏州' },
-      { assessmentId: 'a3', ruleKey: 'commute', evidenceState: 'corrupt', corruptReason: 'schema mismatch', overrideState: 'none', ruleId: null, ruleVersion: null, outcome: null, matchedFieldPath: null, rawValue: null, normalizedValue: null, excerpt: null, explanation: null, confidence: null, blocking: null, matchedText: null },
+      { assessmentId: 'a1', ruleKey: 'salary_floor', evidenceState: 'structured', corruptReason: null, overrideState: 'none', originalResult: 'hit', evidenceHashShort: 'abc123def456', overrideAudit: [], ruleId: 'salary_floor', ruleVersion: 'v1', outcome: 'matched', matchedFieldPath: 'salaryMinK', rawValue: '20', normalizedValue: 20, excerpt: '摘要', explanation: '说明', confidence: 0.9, blocking: true, matchedText: '20K' },
+      { assessmentId: 'a2', ruleKey: 'city', evidenceState: 'legacy_scalar', corruptReason: null, overrideState: 'none', originalResult: 'miss', evidenceHashShort: null, overrideAudit: [], ruleId: null, ruleVersion: null, outcome: null, matchedFieldPath: null, rawValue: null, normalizedValue: null, excerpt: null, explanation: null, confidence: null, blocking: null, matchedText: '苏州' },
+      { assessmentId: 'a3', ruleKey: 'commute', evidenceState: 'corrupt', corruptReason: 'schema mismatch', overrideState: 'none', originalResult: 'hit', evidenceHashShort: null, overrideAudit: [], ruleId: null, ruleVersion: null, outcome: null, matchedFieldPath: null, rawValue: null, normalizedValue: null, excerpt: null, explanation: null, confidence: null, blocking: null, matchedText: null },
     ];
     mocks.listRuleEvidence.mockResolvedValue(evidence);
     const wrapper = await mountPage();
