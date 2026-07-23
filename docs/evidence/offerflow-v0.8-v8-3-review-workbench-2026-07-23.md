@@ -4,7 +4,9 @@
 > 结果：PASS（沙箱/演练环境）
 > 生产 schema：保持 v7（未改动）
 > Radar 正式入口：DISABLED（未改动）
-> V8-3：IMPLEMENTED（仅 schema≥v8 的沙箱/演练库可用）
+> V8-3：IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING（代码实现完成、自动化回归通过；仅 schema≥v8 的沙箱/演练库可用）
+> schema v8：IMPLEMENTED IN CODE / NOT ACTIVATED IN PRODUCTION
+> RC-05 / RC-06：Partial（人工验收 MA-01～MA-04 未完成前不得升级）
 
 ## 1. 范围与边界
 
