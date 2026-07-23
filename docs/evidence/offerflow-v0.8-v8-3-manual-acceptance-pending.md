@@ -1,4 +1,4 @@
-# V8-3 人工评审工作台 · 人工验收证据（待用户复核）
+# V8-3 人工评审工作台 · 人工验收证据（待用户复核）· v2
 
 **状态：EVIDENCE CAPTURED / USER REVIEW PENDING**
 
@@ -12,96 +12,91 @@
 - schema v8 = IMPLEMENTED IN CODE / NOT ACTIVATED IN PRODUCTION
 - 生产 schema = v7；Radar 正式入口 = DISABLED
 
+## v2 修订说明（相对上一版证据）
+
+上一版证据基于旧 fixture，且记载“工作台 UI 无独立 signals 字段”。本轮功能提交后：
+
+- 工作台**已渲染**结构化「疑似重复信号」区（signalType / field / 双方值 / strength / explanation），
+  故 MA-01 截图与描述据实更新，旧“无 signals 字段”表述作废。
+- MA-02 改为从「已确认不同」筛选重开 `rvsb-22` 详情，展示用户裁决原因 + 裁决审计时间线
+  （文件名 `v8-3-ma-02-confirmed-distinct-detail.png`）。
+- MA-04 override 审计目标为专用评估 `rvsb-77`（salary_ceiling），set→revert 终态 none
+  （文件名 `v8-3-ma-04-rule-evidence-override-audit.png`）。
+- 所有数值取自本轮运行中的 v2 证据 sandbox 只读查询与生产库只读核验，未沿用旧值。
+
 ## 采集环境
 
-- 入口：受控评审沙箱 `#/radar/review`（flag 打开、schema v8 临时库，非生产）
-- 生产数据库仅进行只读核验，未执行任何写入
-- 关联标识：relation `rvsb-11`；candidate `rvsb-5` / `rvsb-10`；
-  material 候选版本 `rvsb-44`；override 评估 `rvsb-76`（education_floor）
+- 入口：受控评审沙箱 `#/radar/review`（flag 打开、schema v8 临时库，非生产，端口 17395/17396）
+- 全新独立临时 v8 库，重新 seed 同一确定性 fixture（ID 前缀 `rvsb-*`），与生产库完全隔离
+- 生产数据库仅只读核验，未执行任何写入
+- 时间来自确定性 fixture 时钟，仅用于可重复验收，不代表真实生产时间（UI 显示 1970 属预期）
 
-## 截图落盘情况（如实）
+## 截图落盘清单
 
-截图来自两处，须区分：
+| 文件 | 覆盖 | 说明 |
+|---|---|---|
+| `v8-3-ma-01-duplicate-comparison.png` | MA-01 | suspected_duplicate 并排对比 + 4 条结构化信号 + 确认相同/确认不同 |
+| `v8-3-ma-02-confirmed-distinct-detail.png` | MA-02 | confirmed_distinct 详情：用户原因 + 裁决审计时间线（重开自筛选） |
+| `v8-3-ma-03-change-and-conflict.png` | MA-03 | material_change 变化字段 + identity_conflict 内联冲突/阻断 |
+| `v8-3-ma-04-rule-evidence-override-audit.png` | MA-04 | 规则证据三态 + salary_ceiling override set→revert 审计 |
 
-- **当前验收 sandbox**（承载真实验收痕迹：rvsb-11=confirmed_distinct、三条 RadarAction）：MA-02 / MA-03 / MA-04 三张
-- **独立证据专用 sandbox**（全新临时 v8 库、重新 seed 同一确定性 fixture、与验收 sandbox 及生产库完全隔离、截图后停止并清理临时库）：MA-01 一张
+**保持 USER REVIEW PENDING 的瞬时态（不伪造重建）：** 提交成功 toast、二次确认弹窗等交互瞬时态
+未持久化为截图，其结果由数据库审计动作交叉佐证（见审计 JSON）。
 
-MA-01 原图在会话内曾生成但**未持久化**，且验收 sandbox 中该关系已 confirmed_distinct 移出默认列表、UI 无历史视图，无法在不改验收数据下重开，故按边界在独立证据 sandbox 重现补拍（未修改验收 sandbox、未连接生产库）。
-
-| 文件 | 覆盖 | 来源 | 说明 |
-|---|---|---|---|
-| `v8-3-ma-01-duplicate-comparison.png` | MA-01 | 证据 sandbox | suspected_duplicate 并排对比 + 全字段 + 确认相同/确认不同按钮 |
-| `v8-3-ma-02-list-after-confirm-distinct.png` | MA-02 终态 | 验收 sandbox | 待处理列表仅剩 needs_recheck（suspected 已移除，刷新后保持） |
-| `v8-3-ma-03-change-and-conflict.png` | MA-03 | 验收 sandbox | material_change 变化字段 + identity_conflict 内联冲突/阻断 |
-| `v8-3-ma-04-rule-evidence-override.png` | MA-04 | 验收 sandbox | 规则证据三态 + override 标签（education_floor 撤销后 none 终态） |
-
-**仍未持久化 / 保持 USER REVIEW PENDING 的中间态截图（瞬时态，不伪造重建）：**
-- MA-02「确认不同已完成」toast + 填原因二次确认弹窗
-- MA-04 override 设置/撤销的成功 toast 与 none→pass→none 过程弹窗
-
-以上瞬时态在交互会话中实际出现过，其结果以数据库审计动作交叉佐证（见审计 JSON）。
-
-> 关于 signals：当前工作台 UI 未渲染独立的 “signals” 字段（组件/fixture/API 均无该字段）；
-> 岗位识别信号通过 decisionType 标签（如 new_identity）与关系状态呈现，MA-01 截图已含这些标签。
-
-## MA-01 疑似重复对比
+## MA-01 疑似重复对比与结构化信号
 
 - suspected_duplicate 候选对：`rvsb-5`（同城科技）× `rvsb-10`（同城科技(分部)）
-- 两侧字段：公司 / 岗位（前端工程师）/ 城市（苏州）/ 薪资（15-25K/month）/ 学历（本科）/ 经验（3-5年）
-- decisionType 标签（new_identity）与 suspected_duplicate 状态可见
-- 「确认相同」「确认不同」按钮均可用（截图含底部动作区）
-- 截图：`v8-3-ma-01-duplicate-comparison.png`（独立证据 sandbox 补拍，非验收 sandbox）
-- signals 非工作台独立 UI 字段（见上方说明）
+- 两侧全字段：公司 / 岗位（前端工程师）/ 城市（苏州）/ 薪资（15-25K/month）/ 学历（本科）/ 经验（3-5年）
+- 结构化「疑似重复信号」4 条（signalType · field · A/B 值 · 强度 · 说明）：
+  - `company_name_similar` · company · 同城科技 ｜ 同城科技(分部) · 0.86 · 公司名高度相似
+  - `role_title_equal` · role · 前端工程师 ｜ 前端工程师 · 1 · 岗位标题完全一致
+  - `same_city` · city · 苏州 ｜ 苏州 · 1 · 工作城市相同
+  - `same_salary_range` · salary · 15-25K/月 ｜ 15-25K/月 · 1 · 薪资区间相同
+- 「确认相同」「确认不同」按钮均可用
 
-## MA-02 确认不同（confirmed_distinct）
+## MA-02 确认不同（confirmed_distinct）详情
 
-- 用户原因：`两家为不同法人主体，虽同名但注册地与招聘主体不同`
-- 关系终态：`confirmed_distinct`（relation `rvsb-11`）
-- RadarAction：`duplicate_rejected` @ `1784786712509`
-- 提交后移出默认待处理列表；刷新后仍保持（截图：`v8-3-ma-02-list-after-confirm-distinct.png`）
-- 成功 toast 与二次确认弹窗为瞬时态，未持久化 → PENDING
+- 关系 `rvsb-22`：`rvsb-15`（蓝鲸网络）× `rvsb-20`（蓝鲸传媒），终态 `confirmed_distinct`
+- 用户裁决原因：`两家为不同法人主体，虽同名但注册地与招聘主体不同`
+- 裁决审计时间线：`确认不同 → confirmed_distinct`（RadarAction `duplicate_rejected`）
+- 已移出默认待处理列表，经「已确认不同」筛选可重开并保持
 
 ## MA-03 变化与冲突
 
 - material_change（候选版本 `rvsb-44`）changedFields：
-  - `salaryMinK` 15 → 20（classification：changed_fact / value_changed）
-  - `salaryMaxK` 25 → 35（classification：changed_fact / value_changed）
+  - `salaryMinK` 15 → 20（changed_fact / value_changed）
+  - `salaryMaxK` 25 → 35（changed_fact / value_changed）
 - identity_conflict：冲突原因 `tier2_multiple_matches`；阻断 `identity_conflict: tier2_multiple_matches`
   （该 feed 项无候选、打开按钮禁用，属设计预期）
-- 截图：`v8-3-ma-03-change-and-conflict.png`
 
-## MA-04 规则证据与 override
+## MA-04 规则证据三态与 override 审计
 
-- RuleEvidence 三态：`structured`（salary_floor / education_floor）、`legacy_scalar`（city_whitelist）、
-  `corrupt`（commute_radius，损坏原因：evidence_json 未通过契约校验）
-- structured 字段可见：rawValue（原值 20）、normalizedValue（规范化 20）、confidence（置信度 0.92）、
-  excerpt（摘要）、explanation（说明）
-- override：`education_floor`（评估 `rvsb-76`）none → pass → none
-  - `rule_override_set` @ `1784786791559`
-  - `rule_override_reverted` @ `1784786843660`
-- 原 RuleAssessment 保持不变：result=`hit`，evidence_json SHA-256 = `2ec8b49b501eae39c87e2fe6bd1d6d931a7b212edf4158b6d81d0e60e2270cce`
-- 截图：`v8-3-ma-04-rule-evidence-override.png`（override 撤销后 none 终态；过程弹窗为瞬时态 → PENDING）
+- RuleEvidence 三态：`structured`（salary_floor `rvsb-71`，sha256 `357bcdec…`）、
+  `legacy_scalar`（city_whitelist `rvsb-72`，evidence_json NULL）、
+  `corrupt`（commute_radius `rvsb-73`，sha256 `55ac744f…`，损坏原因：evidence_json 未通过契约校验）
+- override 审计目标：`salary_ceiling`（评估 `rvsb-77`）none → pass → none
+  - `rule_override_set`：原因「经复核该薪资上限可接受」
+  - `rule_override_reverted`：原因「策略调整，恢复规则默认判定」
+- 原 RuleAssessment 保持不变：result=`hit`，evidence_json sha256 `e7f8489accdb…`
+  （明示“原始规则评估未被覆盖操作修改（覆盖仅追加审计事件）”）
 
 ## 数据不变量（只读核验）
 
-两套数据库须分开表述，切勿混淆：
-
 ### 人工验收 sandbox（schema v8，会话级临时库，非生产）
 
-- 验收前后 jobs = 0；applications = 0；feedback_events = 0
-- 人工评审操作没有创建正式 Job / Application / FeedbackEvent
-- Candidate 未被 confirmed_same 物理合并（candidates = 11 未减少）
-- 原 RuleAssessment 未被 UPDATE 或删除
+- jobs = 0；applications = 0；feedback_events = 0（评审未创建正式记录）
+- candidates = 11 未减少（confirmed_same 不物理合并）；candidate_versions = 12；rule_assessments = 6
+- 原 RuleAssessment 未被 UPDATE 或删除（E2E 全表行签名断言佐证）
 
 ### 真实生产数据库（`data/offerflow.sqlite3`，仅只读核验）
 
-- schema version = 7
+- schema version = 7（schema_migrations MAX 与 app_meta.schema_version 一致）
 - jobs = 15；applications = 9；feedback_events = 11
-- 原有数据行数未变化；未执行 migration；未发生写入
-- 仅进行只读核验，未执行任何写入
+- `radar_candidate_relations` 表不存在（v8 relations schema 未激活）
+- 未执行 migration；未发生写入；仅只读核验
 
 ## 待办
 
 用户复核上述截图与审计 JSON 后，方可决定是否推进 V8-3 / RC-05 / RC-06 状态。
-在此之前一律保持 Partial / PENDING。审计明细见
+在此之前一律保持 Partial / PENDING（`passed=null`）。审计明细见
 [offerflow-v0.8-v8-3-manual-acceptance-audit.json](offerflow-v0.8-v8-3-manual-acceptance-audit.json)。

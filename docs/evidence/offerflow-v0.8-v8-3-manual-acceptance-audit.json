@@ -1,100 +1,89 @@
 {
-  "captureContext": "controlled review sandbox (schema v8, non-production, session-scoped temp DB)",
+  "captureContext": "controlled review sandbox (schema v8, non-production, session-scoped temp DB, ports 17395/17396)",
   "databaseScope": "sandbox",
   "status": "EVIDENCE CAPTURED / USER REVIEW PENDING",
+  "evidenceRevision": "v2",
+  "fixtureNote": "确定性 fixture ID 前缀 rvsb-*；时间戳为可复现的固定基线（3.0xM ms → UI 显示 1970 属预期，非真实钟）",
   "MA01": {
     "relationId": "rvsb-11",
-    "candidateA": "rvsb-5",
-    "candidateB": "rvsb-10",
+    "candidateA": { "id": "rvsb-5", "company": "同城科技" },
+    "candidateB": { "id": "rvsb-10", "company": "同城科技(分部)" },
     "screenshot": "v8-3-ma-01-duplicate-comparison.png",
-    "screenshotSource": "dedicated evidence sandbox (fresh temp v8 DB, isolated, cleaned up after capture)",
-    "signalsNote": "workbench UI has no discrete 'signals' field; identity signals surface via decisionType tags + relation status",
-    "note": "suspected_duplicate 并排对比（同城科技 × 同城科技(分部)），含全字段与确认相同/确认不同按钮"
+    "screenshotSource": "v2 evidence sandbox (fresh temp v8 DB, isolated from production)",
+    "signals": [
+      { "signalType": "company_name_similar", "field": "company", "a": "同城科技", "b": "同城科技(分部)", "strength": 0.86 },
+      { "signalType": "role_title_equal", "field": "role", "a": "前端工程师", "b": "前端工程师", "strength": 1 },
+      { "signalType": "same_city", "field": "city", "a": "苏州", "b": "苏州", "strength": 1 },
+      { "signalType": "same_salary_range", "field": "salary", "a": "15-25K/月", "b": "15-25K/月", "strength": 1 }
+    ],
+    "signalsNote": "工作台已渲染结构化『疑似重复信号』区（signalType/field/双方值/strength/explanation），并含确认相同/确认不同按钮",
+    "note": "suspected_duplicate 并排对比，全字段可见"
   },
   "MA02": {
-    "relationId": "rvsb-11",
+    "relationId": "rvsb-22",
+    "candidateA": { "id": "rvsb-15", "company": "蓝鲸网络" },
+    "candidateB": { "id": "rvsb-20", "company": "蓝鲸传媒" },
     "finalStatus": "confirmed_distinct",
+    "decisionReason": "两家为不同法人主体，虽同名但注册地与招聘主体不同",
     "removedFromDefaultList": true,
-    "persistedAfterReload": true,
-    "action": "duplicate_rejected"
+    "reopenableViaFilter": "已确认不同",
+    "auditTimeline": [{ "label": "确认不同", "to": "confirmed_distinct", "action": "duplicate_rejected" }],
+    "screenshot": "v8-3-ma-02-confirmed-distinct-detail.png",
+    "screenshotSource": "v2 evidence sandbox（切『已确认不同』重开 rvsb-22 详情，展示原因 + 裁决审计时间线）"
   },
   "MA03": {
     "materialChange": {
       "candidateVersionId": "rvsb-44",
       "changedFields": [
-        {
-          "field": "salaryMinK",
-          "before": 15,
-          "after": 20
-        },
-        {
-          "field": "salaryMaxK",
-          "before": 25,
-          "after": 35
-        }
-      ],
-      "classification": "changed_fact"
+        { "field": "salaryMinK", "before": 15, "after": 20, "classification": "changed_fact / value_changed" },
+        { "field": "salaryMaxK", "before": 25, "after": 35, "classification": "changed_fact / value_changed" }
+      ]
     },
-    "identityConflict": {
-      "reason": "tier2_multiple_matches",
-      "blocking": "identity_conflict"
-    }
+    "identityConflict": { "reason": "tier2_multiple_matches", "blocking": "identity_conflict", "openButtonDisabled": true },
+    "screenshot": "v8-3-ma-03-change-and-conflict.png"
   },
   "MA04": {
     "evidenceStates": [
-      "structured",
-      "legacy_scalar",
-      "corrupt"
+      { "ruleKey": "salary_floor", "assessmentId": "rvsb-71", "state": "structured", "result": "hit", "evidenceSha256": "357bcdec2a042cbe77f3b24e341af8a4a32410db6587118eb504150daf150442" },
+      { "ruleKey": "city_whitelist", "assessmentId": "rvsb-72", "state": "legacy_scalar", "result": "hit", "evidenceSha256": null },
+      { "ruleKey": "commute_radius", "assessmentId": "rvsb-73", "state": "corrupt", "result": "hit", "evidenceSha256": "55ac744fcf9cd8bb4b7f744e822e09032469663bec831a1487ac20bbf61039b2", "corruptReason": "evidence_json 未通过契约校验：Invalid input: expected string, received undefined" }
     ],
-    "overrideTarget": {
-      "assessmentId": "rvsb-76",
-      "rule": "education_floor",
-      "overridePath": [
-        "none",
-        "pass",
-        "none"
+    "overrideAuditTarget": {
+      "assessmentId": "rvsb-77",
+      "ruleKey": "salary_ceiling",
+      "overridePath": ["none", "pass", "none"],
+      "auditActions": [
+        { "actionType": "rule_override_set", "reason": "经复核该薪资上限可接受", "occurredAt": 3104000 },
+        { "actionType": "rule_override_reverted", "reason": "策略调整，恢复规则默认判定", "occurredAt": 3105000 }
       ]
     },
     "originalAssessmentUnchanged": {
-      "assessmentId": "rvsb-76",
-      "result": "hit",
-      "evidenceSha256": "2ec8b49b501eae39c87e2fe6bd1d6d931a7b212edf4158b6d81d0e60e2270cce"
-    }
+      "assessmentId": "rvsb-77", "result": "hit",
+      "evidenceSha256": "e7f8489accdbab302bcca8876d9073b2b396ffe527b5061574ab0d4af1c5b521",
+      "note": "覆盖仅追加 radar_actions，原始 RuleAssessment 从未 UPDATE/删除（E2E 全表行签名断言佐证）"
+    },
+    "screenshot": "v8-3-ma-04-rule-evidence-override-audit.png"
   },
   "auditActionsThisRound": [
-    {
-      "actionType": "duplicate_rejected",
-      "timestamp": 1784786712509
-    },
-    {
-      "actionType": "rule_override_set",
-      "timestamp": 1784786791559
-    },
-    {
-      "actionType": "rule_override_reverted",
-      "timestamp": 1784786843660
-    }
+    { "actionType": "duplicate_rejected", "relationId": "rvsb-22", "reason": "两家为不同法人主体，虽同名但注册地与招聘主体不同" },
+    { "actionType": "rule_override_set", "assessmentId": "rvsb-77", "reason": "经复核该薪资上限可接受" },
+    { "actionType": "rule_override_reverted", "assessmentId": "rvsb-77", "reason": "策略调整，恢复规则默认判定" }
   ],
   "invariants": {
-    "databaseScope": "sandbox",
     "sandbox": {
-      "schemaVersion": 8,
-      "jobs": 0,
-      "applications": 0,
-      "feedbackEvents": 0,
-      "candidates": 11,
+      "databaseScope": "sandbox", "schemaVersion": 8,
+      "jobs": 0, "applications": 0, "feedbackEvents": 0,
+      "candidates": 11, "candidateVersions": 12, "ruleAssessments": 6, "relations": 3, "actions": 6,
       "originalRuleAssessmentDeletedOrUpdated": false,
-      "note": "0/0/0 属于人工验收 sandbox；人工评审操作没有创建正式 Job/Application/FeedbackEvent"
+      "note": "人工评审操作未创建正式 Job/Application/FeedbackEvent；确认相同不物理合并候选"
     },
     "production": {
       "databaseScope": "production",
       "access": "read-only verification only, no writes",
-      "schemaVersion": 7,
-      "jobs": 15,
-      "applications": 9,
-      "feedbackEvents": 11,
-      "rowsChanged": false,
-      "migrationExecuted": false
+      "schemaVersion": 7, "schemaVersionSource": "schema_migrations MAX + app_meta.schema_version",
+      "jobs": 15, "applications": 9, "feedbackEvents": 11,
+      "radarCandidateRelationsTable": "absent (v8 relations schema NOT activated)",
+      "migrationExecuted": false, "rowsChanged": false
     }
   },
   "passed": null
