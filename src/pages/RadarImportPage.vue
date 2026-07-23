@@ -375,12 +375,13 @@ const batchSummary = computed(() => {
 
         <n-card v-if="commitResult !== null" size="small" title="写入结果" class="block" data-testid="radar-result">
           <n-table :bordered="false">
-            <thead><tr><th>条目</th><th>结果</th><th>候选 ID</th></tr></thead>
+            <thead><tr><th>条目</th><th>结果</th><th>决策</th><th>候选 ID</th></tr></thead>
             <tbody>
               <tr v-for="outcome in commitResult.outcomes" :key="outcome.index">
                 <td>#{{ outcome.index }}</td>
                 <td><n-tag size="small">{{ outcomeLabel(outcome.kind) }}</n-tag></td>
-                <td>{{ outcome.candidateId.slice(0, 8) }}</td>
+                <td><n-tag size="small" :type="outcome.analysisEligible === false ? 'warning' : 'default'">{{ outcome.decisionType ?? '—' }}</n-tag></td>
+                <td>{{ outcome.candidateId === null ? '（未建候选）' : outcome.candidateId.slice(0, 8) }}</td>
               </tr>
             </tbody>
           </n-table>

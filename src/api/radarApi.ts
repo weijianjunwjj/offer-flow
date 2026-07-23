@@ -59,13 +59,28 @@ export interface RadarCaptureSessionView {
   items: RadarPreviewItem[];
 }
 
+export type RadarDecisionType =
+  | 'new_identity'
+  | 'material_change'
+  | 'no_change'
+  | 'snapshot_only'
+  | 'extraction_regression'
+  | 'ambiguous_change'
+  | 'identity_conflict';
+
+/**
+ * commit 结果条目。V8-3 起服务端补充结构化决策：identity_conflict 等场景 candidateId/
+ * candidateVersionId/sourceRecordId 可能为 null，故这三者放宽为可空（向后兼容旧 kind 字段）。
+ */
 export interface RadarCommitOutcomeItem {
   index: number;
-  candidateId: string;
-  candidateVersionId: string;
-  sourceRecordId: string;
+  candidateId: string | null;
+  candidateVersionId: string | null;
+  sourceRecordId: string | null;
   snapshotId: string;
   kind: 'created' | 'unchanged' | 'new_version';
+  decisionType?: RadarDecisionType;
+  analysisEligible?: boolean;
 }
 
 export interface RadarCommitCaptureSessionResult {

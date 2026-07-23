@@ -13,6 +13,7 @@ import MarketFunnelPage from '../pages/MarketFunnelPage.vue';
 import MarketPositionPage from '../pages/MarketPositionPage.vue';
 import StrategyWindowPage from '../pages/StrategyWindowPage.vue';
 import RadarImportPage from '../pages/RadarImportPage.vue';
+import RadarReviewPage from '../pages/RadarReviewPage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -74,6 +75,13 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
         path: '/radar/import',
         name: 'radar-import-disabled',
         redirect: { name: 'jobs', query: { feature: 'radar-import-disabled' } },
+      },
+    options.radarEnabled
+      ? { path: '/radar/review', name: 'radar-review', component: RadarReviewPage }
+      : {
+        path: '/radar/review',
+        name: 'radar-review-disabled',
+        redirect: { name: 'jobs', query: { feature: 'radar-review-disabled' } },
       },
     options.jobMemoryV2Enabled
       ? {
