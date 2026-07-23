@@ -22,6 +22,7 @@
     "build:extension": "node browser-extension/build.mjs",
     "extension:typecheck": "tsc --noEmit -p browser-extension/tsconfig.json",
     "extension:e2e": "playwright test -c browser-extension/e2e/playwright.config.ts",
+    "review:e2e": "playwright test -c review-e2e/playwright.config.ts",
     "db:init": "tsx server/schema.ts",
     "db:doctor": "tsx scripts/dbDoctor.ts",
     "db:sync": "tsx scripts/dbSync.ts",

@@ -57,6 +57,25 @@
   写操作二次确认 + 原因必填、409 提示且保留输入。
 - `src/router/router.spec.ts`（+2 项）：`/radar/review` 开启注册 / 关闭安全重定向且不加载组件。
 
+### 4.1a 正式自动化浏览器 E2E（`npm run review:e2e`，Playwright 无头 chromium，9 项 PASS）
+
+编排器 `review-e2e/harness.ts` 全程 in-process：临时 **v8** 库（系统临时目录，动态端口，
+绝不指向真实生产库、绝不占用人工沙箱固定的 17365/17366），启动 v8 评审后端 + v7 采集后端
++ flag 开/关两套前端；`globalSetup` 返回的 teardown 关闭全部 server、显式关闭注入 db 句柄并清理临时库。
+
+- 门禁：flag 关闭时 `/radar/review` 重定向（`radar-review-disabled`）且工作台不渲染；
+  schema=v7 时评审 API 404、采集桥仍在（非 404）；schema=v8 沙箱评审页可访问并列出待处理关系。
+- 决策 feed：material/regression/ambiguous/identity_conflict 四类均带结构化原因。
+- 规则证据：structured/legacy_scalar/corrupt 三态呈现；override 设置→撤销经真实 UI 弹窗完成，
+  只读回查临时库确认**原 RuleAssessment 行不变、评估不删除、`radar_actions` 追加 set+revert 两条**。
+- 关系裁决：疑似重复并排对比 → 确认不同（原因为空提交禁用、填写后成功）→ 移出默认列表 → 刷新保持；
+  confirmed_same 明确提示不物理合并；提交前状态被抢先改变时返回 **409** 且用户输入的原因保留；
+  裁决后两候选仍可读、候选数不减少。
+- 全流程后回查临时库：Job/Application/FeedbackEvent 零新增，候选数不因裁决减少。
+
+> 与 4.2 的区别：4.1a 为可重复、无人值守的自动化断言（含只读 SQLite 不变量校验），
+> 4.2 为人工驱动的真实浏览器观察。二者互补，均在临时 v8 库、绝不触碰生产库。
+
 ### 4.2 真实浏览器 E2E（沙箱 `npm run dev:radar-review-sandbox`，chrome-devtools MCP）
 
 - 独立临时 **v8** 库（系统临时目录，非真实生产库），经真实 service 落库 12 类 fixture。
