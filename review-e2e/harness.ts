@@ -147,6 +147,7 @@ async function stopReviewE2E(): Promise<void> {
   try { dbV8.close(); } catch { /* already closed */ }
   try { dbV7.close(); } catch { /* already closed */ }
   try { fs.rmSync(RUNTIME_FILE, { force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(RUNTIME_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
   // Windows 下 SQLite 文件句柄可能延迟释放：重试几轮后仍占用则留待系统临时目录清理。
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try { fs.rmSync(tempDir, { recursive: true, force: true }); break; } catch { /* retry */ }
