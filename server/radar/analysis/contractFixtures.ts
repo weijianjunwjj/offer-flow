@@ -28,8 +28,8 @@ export function validSnapshot(
     resume: {
       versionId: 'resume-1', contentHash: 'rhash-1',
       safeSnapshot: {
-        headline: '资深后端工程师', yearsOfExperience: 6,
-        capabilities: ['Go 微服务', '高并发'], experienceHighlights: ['主导支付系统重构'],
+        name: '后端工程师简历', summary: '6 年后端经验，主导支付系统重构',
+        resumeText: '资深后端工程师，Go 微服务与高并发实战。', projectExperience: '主导支付系统重构，QPS 提升 3 倍。',
       },
     },
     jobMatchProfile: {
@@ -43,11 +43,15 @@ export function validSnapshot(
     marketPosition: null,
     strategy: null,
     cityContext: { cityCode: 'suzhou', usesGlobalProfile: false, missingCityEvidence: false },
+    readiness: {
+      hasCapabilityBaseline: false, hasMarketPosition: false, hasStrategy: false,
+      confidenceCeiling: 'medium', limitations: ['缺少能力基线正式版本：结论置信度上限为 medium'],
+    },
     ruleProjection: {
       version: 'rules-v1', projectionHash: 'proj-1',
       assessments: [
-        { ruleKey: 'salary_floor', category: 'hard_constraint', result: 'pass', severity: 'high', explanation: '薪资达标' },
-        { ruleKey: 'commute', category: 'risk', result: 'hit', severity: 'medium', explanation: '通勤偏远' },
+        { ruleKey: 'salary_floor', category: 'hard_constraint', result: 'pass', severity: 'high', explanation: '薪资达标', evidenceState: 'structured' },
+        { ruleKey: 'commute', category: 'risk', result: 'hit', severity: 'medium', explanation: '通勤偏远', evidenceState: 'legacy_scalar' },
       ],
       userOverrides: [{ ruleKey: 'commute', overrideState: 'overridden_pass', note: '可接受' }],
     },

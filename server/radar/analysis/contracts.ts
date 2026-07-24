@@ -56,12 +56,19 @@ export const QualityIssueSchema = z.strictObject({
   issue: bounded(MEDIUM_TEXT),
 });
 
-/** 简历脱敏投影：只承载分析所需的能力/经历，不含完整简历原文。 */
+/** 简历版本正文投影上限：截断，绝不无上限带入完整简历。 */
+const RESUME_TEXT_MAX = 8_000;
+
+/**
+ * 简历脱敏投影：对齐真实 ResumeVersionRecord（name/summary + contentSnapshot 正文）。
+ * 上一波的 headline/yearsOfExperience/capabilities 等结构化字段真实简历并不存在（简历为自由文本），
+ * 为「只映射真实正式数据」按 §三 做最小契约调整：只承载真实存在的四个字段（正文截断）。
+ */
 export const ResumeSafeSnapshotSchema = z.strictObject({
-  headline: bounded(SHORT_TEXT).nullable(),
-  yearsOfExperience: z.number().finite().nullable(),
-  capabilities: z.array(bounded(MEDIUM_TEXT)).max(LIST_MAX),
-  experienceHighlights: z.array(bounded(MEDIUM_TEXT)).max(LIST_MAX),
+  name: bounded(SHORT_TEXT).nullable(),
+  summary: bounded(MEDIUM_TEXT).nullable(),
+  resumeText: bounded(RESUME_TEXT_MAX),
+  projectExperience: bounded(RESUME_TEXT_MAX),
 });
 
 /** 正式画像脱敏投影。 */
@@ -93,19 +100,38 @@ const optionalContext = <T extends z.ZodTypeAny>(safe: T) =>
     .strictObject({ versionId: ID, contentHash: HASH, safeSnapshot: safe })
     .nullable();
 
-/** 规则投影单项（脱敏，语义键回指见 evidenceCatalog；此处仅承载投影事实）。 */
+/**
+ * 规则投影单项（脱敏，语义键回指见 evidenceCatalog；此处仅承载投影事实）。
+ * evidenceState 显式标记证据载体状态：structured(合法 evidence_json)/legacy_scalar(NULL 回退 scalar)/
+ * corrupt(非 NULL 但校验失败)——corrupt 明确标记，绝不静默忽略（对齐 §六 与 ruleEvidenceService 语义）。
+ */
 export const RuleProjectionItemSchema = z.strictObject({
   ruleKey: bounded(SHORT_TEXT),
   category: z.enum(['hard_constraint', 'risk', 'preference', 'state_suppression']),
   result: z.enum(['hit', 'pass', 'unknown']),
   severity: bounded(SHORT_TEXT),
   explanation: bounded(MEDIUM_TEXT),
+  evidenceState: z.enum(['structured', 'legacy_scalar', 'corrupt']),
 });
 
 export const RuleOverrideProjectionSchema = z.strictObject({
   ruleKey: bounded(SHORT_TEXT),
   overrideState: z.enum(['overridden_pass', 'overridden_block', 'override_reverted']),
   note: bounded(MEDIUM_TEXT).nullable(),
+});
+
+/**
+ * 输入就绪度与局限（§四）。本波次不调用模型，仅在快照中如实记录：
+ * - hasCapabilityBaseline/hasMarketPosition/hasStrategy：对应正式版本是否存在；
+ * - confidenceCeiling：能力基线缺失 → 结论置信度上限降为 medium，否则 high；
+ * - limitations：缺失/借用（如非目标城市走全局画像）导致的确定性局限说明（供执行波次消费，不发模型）。
+ */
+export const AnalysisReadinessSchema = z.strictObject({
+  hasCapabilityBaseline: z.boolean(),
+  hasMarketPosition: z.boolean(),
+  hasStrategy: z.boolean(),
+  confidenceCeiling: z.enum(['low', 'medium', 'high']),
+  limitations: z.array(bounded(MEDIUM_TEXT)).max(LIST_MAX),
 });
 
 export const JobMatchAnalysisInputSnapshotV1Schema = z.strictObject({
@@ -128,6 +154,7 @@ export const JobMatchAnalysisInputSnapshotV1Schema = z.strictObject({
     usesGlobalProfile: z.boolean(),
     missingCityEvidence: z.boolean(),
   }),
+  readiness: AnalysisReadinessSchema,
   ruleProjection: z.strictObject({
     version: VERSION,
     projectionHash: HASH,
