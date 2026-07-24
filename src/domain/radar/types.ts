@@ -261,6 +261,11 @@ export interface AnalysisTask {
   status: AnalysisTaskStatus;
   inputHash: string;
   inputSnapshot: unknown;
+  /**
+   * 已开始执行的次数（V8-4 冻结语义，见任务状态机 taskStateMachine.ts）：
+   * 新建 queued=0；queued→running 时 +1；failed→queued 的 retry 不递增；
+   * attemptCount >= maxAttempts 时不得再进入 running。
+   */
   attemptCount: number;
   maxAttempts: number;
   startedAt: number | null;
