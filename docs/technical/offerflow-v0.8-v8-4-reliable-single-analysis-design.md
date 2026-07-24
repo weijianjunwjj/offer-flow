@@ -189,7 +189,7 @@ task.id = `analysis-task:v1:${inputHash}`
 同一输入永远映射到同一 task.id。创建流程：
 
 1. 事务内 `SELECT ... WHERE id = 'analysis-task:v1:<hash>'`；
-2. 命中：直接返回既有 task（`succeeded` 返回原 task+result；`queued/running` 返回进行中；`failed/cancelled` 见 §4 是否允许 retry）；
+2. 命中：直接返回既有 task（`succeeded` 返回原 task+result；`queued/running` 返回进行中；`failed` 见 §4 是否允许 retry；`cancelled` 为终态，原样返回，不重跑、不 retry、不恢复为 queued——需再次分析必须基于当前正式输入重算 inputHash 并创建新的确定性 task）；
 3. 未命中：`INSERT` queued task；
 4. **并发插入冲突处理**：`INSERT` 命中主键冲突（`SQLITE_CONSTRAINT_PRIMARYKEY`）时，捕获异常并**重读**同 ID 行，返回已存在的 task（丢弃本次 INSERT）。这样两个并发相同输入的请求最终收敛到同一 task，不产生重复任务。
 
@@ -234,14 +234,17 @@ queued
 - **retry**：仅在 `failed` 且 `attempt_count < max_attempts` 时允许；把 task 重置为 `queued`、**`attempt_count` 保持不变**（下次 `queued → running` 开始执行时才 +1）、清 `error_code/error_message/finished_at/started_at`，**复用原 `input_hash` 与 `input_snapshot_json`**（字节语义不变）；
 - `attempt_count >= max_attempts` 时不得再次进入 `running`（retry 与 start 均返回稳定错误，不再排程）；
 - **重复 cancel 幂等**：已 `cancelled` 再 cancel → 返回原 task，不报错、不改字段；
-- `cancelled` **不自动恢复**，只能由用户重新创建（相同输入命中 §3 会复用 task.id，故需 §4.4 处理）。
+- `cancelled` 是**终态**：不自动恢复、不允许 retry、不允许恢复为 `queued`。需再次分析时，只能基于当前正式输入重算 inputHash 并创建新的确定性 task（见 §4.4）。
 
-### 4.4 cancelled/failed 终态下的"重新创建"
+### 4.4 终态下的"重新分析"
 
-因为 task.id 由 inputHash 决定，相同输入的"重新分析"会命中已存在的 `cancelled`/`failed` 行。裁决：
+因为 task.id 由 inputHash 决定，"重新分析"会命中已存在行。裁决：
 
 - 命中 `failed`：等价于 retry（走 §4.3 retry 路径，若 attempt 未耗尽）；
-- 命中 `cancelled`：允许一次"复活"为 `queued`（expected-status = `cancelled`），**`attempt_count` 保持不变**（下次 `queued → running` 才 +1），复用原快照；仍受 `max_attempts` 约束。（注：本设计的这一 `cancelled` 复活路径由后续执行器/服务波次实现；任务领域波次的状态机把 `cancelled → queued` 视为非法迁移，仅实现 `failed → queued` 的 retry。）
+- 命中 `cancelled`：`cancelled` 为终态，**永不复活**。
+  - 输入未变化（inputHash 相同）→ 命中同一 `cancelled` task，原样返回，**不自动重跑**；
+  - 输入发生变化（inputHash 不同）→ 计算出新的确定性 task.id，创建全新 `queued` task。
+  - 因此"取消后再分析"永远表现为"新任务"，而非复活旧的 `cancelled` 任务。
 
 ---
 
@@ -519,7 +522,7 @@ GET  /radar/analyses/:id                             单条分析结果详情
 - **hard constraints**（红色优先）、**risks**、**counter evidence**、**gaps**、**uncertainties**、**missing evidence**；
 - **evidence references**：点结论展开引用的证据文本（映射自目录 key）；
 - **recruiter questions**、**communication angles**（可复制）；
-- **retry**（failed/cancelled 可见）、**cancel**（queued/running 可见）；
+- **retry**（仅 failed 可见）、**cancel**（queued/running 可见）、**重新分析**（cancelled/stale 可见，创建基于当前输入的新任务，不复活取消任务）；
 - **历史分析**：同候选历史记录列表，stale 标注为"旧版参考"，明确文案"不提供逐次重试历史"（§5 限制）。
 
 ### 14.4 交互约束
@@ -569,7 +572,7 @@ server/radar/analysis/
   inputSnapshot.ts    JobMatchAnalysisInputSnapshotV1 构建（事务内冻结）+ 投影类型 + Zod
   evidenceCatalog.ts  EvidenceCatalogV1 生成、语义键规则、公有/私有映射拆分、evidenceKey 校验
   provider.ts         JobMatchAnalysisProvider 接口 + deepSeek 适配 + deterministic fake + 一次修复
-  taskStateMachine.ts 状态转移表 + expected-current-status 断言 + retry/cancel/复活规则
+  taskStateMachine.ts 状态转移表 + expected-current-status 断言 + retry/cancel 规则（cancelled 为终态，无复活）
   executor.ts         队列执行、Map<taskId,AbortController>、原子成功写入、恢复扫描 recoverOnStartup
   validity.ts         AnalysisValidity 派生（stale reasons，model 变化默认不 stale）
   service.ts          RadarAnalysisService：创建/查询/retry/cancel/幂等/准备度门禁
