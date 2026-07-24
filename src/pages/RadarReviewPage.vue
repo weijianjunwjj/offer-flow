@@ -127,7 +127,16 @@ async function submitPending(): Promise<void> {
     await loadRelations();
     if (selectedRelation.value !== null) {
       const again = relations.value.find((r) => r.relationId === selectedRelation.value?.relationId);
-      if (again !== undefined) await selectRelation(again);
+      if (again !== undefined) {
+        await selectRelation(again);
+      } else {
+        // 关系裁决后不再符合当前筛选：清空详情面板，避免残留旧状态和可点但会 409 的操作按钮。
+        selectedRelation.value = null;
+        relationDetail.value = null;
+        detailLow.value = null;
+        detailHigh.value = null;
+        evidence.value = [];
+      }
     }
   } catch (error) {
     if (error instanceof ApiError && error.status === 409) {

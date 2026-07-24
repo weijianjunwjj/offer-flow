@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-23T00:00:00.000Z",
+  "title": "Design System: OfferFlow",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "决策蓝 / Decisive Blue", "canonical": "#2563eb", "tonalRamp": ["#0a1a3d", "#0f2c6b", "#153e93", "#1d4ed8", "#2563eb", "#3b82f6", "#7fadf7", "#c3dafc"] },
+      "neutral-ink": { "role": "neutral", "displayName": "石墨黑 / Ink", "canonical": "#0f172a", "tonalRamp": ["#020617", "#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1"] },
+      "neutral-bg": { "role": "neutral", "displayName": "云雾背景 / Cloud Background", "canonical": "#f6f8fc", "tonalRamp": ["#c7d2e0", "#dbe3ee", "#e9eef6", "#f0f4fa", "#f6f8fc", "#f9fbfd", "#fbfcfe", "#ffffff"] },
+      "success": { "role": "semantic", "displayName": "成功绿 / Success Green", "canonical": "#166534", "tonalRamp": ["#052e16", "#14532d", "#166534", "#15803d", "#22c55e", "#4ade80", "#86efac", "#dcfce7"] },
+      "danger": { "role": "semantic", "displayName": "危险红 / Danger Red", "canonical": "#991b1b", "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#fca5a5", "#fee2e2"] },
+      "warning": { "role": "semantic", "displayName": "警示黄 / Warning Amber", "canonical": "#92400e", "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fcd34d", "#fef3c7"] },
+      "info": { "role": "semantic", "displayName": "信息青 / Info Cyan", "canonical": "#0e7490", "tonalRamp": ["#083344", "#164e63", "#0e7490", "#0891b2", "#06b6d4", "#22d3ee", "#67e8f9", "#cffafe"] },
+      "highlight": { "role": "semantic", "displayName": "强调蓝紫 / Highlight Indigo", "canonical": "#3730a3", "tonalRamp": ["#1e1b4b", "#312e81", "#3730a3", "#4338ca", "#4f46e5", "#6366f1", "#a5b4fc", "#eef2ff"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "页面级 Hero 数字与核心指标，最高层级强调。" },
+      "headline": { "displayName": "Headline", "purpose": "页面主标题。" },
+      "title": { "displayName": "Title", "purpose": "区块标题、卡片标题。" },
+      "body": { "displayName": "Body", "purpose": "正文、说明文字、表格内容，系统最常用字号。" },
+      "label": { "displayName": "Label", "purpose": "徽标、标签、eyebrow 小标签。" }
+    },
+    "shadows": [
+      { "name": "card-shadow", "value": "0 1px 2px rgba(16, 24, 40, 0.04), 0 18px 40px -28px rgba(16, 24, 40, 0.22)", "purpose": "默认卡片容器静态阴影，柔和漂浮感。" },
+      { "name": "focus-ring", "value": "0 0 0 3px rgba(37, 99, 235, 0.12)", "purpose": "输入框/交互元素聚焦态光晕。" },
+      { "name": "overlay-shadow", "value": "0 24px 80px rgba(15, 23, 42, 0.28)", "purpose": "模态框、下拉面板等浮层的重阴影。" }
+    ],
+    "motion": [],
+    "breakpoints": [
+      { "name": "sm", "value": "560px" },
+      { "name": "md", "value": "620px" },
+      { "name": "lg", "value": "720px" },
+      { "name": "xl", "value": "860px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "主操作按钮，用于新建、提交、确认等关键动作。",
+      "html": "<button class=\"ds-btn-primary\">新建岗位</button>",
+      "css": ".ds-btn-primary { background: #2563eb; color: #fff; padding: 9px 16px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s; } .ds-btn-primary:hover { background: #1d4ed8; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "标准内容卡片容器，承载岗位、指标或表单分组。",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\">岗位概览</h3><p class=\"ds-card-body\">当前跟踪 12 个岗位，3 个待反馈。</p></div>",
+      "css": ".ds-card { background: #ffffff; border: 1px solid rgba(15, 23, 42, 0.08); border-radius: 16px; padding: 16px 18px; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 18px 40px -28px rgba(16, 24, 40, 0.22); } .ds-card-title { margin: 0 0 4px; font-size: 16px; font-weight: 600; color: #0f172a; } .ds-card-body { margin: 0; font-size: 13px; line-height: 1.5; color: #475569; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "tag-neutral",
+      "description": "语义色徽标，标记机会等级、投递策略或动作建议。",
+      "html": "<span class=\"ds-badge ds-badge-strong\">强机会</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 999px; background: #eef1f5; color: #475569; } .ds-badge-strong { background: #dcfce7; color: #166534; } .ds-badge-caution { background: #fef3c7; color: #92400e; } .ds-badge-danger { background: #fee2e2; color: #991b1b; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "card",
+      "description": "标准文本输入框，用于表单和搜索场景。",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"搜索岗位…\" />",
+      "css": ".ds-input { width: 100%; box-sizing: border-box; border: 1px solid rgba(15, 23, 42, 0.08); border-radius: 8px; padding: 9px 12px; font-size: 13px; color: #0f172a; background: #ffffff; } .ds-input:focus { outline: none; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }"
+    },
+    {
+      "name": "Navigation Link",
+      "kind": "nav",
+      "refersTo": "button-primary",
+      "description": "顶部导航文字链接，当前选中项以决策蓝高亮。",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-link ds-nav-link-active\">岗位台账</a><a class=\"ds-nav-link\">能力基线</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 24px; } .ds-nav-link { font-size: 13px; font-weight: 500; color: #475569; cursor: pointer; padding: 4px 0; } .ds-nav-link-active { color: #2563eb; font-weight: 600; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Decision Operating System（决策操作系统）",
+    "overview": "OfferFlow 不是求职记录工具，而是帮助用户做出更好职业决策的分析驾驶舱。每个页面都在回答三个问题：当前发生了什么、为什么会这样（证据是什么）、下一步最值得做什么。AI 负责分析、归纳和量化风险，但不替用户下最终判断——正式记录和现实行动始终由用户确认。整体气质是专业、克制、理性、可信，参照 Linear、GitHub、Stripe Dashboard、Vercel Dashboard 的设计语言，而不是招聘网站的营销感或聊天机器人的对话感。信息密度优先于视觉效果，用户需要能连续工作数小时而不产生视觉疲劳。颜色承担语义（状态、风险等级），不作装饰；动画（若使用）只服务于状态变化的理解，不用来吸引注意力。",
+    "keyCharacteristics": [
+      "理性优先于表现：每个视觉决策服务于信息传达",
+      "高密度但不拥挤：紧凑排版配合克制的留白节奏",
+      "语义色而非装饰色：状态、风险、动作各自有固定色彩语言",
+      "扁平为主，阴影表状态：深度只在需要强调层级时出现",
+      "渐进披露：核心结论先行，证据和细节按需展开"
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "决策蓝是唯一的品牌强调色，不引入第二个品牌色；--of-brand-2 (#0ea5e9) 仅用于装饰性渐变/图表点缀，不作为可点击元素的主色。", "section": "colors" },
+      { "name": "The Semantic-Only Rule", "body": "五组状态色只用于传达状态语义（风险等级、动作类型），禁止用作纯装饰配色。", "section": "colors" },
+      { "name": "The Density-First Rule", "body": "默认正文字号为 13px 而非常见的 14-16px，优先信息密度；不要为追求呼吸感随意放大正文字号。", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "静态展示元素（标签、次级容器、列表行）不使用阴影，阴影只出现在卡片级容器或响应状态变化（聚焦、浮层）时。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 把决策蓝（#2563eb）限制在按钮、选中态、强调文字和图表主色，不作为大面积背景。",
+      "Do 状态和结果始终通过语义色徽标传达（成功绿/危险红/警示黄/信息青/强调紫），而不是仅靠文案。",
+      "Do 卡片和容器保持扁平，阴影仅用于可交互元素的静止态弱阴影（--of-shadow）或聚焦态高亮环。",
+      "Do 数据密集页面（战场页、岗位台账）优先信息密度和可扫描性，用 12-13px 正文字号和紧凑间距。",
+      "Do 表单、聚焦、错误态使用统一的 rgba(37, 99, 235, 0.12) 聚焦环和克制的错误提示配色。"
+    ],
+    "donts": [
+      "Don't 引入大面积渐变、玻璃拟态、强投影或任何 AI 魔法感视觉效果。",
+      "Don't 使用游戏化元素（徽章解锁动画、进度条庆祝效果、彩纸动画等）。",
+      "Don't 用聊天气泡、圆形头像串、社交动态流等社交媒体式布局呈现决策信息。",
+      "Don't 为吸引注意力添加装饰性动画；动画只能用于状态变化的过渡（如展开/折叠、加载态）。",
+      "Don't 混用多套圆角体系；卡片统一 16px，小型交互元素统一 8-10px，标签统一胶囊形。"
+    ]
+  }
+}
