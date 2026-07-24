@@ -219,7 +219,7 @@ queued
 
 | 转移 | 前置条件 | 说明 |
 |---|---|---|
-| `queued → running` | 当前必须 `queued` | 执行器领取任务，写 `started_at` |
+| `queued → running` | 当前必须 `queued` 且 `attempt_count < max_attempts` | 执行器领取任务，写 `started_at`，`attempt_count += 1`（执行次数在**开始执行时**递增，不在 retry 时递增） |
 | `running → succeeded` | 当前必须 `running` | 原子写 record（§9） |
 | `running → failed` | 当前必须 `running` | 写 `error_code` / `finished_at` |
 | `queued → cancelled` | 当前必须 `queued` | 尚未执行即取消 |
@@ -231,8 +231,8 @@ queued
 
 - `queued` / `running` **可取消**；`succeeded` **不可取消**（对 `succeeded` 调 cancel → 幂等返回原 task，不改状态）；
 - `failed` **可人工 retry**（§5）；`succeeded` 重复创建 → 返回原 task+result（§3.2）；
-- **retry**：仅在 `failed` 且 `attempt_count < max_attempts` 时允许；把 task 重置为 `queued`、`attempt_count += 1`、清 `error_code/error_message/finished_at`，**复用原 `input_snapshot_json`**；
-- `attempt_count >= max_attempts` 时 retry 被拒绝（返回稳定错误，不再排程）；
+- **retry**：仅在 `failed` 且 `attempt_count < max_attempts` 时允许；把 task 重置为 `queued`、**`attempt_count` 保持不变**（下次 `queued → running` 开始执行时才 +1）、清 `error_code/error_message/finished_at/started_at`，**复用原 `input_hash` 与 `input_snapshot_json`**（字节语义不变）；
+- `attempt_count >= max_attempts` 时不得再次进入 `running`（retry 与 start 均返回稳定错误，不再排程）；
 - **重复 cancel 幂等**：已 `cancelled` 再 cancel → 返回原 task，不报错、不改字段；
 - `cancelled` **不自动恢复**，只能由用户重新创建（相同输入命中 §3 会复用 task.id，故需 §4.4 处理）。
 
@@ -241,7 +241,7 @@ queued
 因为 task.id 由 inputHash 决定，相同输入的"重新分析"会命中已存在的 `cancelled`/`failed` 行。裁决：
 
 - 命中 `failed`：等价于 retry（走 §4.3 retry 路径，若 attempt 未耗尽）；
-- 命中 `cancelled`：允许一次"复活"为 `queued`（expected-status = `cancelled`），`attempt_count += 1`，复用原快照；仍受 `max_attempts` 约束。
+- 命中 `cancelled`：允许一次"复活"为 `queued`（expected-status = `cancelled`），**`attempt_count` 保持不变**（下次 `queued → running` 才 +1），复用原快照；仍受 `max_attempts` 约束。（注：本设计的这一 `cancelled` 复活路径由后续执行器/服务波次实现；任务领域波次的状态机把 `cancelled → queued` 视为非法迁移，仅实现 `failed → queued` 的 retry。）
 
 ---
 
@@ -249,7 +249,7 @@ queued
 
 **不新增 `AnalysisAttempt` 表**。重试信息由 `analysis_tasks` 既有列承载：
 
-- `attempt_count`：累计尝试次数（创建即 1，每次 retry/复活 +1）；
+- `attempt_count`：**已开始执行的次数**。新建 `queued` 任务为 `0`；`queued → running` 开始执行时 `+1`；`failed → queued` 的人工 retry **不**递增（复用原 `input_hash`/`input_snapshot_json`，字节语义不变），只有 retry 后再次进入 `running` 才 `+1`；`attempt_count >= max_attempts` 时不得再进入 `running`；
 - `max_attempts`：上限（默认 3，可由 analysisPolicy 版本化配置）；
 - `started_at` / `finished_at`：最近一次执行窗口；
 - `error_code` / `error_message`：最近一次失败原因（`ANALYSIS_TASK_ERROR_CODES` 已在 `types.ts` 定义）；
