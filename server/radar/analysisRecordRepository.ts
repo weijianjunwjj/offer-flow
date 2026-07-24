@@ -46,6 +46,23 @@ export class AnalysisRecordRepository {
     return row === undefined ? null : rowToJobMatchAnalysisRecord(row);
   }
 
+  /**
+   * 幂等成功写入原语（设计 §9 步骤 3–4）：INSERT 新记录；命中 input_hash UNIQUE 冲突时
+   * 复用既有记录，绝不插入第二份。返回生效记录与 created 标记。
+   * 供执行器在原子成功写入事务内调用——同一 inputHash 只保留唯一正式结果（TD §3.3）。
+   */
+  insertOrGetByInputHash(record: JobMatchAnalysisRecord): { record: JobMatchAnalysisRecord; created: boolean } {
+    try {
+      this.insert(record);
+      return { record, created: true };
+    } catch (error) {
+      const existing = this.findByInputHash(record.inputHash);
+      // 仅 input_hash 冲突（已有同指纹记录）才是幂等复用路径；否则是真实写入错误，原样抛出。
+      if (existing === null) throw error;
+      return { record: existing, created: false };
+    }
+  }
+
   findByInputHash(inputHash: string): JobMatchAnalysisRecord | null {
     const row = this.db
       .prepare(`SELECT ${COLUMNS} FROM job_match_analysis_records WHERE input_hash = ?`)
