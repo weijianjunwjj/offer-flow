@@ -16,7 +16,7 @@
 | RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Done（实现、写入闭环、真实采集、最终 Preview 零写入及生产 schema v7 受控激活全部通过） | 见下方 RC-04 分项证据与生产激活记录 |
 | RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-01/MA-02 静态截图受内层滚动容器裁切，能力已由真实浏览器验证 + Review Playwright E2E + 组件/API 测试 + 审计数据共同证明，采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | fixture、Diff 截图、hash 结果 |
 | RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-03/MA-04 静态证据完整；采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | 命中原文、覆盖动作截图 |
-| RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Design in Review（V8-4 已开工，技术设计与契约实现中） | Payload、Envelope、证据引用 |
+| RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Design in Review（V8-4 已开工；可靠单岗位分析技术设计 `DESIGN COMPLETE / IMPLEMENTATION PENDING`，见 `docs/technical/offerflow-v0.8-v8-4-reliable-single-analysis-design.md`；契约实现未开始） | Payload、Envelope、证据引用；设计文档见左 |
 | RC-08 | 0～8 条推荐 | P0-09 / US-06 | 4.10 / 13.3 | 7 | V8-5 | Not Started | 正常批次与空推荐截图 |
 | RC-09 | 误区或证据不足 | 4.8 / 11.3 / US-07 | 9 | 5.4 / 7 | V8-5 | Not Started | formed/insufficient 两类样本 |
 | RC-10 | RadarAction | P0-10 / US-08 | 4.11 / 12 | 5.5 | V8-5 | Not Started | 动作流水、撤销、投影 |
@@ -79,6 +79,15 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 - **schema v8：** 迁移 `008_v0_8_radar_candidate_relations_schema` 已编写并在**沙箱/演练/注入测试库**使用；**生产库仍为 v7、未运行 v8 迁移**。生产启用 V8-3 仍需 BR-1（v8 受控激活授权 + 迁移演练），本轮未涉及。评审路由仅在 `schema≥v8` 时注册，v7 库访问评审接口返回 404（采集桥不受影响）。
 - **仍待裁决：** BR-1 生产 schema v8 受控激活授权；BR-2 §9 规则证据缺口字段的证据严格性档位（当前实现区分 structured/legacy_scalar/corrupt 三态呈现）。
 - **边界：** 未改动 V8-2（CLOSED/FROZEN）、RC-01～RC-04、**生产 schema v7 状态**或 Radar 正式入口（仍 DISABLED）；未推进 `PRODUCTION_SCHEMA_VERSION`（保持 2）。V8-3 实现仅在受控 v8 环境可用。
+
+### 1.4 V8-4 设计状态（可靠单岗位分析）
+
+- **状态：** `DESIGN COMPLETE / IMPLEMENTATION PENDING`（技术设计冻结、契约明确；**尚未编写业务代码/测试/migration/页面/API**）。生产 schema 仍 v7、Radar 与 Analysis 正式入口均 `DISABLED`。
+- **范围：** 覆盖 RC-07（可解释单岗位分析）与 RC-12（可靠任务，单岗位部分）的设计裁决：`JobMatchAnalysisInputSnapshotV1` 输入快照、LLM Payload/Envelope 分离与证据目录、确定性任务 ID `analysis-task:v1:<inputHash>` + record.input_hash UNIQUE 双层幂等、状态机、attempt 语义、`JobMatchAnalysisPayloadV1` Structured Output、Provider 与一次结构修复、cancel/迟到结果、原子成功写入、进程恢复、stale 投影、API/DTO、能力门禁、`RadarAnalysisPanel.vue`、测试矩阵与文件实施计划。
+- **设计文档：** `docs/technical/offerflow-v0.8-v8-4-reliable-single-analysis-design.md`。
+- **无需 migration：** `analysis_tasks` 与 `job_match_analysis_records` 已由 schema v7 建表并含所需全部列；本设计不新增 migration、不改生产库、不推进 `PRODUCTION_SCHEMA_VERSION`（保持 2）。
+- **边界：** 未改动 V8-2/V8-3 既有结论、RC-01～RC-06、生产 schema v7 状态或 Radar 正式入口；不接新 Provider、不做 BYOK、不绑定 SSE、不承诺断点续跑；AI Payload 不含内部 ID；不使用 legacy `/api/llm/analyze-job` 作为正式契约。
+- **未决（不阻塞设计冻结）：** Resume/Profile 投影字段对齐既有领域投影、初始 promptVersion/analysisPolicyVersion/providerPolicyVersion 常量值、userOverride 是否并入 ruleProjectionHash——均在实施首个 PR 固定。
 
 ---
 
