@@ -38,6 +38,20 @@ export function tableSignature(db: SqlLike, table: string): string {
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
 
+/** 最小 pragma 句柄：better-sqlite3 只读连接即可执行完整性/外键自检。 */
+export interface PragmaLike { pragma(sql: string): unknown }
+
+/** integrity_check 结果：无损坏时 better-sqlite3 返回单行 { integrity_check: 'ok' }。 */
+export function integrityOk(db: PragmaLike): boolean {
+  const rows = db.pragma('integrity_check') as Array<{ integrity_check: string }>;
+  return rows.length === 1 && rows[0]?.integrity_check === 'ok';
+}
+
+/** foreign_key_check 违规行数：0 表示无悬挂外键。 */
+export function foreignKeyViolations(db: PragmaLike): number {
+  return (db.pragma('foreign_key_check') as unknown[]).length;
+}
+
 export function readRuntime(): AnalysisE2ERuntime {
   return JSON.parse(fs.readFileSync(RUNTIME_FILE, 'utf8')) as AnalysisE2ERuntime;
 }

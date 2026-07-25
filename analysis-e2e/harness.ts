@@ -17,8 +17,13 @@ import { initSchema } from '../server/schema';
 import { seedReviewFixture } from '../server/radar/reviewFixture';
 import { RadarCandidateRepository } from '../server/radar/candidateRepository';
 import { seedActiveResumeAndProfile } from '../server/radar/analysis/analysisInputFixture';
-import { createGatedSuccessProvider } from './gatedProvider';
+import { createControllableProvider, type ProviderMode } from './controllableProvider';
 import { RUNTIME_DIR, RUNTIME_FILE, tableSignature, type AnalysisE2ERuntime } from './runtime';
+
+/** 合法测试模式白名单：控制端点只接受这些值，绝不接受任意输入。 */
+const VALID_MODES: ReadonlySet<string> = new Set<ProviderMode>([
+  'delayed_success', 'malformed_then_repair_success', 'fail_once_then_success', 'delayed_cancellable',
+]);
 
 const HOST = '127.0.0.1';
 
@@ -103,7 +108,7 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
   // 2) 后端：注入已 seed 的 v8 库（版本匹配，不自动迁移）+ 闸门式延迟成功 Provider。
   //    注入 db 时 buildServer 不拥有连接（app.close 不关闭），harness 持句柄在 teardown 显式关闭。
   const db = openDb(dbPath);
-  const gated = createGatedSuccessProvider();
+  const gated = createControllableProvider();
   let recSeq = 0;
   let analysisClock = 6_000_000;
   const app = buildServer({
@@ -119,11 +124,39 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
     },
   });
 
-  // E2E 控制端点：释放当前分析闸门（让 running 的 generate 立即完成）。
-  // 独立于 /radar 命名空间，不过安全网关；仅本进程内测试可达，绝不出现在真实入口。
+  // E2E 控制端点（独立于 /radar 命名空间，不过安全网关；仅本进程内测试可达，绝不出现在真实入口）。
+  // 释放当前分析闸门（让 running 的 generate 立即完成）。
   app.post('/e2e/release-analysis', async () => {
     gated.release();
     return { released: true };
+  });
+
+  // 只读安全计数（generate/repair/settled + 当前 mode），供场景断言与「迟到已处理」同步栅栏。
+  app.get('/e2e/analysis-counts', async () => gated.counts());
+
+  // 切换测试模式并复位计数/闸门。仅接受白名单模式；非法输入 400，绝不静默接受。
+  app.post('/e2e/analysis-mode', async (request, reply) => {
+    const body = (request.body ?? {}) as { mode?: unknown };
+    if (typeof body.mode !== 'string' || !VALID_MODES.has(body.mode)) {
+      return reply.code(400).send({ error: 'invalid_mode' });
+    }
+    gated.setMode(body.mode as ProviderMode);
+    return { mode: body.mode };
+  });
+
+  // 场景隔离：只清空两张分析表并复位 Provider 到指定模式，绝不触碰 seed 的评审/雷达数据。
+  // FK 为 self-ref RESTRICT（records.supersedes），删前暂关外键（PRAGMA 在事务外才生效），删后恢复。
+  app.post('/e2e/reset-analysis', async (request, reply) => {
+    const body = (request.body ?? {}) as { mode?: unknown };
+    const mode = typeof body.mode === 'string' && VALID_MODES.has(body.mode) ? (body.mode as ProviderMode) : 'delayed_success';
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.exec('DELETE FROM job_match_analysis_records; DELETE FROM analysis_tasks;');
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+    gated.setMode(mode);
+    return reply.code(200).send({ reset: true, mode });
   });
 
   const apiPort = await reservePort();
