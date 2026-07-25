@@ -2,8 +2,8 @@
 
 > **合同版本：** 1.0  
 > **对应 PRD：** v2.1  
-> **状态：** 已冻结；V8-2 已关闭并冻结；V8-3 已验收（`ACCEPTED / ACTIVATION PENDING`，RC-05 / RC-06 = Done）；当前进入 V8-4。生产 schema 仍为 v7，Radar 与 Analysis 正式入口关闭。
-> **日期：** 2026-07-17（状态摘要 2026-07-24 更新）
+> **状态：** 已冻结；V8-2 已关闭并冻结；V8-3 已验收（`ACCEPTED / ACTIVATION PENDING`，RC-05 / RC-06 = Done）；V8-4 `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`（RC-07 / RC-12 单岗位分析部分 = Partial，代码与自动化回归 2026-07-25 全绿；人工验收未签字，实施证据见 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md`）。生产 schema 仍为 v7，Radar 与 Analysis 正式入口关闭。
+> **日期：** 2026-07-17（状态摘要 2026-07-25 更新）
 
 ---
 

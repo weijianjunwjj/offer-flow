@@ -4,8 +4,8 @@
 > **对应 PRD：** v2.1（P0-08 / P0-12，US-05 / US-10）
 > **对应 Traceability：** RC-07（可解释单岗位分析）、RC-12（可靠任务，单岗位部分）
 > **波次：** V8-4
-> **状态：** `DESIGN COMPLETE / IMPLEMENTATION PENDING`
-> **基线：** 分支 `feat/v0.8-v8-4`，生产 schema v7，Radar 与 Analysis 正式入口 `DISABLED`
+> **状态：** `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`（实施与自动化回归证据见 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md`）
+> **基线：** 分支 `feat/v0.8-v8-4`（HEAD `d10736d`），生产 schema v7，Radar 与 Analysis 正式入口 `DISABLED`
 
 ---
 

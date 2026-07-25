@@ -2,7 +2,7 @@
 
 > **矩阵版本：** 1.0  
 > **对应 PRD：** v2.1  
-> **状态：** V8-2 `CLOSED / FROZEN`；V8-3 `ACCEPTED / ACTIVATION PENDING`（RC-05 / RC-06 = Done，2026-07-23 验收）；当前进入 V8-4（RC-07、RC-12 可靠单岗位分析部分），生产 schema 仍 v7、Radar 与 Analysis 正式入口保持关闭。采集桥、预览、确认写入闭环、自动化测试、最终真实 BOSS 批量 Preview 与生产 schema v7 受控激活均已完成；Radar 正式入口保持关闭。2026-07-22 最终范围收缩为扩展当前页采集、BOSS 单条/批量、通用可见文本降级、预览纠错/取消/确认、幂等重放与终态；手工 JD 文本、“链接 + 文本”和 JSON 对象/数组输入均从产品入口、前端 API 包装、写入 DTO 和验收中删除，仅保留数据库枚举、历史数据读取与 Preview/Snapshot 反序列化兼容；扩展继续使用 JSON HTTP body 的 browser/boss/generic 协议。RC-01～RC-04 均为 Done。
+> **状态：** V8-2 `CLOSED / FROZEN`；V8-3 `ACCEPTED / ACTIVATION PENDING`（RC-05 / RC-06 = Done，2026-07-23 验收）；V8-4 `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`（RC-07、RC-12 可靠单岗位分析部分 = Partial，代码与自动化回归 2026-07-25 全绿，实施证据见 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md`；人工验收未签字），生产 schema 仍 v7、Radar 与 Analysis 正式入口保持关闭。采集桥、预览、确认写入闭环、自动化测试、最终真实 BOSS 批量 Preview 与生产 schema v7 受控激活均已完成；Radar 正式入口保持关闭。2026-07-22 最终范围收缩为扩展当前页采集、BOSS 单条/批量、通用可见文本降级、预览纠错/取消/确认、幂等重放与终态；手工 JD 文本、“链接 + 文本”和 JSON 对象/数组输入均从产品入口、前端 API 包装、写入 DTO 和验收中删除，仅保留数据库枚举、历史数据读取与 Preview/Snapshot 反序列化兼容；扩展继续使用 JSON HTTP body 的 browser/boss/generic 协议。RC-01～RC-04 均为 Done。
 
 ---
 
@@ -16,12 +16,12 @@
 | RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Done（实现、写入闭环、真实采集、最终 Preview 零写入及生产 schema v7 受控激活全部通过） | 见下方 RC-04 分项证据与生产激活记录 |
 | RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-01/MA-02 静态截图受内层滚动容器裁切，能力已由真实浏览器验证 + Review Playwright E2E + 组件/API 测试 + 审计数据共同证明，采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | fixture、Diff 截图、hash 结果 |
 | RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-03/MA-04 静态证据完整；采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | 命中原文、覆盖动作截图 |
-| RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Design in Review（V8-4 已开工；可靠单岗位分析技术设计 `DESIGN COMPLETE / IMPLEMENTATION PENDING`，见 `docs/technical/offerflow-v0.8-v8-4-reliable-single-analysis-design.md`；契约实现未开始） | Payload、Envelope、证据引用；设计文档见左 |
+| RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Partial — V8-4 `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`（输入/输出契约、Provider 与结构修复、执行器、服务编排、七个 HTTP 接口、前端面板与门禁、刷新恢复均已实现；单元/集成 + 六个浏览器 E2E 全绿；人工验收未签字、生产入口 DISABLED、schema 仍 v7） | Payload、Envelope、证据引用；实施证据 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md` |
 | RC-08 | 0～8 条推荐 | P0-09 / US-06 | 4.10 / 13.3 | 7 | V8-5 | Not Started | 正常批次与空推荐截图 |
 | RC-09 | 误区或证据不足 | 4.8 / 11.3 / US-07 | 9 | 5.4 / 7 | V8-5 | Not Started | formed/insufficient 两类样本 |
 | RC-10 | RadarAction | P0-10 / US-08 | 4.11 / 12 | 5.5 | V8-5 | Not Started | 动作流水、撤销、投影 |
 | RC-11 | RadarPromotion | P0-11 / US-09 | 4.12 / 13.4 | 8 | V8-6 | Not Started | 晋升预览、幂等、反向追踪 |
-| RC-12 | 可靠任务与发布闭环 | P0-12 / US-10 / 12.2 | 4.8 / 10 | 6 / 9 | V8-4/6 | Partial — V8-4 reliable analysis task implementation started（仅单岗位可靠分析任务部分开工，发布闭环/迁移/恢复演练未开始） | 故障日志、migration、恢复、截图 |
+| RC-12 | 可靠任务与发布闭环 | P0-12 / US-10 / 12.2 | 4.8 / 10 | 6 / 9 | V8-4/6 | Partial — V8-4 单岗位可靠分析任务已实现（确定性 createTask、固定 Snapshot、状态机、最多一次结构修复、原子写入、cancel/迟到结果抑制、进程恢复、retry 复用快照、current/stale 投影，自动化全绿）；**发布闭环/迁移/恢复演练（V8-6）未开始**，人工验收未签字 | 故障日志、migration、恢复、截图；实施证据 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md` |
 
 ### 1.1 RC-04 分项证据（区分实现层次，不得合并为单一完成结论）
 
@@ -82,7 +82,7 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 
 ### 1.4 V8-4 设计状态（可靠单岗位分析）
 
-- **状态：** `DESIGN COMPLETE / IMPLEMENTATION PENDING`（技术设计冻结、契约明确；**尚未编写业务代码/测试/migration/页面/API**）。生产 schema 仍 v7、Radar 与 Analysis 正式入口均 `DISABLED`。
+- **状态：** `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`（技术设计冻结、契约明确；业务代码/测试/页面/API 已实现，2026-07-25 集成 worktree 一次完整回归全绿，实施证据见 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md`；**人工视觉/交互验收尚未签字、生产迁移与正式开关未授权**）。生产 schema 仍 v7、Radar 与 Analysis 正式入口均 `DISABLED`。
 - **范围：** 覆盖 RC-07（可解释单岗位分析）与 RC-12（可靠任务，单岗位部分）的设计裁决：`JobMatchAnalysisInputSnapshotV1` 输入快照、LLM Payload/Envelope 分离与证据目录、确定性任务 ID `analysis-task:v1:<inputHash>` + record.input_hash UNIQUE 双层幂等、状态机、attempt 语义、`JobMatchAnalysisPayloadV1` Structured Output、Provider 与一次结构修复、cancel/迟到结果、原子成功写入、进程恢复、stale 投影、API/DTO、能力门禁、`RadarAnalysisPanel.vue`、测试矩阵与文件实施计划。
 - **设计文档：** `docs/technical/offerflow-v0.8-v8-4-reliable-single-analysis-design.md`。
 - **无需 migration：** `analysis_tasks` 与 `job_match_analysis_records` 已由 schema v7 建表并含所需全部列；本设计不新增 migration、不改生产库、不推进 `PRODUCTION_SCHEMA_VERSION`（保持 2）。
