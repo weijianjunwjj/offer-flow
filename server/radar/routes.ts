@@ -5,6 +5,8 @@ import { IdParamsSchema } from './dtoSchemas';
 import { RadarCaptureError, radarForbiddenOrigin, radarValidationError } from './errors';
 import { RadarCaptureService, type RadarCaptureServiceDeps } from './service';
 import { RadarReviewService } from './reviewService';
+import { registerRadarAnalysisRoutes, type AnalysisRouteDeps } from './analysis/analysisRoutes';
+import { RADAR_DOMAIN_SCHEMA_VERSION } from '../migrations';
 import {
   AdjudicationRequestSchema,
   RecheckRequestSchema,
@@ -18,6 +20,9 @@ export type { RadarCaptureServiceDeps };
 
 export interface RadarCaptureRouteOptions {
   serviceDeps?: RadarCaptureServiceDeps;
+  /** V8-4 单岗位分析 API 门禁：默认关闭；需 radar 已启用 + schema ≥ v7 才注册。 */
+  analysisEnabled?: boolean;
+  analysisDeps?: AnalysisRouteDeps;
 }
 
 /**
@@ -122,6 +127,12 @@ export function registerRadarCaptureRoutes(
     scopedApp.post('/radar/capture-sessions/:id/cancel', async (request) => (
       service.cancelSession(parseIdParams(request.params), request.body)
     ));
+
+    // ---- V8-4 单岗位分析 API（独立门禁）：需 analysisEnabled 且 schema ≥ v7（分析领域表随 v7 落地）。 ----
+    // 分析只依赖 v7 雷达领域表，早于 v8 评审门禁注册，确保 v7 库亦可接出；生产入口默认不开启。
+    if (options.analysisEnabled === true && getDatabaseSchemaVersion(scopedApp.db) >= RADAR_DOMAIN_SCHEMA_VERSION) {
+      registerRadarAnalysisRoutes(scopedApp, { analysisDeps: options.analysisDeps });
+    }
 
     // ---- V8-3 人工评审工作台（只读详情 + 关系裁决 + 规则证据/覆盖），共用同一安全网关 ----
     // 评审依赖 v8 候选关系表（radar_candidate_relations）。采集桥的最低 schema 为 v7；

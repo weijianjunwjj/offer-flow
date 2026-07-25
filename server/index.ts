@@ -28,6 +28,7 @@ import {
   STRATEGY_WINDOW_SCHEMA_VERSION,
 } from './migrations';
 import { registerRadarCaptureRoutes, type RadarCaptureServiceDeps } from './radar/routes';
+import type { AnalysisRouteDeps as RadarAnalysisRouteDeps } from './radar/analysis/analysisRoutes';
 import { planSchemaStartup, schemaRefusalMessage } from './schemaStartup';
 import { initSchema } from './schema';
 import { registerProfileRoutes } from './routes/profile';
@@ -75,6 +76,9 @@ export interface StrategyWindowCapability {
 export interface RadarCapability {
   enabled?: boolean;
   serviceDeps?: RadarCaptureServiceDeps;
+  /** V8-4 单岗位分析 API 门禁：默认关闭，仅显式开启时才注册分析路由（需 radar 已启用 + schema ≥ v7）。 */
+  analysisEnabled?: boolean;
+  analysisDeps?: RadarAnalysisRouteDeps;
 }
 
 export interface BuildServerOptions {
@@ -218,7 +222,11 @@ export function buildServer(
       registerStrategyWindowRoutes(app, options.strategyWindow?.serviceDeps);
     }
     if (radarEnabled) {
-      registerRadarCaptureRoutes(app, { serviceDeps: options.radar?.serviceDeps });
+      registerRadarCaptureRoutes(app, {
+        serviceDeps: options.radar?.serviceDeps,
+        analysisEnabled: options.radar?.analysisEnabled ?? false,
+        analysisDeps: options.radar?.analysisDeps,
+      });
     }
   }
   return app;
