@@ -61,4 +61,10 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_RADAR,
     false,
   ),
+  // V8-4 单岗位分析面板：独立于 radarEnabled 的门禁，默认关闭；不因 Radar 开启而自动开启，
+  // 真实生产入口保持关闭，仅在显式设置 VITE_OFFERFLOW_RADAR_ANALYSIS=true 或测试注入时启用。
+  radarAnalysisEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_RADAR_ANALYSIS,
+    false,
+  ),
 });

@@ -7,6 +7,11 @@ import {
   type CandidateDecisionDetail, type DecisionFeedItem, type RelationDetail, type RelationListItem,
   type RuleEvidenceView, type RelationStatus,
 } from '../api/radarReviewApi';
+import { features } from '../config/features';
+import RadarAnalysisPanel from '../components/radar/RadarAnalysisPanel.vue';
+
+/** V8-4 单岗位分析面板门禁：默认关闭，不随 Radar 开启而自动开启（见 features.ts）。 */
+const analysisEnabled = features.radarAnalysisEnabled;
 
 const loading = ref(true);
 const busy = ref(false);
@@ -265,6 +270,14 @@ function signalValueText(v: string | number | boolean | null): string {
               <div v-for="cf in d.changedFields" :key="cf.fieldPath" class="reason" data-testid="changed-field">
                 {{ cf.fieldPath }}：{{ cf.before ?? '∅' }} → {{ cf.after ?? '∅' }}（{{ cf.classification }}：{{ cf.reason }}）
               </div>
+              <!-- V8-4 单岗位分析：仅在能力开启且该侧有当前正式版本时展示；每侧独立，避免双候选歧义 -->
+              <RadarAnalysisPanel
+                v-if="analysisEnabled && d.activeCandidateVersionId"
+                :candidate-id="d.candidateId"
+                :candidate-version-id="d.activeCandidateVersionId"
+                :enabled="analysisEnabled"
+                :data-testid="`analysis-panel-${side}`"
+              />
             </template>
           </div>
         </div>

@@ -121,6 +121,17 @@ describe('RadarReviewPage 候选对比 + 变化 + 证据', () => {
     expect(changed.text()).toContain('salaryMinK');
   });
 
+  it('V8-4 分析面板默认关闭：flag=false 时不渲染分析面板（V8-3 行为不变）', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // radarAnalysisEnabled 默认 false：候选对比区不嵌入任何分析面板。
+    expect(wrapper.find('[data-testid="analysis-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-panel-low"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-panel-high"]').exists()).toBe(false);
+  });
+
   it('点击决策 feed 中带候选的条目加载单侧详情与证据（无关系裁决按钮）', async () => {
     setupHappy({}, [{
       snapshotId: 'snap-m', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',
