@@ -71,6 +71,8 @@ function mountPanel(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   mocks.listCandidateAnalyses.mockResolvedValue([]);
+  // 刷新恢复指针存 sessionStorage：逐用例清空，避免跨用例串味。
+  try { globalThis.sessionStorage?.clear(); } catch { /* ignore */ }
 });
 afterEach(() => vi.useRealTimers());
 
@@ -316,6 +318,93 @@ describe('RadarAnalysisPanel 并发 / 迟到响应 / 卸载', () => {
     resolveCreate(task({ status: 'queued' }));
     await micro();
     expect(mocks.createTask).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RadarAnalysisPanel 刷新恢复（sessionStorage taskId 指针）', () => {
+  const KEY = (cvId: string) => `offerflow.analysis.task.${cvId}`;
+
+  it('create 成功后按含 candidateVersionId 的键落 taskId 指针（只存 id）', async () => {
+    vi.useFakeTimers();
+    mocks.createTask.mockResolvedValue(task({ id: 'task-42', status: 'queued', entityId: 'cv-1' }));
+    mocks.runTask.mockResolvedValue(task({ status: 'running' }));
+    mocks.getTask.mockResolvedValue(task({ status: 'running', attemptCount: 1 }));
+
+    const wrapper = mountPanel();
+    await micro();
+    await wrapper.find('[data-testid="analysis-start"]').trigger('click');
+    await micro();
+
+    expect(sessionStorage.getItem(KEY('cv-1'))).toBe('task-42');
+    // 指针仅是 taskId，绝不含 snapshot/payload/JD。
+    expect(sessionStorage.getItem(KEY('cv-1'))).not.toContain('{');
+  });
+
+  it('挂载时凭指针 GET task 恢复 running 并接管轮询 → succeeded', async () => {
+    vi.useFakeTimers();
+    sessionStorage.setItem(KEY('cv-1'), 'task-99');
+    mocks.getTask
+      .mockResolvedValueOnce(task({ id: 'task-99', status: 'running', attemptCount: 1, entityId: 'cv-1' })) // recover
+      .mockResolvedValueOnce(task({ id: 'task-99', status: 'running', attemptCount: 1, entityId: 'cv-1' })) // 首次接管轮询
+      .mockResolvedValue(task({ id: 'task-99', status: 'succeeded', attemptCount: 1, resultRecordId: 'rec-1', entityId: 'cv-1' }));
+    mocks.getAnalysis.mockResolvedValue(analysis());
+
+    const wrapper = mountPanel();
+    await micro(); // recoverPersistedTask→running→接管轮询→首个 pollOnce 仍 running，下一次轮询排入 setTimeout
+    expect(wrapper.find('[data-testid="analysis-running"]').exists()).toBe(true);
+    expect(mocks.createTask).not.toHaveBeenCalled(); // 恢复绝不自动 create
+    expect(mocks.runTask).not.toHaveBeenCalled();    // 也不再次 run
+
+    await poll(); // 下一轮询 → succeeded → 拉结果
+    expect(wrapper.find('[data-testid="analysis-result"]').exists()).toBe(true);
+  });
+
+  it('挂载时凭指针恢复 succeeded 终态并展示结果（保留指针供再次刷新）', async () => {
+    sessionStorage.setItem(KEY('cv-1'), 'task-ok');
+    mocks.getTask.mockResolvedValue(task({ id: 'task-ok', status: 'succeeded', resultRecordId: 'rec-1', entityId: 'cv-1' }));
+    mocks.getAnalysis.mockResolvedValue(analysis());
+
+    const wrapper = mountPanel();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="analysis-result"]').exists()).toBe(true);
+    expect(sessionStorage.getItem(KEY('cv-1'))).toBe('task-ok'); // 终态保留指针
+  });
+
+  it('指针 entityId 与当前版本不符 → 清除且不污染，落 not_started，不 create', async () => {
+    sessionStorage.setItem(KEY('cv-1'), 'task-other');
+    mocks.getTask.mockResolvedValue(task({ id: 'task-other', status: 'running', entityId: 'cv-OTHER' }));
+
+    const wrapper = mountPanel();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="analysis-not-started"]').exists()).toBe(true);
+    expect(sessionStorage.getItem(KEY('cv-1'))).toBeNull(); // 陈旧指针被清除
+    expect(mocks.createTask).not.toHaveBeenCalled();
+  });
+
+  it('指针失效（getTask 404/拒绝）→ 清除指针，回落 not_started，不 create', async () => {
+    sessionStorage.setItem(KEY('cv-1'), 'task-gone');
+    mocks.getTask.mockRejectedValue(new ApiError('任务不存在', 404, { code: 'TASK_NOT_FOUND' }));
+
+    const wrapper = mountPanel();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="analysis-not-started"]').exists()).toBe(true);
+    expect(sessionStorage.getItem(KEY('cv-1'))).toBeNull();
+    expect(mocks.createTask).not.toHaveBeenCalled();
+  });
+
+  it('旧候选指针不恢复到新候选：切到无指针的 cv-2 显示 not_started', async () => {
+    sessionStorage.setItem(KEY('cv-1'), 'task-1');
+    mocks.getTask.mockResolvedValue(task({ id: 'task-1', status: 'running', entityId: 'cv-1' }));
+
+    const wrapper = mountPanel();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="analysis-running"]').exists()).toBe(true);
+
+    // 切到 cv-2（该键无指针）：不得读到 cv-1 的 task。
+    await wrapper.setProps({ candidateVersionId: 'cv-2' });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="analysis-running"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-not-started"]').exists()).toBe(true);
   });
 });
 

@@ -40,6 +40,25 @@ function safeMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
 }
 
+/**
+ * 刷新恢复指针：仅持久化 taskId，按 candidateVersionId 分键，绝不写 Snapshot/Payload/JD/敏感数据。
+ * 不同候选版本各自独立键，旧候选指针绝不污染新候选。sessionStorage 不可用（隐私模式/SSR）时静默降级。
+ */
+function pointerKey(candidateVersionId: string): string {
+  return `offerflow.analysis.task.${candidateVersionId}`;
+}
+function readPointer(candidateVersionId: string): string | null {
+  try {
+    return globalThis.sessionStorage?.getItem(pointerKey(candidateVersionId)) ?? null;
+  } catch { return null; }
+}
+function writePointer(candidateVersionId: string, taskId: string): void {
+  try { globalThis.sessionStorage?.setItem(pointerKey(candidateVersionId), taskId); } catch { /* 降级：仅失去刷新恢复 */ }
+}
+function clearPointer(candidateVersionId: string): void {
+  try { globalThis.sessionStorage?.removeItem(pointerKey(candidateVersionId)); } catch { /* ignore */ }
+}
+
 function stopPolling(): void {
   if (pollTimer !== null) {
     clearTimeout(pollTimer);
@@ -122,6 +141,8 @@ async function startAnalysis(): Promise<void> {
     const created = await radarAnalysisApi.createTask(props.candidateVersionId);
     if (stale(gen)) return;
     task.value = created;
+    // 幂等 create 成功即落刷新恢复指针（含当前版本键）：刷新后 mount 能凭此恢复本次任务。
+    writePointer(props.candidateVersionId, created.id);
     if (created.status === 'succeeded') {
       await loadResultAndHistory(gen);
     } else if (!isTerminal(created.status)) {
@@ -193,7 +214,36 @@ async function refreshTask(gen: number): Promise<void> {
   } catch { /* 刷新失败保留原状态 */ }
 }
 
-/** 候选/版本切换：自增 gen 作废迟到响应、停轮询、清任务与结果、重载新候选历史。 */
+/**
+ * 刷新/挂载恢复：凭当前版本键的 sessionStorage 指针 GET task 恢复状态。
+ * - 仅恢复本版本的 task（entityId 必须等于当前版本；否则视为陈旧指针，清除且不污染新候选）；
+ * - 非终态 → 恢复中间态并接管轮询；succeeded → 拉结果；terminal 保留指针供后续刷新展示；
+ * - 指针失效（task 不存在/请求失败）→ 清除，静默回落到 not_started，绝不自动 create。
+ */
+async function recoverPersistedTask(gen: number, candidateVersionId: string): Promise<void> {
+  const taskId = readPointer(candidateVersionId);
+  if (taskId === null) return;
+  let recovered: AnalysisTaskView;
+  try {
+    recovered = await radarAnalysisApi.getTask(taskId);
+  } catch {
+    clearPointer(candidateVersionId); // 指针失效（可能 404）：清除，回落 not_started。
+    return;
+  }
+  if (stale(gen) || candidateVersionId !== props.candidateVersionId) return;
+  if (recovered.entityId !== candidateVersionId) {
+    clearPointer(candidateVersionId); // 陈旧指针指向别的版本：绝不污染当前候选。
+    return;
+  }
+  task.value = recovered;
+  if (recovered.status === 'succeeded') {
+    await loadResultAndHistory(gen);
+  } else if (!isTerminal(recovered.status)) {
+    startPolling(gen); // 接管进行中任务的轮询（不重新 create、不再次 run）。
+  }
+}
+
+/** 候选/版本切换：自增 gen 作废迟到响应、停轮询、清任务与结果、重载新候选历史并尝试刷新恢复。 */
 function resetForTarget(): void {
   generation.value += 1;
   stopPolling();
@@ -203,7 +253,10 @@ function resetForTarget(): void {
   errorText.value = '';
   conflictHint.value = '';
   if (props.enabled && props.candidateId !== '') {
-    void loadHistory(generation.value);
+    const gen = generation.value;
+    const versionId = props.candidateVersionId;
+    void loadHistory(gen);
+    void recoverPersistedTask(gen, versionId);
   } else {
     history.value = [];
   }
