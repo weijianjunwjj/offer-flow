@@ -108,6 +108,9 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
   // 2) 后端：注入已 seed 的 v8 库（版本匹配，不自动迁移）+ 闸门式延迟成功 Provider。
   //    注入 db 时 buildServer 不拥有连接（app.close 不关闭），harness 持句柄在 teardown 显式关闭。
   const db = openDb(dbPath);
+  // 捕获 seed 后 profiles 行原文（供 stale 场景 afterAll 逐字节还原，保证 harness 复用时无残留）。
+  const originalProfileJson =
+    (db.prepare("SELECT data_json FROM profiles WHERE id = 'default'").get() as { data_json: string } | undefined)?.data_json ?? null;
   const gated = createControllableProvider();
   let recSeq = 0;
   let analysisClock = 6_000_000;
@@ -157,6 +160,46 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
     }
     gated.setMode(mode);
     return reply.code(200).send({ reset: true, mode });
+  });
+
+  // stale 触发：走真实领域状态——推进 active JobMatchProfile 版本（归档旧 active、追加新 active 并改指针）。
+  // 只改 profiles 行；绝不动旧 AnalysisRecord/旧 task、不建任务、不调 Provider、不动 Job/Application/FeedbackEvent。
+  // 只回版本 ID 与 mutationType，绝不回 JD/简历/Snapshot。
+  app.post('/e2e/advance-profile-version', async (_request, reply) => {
+    const row = db.prepare("SELECT data_json FROM profiles WHERE id = 'default'").get() as { data_json: string } | undefined;
+    if (row === undefined) return reply.code(409).send({ error: 'profile_not_seeded' });
+    const profile = JSON.parse(row.data_json) as {
+      jobMatchProfile?: { stateVersion: number; activeVersionId: string | null; versions: Array<Record<string, unknown>> };
+    };
+    const state = profile.jobMatchProfile;
+    const oldVersionId = state?.activeVersionId ?? null;
+    const activeVer = state?.versions.find((v) => (v as { id?: string }).id === oldVersionId);
+    if (state === undefined || oldVersionId === null || activeVer === undefined) {
+      return reply.code(409).send({ error: 'no_active_profile_version' });
+    }
+    const newVersionId = `${oldVersionId}-adv-${state.stateVersion + 1}`;
+    const newVer = {
+      ...activeVer,
+      id: newVersionId,
+      version: ((activeVer as { version?: number }).version ?? 1) + 1,
+      status: 'active',
+      supersedesVersionId: oldVersionId,
+      activatedAt: analysisClock += 1,
+    };
+    state.versions = [...state.versions.map((v) => (v === activeVer ? { ...activeVer, status: 'archived' } : v)), newVer];
+    state.activeVersionId = newVersionId;
+    state.stateVersion += 1;
+    db.prepare("UPDATE profiles SET data_json = @data, updated_at = @now WHERE id = 'default'")
+      .run({ data: JSON.stringify(profile), now: analysisClock += 1 });
+    return reply.code(200).send({ oldVersionId, newVersionId, mutationType: 'job_match_profile_version_advanced' });
+  });
+
+  // 逐字节还原 seed 后 profiles 原文（afterAll 收尾；无原文则跳过）。
+  app.post('/e2e/restore-profile', async (_request, reply) => {
+    if (originalProfileJson === null) return reply.code(200).send({ restored: false });
+    db.prepare("UPDATE profiles SET data_json = @data, updated_at = @now WHERE id = 'default'")
+      .run({ data: originalProfileJson, now: analysisClock += 1 });
+    return reply.code(200).send({ restored: true });
   });
 
   const apiPort = await reservePort();
