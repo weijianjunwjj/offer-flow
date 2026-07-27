@@ -202,6 +202,67 @@ describe('RadarReviewPage 候选对比 + 变化 + 证据', () => {
     expect(panelAt).toBeLessThan(compareAt);
   });
 
+  it('V8-5.5 状态 Tag 中文化：关系状态与决策类型显示中文，技术码降级保留', async () => {
+    setupHappy({}, [{
+      snapshotId: 'snap-z', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',
+      decisionType: 'material_change', analysisEligible: true, blockingIssues: [],
+      needsConfirmation: [], conflictReason: null, changedFieldPaths: ['salaryMinK'], summary: summary('越迁软件'),
+    }]);
+    const wrapper = await mountPage();
+    // 关系列表：中文状态可见，原技术码仍在 DOM（降级为弱化副文本，便于排查与既有断言）。
+    expect(wrapper.text()).toContain('疑似重复');
+    expect(wrapper.find('[data-testid="relation-list"]').text()).toContain('suspected_duplicate');
+    // feed：决策类型中文化。
+    expect(wrapper.find('[data-testid="decision-feed"]').text()).toContain('实质变化');
+  });
+
+  it('V8-5.5 候选 A/B 为两张等宽卡（结构对称）', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    const a = wrapper.find('[data-testid="candidate-card-low"]');
+    const b = wrapper.find('[data-testid="candidate-card-high"]');
+    expect(a.exists()).toBe(true);
+    expect(b.exists()).toBe(true);
+    // 两侧同为 cand-card，等宽由 .compare 的 1fr 1fr 栅格保证。
+    expect(a.classes()).toContain('cand-card');
+    expect(b.classes()).toContain('cand-card');
+  });
+
+  it('V8-5.5 顶部两列限高内部滚动 + 内部标识默认折叠', async () => {
+    setupHappy({}, [{
+      snapshotId: 'snap-y', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',
+      decisionType: 'material_change', analysisEligible: true, blockingIssues: [],
+      needsConfirmation: [], conflictReason: null, changedFieldPaths: [], summary: summary('越迁软件'),
+    }]);
+    mocks.listRuleEvidence.mockResolvedValue([{
+      assessmentId: 'a1', ruleKey: 'salary_ceiling', evidenceState: 'structured', corruptReason: null,
+      overrideState: 'none', originalResult: 'hit', evidenceHashShort: 'cafebabe0022',
+      overrideAudit: [], matchedFieldPath: 'salaryMaxK', rawValue: '25K', normalizedValue: '25',
+      confidence: 0.9, outcome: 'block', excerpt: null, explanation: null,
+      ruleId: 'rule-1', ruleVersion: 'v1', blocking: true, matchedText: null,
+    }] satisfies RuleEvidenceView[]);
+    const wrapper = await mountPage();
+    // 顶部两列列表挂 scroll-pane（限高 + overflow-y:auto）。
+    expect(wrapper.find('[data-testid="relation-list"]').classes()).toContain('scroll-pane');
+    expect(wrapper.find('[data-testid="decision-feed"]').classes()).toContain('scroll-pane');
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 证据内部 ID/哈希收进 details（默认折叠），文本仍留在 DOM 中。
+    const details = wrapper.findAll('details.tech-details');
+    expect(details.length).toBeGreaterThan(0);
+    expect(details[0]!.attributes('open')).toBeUndefined();
+    expect(wrapper.find('[data-testid^="evidence-original-"]').exists()).toBe(true);
+  });
+
+  it('V8-5.5 推荐区标记为主决策区（primary-zone）', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    expect(wrapper.find('[data-testid="recommendation-panel-review"]').classes()).toContain('primary-zone');
+  });
+
   it('点击决策 feed 中带候选的条目加载单侧详情与证据（无关系裁决按钮）', async () => {
     setupHappy({}, [{
       snapshotId: 'snap-m', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',

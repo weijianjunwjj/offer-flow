@@ -199,6 +199,31 @@ const OVERRIDE_ACTION_LABELS: Record<string, string> = {
   rule_override_reverted: '撤销覆盖',
 };
 const OVERRIDE_STATE_LABELS: Record<string, string> = { none: '默认', pass: '判定通过', block: '坚持阻断' };
+
+/** 关系状态中文化：Tag 显示中文，技术码降级为弱化副文本（不从 DOM 移除，便于排查与既有断言）。 */
+const RELATION_STATUS_LABELS: Record<string, string> = {
+  suspected_duplicate: '疑似重复',
+  needs_recheck: '待重新确认',
+  confirmed_same: '已确认相同',
+  confirmed_distinct: '已确认不同',
+};
+/** 决策类型中文化（feed 项 Tag）。 */
+const DECISION_TYPE_LABELS: Record<string, string> = {
+  new_identity: '新岗位',
+  material_change: '实质变化',
+  no_change: '无变化',
+  snapshot_only: '仅快照',
+  extraction_regression: '提取回退',
+  ambiguous_change: '变化存疑',
+  identity_conflict: '身份冲突',
+};
+/** 证据状态中文化（结构化/旧标量/损坏）。 */
+const EVIDENCE_STATE_LABELS: Record<string, string> = {
+  structured: '结构化', legacy_scalar: '旧标量', corrupt: '已损坏',
+};
+function relationStatusLabel(s: string): string { return RELATION_STATUS_LABELS[s] ?? s; }
+function decisionTypeLabel(t: string): string { return DECISION_TYPE_LABELS[t] ?? t; }
+function evidenceStateLabel(s: string): string { return EVIDENCE_STATE_LABELS[s] ?? s; }
 function relationActionLabel(t: string): string { return RELATION_ACTION_LABELS[t] ?? t; }
 function overrideActionLabel(t: string): string { return OVERRIDE_ACTION_LABELS[t] ?? t; }
 function overrideStateLabel(s: string): string { return OVERRIDE_STATE_LABELS[s] ?? s; }
@@ -225,7 +250,7 @@ function signalValueText(v: string | number | boolean | null): string {
             <NButton size="tiny" :type="statusFilter === 'all' ? 'primary' : 'default'" data-testid="filter-all" @click="changeFilter('all')">全部</NButton>
           </NSpace>
           <NEmpty v-if="relations.length === 0" description="该筛选下暂无关系" data-testid="relations-empty" />
-          <ul v-else class="relation-list" data-testid="relation-list">
+          <ul v-else class="relation-list scroll-pane" data-testid="relation-list">
             <li v-for="rel in relations" :key="rel.relationId">
               <NButton
                 text
@@ -233,9 +258,11 @@ function signalValueText(v: string | number | boolean | null): string {
                 :data-testid="`relation-${rel.relationId}`"
                 @click="selectRelation(rel)"
               >
-                <NTag size="small" :type="rel.status === 'needs_recheck' ? 'warning' : 'info'">{{ rel.status }}</NTag>
+                <NTag size="small" :type="rel.status === 'needs_recheck' ? 'warning' : 'info'">{{ relationStatusLabel(rel.status) }}</NTag>
                 {{ rel.lowSummary.company ?? '?' }} × {{ rel.highSummary.company ?? '?' }}
               </NButton>
+              <!-- 技术码降级：保留在 DOM 供排查，视觉弱化为次要副文本 -->
+              <span class="tech-code">{{ rel.status }}</span>
             </li>
           </ul>
         </NCard>
@@ -243,12 +270,14 @@ function signalValueText(v: string | number | boolean | null): string {
         <!-- 区域：决策审阅 feed（含阻断信息） -->
         <NCard title="决策审阅（变化 / 阻断）" size="small" class="col">
           <NEmpty v-if="feed.length === 0" description="暂无决策记录" />
-          <ul v-else class="feed-list" data-testid="decision-feed">
+          <ul v-else class="feed-list scroll-pane" data-testid="decision-feed">
             <li v-for="f in feed" :key="f.snapshotId" :data-testid="`feed-${f.decisionType}`">
               <NButton text :disabled="f.candidateId === null" :data-testid="`feed-open-${f.snapshotId}`" @click="selectFeedCandidate(f.candidateId)">
-                <NTag size="small" :type="f.analysisEligible ? 'success' : 'error'">{{ f.decisionType }}</NTag>
+                <NTag size="small" :type="f.analysisEligible ? 'success' : 'error'">{{ decisionTypeLabel(f.decisionType) }}</NTag>
                 <NText depth="3">{{ f.summary?.company ?? '（无候选）' }}</NText>
               </NButton>
+              <!-- 技术码降级：保留 decisionType 原码供排查（e2e testid 亦依赖该码） -->
+              <span class="tech-code">{{ f.decisionType }}</span>
               <div v-if="f.conflictReason" class="reason" data-testid="feed-conflict-reason">
                 冲突原因：{{ f.conflictReason }}
               </div>
@@ -267,15 +296,22 @@ function signalValueText(v: string | number | boolean | null): string {
         :candidate-version-ids="recommendationScope"
         :enabled="recommendationsEnabled"
         :has-selection="showCompare"
-        class="mt"
+        class="mt primary-zone"
         data-testid="recommendation-panel-review"
       />
 
       <!-- 区域 2/3/4：候选对比 + 变化摘要 + 阻断信息（选中关系后展开） -->
       <NCard v-if="showCompare" title="候选对比" size="small" class="mt" data-testid="candidate-compare">
         <div class="compare">
-          <div v-for="(d, side) in { low: detailLow, high: detailHigh }" :key="side">
-            <NText strong>{{ side === 'low' ? '候选 A' : '候选 B' }}</NText>
+          <!-- 候选 A/B 两张等宽卡：结构对称，便于左右逐字段比对 -->
+          <div v-for="(d, side) in { low: detailLow, high: detailHigh }" :key="side"
+            class="cand-card" :data-testid="`candidate-card-${side}`">
+            <div class="cand-head">
+              <NText strong>{{ side === 'low' ? '候选 A' : '候选 B' }}</NText>
+              <NTag v-if="d" size="small" :type="d.analysisEligible ? 'success' : 'error'">
+                {{ decisionTypeLabel(d.decisionType) }}
+              </NTag>
+            </div>
             <template v-if="d">
               <div class="field-row"><span>公司</span><span>{{ d.currentVersion?.company ?? '—' }}</span></div>
               <div class="field-row"><span>岗位</span><span>{{ d.currentVersion?.role ?? '—' }}</span></div>
@@ -285,8 +321,10 @@ function signalValueText(v: string | number | boolean | null): string {
               <div class="field-row"><span>经验</span><span>{{ d.currentVersion?.experienceRequirement ?? '—' }}</span></div>
               <div class="field-row"><span>JD</span><span>{{ d.currentVersion?.jdExcerpt ?? '—' }}</span></div>
               <div class="field-row"><span>来源</span><span>{{ d.currentVersion?.normalizedSourceUrl ?? '—' }}</span></div>
-              <div class="field-row"><span>当前版本</span><span>{{ d.activeCandidateVersionId ?? '—' }}</span></div>
-              <NTag size="small" :type="d.analysisEligible ? 'success' : 'error'">{{ d.decisionType }}</NTag>
+              <!-- 内部版本号弱化：保留可查，视觉降级 -->
+              <div class="field-row tech-row"><span>当前版本</span><span class="tech-code">{{ d.activeCandidateVersionId ?? '—' }}</span></div>
+              <!-- 决策类型中文 Tag 已上移至卡头；此处仅保留技术码（弱化） -->
+              <div class="tech-code">{{ d.decisionType }}</div>
               <div v-if="d.conflictReason" class="reason">冲突原因：{{ d.conflictReason }}</div>
               <div v-for="cf in d.changedFields" :key="cf.fieldPath" class="reason" data-testid="changed-field">
                 {{ cf.fieldPath }}：{{ cf.before ?? '∅' }} → {{ cf.after ?? '∅' }}（{{ cf.classification }}：{{ cf.reason }}）
@@ -311,7 +349,7 @@ function signalValueText(v: string | number | boolean | null): string {
             :title="`信号数据损坏：${relationDetail.signals.corruptReason ?? '未知原因'}`" />
           <ul v-else class="signal-list" data-testid="signals-list">
             <li v-for="(sig, i) in relationDetail.signals.signals" :key="i" class="signal-item" :data-testid="`signal-${sig.signalType}`">
-              <NTag size="small" type="info">{{ sig.signalType }}</NTag>
+              <NTag size="small" type="info" class="tech-code">{{ sig.signalType }}</NTag>
               <span class="signal-field">{{ sig.field }}</span>
               <span class="signal-vals">A：{{ signalValueText(sig.candidateAValue) }} ｜ B：{{ signalValueText(sig.candidateBValue) }}</span>
               <NText v-if="sig.strength !== null" depth="3">强度 {{ sig.strength }}</NText>
@@ -319,7 +357,9 @@ function signalValueText(v: string | number | boolean | null): string {
             </li>
           </ul>
           <div class="reason" data-testid="relation-meta">
-            当前状态：{{ relationDetail.status }} ｜ 原因码：{{ relationDetail.reasonCode ?? '—' }}
+            当前状态：{{ relationStatusLabel(relationDetail.status) }}
+            <span class="tech-code">{{ relationDetail.status }}</span>
+            ｜ 原因码：{{ relationDetail.reasonCode ?? '—' }}
             ｜ 首次检测：{{ timeText(relationDetail.firstDetectedAt) }}
             ｜ 最近检测：{{ timeText(relationDetail.lastDetectedAt) }}
             ｜ 裁决时间：{{ timeText(relationDetail.decidedAt) }}
@@ -350,9 +390,9 @@ function signalValueText(v: string | number | boolean | null): string {
           <div v-for="e in evidence" :key="e.assessmentId" class="evidence-item" :data-testid="`evidence-${e.evidenceState}`">
             <NSpace align="center" size="small">
               <NTag size="small">{{ e.ruleKey }}</NTag>
-              <NTag size="small" :type="e.evidenceState === 'corrupt' ? 'error' : e.evidenceState === 'legacy_scalar' ? 'warning' : 'default'">{{ e.evidenceState }}</NTag>
-              <NTag size="small" :type="e.overrideState === 'none' ? 'default' : 'info'">覆盖：{{ e.overrideState }}</NTag>
-              <NText v-if="e.outcome" depth="3">outcome={{ e.outcome }}</NText>
+              <NTag size="small" :type="e.evidenceState === 'corrupt' ? 'error' : e.evidenceState === 'legacy_scalar' ? 'warning' : 'default'">{{ evidenceStateLabel(e.evidenceState) }}</NTag>
+              <NTag size="small" :type="e.overrideState === 'none' ? 'default' : 'info'">覆盖：{{ overrideStateLabel(e.overrideState) }}</NTag>
+              <NText v-if="e.outcome" depth="3" class="tech-code">outcome={{ e.outcome }}</NText>
             </NSpace>
             <div v-if="e.evidenceState === 'structured'" class="reason">
               字段 {{ e.matchedFieldPath }} · 原值 {{ e.rawValue }} · 规范化 {{ e.normalizedValue }} · 置信度 {{ e.confidence }}
@@ -360,11 +400,15 @@ function signalValueText(v: string | number | boolean | null): string {
             <div v-if="e.excerpt" class="reason">摘要：{{ e.excerpt }}</div>
             <div v-if="e.explanation" class="reason">说明：{{ e.explanation }}</div>
             <div v-if="e.corruptReason" class="reason">损坏原因：{{ e.corruptReason }}</div>
-            <!-- 原始规则评估只读标识 + 不可变说明（由只读 API 提供，非仅 UI 文案） -->
-            <div class="reason" :data-testid="`evidence-original-${e.assessmentId}`">
-              原评估 {{ e.assessmentId }} · 结果 {{ e.originalResult }}
-              <span v-if="e.evidenceHashShort"> · 证据哈希 {{ e.evidenceHashShort }}</span>
-            </div>
+            <!-- 原始规则评估只读标识 + 不可变说明（由只读 API 提供，非仅 UI 文案）。
+                 内部 ID/哈希默认折叠：降低视觉噪音，但仍在 DOM 中可查（不改变可访问文本）。 -->
+            <details class="tech-details">
+              <summary class="tech-summary">内部标识与证据哈希</summary>
+              <div class="reason" :data-testid="`evidence-original-${e.assessmentId}`">
+                原评估 {{ e.assessmentId }} · 结果 {{ e.originalResult }}
+                <span v-if="e.evidenceHashShort"> · 证据哈希 {{ e.evidenceHashShort }}</span>
+              </div>
+            </details>
             <div class="immutable-note" :data-testid="`evidence-immutable-${e.assessmentId}`">
               原始规则评估未被覆盖操作修改（覆盖仅追加审计事件）。
             </div>
@@ -424,21 +468,47 @@ function signalValueText(v: string | number | boolean | null): string {
 </template>
 
 <style scoped>
-.radar-review { padding: 16px; max-width: 1200px; margin: 0 auto; }
+/* 决策工作台：更宽的主内容区，让候选 A/B 与建议卡片有足够横向空间 */
+.radar-review { padding: 16px; max-width: 1520px; margin: 0 auto; }
 .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .col { min-width: 0; }
-.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* 顶部两列限高 + 内部滚动：长列表不再把主决策区推到屏幕外 */
+.scroll-pane { max-height: 300px; overflow-y: auto; }
+/* 候选 A/B 等宽卡：min-width 0 防止长 URL 撑破栅格 */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.cand-card {
+  min-width: 0; padding: 12px; border: 1px solid var(--of-line, rgba(15, 23, 42, 0.08));
+  border-radius: 10px; background: var(--of-card, #ffffff);
+}
+.cand-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
 .relation-list, .feed-list { list-style: none; padding: 0; margin: 0; }
-.relation-list li, .feed-list li { padding: 6px 0; border-bottom: 1px solid #eee; }
-.reason { font-size: 12px; color: #666; margin-top: 2px; }
+.relation-list li, .feed-list li { padding: 6px 0; border-bottom: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); }
+.reason { font-size: 12px; color: var(--of-ink-2, #475569); margin-top: 2px; }
 .field-row { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 2px 0; }
-.evidence-item { border: 1px solid #eee; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
-.merge-note { color: #b06a00; font-size: 12px; margin: 8px 0; }
+.field-row > span:first-child { color: var(--of-ink-2, #475569); flex: 0 0 auto; }
+.field-row > span:last-child { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+/* 内部 ID / 版本号 / 技术码统一弱化 */
+/* 技术码弱化靠颜色（muted）而非缩到 ramp 之外的字号：12px 是 DESIGN.md 的最小步进 */
+.tech-code { font-size: 12px; color: var(--of-muted, #94a3b8); overflow-wrap: anywhere; margin-left: 6px; }
+.tech-row .tech-code, .cand-card > .tech-code { margin-left: 0; }
+.tech-row > span:last-child { text-align: right; }
+.tech-details { margin-top: 4px; }
+.tech-summary { cursor: pointer; font-size: 12px; color: var(--of-muted, #94a3b8); }
+.evidence-item {
+  border: 1px solid var(--of-line, rgba(15, 23, 42, 0.08));
+  border-radius: 10px; padding: 8px; margin-bottom: 8px;
+}
+.merge-note { color: #92400e; font-size: 12px; margin: 8px 0; }
 .mt { margin-top: 12px; }
+/* 主决策区：靠版面位置（列表之下、候选详情之上）与卡片标题建立层级，不加装饰性标边 */
+.primary-zone { border-radius: 10px; }
 .filter-bar { margin-bottom: 8px; }
 .signal-list, .audit-list { list-style: none; padding: 0; margin: 4px 0; }
-.signal-item, .audit-item { padding: 4px 0; border-bottom: 1px dashed #eee; font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.signal-item, .audit-item {
+  padding: 4px 0; border-bottom: 1px dashed var(--of-line, rgba(15, 23, 42, 0.08));
+  font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+}
 .signal-field { font-weight: 600; }
-.signal-vals { color: #444; }
-.immutable-note { font-size: 12px; color: #2a7; margin-top: 2px; }
+.signal-vals { color: var(--of-ink-2, #475569); }
+.immutable-note { font-size: 12px; color: #166534; margin-top: 2px; }
 </style>

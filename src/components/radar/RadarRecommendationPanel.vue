@@ -196,13 +196,18 @@ function emptyReasonLabel(v: string | null): string {
 .mb { margin-bottom: 8px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
 .count { display: block; margin-bottom: 8px; }
-.rec-item { padding: 8px 0; border-bottom: 1px dashed var(--of-line, rgba(15, 23, 42, 0.08)); }
-.rec-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* 建议卡片：主决策区内容，给足留白与卡片边界，避免密集列表感 */
+.rec-item {
+  padding: 14px 16px; margin-bottom: 10px;
+  border: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); border-radius: 10px;
+}
+.rec-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .priority { font-weight: 600; color: var(--of-brand, #2563eb); }
-.rationale { margin: 6px 0; color: var(--of-ink, #0f172a); line-height: 1.5; }
+.rationale { margin: 8px 0; color: var(--of-ink, #0f172a); line-height: 1.6; font-size: 13px; }
 .conditions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; }
 .evidence summary { cursor: pointer; color: var(--of-ink-2, #475569); font-size: 12px; }
-.cvid { padding: 0 6px; background: rgba(15, 23, 42, 0.05); border-radius: 8px; font-size: 12px; color: var(--of-ink-2, #475569); }
+/* 内部候选版本 ID：弱化为辅助信息，不与结论/理由争夺注意力（字号保持 12px 最小步进，靠颜色弱化） */
+.cvid { padding: 0 6px; background: rgba(15, 23, 42, 0.05); border-radius: 8px; font-size: 12px; color: var(--of-muted, #94a3b8); }
 .ekey { display: inline-block; margin: 2px 4px 0 0; padding: 0 8px; background: rgba(15, 23, 42, 0.05); border-radius: 999px; font-size: 12px; }
 .ekey.support { color: #15803d; } .ekey.counter { color: #b91c1c; }
 .blocked { margin-top: 12px; }
