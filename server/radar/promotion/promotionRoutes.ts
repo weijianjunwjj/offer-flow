@@ -99,6 +99,15 @@ export function registerRadarPromotionRoutes(
       });
     });
 
+    // 预览晋升计划：只读，零写入。与执行共用同一推导，保证"预览所见 = 确认所得"。
+    // Human-in-the-loop 的关键一环：用户先看清会发生什么，再决定是否确认。
+    scoped.post('/radar/candidate-versions/:id/promotions/preview', async (request, reply) => {
+      const parsed = PromoteRequestSchema.safeParse(request.body);
+      if (!parsed.success) throw badRequest();
+      const plan = service.previewPromotion(parseId(request), parsed.data);
+      return reply.code(200).send({ plan: toPromotionPlanView(plan) });
+    });
+
     scoped.get('/radar/promotions/:id', async (request, reply) => {
       const promotion = service.getPromotion(parseId(request));
       if (promotion === null) {

@@ -109,6 +109,29 @@ export class PromotionService {
   }
 
   /**
+   * 预览晋升计划：与 `promote` 共用同一份 `derivePlan`，保证"预览所见 = 确认所得"。
+   *
+   * **零写入**：只读事务，不插入任何正式对象，也不落 Promotion。
+   * 校验与拒绝规则与执行完全一致（no_response 同样直接抛错），
+   * 因此用户在确认前就能看到会被钳到哪一层、以及为什么。
+   *
+   * @throws PromotionError 版本不存在 / 非当前版本 / 触发原因不允许 / 目标错配
+   */
+  previewPromotion(candidateVersionId: string, request: PromoteRequest): PromotionPlanV1 {
+    return this.db.transaction(() => {
+      const plan = this.derivePlan(candidateVersionId, request);
+      // 已晋升过则在预览里如实标注，避免用户误以为会再建一份正式对象。
+      const replay = this.promotions.findByIdempotencyKey(plan.idempotencyKey);
+      if (replay === null) return plan;
+      return {
+        ...plan,
+        existingPromotionId: replay.id,
+        clampReasons: [...plan.clampReasons, 'already_promoted' as const],
+      };
+    })();
+  }
+
+  /**
    * 推导计划：校验版本可晋升 → 事务内重新读取正式对象 → 交给纯函数定型。
    *
    * @throws PromotionError 版本不存在 / 非当前版本 / 触发原因不允许 / 目标错配

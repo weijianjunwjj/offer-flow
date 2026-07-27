@@ -149,6 +149,79 @@ describe('晋升 HTTP — 查询', () => {
   });
 });
 
+describe('晋升 HTTP — 预览', () => {
+  it('预览返回 200 与计划，且零写入', async () => {
+    const { app, db } = setup();
+    const { versionId } = seedCandidate(db, 'pr1');
+
+    const res = await post(app, `/radar/candidate-versions/${versionId}/promotions/preview`, {
+      trigger: 'hr_replied', requestedDepth: 'feedback',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as any;
+    expect(body.plan.effectiveDepth).toBe('feedback');
+    expect(body.plan.feedbackEventType).toBe('hr_replied');
+    // 预览绝不落库。
+    expect((db.prepare('SELECT COUNT(*) AS n FROM radar_promotions').get() as any).n).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM jobs').get() as any).n).toBe(0);
+  });
+
+  it('预览不返回 promotion，只返回 plan', async () => {
+    const { app, db } = setup();
+    const { versionId } = seedCandidate(db, 'pr2');
+
+    const res = await post(app, `/radar/candidate-versions/${versionId}/promotions/preview`, {
+      trigger: 'hr_replied', requestedDepth: 'feedback',
+    });
+
+    const body = res.json() as any;
+    expect(body).not.toHaveProperty('promotion');
+    expect(body).not.toHaveProperty('created');
+    expect(body.plan).not.toHaveProperty('idempotencyKey');
+  });
+
+  it('预览显示深度钳制原因', async () => {
+    const { app, db } = setup();
+    const { versionId } = seedCandidate(db, 'pr3');
+
+    const res = await post(app, `/radar/candidate-versions/${versionId}/promotions/preview`, {
+      trigger: 'user_priority', requestedDepth: 'feedback',
+    });
+
+    const plan = (res.json() as any).plan;
+    expect(plan.requestedDepth).toBe('feedback');
+    expect(plan.effectiveDepth).toBe('job_only');
+    expect(plan.clampReasons).toContain('trigger_forbids_application');
+  });
+
+  it('预览 no_response 返回 409，且零写入', async () => {
+    const { app, db } = setup();
+    const { versionId } = seedCandidate(db, 'pr4');
+
+    const res = await post(app, `/radar/candidate-versions/${versionId}/promotions/preview`, {
+      trigger: 'no_response', requestedDepth: 'feedback',
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect((res.json() as any).code).toBe('PROMOTION_TRIGGER_NOT_ALLOWED');
+    expect((db.prepare('SELECT COUNT(*) AS n FROM radar_promotions').get() as any).n).toBe(0);
+  });
+
+  it('预览后确认晋升：计划一致且正式对象落库', async () => {
+    const { app, db } = setup();
+    const { versionId } = seedCandidate(db, 'pr5');
+    const payload = { trigger: 'hr_replied', requestedDepth: 'feedback' };
+
+    const preview = await post(app, `/radar/candidate-versions/${versionId}/promotions/preview`, payload);
+    const confirm = await post(app, `/radar/candidate-versions/${versionId}/promotions`, payload);
+
+    expect(confirm.statusCode).toBe(201);
+    expect((confirm.json() as any).plan.effectiveDepth).toBe((preview.json() as any).plan.effectiveDepth);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM radar_promotions').get() as any).n).toBe(1);
+  });
+});
+
 describe('晋升 HTTP — 错误码映射与安全', () => {
   it('no_response 返回 409 PROMOTION_TRIGGER_NOT_ALLOWED，且零写入', async () => {
     const { app, db } = setup();

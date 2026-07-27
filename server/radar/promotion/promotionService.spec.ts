@@ -324,6 +324,91 @@ describe('V8-6 晋升服务 · 目标错配拒绝', () => {
   });
 });
 
+describe('V8-6 晋升预览 · 零写入', () => {
+  it('预览不写任何表', () => {
+    const { db, service } = setup();
+    const { versionId } = seedCandidate(db, 'pv1');
+
+    const plan = service.previewPromotion(versionId, request());
+
+    expect(plan.effectiveDepth).toBe('feedback');
+    expect(countRows(db, 'jobs')).toBe(0);
+    expect(countRows(db, 'applications')).toBe(0);
+    expect(countRows(db, 'feedback_events')).toBe(0);
+    expect(countRows(db, 'radar_promotions')).toBe(0);
+  });
+
+  it('反复预览仍然零写入，且计划稳定', () => {
+    const { db, service } = setup();
+    const { versionId } = seedCandidate(db, 'pv2');
+
+    const first = service.previewPromotion(versionId, request());
+    const second = service.previewPromotion(versionId, request());
+
+    expect(second.idempotencyKey).toBe(first.idempotencyKey);
+    expect(second.effectiveDepth).toBe(first.effectiveDepth);
+    expect(countRows(db, 'radar_promotions')).toBe(0);
+  });
+
+  it('预览所见 = 确认所得：深度与事件类型与实际晋升一致', () => {
+    const { db, service } = setup();
+    const { versionId } = seedCandidate(db, 'pv3');
+
+    const preview = service.previewPromotion(versionId, request({ trigger: 'user_explicit_request' }));
+    const executed = service.promote(versionId, request({ trigger: 'user_explicit_request' }));
+
+    expect(executed.plan.effectiveDepth).toBe(preview.effectiveDepth);
+    expect(executed.plan.feedbackEventType).toBe(preview.feedbackEventType);
+    expect(executed.plan.clampReasons).toEqual(preview.clampReasons);
+    expect(executed.plan.idempotencyKey).toBe(preview.idempotencyKey);
+  });
+
+  it('预览钳制：user_priority 请求 feedback 显示将被钳到 job_only', () => {
+    const { db, service } = setup();
+    const { versionId } = seedCandidate(db, 'pv4');
+
+    const plan = service.previewPromotion(versionId, request({ trigger: 'user_priority' }));
+
+    expect(plan.effectiveDepth).toBe('job_only');
+    expect(plan.clampReasons).toContain('trigger_forbids_application');
+    expect(plan.application.mode).toBe('none');
+    expect(plan.feedback.mode).toBe('none');
+  });
+
+  it('预览 no_response 直接拒绝，且零写入', () => {
+    const { db, service } = setup();
+    const { versionId } = seedCandidate(db, 'pv5');
+
+    expect(() => service.previewPromotion(versionId, request({ trigger: 'no_response' })))
+      .toThrow(PromotionError);
+    expect(countRows(db, 'radar_promotions')).toBe(0);
+  });
+
+  it('已晋升过时，预览标注 already_promoted 与既有晋升 id', () => {
+    const { db, service } = setup();
+    const { versionId } = seedCandidate(db, 'pv6');
+    const executed = service.promote(versionId, request()).promotion;
+
+    const plan = service.previewPromotion(versionId, request());
+
+    expect(plan.clampReasons).toContain('already_promoted');
+    expect(plan.existingPromotionId).toBe(executed.id);
+  });
+
+  it('预览 link 模式：既有 Job 显示为关联而非新建', () => {
+    const { db, service } = setup();
+    const first = seedCandidate(db, 'pv7');
+    const jobId = service.promote(first.versionId, request({ trigger: 'user_priority', requestedDepth: 'job_only' })).promotion.jobId;
+
+    const second = seedCandidate(db, 'pv8');
+    const plan = service.previewPromotion(second.versionId, request({ jobId }));
+
+    expect(plan.job.mode).toBe('link');
+    expect(plan.job.existingId).toBe(jobId);
+    expect(plan.application.mode).toBe('create');
+  });
+});
+
 describe('V8-6 晋升服务 · 原子性', () => {
   /**
    * 最后一步 Promotion 落库失败时，必须整体回滚。

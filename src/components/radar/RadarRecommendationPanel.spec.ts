@@ -210,3 +210,25 @@ describe('RadarRecommendationPanel 加载最新与健壮性', () => {
     expect(w.find('[data-testid="recommendation-error"]').text()).toContain('推荐 scope 超过上限 50');
   });
 });
+
+describe('V8-6 晋升入口', () => {
+  it('promotionEnabled 关闭时不显示晋升按钮（与 V8-5 行为一致）', async () => {
+    mocks.createBatch.mockResolvedValue(batch([rec()]));
+    const w = mountPanel();
+    await w.find('[data-testid="recommendation-generate"]').trigger('click');
+    await flushPromises();
+
+    expect(w.find('[data-testid="recommendation-promote-1"]').exists()).toBe(false);
+  });
+
+  it('点击晋升只发出选中事件，不触发任何写操作', async () => {
+    mocks.createBatch.mockResolvedValue(batch([rec()]));
+    const w = mountPanel({ promotionEnabled: true });
+    await w.find('[data-testid="recommendation-generate"]').trigger('click');
+    await flushPromises();
+
+    await w.find('[data-testid="recommendation-promote-1"]').trigger('click');
+
+    expect(w.emitted('promote')).toEqual([['cv-1']]);
+  });
+});

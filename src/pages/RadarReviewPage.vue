@@ -10,11 +10,22 @@ import {
 import { features } from '../config/features';
 import RadarAnalysisPanel from '../components/radar/RadarAnalysisPanel.vue';
 import RadarRecommendationPanel from '../components/radar/RadarRecommendationPanel.vue';
+import RadarPromotionPanel from '../components/radar/RadarPromotionPanel.vue';
 
 /** V8-4 单岗位分析面板门禁：默认关闭，不随 Radar 开启而自动开启（见 features.ts）。 */
 const analysisEnabled = features.radarAnalysisEnabled;
 /** V8-5 岗位建议批次面板门禁：独立、默认关闭；flag=false 时完全不渲染，不影响 V8-4。 */
 const recommendationsEnabled = features.radarRecommendationsEnabled;
+/**
+ * V8-6 晋升面板：随建议面板同门禁（建议在生产默认关闭，晋升因此也默认不可见），
+ * 不新增生产开关。晋升入口只由用户在某条建议上点击"晋升"打开。
+ */
+const promotingCandidateVersionId = ref<string | null>(null);
+function selectForPromotion(candidateVersionId: string): void {
+  // 再次点击同一条即收起，避免误留一个已打开的晋升面板。
+  promotingCandidateVersionId.value =
+    promotingCandidateVersionId.value === candidateVersionId ? null : candidateVersionId;
+}
 
 const loading = ref(true);
 const busy = ref(false);
@@ -296,8 +307,21 @@ function signalValueText(v: string | number | boolean | null): string {
         :candidate-version-ids="recommendationScope"
         :enabled="recommendationsEnabled"
         :has-selection="showCompare"
+        :promotion-enabled="recommendationsEnabled"
+        :promoting-candidate-version-id="promotingCandidateVersionId"
         class="mt primary-zone"
         data-testid="recommendation-panel-review"
+        @promote="selectForPromotion"
+      />
+
+      <!-- V8-6 晋升面板：仅在用户点击某条建议的「晋升」后出现，紧随建议区，
+           保持"看到建议 → 决定晋升 → 预览 → 确认"的线性动线。无任何自动晋升。 -->
+      <RadarPromotionPanel
+        v-if="recommendationsEnabled && promotingCandidateVersionId !== null"
+        :candidate-version-id="promotingCandidateVersionId"
+        :enabled="recommendationsEnabled"
+        class="mt primary-zone"
+        data-testid="promotion-panel-review"
       />
 
       <!-- 区域 2/3/4：候选对比 + 变化摘要 + 阻断信息（选中关系后展开） -->

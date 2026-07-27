@@ -7,16 +7,26 @@ import {
   type RecommendationBatchView, type RecommendationItem, type BlockedCandidate,
 } from '../../api/radarRecommendationApi';
 
+/**
+ * 选中某条建议以进入晋升流程。只发出用户点击意图，不做任何写操作——
+ * 晋升面板仍要求用户单独预览与确认（Human-in-the-loop）。
+ */
+const emit = defineEmits<{ (e: 'promote', candidateVersionId: string): void }>();
+
 const props = withDefaults(defineProps<{
   /** 推荐 scope：当前可见候选的正式版本集合（去重后送后端）。空则不允许生成。 */
   candidateVersionIds: string[];
   enabled: boolean;
+  /** 已选中待晋升的候选版本；用于高亮当前建议条目。 */
+  promotingCandidateVersionId?: string | null;
+  /** 是否显示"晋升"入口。关闭时面板行为与 V8-5 完全一致。 */
+  promotionEnabled?: boolean;
   /**
    * 是否已选中一组岗位（关系已打开）。未选中时仅显示引导提示，不显示生成/加载操作。
    * 缺省为 true：纯展示层门禁，未显式传入时行为与既有一致（scope/API/状态逻辑不受影响）。
    */
   hasSelection?: boolean;
-}>(), { hasSelection: true });
+}>(), { hasSelection: true, promotingCandidateVersionId: null, promotionEnabled: false });
 
 const batch = ref<RecommendationBatchView | null>(null);
 const actionBusy = ref(false);
@@ -160,6 +170,11 @@ function emptyReasonLabel(v: string | null): string {
               <NTag size="small" :type="kindTagType(rec.kind)" data-testid="recommendation-kind">{{ kindLabel(rec.kind) }}</NTag>
               <NTag size="small" data-testid="recommendation-confidence">置信度：{{ confidenceLabel(rec.confidence) }}</NTag>
               <code class="cvid">{{ rec.candidateVersionId }}</code>
+              <!-- 晋升入口：只选中该建议，不触发任何写操作 -->
+              <NButton v-if="promotionEnabled" size="tiny"
+                :type="promotingCandidateVersionId === rec.candidateVersionId ? 'primary' : 'default'"
+                :data-testid="`recommendation-promote-${rec.priority}`"
+                @click="emit('promote', rec.candidateVersionId)">晋升</NButton>
             </div>
             <p class="rationale" data-testid="recommendation-rationale">{{ rec.rationale }}</p>
             <div v-if="rec.conditions.length > 0" class="conditions" data-testid="recommendation-conditions">

@@ -40,6 +40,11 @@ export interface PromotionPlanView {
   feedbackMode: string;
   feedbackEventType: string | null;
   clampReasons: string[];
+  /** 已存在的晋升 id（幂等命中）；预览据此提示"已晋升过，确认不会再建一份"。 */
+  existingPromotionId: string | null;
+  /** 将被关联的既有正式对象 id：供预览逐条说明"关联哪一个"。 */
+  linkedJobId: string | null;
+  linkedApplicationId: string | null;
 }
 
 export interface PromotionView {
@@ -66,6 +71,10 @@ export function toPromotionPlanView(plan: PromotionPlanV1): PromotionPlanView {
     feedbackMode: plan.feedback.mode,
     feedbackEventType: plan.feedbackEventType,
     clampReasons: [...plan.clampReasons],
+    existingPromotionId: plan.existingPromotionId,
+    // 只在 link 模式下透出目标 id：create 模式尚无对象，null 即"将新建"。
+    linkedJobId: plan.job.mode === 'link' ? plan.job.existingId : null,
+    linkedApplicationId: plan.application.mode === 'link' ? plan.application.existingId : null,
   };
 }
 
