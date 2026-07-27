@@ -260,6 +260,17 @@ function signalValueText(v: string | number | boolean | null): string {
         </NCard>
       </div>
 
+      <!-- V8-5 岗位建议批次：置于候选对比区顶部、先于候选详情，避免埋在长页面底部。
+           未选关系时也渲染（显示「请先选择一组岗位」引导）；仅在能力开启时渲染，flag=false 完全不影响 V8-4。 -->
+      <RadarRecommendationPanel
+        v-if="recommendationsEnabled"
+        :candidate-version-ids="recommendationScope"
+        :enabled="recommendationsEnabled"
+        :has-selection="showCompare"
+        class="mt"
+        data-testid="recommendation-panel-review"
+      />
+
       <!-- 区域 2/3/4：候选对比 + 变化摘要 + 阻断信息（选中关系后展开） -->
       <NCard v-if="showCompare" title="候选对比" size="small" class="mt" data-testid="candidate-compare">
         <div class="compare">
@@ -291,14 +302,6 @@ function signalValueText(v: string | number | boolean | null): string {
             </template>
           </div>
         </div>
-
-        <!-- V8-5 岗位建议批次：跨当前可见候选（A/B）的 scope 级面板；仅在能力开启时渲染，flag=false 完全不影响 V8-4 -->
-        <RadarRecommendationPanel
-          v-if="recommendationsEnabled"
-          :candidate-version-ids="recommendationScope"
-          :enabled="recommendationsEnabled"
-          data-testid="recommendation-panel-review"
-        />
 
         <!-- 区域：疑似重复信号 + 裁决历史（仅关系场景） -->
         <div v-if="relationDetail" class="mt" data-testid="relation-detail">

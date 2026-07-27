@@ -21,6 +21,15 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../api/radarReviewApi', () => ({ radarReviewApi: mocks }));
 
+// 可变 features mock：默认与生产一致（两个能力均关闭），单测内按需打开 V8-5 推荐门禁。
+const featureFlags = vi.hoisted(() => ({ radarAnalysisEnabled: false, radarRecommendationsEnabled: false }));
+vi.mock('../config/features', () => ({ features: featureFlags }));
+
+// 推荐面板依赖的推荐 API：本文件只验证入口可发现性（位置/标题/引导），不触发真实请求。
+vi.mock('../api/radarRecommendationApi', () => ({
+  radarRecommendationApi: { createBatch: vi.fn(), listRecentBatches: vi.fn(), getBatch: vi.fn() },
+}));
+
 function summary(company: string) {
   return {
     candidateId: `cand-${company}`, activeCandidateVersionId: `ver-${company}`,
@@ -78,7 +87,12 @@ function setupHappy(relOver: Partial<RelationListItem> = {}, feed: DecisionFeedI
   mocks.listRuleEvidence.mockResolvedValue([]);
 }
 
-afterEach(() => { vi.clearAllMocks(); });
+afterEach(() => {
+  vi.clearAllMocks();
+  // 复位 flag，避免用例间互相污染（默认与生产一致：两个能力均关闭）。
+  featureFlags.radarAnalysisEnabled = false;
+  featureFlags.radarRecommendationsEnabled = false;
+});
 
 async function mountPage() {
   // NModal 默认 teleport 到 body，stub teleport 让弹窗内容内联渲染，便于断言。
@@ -143,6 +157,49 @@ describe('RadarReviewPage 候选对比 + 变化 + 证据', () => {
     expect(wrapper.find('[data-testid="analysis-panel-low"]').exists()).toBe(false);
     // 候选对比区仍正常渲染（推荐能力关闭不破坏既有评审 UI）。
     expect(wrapper.find('[data-testid="candidate-compare"]').exists()).toBe(true);
+  });
+
+  it('V8-5 推荐入口可发现性：未选关系即渲染面板并提示「请先选择一组岗位」', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    // 未选中任何关系：面板已可见（不再埋在长页面底部），且不显示生成/加载操作。
+    const panel = wrapper.find('[data-testid="recommendation-panel-review"]');
+    expect(panel.exists()).toBe(true);
+    expect(wrapper.find('[data-testid="recommendation-needs-selection"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('请先选择一组岗位');
+    expect(wrapper.find('[data-testid="recommendation-generate"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="recommendation-load-latest"]').exists()).toBe(false);
+    // 候选对比区尚未展开。
+    expect(wrapper.find('[data-testid="candidate-compare"]').exists()).toBe(false);
+  });
+
+  it('V8-5 推荐入口可发现性：选中关系后立即显示生成/加载按钮，标题为「本组岗位建议（0–8 条）」', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="recommendation-needs-selection"]').exists()).toBe(false);
+    // 两个入口按钮立即可见，无需下滑。
+    expect(wrapper.find('[data-testid="recommendation-generate"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="recommendation-load-latest"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('本组岗位建议（0–8 条）');
+  });
+
+  it('V8-5 推荐面板位于候选对比区之前（DOM 顺序先于候选详情）', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    const html = wrapper.html();
+    const panelAt = html.indexOf('recommendation-panel-review');
+    const compareAt = html.indexOf('candidate-compare');
+    expect(panelAt).toBeGreaterThan(-1);
+    expect(compareAt).toBeGreaterThan(-1);
+    // 入口在候选详情之前渲染：可发现性的核心断言。
+    expect(panelAt).toBeLessThan(compareAt);
   });
 
   it('点击决策 feed 中带候选的条目加载单侧详情与证据（无关系裁决按钮）', async () => {

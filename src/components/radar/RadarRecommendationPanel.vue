@@ -7,11 +7,16 @@ import {
   type RecommendationBatchView, type RecommendationItem, type BlockedCandidate,
 } from '../../api/radarRecommendationApi';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 推荐 scope：当前可见候选的正式版本集合（去重后送后端）。空则不允许生成。 */
   candidateVersionIds: string[];
   enabled: boolean;
-}>();
+  /**
+   * 是否已选中一组岗位（关系已打开）。未选中时仅显示引导提示，不显示生成/加载操作。
+   * 缺省为 true：纯展示层门禁，未显式传入时行为与既有一致（scope/API/状态逻辑不受影响）。
+   */
+  hasSelection?: boolean;
+}>(), { hasSelection: true });
 
 const batch = ref<RecommendationBatchView | null>(null);
 const actionBusy = ref(false);
@@ -120,9 +125,12 @@ function emptyReasonLabel(v: string | null): string {
 </script>
 
 <template>
-  <NCard size="small" class="rec-panel" data-testid="recommendation-panel" title="岗位建议批次">
+  <NCard size="small" class="rec-panel" data-testid="recommendation-panel" title="本组岗位建议（0–8 条）">
     <!-- 未开启：仅提示，不显示任何操作 -->
     <NEmpty v-if="!enabled" description="岗位建议功能尚未开启" size="small" data-testid="recommendation-disabled" />
+
+    <!-- 未选中关系：仅引导，不显示生成/加载操作（入口仍在页面顶部可见） -->
+    <NEmpty v-else-if="!hasSelection" description="请先选择一组岗位" size="small" data-testid="recommendation-needs-selection" />
 
     <template v-else>
       <div class="actions" data-testid="recommendation-actions">
