@@ -24,6 +24,7 @@
     "extension:e2e": "playwright test -c browser-extension/e2e/playwright.config.ts",
     "review:e2e": "playwright test -c review-e2e/playwright.config.ts",
     "analysis:e2e": "playwright test -c analysis-e2e/playwright.config.ts",
+    "analysis:review": "tsx scripts/analysis-review.ts",
     "db:init": "tsx server/schema.ts",
     "db:doctor": "tsx scripts/dbDoctor.ts",
     "db:sync": "tsx scripts/dbSync.ts",

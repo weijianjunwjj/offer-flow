@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createServer as createNetServer } from 'node:net';
 import { createServer as createViteServer, type InlineConfig, type ViteDevServer } from 'vite';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { openDb } from '../server/db';
 import { buildServer } from '../server/index';
 import { initSchema } from '../server/schema';
@@ -138,7 +138,7 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
   app.get('/e2e/analysis-counts', async () => gated.counts());
 
   // 切换测试模式并复位计数/闸门。仅接受白名单模式；非法输入 400，绝不静默接受。
-  app.post('/e2e/analysis-mode', async (request, reply) => {
+  app.post('/e2e/analysis-mode', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = (request.body ?? {}) as { mode?: unknown };
     if (typeof body.mode !== 'string' || !VALID_MODES.has(body.mode)) {
       return reply.code(400).send({ error: 'invalid_mode' });
@@ -149,7 +149,7 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
 
   // 场景隔离：只清空两张分析表并复位 Provider 到指定模式，绝不触碰 seed 的评审/雷达数据。
   // FK 为 self-ref RESTRICT（records.supersedes），删前暂关外键（PRAGMA 在事务外才生效），删后恢复。
-  app.post('/e2e/reset-analysis', async (request, reply) => {
+  app.post('/e2e/reset-analysis', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = (request.body ?? {}) as { mode?: unknown };
     const mode = typeof body.mode === 'string' && VALID_MODES.has(body.mode) ? (body.mode as ProviderMode) : 'delayed_success';
     db.pragma('foreign_keys = OFF');
@@ -165,7 +165,7 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
   // stale 触发：走真实领域状态——推进 active JobMatchProfile 版本（归档旧 active、追加新 active 并改指针）。
   // 只改 profiles 行；绝不动旧 AnalysisRecord/旧 task、不建任务、不调 Provider、不动 Job/Application/FeedbackEvent。
   // 只回版本 ID 与 mutationType，绝不回 JD/简历/Snapshot。
-  app.post('/e2e/advance-profile-version', async (_request, reply) => {
+  app.post('/e2e/advance-profile-version', async (_request: FastifyRequest, reply: FastifyReply) => {
     const row = db.prepare("SELECT data_json FROM profiles WHERE id = 'default'").get() as { data_json: string } | undefined;
     if (row === undefined) return reply.code(409).send({ error: 'profile_not_seeded' });
     const profile = JSON.parse(row.data_json) as {
@@ -195,7 +195,7 @@ export async function startAnalysisE2E(): Promise<() => Promise<void>> {
   });
 
   // 逐字节还原 seed 后 profiles 原文（afterAll 收尾；无原文则跳过）。
-  app.post('/e2e/restore-profile', async (_request, reply) => {
+  app.post('/e2e/restore-profile', async (_request: FastifyRequest, reply: FastifyReply) => {
     if (originalProfileJson === null) return reply.code(200).send({ restored: false });
     db.prepare("UPDATE profiles SET data_json = @data, updated_at = @now WHERE id = 'default'")
       .run({ data: originalProfileJson, now: analysisClock += 1 });
