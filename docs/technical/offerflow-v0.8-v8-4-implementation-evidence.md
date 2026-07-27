@@ -4,9 +4,10 @@
 > **对应设计：** `docs/technical/offerflow-v0.8-v8-4-reliable-single-analysis-design.md`
 > **对应 Traceability：** RC-07（可解释单岗位分析）、RC-12（可靠任务，单岗位部分）
 > **波次：** V8-4
-> **状态：** `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`
-> **基线：** 分支 `feat/v0.8-v8-4`，HEAD `d10736d`；生产 schema v7，Radar 与 Analysis 正式入口 `DISABLED`
+> **状态：** `MANUAL ACCEPTED`（2026-07-27）
+> **基线：** 分支 `feat/v0.8-v8-4`，HEAD `d10736d`（回归基线）→ `a16ee85`（人工验收沙箱工具提交）；生产 schema v7，Radar 与 Analysis 正式入口 `DISABLED`；生产迁移与正式开关仍未授权
 > **回归日期：** 2026-07-25（集成 worktree 一次完整回归）
+> **验收日期：** 2026-07-27（人工验收沙箱 `npm run analysis:review`，114 文件 / 1191 测试 + 6 E2E 全绿，API JSON 正常，fake Provider `delayed_success` → `succeeded` 一次走通）
 
 ---
 
