@@ -28,6 +28,7 @@
     "promotion:e2e": "playwright test -c promotion-e2e/playwright.config.ts",
     "analysis:review": "tsx scripts/analysis-review.ts",
     "recommendation:review": "tsx scripts/recommendation-review.ts",
+    "promotion:review": "tsx scripts/promotion-review.ts",
     "db:init": "tsx server/schema.ts",
     "db:doctor": "tsx scripts/dbDoctor.ts",
     "db:sync": "tsx scripts/dbSync.ts",
