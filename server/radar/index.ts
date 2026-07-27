@@ -23,3 +23,8 @@ export * from './recommendation/recommendationRoutes';
 export * from './recommendation/recommendationErrors';
 export * from './actionRepository';
 export * from './promotionRepository';
+// V8-6 第一波：晋升领域核心（契约 / 计划 / 范围键 / 错误）。服务层与 HTTP 为后续波次。
+export * from './promotion/promotionContract';
+export * from './promotion/promotionPlan';
+export * from './promotion/promotionTargetScope';
+export * from './promotion/promotionErrors';
