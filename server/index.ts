@@ -29,6 +29,7 @@ import {
 } from './migrations';
 import { registerRadarCaptureRoutes, type RadarCaptureServiceDeps } from './radar/routes';
 import type { AnalysisRouteDeps as RadarAnalysisRouteDeps } from './radar/analysis/analysisRoutes';
+import type { RecommendationRouteDeps as RadarRecommendationRouteDeps } from './radar/recommendation/recommendationRoutes';
 import { planSchemaStartup, schemaRefusalMessage } from './schemaStartup';
 import { initSchema } from './schema';
 import { registerProfileRoutes } from './routes/profile';
@@ -79,6 +80,8 @@ export interface RadarCapability {
   /** V8-4 单岗位分析 API 门禁：默认关闭，仅显式开启时才注册分析路由（需 radar 已启用 + schema ≥ v7）。 */
   analysisEnabled?: boolean;
   analysisDeps?: RadarAnalysisRouteDeps;
+  /** V8-5 推荐批次 API 注入依赖（随 analysisEnabled 同门禁开启）。 */
+  recommendationDeps?: RadarRecommendationRouteDeps;
 }
 
 export interface BuildServerOptions {
@@ -226,6 +229,7 @@ export function buildServer(
         serviceDeps: options.radar?.serviceDeps,
         analysisEnabled: options.radar?.analysisEnabled ?? false,
         analysisDeps: options.radar?.analysisDeps,
+        recommendationDeps: options.radar?.recommendationDeps,
       });
     }
   }

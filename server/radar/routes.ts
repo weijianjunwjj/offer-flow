@@ -6,6 +6,7 @@ import { RadarCaptureError, radarForbiddenOrigin, radarValidationError } from '.
 import { RadarCaptureService, type RadarCaptureServiceDeps } from './service';
 import { RadarReviewService } from './reviewService';
 import { registerRadarAnalysisRoutes, type AnalysisRouteDeps } from './analysis/analysisRoutes';
+import { registerRadarRecommendationRoutes, type RecommendationRouteDeps } from './recommendation/recommendationRoutes';
 import { RADAR_DOMAIN_SCHEMA_VERSION } from '../migrations';
 import {
   AdjudicationRequestSchema,
@@ -23,6 +24,8 @@ export interface RadarCaptureRouteOptions {
   /** V8-4 单岗位分析 API 门禁：默认关闭；需 radar 已启用 + schema ≥ v7 才注册。 */
   analysisEnabled?: boolean;
   analysisDeps?: AnalysisRouteDeps;
+  /** V8-5 推荐批次 API：随分析门禁同开（同依赖 v7 领域表）。 */
+  recommendationDeps?: RecommendationRouteDeps;
 }
 
 /**
@@ -132,6 +135,16 @@ export function registerRadarCaptureRoutes(
     // 分析只依赖 v7 雷达领域表，早于 v8 评审门禁注册，确保 v7 库亦可接出；生产入口默认不开启。
     if (options.analysisEnabled === true && getDatabaseSchemaVersion(scopedApp.db) >= RADAR_DOMAIN_SCHEMA_VERSION) {
       registerRadarAnalysisRoutes(scopedApp, { analysisDeps: options.analysisDeps });
+    }
+
+    // V8-5 推荐批次：需 analysisEnabled + schema ≥ v8。推荐必须读规则评估（category/result/evidence）
+    // 排除硬约束命中，而规则评估表的完整列（evidence_json）与规则引擎产出均属 v8 能力（同评审工作台），
+    // v7 库无规则评估可用，故推荐能力的真实 schema 下限是 v8，而非分析所需的 v7。
+    if (
+      options.analysisEnabled === true
+      && getDatabaseSchemaVersion(scopedApp.db) >= RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION
+    ) {
+      registerRadarRecommendationRoutes(scopedApp, { recommendationDeps: options.recommendationDeps });
     }
 
     // ---- V8-3 人工评审工作台（只读详情 + 关系裁决 + 规则证据/覆盖），共用同一安全网关 ----

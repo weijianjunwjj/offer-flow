@@ -4,7 +4,7 @@
  * 纯函数、无 IO：把"已经存在"的 current 分析事实与规则证据确定性地投影为 RecommendationCandidateInput，
  * 交给 buildRecommendationSet 收敛。证据引用直接复用 Payload 内的 evidenceKey（稳定语义键，非内部 ID）。
  */
-import type { JobMatchAnalysisRecord, RadarRuleAssessment } from '../../../src/domain/radar';
+import type { JobMatchAnalysisRecord, RadarAction, RadarRuleAssessment } from '../../../src/domain/radar';
 import type { JobMatchAnalysisPayloadV1 } from '../analysis/analysisPayload';
 import type { RecommendationEvidenceRef } from './recommendationContract';
 import type { RecommendationCandidateInput } from './recommendationService';
@@ -15,6 +15,24 @@ const EVIDENCE_REFS_MAX = 12;
 export interface CandidateHandledState {
   ignoredUnchanged: boolean;
   appliedPending: boolean;
+}
+
+/**
+ * 从候选的 RadarAction 事件流（TD §4.11 追加写入 + reverted 回填）派生当前处理状态。
+ * - ignoredUnchanged：存在未被撤销的 'ignored'，且其绑定版本 == 当前 active 版本
+ *   （版本已变 = 内容变化，不再视为"已忽略未变化"，允许重新推荐）；
+ * - appliedPending：存在未被撤销的 'marked_applied_pending'（跨版本抑制，已投递不重复推荐）。
+ * 判定只依据 reverted_by_action_id 是否为 null（未回填 = 生效中），不物理删除任何事件。
+ */
+export function deriveHandledState(
+  actions: readonly RadarAction[],
+  activeCandidateVersionId: string,
+): CandidateHandledState {
+  const active = (type: RadarAction['actionType']) =>
+    actions.filter((a) => a.actionType === type && a.revertedByActionId === null);
+  const ignoredUnchanged = active('ignored').some((a) => a.candidateVersionId === activeCandidateVersionId);
+  const appliedPending = active('marked_applied_pending').length > 0;
+  return { ignoredUnchanged, appliedPending };
 }
 
 /** 从 Payload 收集去重后的证据引用（支持在前、反证在后，稳定排序，限量）。 */
