@@ -9,9 +9,12 @@ import {
 } from '../api/radarReviewApi';
 import { features } from '../config/features';
 import RadarAnalysisPanel from '../components/radar/RadarAnalysisPanel.vue';
+import RadarRecommendationPanel from '../components/radar/RadarRecommendationPanel.vue';
 
 /** V8-4 单岗位分析面板门禁：默认关闭，不随 Radar 开启而自动开启（见 features.ts）。 */
 const analysisEnabled = features.radarAnalysisEnabled;
+/** V8-5 岗位建议批次面板门禁：独立、默认关闭；flag=false 时完全不渲染，不影响 V8-4。 */
+const recommendationsEnabled = features.radarRecommendationsEnabled;
 
 const loading = ref(true);
 const busy = ref(false);
@@ -36,6 +39,13 @@ const relationDetail = ref<RelationDetail | null>(null);
 const detailLow = ref<CandidateDecisionDetail | null>(null);
 const detailHigh = ref<CandidateDecisionDetail | null>(null);
 const evidence = ref<RuleEvidenceView[]>([]);
+
+/** V8-5 推荐 scope：当前可见候选（A/B）的正式版本集合，去重后送推荐面板；无正式版本则为空。 */
+const recommendationScope = computed<string[]>(() => {
+  const ids = [detailLow.value?.activeCandidateVersionId, detailHigh.value?.activeCandidateVersionId]
+    .filter((v): v is string => typeof v === 'string' && v !== '');
+  return [...new Set(ids)];
+});
 
 // 待确认操作弹窗：所有写操作都必须二次确认 + 填写原因。
 type PendingKind = 'confirm-same' | 'confirm-distinct' | 'revert' | 'recheck' | 'override-set' | 'override-revert';
@@ -281,6 +291,14 @@ function signalValueText(v: string | number | boolean | null): string {
             </template>
           </div>
         </div>
+
+        <!-- V8-5 岗位建议批次：跨当前可见候选（A/B）的 scope 级面板；仅在能力开启时渲染，flag=false 完全不影响 V8-4 -->
+        <RadarRecommendationPanel
+          v-if="recommendationsEnabled"
+          :candidate-version-ids="recommendationScope"
+          :enabled="recommendationsEnabled"
+          data-testid="recommendation-panel-review"
+        />
 
         <!-- 区域：疑似重复信号 + 裁决历史（仅关系场景） -->
         <div v-if="relationDetail" class="mt" data-testid="relation-detail">

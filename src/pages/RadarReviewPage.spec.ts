@@ -132,6 +132,19 @@ describe('RadarReviewPage 候选对比 + 变化 + 证据', () => {
     expect(wrapper.find('[data-testid="analysis-panel-high"]').exists()).toBe(false);
   });
 
+  it('V8-5 推荐面板默认关闭：flag=false 时不渲染，且不影响 V8-4 分析面板行为', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // radarRecommendationsEnabled 默认 false：不渲染推荐面板；同时 V8-4 分析面板行为不因本能力改变。
+    expect(wrapper.find('[data-testid="recommendation-panel-review"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="recommendation-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-panel-low"]').exists()).toBe(false);
+    // 候选对比区仍正常渲染（推荐能力关闭不破坏既有评审 UI）。
+    expect(wrapper.find('[data-testid="candidate-compare"]').exists()).toBe(true);
+  });
+
   it('点击决策 feed 中带候选的条目加载单侧详情与证据（无关系裁决按钮）', async () => {
     setupHappy({}, [{
       snapshotId: 'snap-m', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',

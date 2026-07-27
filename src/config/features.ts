@@ -67,4 +67,10 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_RADAR_ANALYSIS,
     false,
   ),
+  // V8-5 岗位建议批次面板：独立于 radar / radarAnalysis 的门禁，默认关闭；不因其它能力开启而自动开启，
+  // 真实生产入口保持关闭，仅在显式设置 VITE_OFFERFLOW_RADAR_RECOMMENDATIONS=true 或测试注入时启用。
+  radarRecommendationsEnabled: readBooleanFeatureFlag(
+    import.meta.env.VITE_OFFERFLOW_RADAR_RECOMMENDATIONS,
+    false,
+  ),
 });
