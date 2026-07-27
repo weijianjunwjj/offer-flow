@@ -26,6 +26,7 @@
     "analysis:e2e": "playwright test -c analysis-e2e/playwright.config.ts",
     "recommendation:e2e": "playwright test -c recommendation-e2e/playwright.config.ts",
     "analysis:review": "tsx scripts/analysis-review.ts",
+    "recommendation:review": "tsx scripts/recommendation-review.ts",
     "db:init": "tsx server/schema.ts",
     "db:doctor": "tsx scripts/dbDoctor.ts",
     "db:sync": "tsx scripts/dbSync.ts",
