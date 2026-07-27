@@ -7,6 +7,7 @@ import { RadarCaptureService, type RadarCaptureServiceDeps } from './service';
 import { RadarReviewService } from './reviewService';
 import { registerRadarAnalysisRoutes, type AnalysisRouteDeps } from './analysis/analysisRoutes';
 import { registerRadarRecommendationRoutes, type RecommendationRouteDeps } from './recommendation/recommendationRoutes';
+import { registerRadarPromotionRoutes, type PromotionRouteDeps } from './promotion/promotionRoutes';
 import { RADAR_DOMAIN_SCHEMA_VERSION } from '../migrations';
 import {
   AdjudicationRequestSchema,
@@ -26,6 +27,8 @@ export interface RadarCaptureRouteOptions {
   analysisDeps?: AnalysisRouteDeps;
   /** V8-5 推荐批次 API：随分析门禁同开（同依赖 v7 领域表）。 */
   recommendationDeps?: RecommendationRouteDeps;
+  /** V8-6 正式晋升 API：需 schema ≥ v8（与评审工作台同门禁）。 */
+  promotionDeps?: PromotionRouteDeps;
 }
 
 /**
@@ -154,6 +157,12 @@ export function registerRadarCaptureRoutes(
     if (getDatabaseSchemaVersion(scopedApp.db) < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
       return;
     }
+
+    // V8-6 正式晋升：与评审工作台同门禁（schema ≥ v8）。晋升写正式 Job/Application/
+    // FeedbackEvent，必须在 v8 领域表齐备的库上才注册；不随 analysisEnabled 开关，
+    // 因为晋升不依赖 AI 分析产物，只依赖候选标准化事实与用户显式触发。
+    registerRadarPromotionRoutes(scopedApp, { promotionDeps: options.promotionDeps });
+
     const review = new RadarReviewService(scopedApp.db, options.serviceDeps ?? { now: Date.now, createId: randomUUID });
     const actor = 'reviewer';
 

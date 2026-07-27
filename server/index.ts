@@ -30,6 +30,7 @@ import {
 import { registerRadarCaptureRoutes, type RadarCaptureServiceDeps } from './radar/routes';
 import type { AnalysisRouteDeps as RadarAnalysisRouteDeps } from './radar/analysis/analysisRoutes';
 import type { RecommendationRouteDeps as RadarRecommendationRouteDeps } from './radar/recommendation/recommendationRoutes';
+import type { PromotionRouteDeps as RadarPromotionRouteDeps } from './radar/promotion/promotionRoutes';
 import { planSchemaStartup, schemaRefusalMessage } from './schemaStartup';
 import { initSchema } from './schema';
 import { registerProfileRoutes } from './routes/profile';
@@ -82,6 +83,8 @@ export interface RadarCapability {
   analysisDeps?: RadarAnalysisRouteDeps;
   /** V8-5 推荐批次 API 注入依赖（随 analysisEnabled 同门禁开启）。 */
   recommendationDeps?: RadarRecommendationRouteDeps;
+  /** V8-6 正式晋升 API 注入依赖（门禁为 schema ≥ v8，与 analysisEnabled 无关）。 */
+  promotionDeps?: RadarPromotionRouteDeps;
 }
 
 export interface BuildServerOptions {
@@ -230,6 +233,7 @@ export function buildServer(
         analysisEnabled: options.radar?.analysisEnabled ?? false,
         analysisDeps: options.radar?.analysisDeps,
         recommendationDeps: options.radar?.recommendationDeps,
+        promotionDeps: options.radar?.promotionDeps,
       });
     }
   }
