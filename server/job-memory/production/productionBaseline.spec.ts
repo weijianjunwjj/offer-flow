@@ -41,6 +41,17 @@ function fixture(): Fixture {
   return { root, databasePath, snapshotDirectory };
 }
 
+function fixtureAt(targetVersion: number): Fixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-verify-vN-'));
+  const databasePath = path.join(root, 'offerflow.sqlite3');
+  const snapshotDirectory = path.join(root, 'snapshot');
+  const db = openDb(databasePath);
+  initSchema(db, { targetVersion });
+  db.close();
+  cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+  return { root, databasePath, snapshotDirectory };
+}
+
 function seedHistoricalShape(databasePath: string): void {
   const db = openDb(databasePath);
   try {
@@ -303,5 +314,105 @@ describe('当前生产 Snapshot 原子发布', () => {
       .toBe(oldManifest);
     expect(fs.readdirSync(target.snapshotDirectory).some((name) => name.includes('.rollback.tmp')))
       .toBe(false);
+  });
+});
+
+describe('增量架构生产 verifier（v2 底座 + 纯增量升级）', () => {
+  it('接受 v2/v7/v8 生产库并返回真实 schemaVersion', () => {
+    for (const version of [2, 7, 8]) {
+      const target = fixtureAt(version);
+      seedHistoricalShape(target.databasePath);
+      const report = verifyCurrentProductionDatabase(target.databasePath, {
+        requireSnapshotConsistency: false,
+      });
+      expect(report).toMatchObject({
+        schemaVersion: version,
+        appMetaSchemaVersion: version,
+        migrationContinuous: true,
+        integrity: 'ok',
+        foreignKeyViolationCount: 0,
+      });
+      expect(report.tableCounts).toMatchObject({ jobs: 13, applications: 7, feedbackEvents: 7 });
+    }
+  });
+
+  it('拒绝未知未来版本 v9', () => {
+    const target = fixtureAt(8);
+    const db = openDb(target.databasePath);
+    try {
+      db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
+        .run(9, '009_unknown_future', 1);
+      db.prepare("UPDATE app_meta SET value = '9' WHERE key = 'schema_version'").run();
+    } finally {
+      db.close();
+    }
+    expect(() => verifyCurrentProductionDatabase(target.databasePath, {
+      requireSnapshotConsistency: false,
+    })).toThrow(/newer than this application supports/u);
+  });
+
+  it('拒绝 migration 缺口', () => {
+    const target = fixtureAt(7);
+    const db = openDb(target.databasePath);
+    try {
+      db.prepare('DELETE FROM schema_migrations WHERE version = 5').run();
+    } finally {
+      db.close();
+    }
+    expect(() => verifyCurrentProductionDatabase(target.databasePath, {
+      requireSnapshotConsistency: false,
+    })).toThrow(/version gap or out-of-order/u);
+  });
+
+  it('拒绝 migration 名称被篡改', () => {
+    const target = fixtureAt(7);
+    const db = openDb(target.databasePath);
+    try {
+      db.prepare('UPDATE schema_migrations SET name = ? WHERE version = 5').run('005_tampered');
+    } finally {
+      db.close();
+    }
+    expect(() => verifyCurrentProductionDatabase(target.databasePath, {
+      requireSnapshotConsistency: false,
+    })).toThrow(/name conflict/u);
+  });
+
+  it('拒绝 app_meta schema_version 与 migration 不一致', () => {
+    const target = fixtureAt(7);
+    const db = openDb(target.databasePath);
+    try {
+      db.prepare("UPDATE app_meta SET value = '6' WHERE key = 'schema_version'").run();
+    } finally {
+      db.close();
+    }
+    expect(() => verifyCurrentProductionDatabase(target.databasePath, {
+      requireSnapshotConsistency: false,
+    })).toThrow('app_meta schema_version 与 migration 不一致');
+  });
+
+  it('拒绝缺失 v2 核心表', () => {
+    const target = fixtureAt(2);
+    const db = openDb(target.databasePath);
+    try {
+      db.exec('DROP TABLE import_logs');
+    } finally {
+      db.close();
+    }
+    expect(() => verifyCurrentProductionDatabase(target.databasePath, {
+      requireSnapshotConsistency: false,
+    })).toThrow('缺少 v2 核心表 import_logs');
+  });
+
+  it('拒绝缺失 v2 核心字段', () => {
+    const target = fixtureAt(2);
+    const db = openDb(target.databasePath);
+    try {
+      db.exec('ALTER TABLE jobs DROP COLUMN data_json');
+    } finally {
+      db.close();
+    }
+    expect(() => verifyCurrentProductionDatabase(target.databasePath, {
+      requireSnapshotConsistency: false,
+    })).toThrow('缺少字段 data_json');
   });
 });

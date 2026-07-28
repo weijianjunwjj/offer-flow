@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import Database from 'better-sqlite3';
-import { getDatabaseSchemaVersion } from '../../migrations';
+import {
+  getDatabaseSchemaVersion,
+  LATEST_SCHEMA_VERSION,
+  PRODUCTION_SCHEMA_VERSION,
+} from '../../migrations';
 import { atomicWriteJson, sha256Hex } from '../../sync/hash';
 import { getSyncPaths } from '../../sync/paths';
 import {
@@ -24,7 +28,8 @@ export interface CurrentBaselineBackupManifest {
   backupId: string;
   createdAt: string;
   gitCommit: string;
-  sourceSchemaVersion: 2;
+  /** 生产底座恒为 v2，但允许纯增量升级后的实际版本（v2~LATEST）。 */
+  sourceSchemaVersion: number;
   database: {
     fileName: 'offerflow-v2.sqlite3';
     sizeBytes: number;
@@ -101,12 +106,18 @@ function readDatabaseHealth(databasePath: string): {
   }
 }
 
+function isSupportedProductionSchema(schema: number): boolean {
+  return Number.isInteger(schema)
+    && schema >= PRODUCTION_SCHEMA_VERSION
+    && schema <= LATEST_SCHEMA_VERSION;
+}
+
 function readManifest(filePath: string): CurrentBaselineBackupManifest {
   const manifest = JSON.parse(fs.readFileSync(filePath, 'utf8')) as CurrentBaselineBackupManifest;
   if (
     manifest.version !== 1
     || manifest.purpose !== 'r0.1-pre-snapshot-sync'
-    || manifest.sourceSchemaVersion !== 2
+    || !isSupportedProductionSchema(manifest.sourceSchemaVersion)
     || manifest.database?.fileName !== 'offerflow-v2.sqlite3'
     || manifest.previousSnapshot?.directory !== 'snapshot-v2-before-sync'
   ) throw new Error('R0.1 backup manifest 结构无效');
@@ -127,7 +138,13 @@ export function verifyCurrentBaselineBackup(
     throw new Error('R0.1 数据库备份 hash/size 不一致');
   }
   const health = readDatabaseHealth(databasePath);
-  if (health.schema !== 2 || health.integrity.length !== 1 || health.integrity[0] !== 'ok' || health.foreignKeys !== 0) {
+  if (
+    health.schema !== manifest.sourceSchemaVersion
+    || !isSupportedProductionSchema(health.schema)
+    || health.integrity.length !== 1
+    || health.integrity[0] !== 'ok'
+    || health.foreignKeys !== 0
+  ) {
     throw new Error('R0.1 数据库备份未通过 schema/integrity/FK');
   }
   const backupState = captureCurrentProductionState(databasePath);
@@ -178,8 +195,10 @@ export async function createCurrentBaselineBackup(
   options: CreateCurrentBaselineBackupOptions,
 ): Promise<CurrentBaselineBackupResult> {
   const paths = resolveUpgradePaths(options);
-  const sourceBefore = captureCurrentProductionState(paths.sourceDatabasePath);
+  // 先跑只读 verify（含 v2 核心结构守卫），使结构损坏产出确定性报错，
+  // 而非让随后的 captureCurrentProductionState 抛出裸 SQLite 错误。
   verifyCurrentProductionDatabase(paths.sourceDatabasePath, { requireSnapshotConsistency: false });
+  const sourceBefore = captureCurrentProductionState(paths.sourceDatabasePath);
   const snapshotDirectory = path.resolve(
     options.snapshotDirectory ?? getSyncPaths(paths.sourceDatabasePath).syncDir,
   );
@@ -201,7 +220,7 @@ export async function createCurrentBaselineBackup(
     const databaseBytes = fs.readFileSync(databasePath);
     const databaseHealth = readDatabaseHealth(databasePath);
     if (
-      databaseHealth.schema !== 2
+      !isSupportedProductionSchema(databaseHealth.schema)
       || databaseHealth.integrity.length !== 1
       || databaseHealth.integrity[0] !== 'ok'
       || databaseHealth.foreignKeys !== 0
@@ -227,7 +246,7 @@ export async function createCurrentBaselineBackup(
       backupId: id,
       createdAt: (options.now ?? new Date()).toISOString(),
       gitCommit: currentGitCommit(paths.workspaceDirectory),
-      sourceSchemaVersion: 2,
+      sourceSchemaVersion: databaseHealth.schema,
       database: {
         fileName: 'offerflow-v2.sqlite3',
         sizeBytes: databaseBytes.byteLength,
