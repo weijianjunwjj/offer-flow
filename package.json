@@ -32,6 +32,7 @@
     "recommendation:review": "tsx scripts/recommendation-review.ts",
     "promotion:review": "tsx scripts/promotion-review.ts",
     "action:review": "tsx scripts/action-review.ts",
+    "trace:review": "tsx scripts/trace-review.ts",
     "db:init": "tsx server/schema.ts",
     "db:doctor": "tsx scripts/dbDoctor.ts",
     "db:sync": "tsx scripts/dbSync.ts",
