@@ -27,6 +27,7 @@
     "recommendation:e2e": "playwright test -c recommendation-e2e/playwright.config.ts",
     "promotion:e2e": "playwright test -c promotion-e2e/playwright.config.ts",
     "action:e2e": "playwright test -c action-e2e/playwright.config.ts",
+    "trace:e2e": "playwright test -c trace-e2e/playwright.config.ts",
     "analysis:review": "tsx scripts/analysis-review.ts",
     "recommendation:review": "tsx scripts/recommendation-review.ts",
     "promotion:review": "tsx scripts/promotion-review.ts",
