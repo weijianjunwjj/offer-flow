@@ -12,6 +12,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { IdParamsSchema } from '../dtoSchemas';
 import { RadarCaptureError, RadarStorageCorruptionError } from '../errors';
 import { PromotionService, type PromotionServiceDeps } from './promotionService';
+import { PromotionTraceService } from './promotionTraceService';
 import { PromotionError, type PromotionErrorCode } from './promotionErrors';
 import {
   PromoteRequestSchema,
@@ -85,6 +86,7 @@ export function registerRadarPromotionRoutes(
 ): void {
   app.register(async (scoped) => {
     const service = new PromotionService({ db: scoped.db, ...options.promotionDeps });
+    const tracer = new PromotionTraceService(scoped.db);
     scoped.setErrorHandler(handlePromotionError);
 
     // 晋升候选版本为正式记录：201 新建 / 200 幂等复用（复用时零新增正式对象）。
@@ -119,5 +121,23 @@ export function registerRadarPromotionRoutes(
     scoped.get('/radar/candidates/:id/promotions', async (request) => (
       service.listByCandidate(parseId(request)).map(toPromotionView)
     ));
+
+    // ---- RC-11 反向追踪（只读，零写入）：正式对象 ↔ Radar 来源双向可追溯性的反向一侧 ----
+    // 缺失/历史数据由服务层给出明确不可追溯状态（traceable=false / not_recorded / no_batch 等），
+    // 路由不因"查不到来源"报错——那是合法的追踪结论，不是异常。
+
+    // 从晋升记录追溯来源（候选版本 + 触发原因 + 推荐批次成员）；记录不存在才 404。
+    scoped.get('/radar/promotions/:id/trace', async (request, reply) => {
+      const trace = tracer.traceByPromotionId(parseId(request));
+      if (trace === null) {
+        return reply.code(404).send({ code: 'PROMOTION_NOT_FOUND', message: '晋升记录不存在' });
+      }
+      return trace;
+    });
+
+    // 从正式对象反查引用它的晋升来源（无引用晋升 → traceable=false / no_promotion）。
+    scoped.get('/radar/jobs/:id/promotion-trace', async (request) => tracer.traceByJob(parseId(request)));
+    scoped.get('/radar/applications/:id/promotion-trace', async (request) => tracer.traceByApplication(parseId(request)));
+    scoped.get('/radar/feedback-events/:id/promotion-trace', async (request) => tracer.traceByFeedbackEvent(parseId(request)));
   });
 }

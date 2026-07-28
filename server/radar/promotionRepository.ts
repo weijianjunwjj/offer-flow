@@ -50,4 +50,28 @@ export class RadarPromotionRepository {
       .all(candidateId) as RadarPromotionRow[];
     return rows.map(rowToRadarPromotion);
   }
+
+  /**
+   * 反向追踪（RC-11）：从正式对象反查引用它的晋升。
+   * 返回数组而非单条——link 模式下同一 Job 可被多份晋升关联（P0-11），
+   * 追踪必须如实呈现全部来源而非任取一条。按 created_at,id 确定性排序。
+   */
+  private findByColumn(column: 'job_id' | 'application_id' | 'feedback_event_id', value: string): RadarPromotion[] {
+    const rows = this.db
+      .prepare(`SELECT ${COLUMNS} FROM radar_promotions WHERE ${column} = ? ORDER BY created_at, id`)
+      .all(value) as RadarPromotionRow[];
+    return rows.map(rowToRadarPromotion);
+  }
+
+  findByJobId(jobId: string): RadarPromotion[] {
+    return this.findByColumn('job_id', jobId);
+  }
+
+  findByApplicationId(applicationId: string): RadarPromotion[] {
+    return this.findByColumn('application_id', applicationId);
+  }
+
+  findByFeedbackEventId(feedbackEventId: string): RadarPromotion[] {
+    return this.findByColumn('feedback_event_id', feedbackEventId);
+  }
 }
