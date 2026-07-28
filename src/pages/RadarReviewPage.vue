@@ -11,6 +11,7 @@ import { features } from '../config/features';
 import RadarAnalysisPanel from '../components/radar/RadarAnalysisPanel.vue';
 import RadarRecommendationPanel from '../components/radar/RadarRecommendationPanel.vue';
 import RadarPromotionPanel from '../components/radar/RadarPromotionPanel.vue';
+import RadarActionBar from '../components/radar/RadarActionBar.vue';
 
 /** V8-4 单岗位分析面板门禁：默认关闭，不随 Radar 开启而自动开启（见 features.ts）。 */
 const analysisEnabled = features.radarAnalysisEnabled;
@@ -57,6 +58,15 @@ const recommendationScope = computed<string[]>(() => {
     .filter((v): v is string => typeof v === 'string' && v !== '');
   return [...new Set(ids)];
 });
+
+/**
+ * 动作失效计数：候选动作（忽略/已投待反馈等）变化即自增，传给推荐面板强制清空旧批次。
+ * 后端已按 handledStateHash 产生新 batchKey，此处只保证 UI 不静默续用旧推荐。
+ */
+const actionInvalidation = ref(0);
+function onActionChanged(): void {
+  actionInvalidation.value += 1;
+}
 
 // 待确认操作弹窗：所有写操作都必须二次确认 + 填写原因。
 type PendingKind = 'confirm-same' | 'confirm-distinct' | 'revert' | 'recheck' | 'override-set' | 'override-revert';
@@ -309,6 +319,7 @@ function signalValueText(v: string | number | boolean | null): string {
         :has-selection="showCompare"
         :promotion-enabled="recommendationsEnabled"
         :promoting-candidate-version-id="promotingCandidateVersionId"
+        :invalidation-key="actionInvalidation"
         class="mt primary-zone"
         data-testid="recommendation-panel-review"
         @promote="selectForPromotion"
@@ -353,6 +364,13 @@ function signalValueText(v: string | number | boolean | null): string {
               <div v-for="cf in d.changedFields" :key="cf.fieldPath" class="reason" data-testid="changed-field">
                 {{ cf.fieldPath }}：{{ cf.before ?? '∅' }} → {{ cf.after ?? '∅' }}（{{ cf.classification }}：{{ cf.reason }}）
               </div>
+              <!-- RC-10 雷达动作栏：收藏/忽略/标记优先/已投待反馈。每侧独立按候选，
+                   状态由服务端事件流派生（刷新后重新拉取即恢复）；动作变化上抛失效旧推荐。 -->
+              <RadarActionBar
+                :candidate-id="d.candidateId"
+                :data-testid="`action-bar-${side}`"
+                @changed="onActionChanged"
+              />
               <!-- V8-4 单岗位分析：仅在能力开启且该侧有当前正式版本时展示；每侧独立，避免双候选歧义 -->
               <RadarAnalysisPanel
                 v-if="analysisEnabled && d.activeCandidateVersionId"

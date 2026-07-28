@@ -26,7 +26,12 @@ const props = withDefaults(defineProps<{
    * 缺省为 true：纯展示层门禁，未显式传入时行为与既有一致（scope/API/状态逻辑不受影响）。
    */
   hasSelection?: boolean;
-}>(), { hasSelection: true, promotingCandidateVersionId: null, promotionEnabled: false });
+  /**
+   * 失效信号：候选动作（忽略/已投待反馈等）变化后由页面自增。变化即清空已展示批次，
+   * 强制用户重新生成——后端已按 handledStateHash 产生新 batchKey，此处保证旧推荐不静默续用。
+   */
+  invalidationKey?: string | number;
+}>(), { hasSelection: true, promotingCandidateVersionId: null, promotionEnabled: false, invalidationKey: 0 });
 
 const batch = ref<RecommendationBatchView | null>(null);
 const actionBusy = ref(false);
@@ -91,7 +96,7 @@ function resetForScope(): void {
 }
 
 watch(
-  () => [scope.value.join(','), props.enabled] as const,
+  () => [scope.value.join(','), props.enabled, props.invalidationKey] as const,
   () => resetForScope(),
   { immediate: true },
 );

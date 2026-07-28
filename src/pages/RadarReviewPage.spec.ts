@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api/client';
 import type {
   CandidateDecisionDetail, DecisionFeedItem, RelationDetail, RelationListItem, RelationSignals, RuleEvidenceView,
@@ -29,6 +29,19 @@ vi.mock('../config/features', () => ({ features: featureFlags }));
 vi.mock('../api/radarRecommendationApi', () => ({
   radarRecommendationApi: { createBatch: vi.fn(), listRecentBatches: vi.fn(), getBatch: vi.fn() },
 }));
+
+// RC-10 动作栏 API：每侧候选卡挂载即拉取动作状态；默认返回全未生效态。
+const actionMocks = vi.hoisted(() => ({ getView: vi.fn(), apply: vi.fn(), revert: vi.fn() }));
+vi.mock('../api/radarActionApi', async (importActual) => {
+  const actual = await importActual<typeof import('../api/radarActionApi')>();
+  return { ...actual, radarActionApi: actionMocks };
+});
+function emptyActionView(candidateId: string) {
+  return {
+    candidateId, activeCandidateVersionId: `ver-${candidateId}`,
+    state: { saved: false, ignored: false, priority: false, appliedPending: false }, history: [],
+  };
+}
 
 function summary(company: string) {
   return {
@@ -92,6 +105,13 @@ afterEach(() => {
   // 复位 flag，避免用例间互相污染（默认与生产一致：两个能力均关闭）。
   featureFlags.radarAnalysisEnabled = false;
   featureFlags.radarRecommendationsEnabled = false;
+});
+
+// 动作栏 API 默认桩：每次用例前复位为全未生效态，避免真实请求与用例间串扰。
+beforeEach(() => {
+  actionMocks.getView.mockImplementation((candidateId: string) => Promise.resolve(emptyActionView(candidateId)));
+  actionMocks.apply.mockReset();
+  actionMocks.revert.mockReset();
 });
 
 async function mountPage() {
@@ -425,5 +445,40 @@ describe('RadarReviewPage 人工操作二次确认 + 语义 + 409', () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="stale-hint"]').exists()).toBe(true);
     expect(vm.reasonDraft).toBe('同一岗位'); // 输入保留
+  });
+});
+
+describe('RC-10 动作栏接入评审工作台', () => {
+  it('打开关系后，两侧候选卡各挂一个动作栏并按候选拉取状态', async () => {
+    setupHappy();
+    // 两侧候选详情按 id 区分，验证动作栏各自绑定其候选。
+    mocks.getCandidateDetail.mockImplementation((id: string) => Promise.resolve(detail({ candidateId: id })));
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 两侧各一个动作栏（low/high）。
+    expect(wrapper.find('[data-testid="action-bar-low"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="action-bar-high"]').exists()).toBe(true);
+    // 每侧以其候选 id 拉取动作状态（两侧候选详情不同）。
+    expect(actionMocks.getView).toHaveBeenCalledWith('cand-A');
+    expect(actionMocks.getView).toHaveBeenCalledWith('cand-B');
+  });
+
+  it('启用推荐能力时，动作变化让推荐面板失效重置（invalidationKey 自增）', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    actionMocks.apply.mockResolvedValue({
+      changed: true,
+      view: { ...emptyActionView('cand-A'), state: { saved: false, ignored: true, priority: false, appliedPending: false } },
+    });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    const panel = wrapper.findComponent({ name: 'RadarRecommendationPanel' });
+    const before = panel.props('invalidationKey') as number;
+    // 在 low 侧动作栏点“忽略”，触发 changed → 页面自增失效计数。
+    await wrapper.find('[data-testid="action-bar-low"] [data-testid="action-set-ignore"]').trigger('click');
+    await flushPromises();
+    expect(panel.props('invalidationKey')).toBe(before + 1);
   });
 });

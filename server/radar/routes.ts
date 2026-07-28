@@ -16,6 +16,8 @@ import {
   RuleOverrideRevertRequestSchema,
   RuleOverrideSetRequestSchema,
 } from './reviewDtoSchemas';
+import { RadarActionCoordinator } from './action/actionCoordinator';
+import { ActionApplyRequestSchema, ActionRevertRequestSchema } from './action/actionDtoSchemas';
 import type { ZodType } from 'zod';
 
 export type { RadarCaptureServiceDeps };
@@ -198,6 +200,27 @@ export function registerRadarCaptureRoutes(
     ));
     scopedApp.post('/radar/review/rule-overrides/revert', async (request) => (
       review.revertRuleOverride(parseReviewDto(RuleOverrideRevertRequestSchema, request.body), actor)
+    ));
+
+    // ---- RC-10 雷达动作（收藏/忽略/标记优先/已投待反馈）：与评审工作台同门禁（schema ≥ v8）、
+    // 同安全网关。只写 radar_actions（append-only），撤销只恢复 Radar 决策状态，
+    // 绝不触碰正式 Job/Application/FeedbackEvent，也不触发任何自动晋升。
+    // appliedPending 的审计快照锚点由服务端从候选决策详情解析，客户端不可伪造。 ----
+    const actionCoordinator = new RadarActionCoordinator(
+      scopedApp.db,
+      {
+        ...(options.serviceDeps ?? { now: Date.now, createId: randomUUID }),
+        resolveLatestSnapshotId: (candidateId) => review.getCandidateDecisionDetail(candidateId).latestSnapshotId,
+      },
+    );
+    scopedApp.get('/radar/actions/candidates/:id', async (request) => (
+      actionCoordinator.getView(parseIdParams(request.params))
+    ));
+    scopedApp.post('/radar/actions/apply', async (request) => (
+      actionCoordinator.apply(parseReviewDto(ActionApplyRequestSchema, request.body))
+    ));
+    scopedApp.post('/radar/actions/revert', async (request) => (
+      actionCoordinator.revert(parseReviewDto(ActionRevertRequestSchema, request.body))
     ));
   });
 }
