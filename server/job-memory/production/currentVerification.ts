@@ -15,6 +15,7 @@ import {
   auditSnapshotConsistency,
   type SnapshotConsistencyReport,
 } from '../../sync/consistency';
+import { assertCoreBusinessV2Structure } from '../../sync/coreBusinessStructure';
 import { sha256Hex, toStableJson } from '../../sync/hash';
 import { readSnapshotTable } from '../../sync/tables';
 import { SYNC_TABLES, type SyncTableName } from '../../sync/types';
@@ -143,41 +144,6 @@ function assertZero(value: number, message: string): 0 {
   return 0;
 }
 
-/** v2 生产底座必须存在的核心表及其关键字段，独立于 schemaVersion 数值校验，防止只靠版本号蒙混过关。 */
-const V2_CORE_STRUCTURE: ReadonlyArray<{ table: string; columns: readonly string[] }> = [
-  { table: 'app_meta', columns: ['key', 'value', 'updated_at'] },
-  { table: 'profiles', columns: ['id', 'data_json'] },
-  { table: 'jobs', columns: ['id', 'data_json'] },
-  { table: 'import_logs', columns: ['id'] },
-  { table: 'resume_versions', columns: ['id', 'content_hash', 'idempotency_key', 'row_version'] },
-  {
-    table: 'applications',
-    columns: ['id', 'job_id', 'migration_key', 'superseded_by_application_id', 'idempotency_key', 'row_version'],
-  },
-  {
-    table: 'feedback_events',
-    columns: ['id', 'application_id', 'event_type', 'target_event_id', 'idempotency_key'],
-  },
-];
-
-function assertV2CoreStructure(db: Database.Database): void {
-  for (const { table, columns } of V2_CORE_STRUCTURE) {
-    const exists = db.prepare(
-      "SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = ?",
-    ).get(table) as { present: number } | undefined;
-    if (exists === undefined) throw new Error(`当前生产数据库缺少 v2 核心表 ${table}`);
-    const actual = new Set(
-      (db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>)
-        .map((row) => row.name),
-    );
-    for (const column of columns) {
-      if (!actual.has(column)) {
-        throw new Error(`当前生产数据库 v2 核心表 ${table} 缺少字段 ${column}`);
-      }
-    }
-  }
-}
-
 export function verifyCurrentProductionDatabase(
   databasePath: string,
   options: CurrentProductionVerificationOptions = {},
@@ -187,7 +153,7 @@ export function verifyCurrentProductionDatabase(
   const structureDb = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
     structureDb.pragma('query_only = ON');
-    assertV2CoreStructure(structureDb);
+    assertCoreBusinessV2Structure(structureDb, '当前生产数据库');
   } finally {
     structureDb.close();
   }

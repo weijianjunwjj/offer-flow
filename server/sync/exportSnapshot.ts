@@ -2,8 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { getDbPath } from '../db';
-import { getDatabaseSchemaVersion } from '../migrations';
+import {
+  getDatabaseSchemaVersion,
+  LATEST_SCHEMA_VERSION,
+  PRODUCTION_SCHEMA_VERSION,
+} from '../migrations';
 import { readAppVersion } from './appVersion';
+import { assertCoreBusinessV2Structure } from './coreBusinessStructure';
 import { getOrCreateDeviceId } from './device';
 import { atomicWriteJson, sha256Hex, toStableJson } from './hash';
 import { ensureSyncDirs, getSyncPaths } from './paths';
@@ -16,17 +21,36 @@ import {
   type SyncTableName,
 } from './types';
 
+// Snapshot pair 只捕获 v2 核心业务表（SYNC_TABLES）——这 7 张表自 v2 起结构恒定，
+// 因此快照文件格式恒为 SNAPSHOT_SCHEMA_VERSION（databaseSchemaVersion 描述被捕获的核心数据模型，仍为 v2）。
+// 允许来源数据库为 v2~LATEST 的纯增量升级库：v3~v8 只新增 Radar/能力等表，不改核心业务表。
+// 完整 SQLite 一致性备份（baselineBackup）覆盖 Radar 等全部表；Snapshot pair 仅是核心业务逻辑快照。
 function openProductionDb(dbPath: string): Database.Database {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  db.pragma('query_only = ON');
-  const schemaVersion = getDatabaseSchemaVersion(db);
-  if (schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
+  try {
+    db.pragma('query_only = ON');
+    // 先做只读结构守卫：核心表/字段缺失时给出明确报错，避免后续读取抛出裸 SQLite 错误。
+    assertCoreBusinessV2Structure(db, '导出源数据库');
+    // getDatabaseSchemaVersion 复用生产库增量 schema 安全校验：
+    // 拒绝 migration 缺号/乱序、名称篡改、未知未来版本；禁止仅判断 version >= 2。
+    const schemaVersion = getDatabaseSchemaVersion(db);
+    if (schemaVersion < PRODUCTION_SCHEMA_VERSION || schemaVersion > LATEST_SCHEMA_VERSION) {
+      throw new Error(
+        `official snapshot requires database schema ${PRODUCTION_SCHEMA_VERSION}~${LATEST_SCHEMA_VERSION}; `
+        + `current version is ${schemaVersion}. `
+        + `Snapshot 仅从 v2 生产底座及其纯增量升级库（v${PRODUCTION_SCHEMA_VERSION}~v${LATEST_SCHEMA_VERSION}）`
+        + `导出核心业务表，不伪造 schema v${schemaVersion} 的 Snapshot。`,
+      );
+    }
+    const appMetaSchema = db.prepare(
+      "SELECT value FROM app_meta WHERE key = 'schema_version'",
+    ).get() as { value: string } | undefined;
+    if (appMetaSchema?.value !== String(schemaVersion)) {
+      throw new Error('导出源数据库 app_meta schema_version 与 migration 不一致');
+    }
+  } catch (error) {
     db.close();
-    throw new Error(
-      `official snapshot requires database schema ${SNAPSHOT_SCHEMA_VERSION}; current version is ${schemaVersion}. `
-      + `当前 Snapshot 契约仅支持 schema ${SNAPSHOT_SCHEMA_VERSION}；v0.7 使用已验证的数据库一致性备份作为恢复机制，`
-      + `不发布、不伪造 schema v${schemaVersion} 的 Snapshot。`,
-    );
+    throw error;
   }
   return db;
 }

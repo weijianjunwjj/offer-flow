@@ -98,10 +98,8 @@ describe('R0.1 pre-sync 一致性备份', () => {
     } finally {
       db.close();
     }
-    // v7 无法导出真实 Snapshot（Snapshot 契约锁定 v2），备份仅按字节复制并校验 pair，因此写入占位对。
-    fs.mkdirSync(snapshotDirectory, { recursive: true });
-    fs.writeFileSync(path.join(snapshotDirectory, 'offerflow.snapshot.json'), '{"placeholder":"snapshot"}');
-    fs.writeFileSync(path.join(snapshotDirectory, 'offerflow.manifest.json'), '{"placeholder":"manifest"}');
+    // v7 纯增量升级库导出真实核心业务 Snapshot pair（仅 7 张核心表，不含 Radar 表）。
+    exportSnapshotToDirectory(databasePath, snapshotDirectory, 'fixture-device-v7');
     const before = captureCurrentProductionState(databasePath);
     const backupId = '20260714-170000-r01-feedface';
     const result = await createCurrentBaselineBackup({
@@ -137,9 +135,8 @@ describe('R0.1 pre-sync 一致性备份', () => {
     } finally {
       db.close();
     }
-    fs.mkdirSync(snapshotDirectory, { recursive: true });
-    fs.writeFileSync(path.join(snapshotDirectory, 'offerflow.snapshot.json'), '{"placeholder":"snapshot"}');
-    fs.writeFileSync(path.join(snapshotDirectory, 'offerflow.manifest.json'), '{"placeholder":"manifest"}');
+    // v8 纯增量升级库导出真实核心业务 Snapshot pair（仅 7 张核心表，不含 Radar 表）。
+    exportSnapshotToDirectory(databasePath, snapshotDirectory, 'fixture-device-v8');
     const before = captureCurrentProductionState(databasePath);
     const backupId = '20260714-180000-r01-cafebabe';
     const result = await createCurrentBaselineBackup({
