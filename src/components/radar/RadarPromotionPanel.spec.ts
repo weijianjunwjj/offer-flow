@@ -17,6 +17,14 @@ vi.mock('../../api/radarPromotionApi', async (importActual) => {
   return { ...actual, radarPromotionApi: mocks };
 });
 
+// 晋升面板内嵌 RC-11 追踪面板：确认晋升后子组件会按 promotionId 拉取来源链。
+// 这里桩掉追踪 API，隔离本 spec 的关注点（晋升流程），避免子组件触发真实 fetch。
+const traceMocks = vi.hoisted(() => ({ traceByPromotion: vi.fn(), traceByObject: vi.fn() }));
+vi.mock('../../api/radarPromotionTraceApi', async (importActual) => {
+  const actual = await importActual<typeof import('../../api/radarPromotionTraceApi')>();
+  return { ...actual, radarPromotionTraceApi: traceMocks };
+});
+
 function plan(over: Partial<PromotionPlanView> = {}): PromotionPlanView {
   return {
     candidateId: 'cand-1', candidateVersionId: 'cv-1',
@@ -44,6 +52,9 @@ function render(props: Partial<{ candidateVersionId: string | null; enabled: boo
 beforeEach(() => {
   mocks.preview.mockReset();
   mocks.promote.mockReset();
+  traceMocks.traceByPromotion.mockReset();
+  traceMocks.traceByObject.mockReset();
+  traceMocks.traceByPromotion.mockResolvedValue(null);
 });
 afterEach(() => { vi.restoreAllMocks(); });
 

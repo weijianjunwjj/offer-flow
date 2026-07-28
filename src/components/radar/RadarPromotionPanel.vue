@@ -14,6 +14,7 @@ import {
   radarPromotionApi,
   type PromotionDepth, type PromotionPlanView, type PromotionTrigger, type PromotionView,
 } from '../../api/radarPromotionApi';
+import RadarPromotionTracePanel from './RadarPromotionTracePanel.vue';
 
 const props = withDefaults(defineProps<{
   /** 要晋升的候选正式版本 id；为空则面板只显示引导。 */
@@ -231,6 +232,10 @@ const wasClamped = computed(() => (
           <div data-testid="promotion-result-id">晋升记录 ID：<code class="oid">{{ promoted.id }}</code></div>
         </div>
       </NAlert>
+
+      <!-- RC-11 反向追踪（只读）：确认晋升后自动展示来源链；反查区始终可用。
+           不提供删除/修改/自动修复任何入口——纯追溯。 -->
+      <RadarPromotionTracePanel :promotion-id="promoted?.id ?? null" data-testid="promotion-trace-review" />
     </template>
   </NCard>
 </template>
