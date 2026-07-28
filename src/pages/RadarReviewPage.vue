@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { NAlert, NButton, NCard, NEmpty, NInput, NModal, NSpace, NSpin, NTag, NText } from 'naive-ui';
 import { ApiError } from '../api/client';
 import {
@@ -12,6 +13,9 @@ import RadarAnalysisPanel from '../components/radar/RadarAnalysisPanel.vue';
 import RadarRecommendationPanel from '../components/radar/RadarRecommendationPanel.vue';
 import RadarPromotionPanel from '../components/radar/RadarPromotionPanel.vue';
 import RadarActionBar from '../components/radar/RadarActionBar.vue';
+import RadarStageStepper from '../components/radar/RadarStageStepper.vue';
+import RadarGuideBar from '../components/radar/RadarGuideBar.vue';
+import RadarNextActionCard from '../components/radar/RadarNextActionCard.vue';
 
 /** V8-4 单岗位分析面板门禁：默认关闭，不随 Radar 开启而自动开启（见 features.ts）。 */
 const analysisEnabled = features.radarAnalysisEnabled;
@@ -137,6 +141,65 @@ async function selectFeedCandidate(candidateId: string | null): Promise<void> {
 
 const showCompare = computed(() => detailLow.value !== null);
 
+const router = useRouter();
+/** 主线步骤条：collect → 回采集页；promote → 岗位台账跟踪；review 即本页。 */
+function goStage(stage: 'collect' | 'review' | 'promote'): void {
+  if (stage === 'collect' && router.hasRoute('radar-import')) { void router.push({ name: 'radar-import' }); return; }
+  if (stage === 'promote') { void router.push({ name: 'jobs' }); return; }
+}
+
+/** 晋升成功出口：有 jobId 去该岗位详情，否则回岗位台账总览。 */
+function onPromotionTrack(payload: { jobId: string | null; applicationId: string | null }): void {
+  if (payload.jobId !== null && payload.jobId !== '') {
+    void router.push({ name: 'job-detail', params: { jobId: payload.jobId } });
+    return;
+  }
+  void router.push({ name: 'jobs' });
+}
+
+/** 引导「选择下一组」：挑当前未选中的第一条待处理关系并打开。 */
+function selectNextRelation(): void {
+  const next = relations.value.find((r) => r.relationId !== selectedRelation.value?.relationId);
+  if (next) void selectRelation(next);
+}
+
+/** 建议面板锚点：选中后引导用户滚动到建议区，收敛为单一主 CTA。 */
+const recommendationPanel = ref<HTMLElement | null>(null);
+function scrollToRecommendations(): void {
+  const el = recommendationPanel.value;
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/**
+ * 每页单一主 CTA：未选关系→引导选下一组；已选→引导处理/生成建议。
+ * label 为空表示"就地即可操作"（如裁决按钮已在对比区），只做引导不再给按钮。
+ */
+const nextAction = computed<{ title: string; hint: string; label: string; act: () => void }>(() => {
+  if (!showCompare.value) {
+    const hasPending = relations.value.length > 0;
+    return {
+      title: hasPending ? '选择一组岗位开始审核' : '当前筛选下没有待处理关系',
+      hint: hasPending ? '从左侧列表选择一组疑似重复 / 待重新确认的岗位，进入对比与裁决。' : '可切换筛选查看已确认记录，或回到采集页收集更多岗位。',
+      label: hasPending ? '选择下一组' : '',
+      act: selectNextRelation,
+    };
+  }
+  if (recommendationsEnabled) {
+    return {
+      title: '已选中一组岗位，查看建议并决定晋升',
+      hint: '先裁决是否同一岗位；如需推进，查看岗位建议后再逐条晋升为正式记录。',
+      label: '查看岗位建议',
+      act: scrollToRecommendations,
+    };
+  }
+  return {
+    title: '已选中一组岗位，请完成裁决',
+    hint: '在下方对比区确认「相同 / 不同」，或撤销、请求重新确认。',
+    label: '',
+    act: () => {},
+  };
+});
+
 function openConfirm(kind: PendingKind, label: string, impact: string, ctx: Record<string, unknown>): void {
   reasonDraft.value = '';
   notice.value = '';
@@ -258,6 +321,21 @@ function signalValueText(v: string | number | boolean | null): string {
 <template>
   <div class="radar-review">
     <h1>岗位雷达 · 人工评审工作台</h1>
+    <RadarStageStepper current="review" class="mt" @navigate="goStage" />
+    <RadarGuideBar
+      class="mt"
+      what="审核处理：登记岗位重复与变化，必要时生成建议并晋升"
+      now="选择一组岗位，裁决是否同一岗位；如需推进再查看建议"
+      next="晋升为正式记录后，去「岗位台账」跟踪进展"
+    />
+    <RadarNextActionCard
+      class="mt"
+      :title="nextAction.title"
+      :hint="nextAction.hint"
+      :cta="nextAction.label"
+      :tone="showCompare ? 'primary' : 'subtle'"
+      @act="nextAction.act"
+    />
     <NAlert v-if="errorText" type="error" :title="errorText" data-testid="review-error" />
     <NAlert v-if="notice" type="success" :title="notice" data-testid="review-notice" closable @close="notice = ''" />
     <NSpin :show="loading">
@@ -312,6 +390,7 @@ function signalValueText(v: string | number | boolean | null): string {
 
       <!-- V8-5 岗位建议批次：置于候选对比区顶部、先于候选详情，避免埋在长页面底部。
            未选关系时也渲染（显示「请先选择一组岗位」引导）；仅在能力开启时渲染，flag=false 完全不影响 V8-4。 -->
+      <div ref="recommendationPanel" data-testid="recommendation-anchor">
       <RadarRecommendationPanel
         v-if="recommendationsEnabled"
         :candidate-version-ids="recommendationScope"
@@ -333,7 +412,9 @@ function signalValueText(v: string | number | boolean | null): string {
         :enabled="recommendationsEnabled"
         class="mt primary-zone"
         data-testid="promotion-panel-review"
+        @track="onPromotionTrack"
       />
+      </div>
 
       <!-- 区域 2/3/4：候选对比 + 变化摘要 + 阻断信息（选中关系后展开） -->
       <NCard v-if="showCompare" title="候选对比" size="small" class="mt" data-testid="candidate-compare">

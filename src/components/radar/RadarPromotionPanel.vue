@@ -22,6 +22,14 @@ const props = withDefaults(defineProps<{
   enabled: boolean;
 }>(), { enabled: true });
 
+/**
+ * 晋升成功后的主线出口：不在面板内直接路由（保持面板可无 router 单测），
+ * 只 emit('track', {jobId, applicationId})，由页面决定去岗位详情 / 岗位台账。
+ */
+const emit = defineEmits<{
+  (e: 'track', payload: { jobId: string | null; applicationId: string | null }): void;
+}>();
+
 const plan = ref<PromotionPlanView | null>(null);
 const promoted = ref<PromotionView | null>(null);
 const actionBusy = ref(false);
@@ -231,6 +239,17 @@ const wasClamped = computed(() => (
           </div>
           <div data-testid="promotion-result-id">晋升记录 ID：<code class="oid">{{ promoted.id }}</code></div>
         </div>
+        <!-- 晋升成功后的主线出口：去岗位详情或岗位台账跟踪，不把用户留在评审页 -->
+        <div class="track-actions" data-testid="promotion-track">
+          <NButton size="small" type="primary" data-testid="promotion-track-job"
+            @click="emit('track', { jobId: promoted.jobId, applicationId: promoted.applicationId })">
+            去岗位详情跟踪
+          </NButton>
+          <NButton size="small" data-testid="promotion-track-ledger"
+            @click="emit('track', { jobId: null, applicationId: promoted.applicationId })">
+            去岗位台账
+          </NButton>
+        </div>
       </NAlert>
 
       <!-- RC-11 反向追踪（只读）：确认晋升后自动展示来源链；反查区始终可用。
@@ -258,6 +277,7 @@ const wasClamped = computed(() => (
 .clamp-item { margin: 4px 0; color: var(--of-ink-2, #475569); line-height: 1.6; }
 .result { margin-top: 4px; }
 .ids { display: flex; flex-direction: column; gap: 4px; }
+.track-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 /* 正式对象 ID：可复制回溯，但弱化为辅助信息 */
 .oid { padding: 0 6px; background: rgba(15, 23, 42, 0.05); border-radius: 8px; font-size: 12px; color: var(--of-ink-2, #475569); }
 </style>

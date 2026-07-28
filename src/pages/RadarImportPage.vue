@@ -21,8 +21,21 @@ import {
   shouldDefaultConfirm,
 } from './radar/commitGate';
 import { readCapturedActivityStatus } from './radar/captureMetadata';
+import { useRouter } from 'vue-router';
+import RadarStageStepper from '../components/radar/RadarStageStepper.vue';
+import RadarGuideBar from '../components/radar/RadarGuideBar.vue';
+import RadarNextActionCard from '../components/radar/RadarNextActionCard.vue';
 
 const props = defineProps<{ sessionId?: string | null }>();
+
+const router = useRouter();
+/** 主线导航：步骤条只发意图，这里用现有路由跳转（review 未开则回落 jobs）。 */
+function goStage(stage: 'collect' | 'review' | 'promote'): void {
+  if (stage === 'collect') { void router.push({ name: 'radar-import' }); return; }
+  if (stage === 'review' && router.hasRoute('radar-review')) { void router.push({ name: 'radar-review' }); return; }
+  void router.push({ name: 'jobs' });
+}
+function goReview(): void { goStage('review'); }
 
 function getStorage(): SessionStorageLike | null {
   try {
@@ -245,6 +258,14 @@ const batchSummary = computed(() => {
       </div>
     </header>
 
+    <RadarStageStepper current="collect" class="block" @navigate="goStage" />
+    <RadarGuideBar
+      class="block"
+      what="收集岗位：采集当前页并写入草稿候选库"
+      now="核对字段、纠正后勾选要写入的条目，再点「确认写入」"
+      next="写入成功后去「审核处理」登记重复与变化"
+    />
+
     <n-alert v-if="errorText" type="error" closable class="block" data-testid="radar-import-error" @close="errorText = ''">{{ errorText }}</n-alert>
     <n-alert v-if="notice" type="success" closable class="block" data-testid="radar-import-notice" @close="notice = ''">{{ notice }}</n-alert>
 
@@ -385,6 +406,14 @@ const batchSummary = computed(() => {
               </tr>
             </tbody>
           </n-table>
+          <!-- 写入成功后的唯一主 CTA：把用户送到主线下一站「审核处理」，不留原地。 -->
+          <RadarNextActionCard
+            class="block"
+            title="已写入草稿候选，去审核处理"
+            hint="在评审工作台登记重复与变化，必要时生成岗位建议并晋升。"
+            cta="去审核岗位"
+            @act="goReview"
+          />
         </n-card>
       </template>
     </n-spin>
