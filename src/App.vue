@@ -19,6 +19,8 @@ const resumeVersionNavigationEnabled = computed(() => router.hasRoute('profile-v
 const historyImportNavigationEnabled = computed(() => router.hasRoute('history-import'));
 const marketPositionNavigationEnabled = computed(() => router.hasRoute('market-position'));
 const strategyWindowNavigationEnabled = computed(() => router.hasRoute('strategy-window'));
+// 岗位雷达主线入口：仅在 radarEnabled 注册了采集路由时出现（见 router/index.ts）。
+const radarNavigationEnabled = computed(() => router.hasRoute('radar-import'));
 const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
 // G5 沙箱会同时启用 G4 能力与数据，但只展示 G5 环境横幅，避免重复提示；
 // G6 演练环境启用 G1~G5，只展示 G6 演练横幅，抑制 G4/G5 沙箱横幅。
@@ -32,6 +34,7 @@ const activeSection = computed(() => {
   if (route.name === 'history-import') return 'history-import';
   if (route.name === 'market-position') return 'market-position';
   if (route.name === 'strategy-window') return 'strategy-window';
+  if (route.name === 'radar-import' || route.name === 'radar-review') return 'radar';
   if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
   return 'jobs';
 });
@@ -75,6 +78,10 @@ function goMarketPosition(): void {
 
 function goStrategyWindow(): void {
   void router.push({ name: 'strategy-window' });
+}
+
+function goRadar(): void {
+  void router.push({ name: 'radar-import' });
 }
 
 function goJobs(): void {
@@ -186,6 +193,16 @@ const contentStyle =
               @click="goStrategyWindow"
             >
               求职策略
+            </n-button>
+            <n-button
+              v-if="radarNavigationEnabled"
+              :type="activeSection === 'radar' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'radar'"
+              size="small"
+              data-testid="nav-radar"
+              @click="goRadar"
+            >
+              岗位雷达
             </n-button>
             <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"

@@ -6,6 +6,7 @@ import {
 import { withJobRecordDefaults, type StoredJobRecord } from '../../../src/storage/defaults';
 import {
   getDatabaseSchemaVersion,
+  LATEST_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
   SCHEMA_MIGRATIONS,
 } from '../../migrations';
@@ -14,6 +15,7 @@ import {
   auditSnapshotConsistency,
   type SnapshotConsistencyReport,
 } from '../../sync/consistency';
+import { assertCoreBusinessV2Structure } from '../../sync/coreBusinessStructure';
 import { sha256Hex, toStableJson } from '../../sync/hash';
 import { readSnapshotTable } from '../../sync/tables';
 import { SYNC_TABLES, type SyncTableName } from '../../sync/types';
@@ -33,8 +35,9 @@ export interface CurrentProductionCounts {
 }
 
 export interface CurrentProductionVerificationReport {
-  schemaVersion: 2;
-  appMetaSchemaVersion: 2;
+  /** 实际生产 schema 版本；生产底座固定为 v2，允许纯增量升级到 LATEST_SCHEMA_VERSION。 */
+  schemaVersion: number;
+  appMetaSchemaVersion: number;
   migrationContinuous: true;
   integrity: 'ok';
   foreignKeyViolationCount: 0;
@@ -146,6 +149,14 @@ export function verifyCurrentProductionDatabase(
   options: CurrentProductionVerificationOptions = {},
 ): CurrentProductionVerificationReport {
   const requireSnapshotConsistency = options.requireSnapshotConsistency ?? true;
+  // 先做只读结构守卫：核心表/字段缺失时给出明确报错，避免 captureCurrentProductionState 抛出裸 SQLite 错误。
+  const structureDb = new Database(databasePath, { readonly: true, fileMustExist: true });
+  try {
+    structureDb.pragma('query_only = ON');
+    assertCoreBusinessV2Structure(structureDb, '当前生产数据库');
+  } finally {
+    structureDb.close();
+  }
   const before = captureCurrentProductionState(databasePath);
   const db = new Database(databasePath, { readonly: true, fileMustExist: true });
   let partial: Omit<
@@ -160,8 +171,14 @@ export function verifyCurrentProductionDatabase(
   >;
   try {
     db.pragma('query_only = ON');
+    // getDatabaseSchemaVersion 已校验 migration 无缺口、无乱序、无未知未来版本、名称一致。
     const schemaVersion = getDatabaseSchemaVersion(db);
-    if (schemaVersion !== 2) throw new Error(`当前生产数据库 schema 应为 2，实际为 ${schemaVersion}`);
+    if (schemaVersion < PRODUCTION_SCHEMA_VERSION || schemaVersion > LATEST_SCHEMA_VERSION) {
+      throw new Error(
+        `当前生产数据库 schema 应在 ${PRODUCTION_SCHEMA_VERSION}~${LATEST_SCHEMA_VERSION} 之间，实际为 ${schemaVersion}`,
+      );
+    }
+    // 生产底座恒为 v2：核心表/字段已在上方只读守卫校验；下方 migration 连续性再校验前两条核心 migration 名称，禁止仅凭版本号通过。
     const integrityRows = (db.prepare('PRAGMA integrity_check').all() as Array<Record<string, unknown>>)
       .map(firstColumn);
     if (integrityRows.length !== 1 || integrityRows[0] !== 'ok') {
@@ -173,18 +190,21 @@ export function verifyCurrentProductionDatabase(
     const migrations = db.prepare(
       'SELECT version, name FROM schema_migrations ORDER BY version',
     ).all() as Array<{ version: number; name: string }>;
-    // 生产底座固定在 PRODUCTION_SCHEMA_VERSION（v2）；LATEST 可高于它（如 G2 的 v3），
-    // 因此只校验生产库恰好包含前 PRODUCTION_SCHEMA_VERSION 条连续且名称匹配的 migration。
-    const productionMigrations = SCHEMA_MIGRATIONS.slice(0, PRODUCTION_SCHEMA_VERSION);
-    const migrationContinuous = migrations.length === productionMigrations.length
+    // 生产底座固定在 PRODUCTION_SCHEMA_VERSION（v2），但允许纯增量升级到实际 schemaVersion。
+    // 校验实际版本对应的前 schemaVersion 条 migration 全部连续、版本递增且名称与代码已知定义一致；
+    // 这天然覆盖前两条核心 migration，禁止只靠 version >= 2 通过。
+    const expectedMigrations = SCHEMA_MIGRATIONS.slice(0, schemaVersion);
+    const migrationContinuous = migrations.length === expectedMigrations.length
       && migrations.every((row, index) => (
-        row.version === index + 1 && row.name === productionMigrations[index]?.name
+        row.version === index + 1 && row.name === expectedMigrations[index]?.name
       ));
     if (!migrationContinuous) throw new Error('当前生产数据库 migration 不连续或名称不匹配');
     const appMetaSchema = db.prepare(
       "SELECT value FROM app_meta WHERE key = 'schema_version'",
     ).get() as { value: string } | undefined;
-    if (appMetaSchema?.value !== '2') throw new Error('app_meta schema_version 与 migration 不一致');
+    if (appMetaSchema?.value !== String(schemaVersion)) {
+      throw new Error('app_meta schema_version 与 migration 不一致');
+    }
 
     const jobRows = db.prepare('SELECT data_json FROM jobs ORDER BY id').all() as Array<{
       data_json: string;
@@ -303,8 +323,8 @@ export function verifyCurrentProductionDatabase(
 
     const orphanReferenceCount = foreignKeyViolationCount;
     partial = {
-      schemaVersion: 2,
-      appMetaSchemaVersion: 2,
+      schemaVersion,
+      appMetaSchemaVersion: schemaVersion,
       migrationContinuous: true,
       integrity: 'ok',
       foreignKeyViolationCount: 0,

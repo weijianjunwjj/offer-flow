@@ -20,6 +20,18 @@ export interface LlmOptions {
   temperature?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * transport 层最大重试次数（区分 transport retry 与任务 attempt）。
+   * 未传时保持现有默认（读 OFFERFLOW_LLM_RETRY_MAX，默认 2）；
+   * 显式传入时钳制到 [0,5]，V8-4 分析 Provider 显式传 0 关闭 transport 重试。
+   */
+  retryMax?: number;
+}
+
+/** 解析 transport 重试上限：显式值优先（钳制 [0,5]），否则沿用环境默认。 */
+function resolveMaxRetries(explicit: number | undefined): number {
+  if (explicit !== undefined) return Math.max(0, Math.min(5, Math.trunc(explicit)));
+  return readEnvInt('OFFERFLOW_LLM_RETRY_MAX', 2, 0, 5);
 }
 
 export interface LlmStreamChunk {
@@ -211,7 +223,7 @@ export async function chatCompletion(
   );
 
   const startTime = Date.now();
-  const maxRetries = readEnvInt('OFFERFLOW_LLM_RETRY_MAX', 2, 0, 5);
+  const maxRetries = resolveMaxRetries(options?.retryMax);
 
   console.log('[llm] request start', {
     model: config.model,
@@ -332,7 +344,7 @@ export async function* chatCompletionStream(
   );
 
   const startTime = Date.now();
-  const maxRetries = readEnvInt('OFFERFLOW_LLM_RETRY_MAX', 2, 0, 5);
+  const maxRetries = resolveMaxRetries(options?.retryMax);
 
   console.log('[llm] stream start', {
     model: config.model,

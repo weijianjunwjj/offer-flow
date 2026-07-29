@@ -5,6 +5,10 @@ import { IdParamsSchema } from './dtoSchemas';
 import { RadarCaptureError, radarForbiddenOrigin, radarValidationError } from './errors';
 import { RadarCaptureService, type RadarCaptureServiceDeps } from './service';
 import { RadarReviewService } from './reviewService';
+import { registerRadarAnalysisRoutes, type AnalysisRouteDeps } from './analysis/analysisRoutes';
+import { registerRadarRecommendationRoutes, type RecommendationRouteDeps } from './recommendation/recommendationRoutes';
+import { registerRadarPromotionRoutes, type PromotionRouteDeps } from './promotion/promotionRoutes';
+import { RADAR_DOMAIN_SCHEMA_VERSION } from '../migrations';
 import {
   AdjudicationRequestSchema,
   RecheckRequestSchema,
@@ -12,12 +16,21 @@ import {
   RuleOverrideRevertRequestSchema,
   RuleOverrideSetRequestSchema,
 } from './reviewDtoSchemas';
+import { RadarActionCoordinator } from './action/actionCoordinator';
+import { ActionApplyRequestSchema, ActionRevertRequestSchema } from './action/actionDtoSchemas';
 import type { ZodType } from 'zod';
 
 export type { RadarCaptureServiceDeps };
 
 export interface RadarCaptureRouteOptions {
   serviceDeps?: RadarCaptureServiceDeps;
+  /** V8-4 单岗位分析 API 门禁：默认关闭；需 radar 已启用 + schema ≥ v7 才注册。 */
+  analysisEnabled?: boolean;
+  analysisDeps?: AnalysisRouteDeps;
+  /** V8-5 推荐批次 API：随分析门禁同开（同依赖 v7 领域表）。 */
+  recommendationDeps?: RecommendationRouteDeps;
+  /** V8-6 正式晋升 API：需 schema ≥ v8（与评审工作台同门禁）。 */
+  promotionDeps?: PromotionRouteDeps;
 }
 
 /**
@@ -123,6 +136,22 @@ export function registerRadarCaptureRoutes(
       service.cancelSession(parseIdParams(request.params), request.body)
     ));
 
+    // ---- V8-4 单岗位分析 API（独立门禁）：需 analysisEnabled 且 schema ≥ v7（分析领域表随 v7 落地）。 ----
+    // 分析只依赖 v7 雷达领域表，早于 v8 评审门禁注册，确保 v7 库亦可接出；生产入口默认不开启。
+    if (options.analysisEnabled === true && getDatabaseSchemaVersion(scopedApp.db) >= RADAR_DOMAIN_SCHEMA_VERSION) {
+      registerRadarAnalysisRoutes(scopedApp, { analysisDeps: options.analysisDeps });
+    }
+
+    // V8-5 推荐批次：需 analysisEnabled + schema ≥ v8。推荐必须读规则评估（category/result/evidence）
+    // 排除硬约束命中，而规则评估表的完整列（evidence_json）与规则引擎产出均属 v8 能力（同评审工作台），
+    // v7 库无规则评估可用，故推荐能力的真实 schema 下限是 v8，而非分析所需的 v7。
+    if (
+      options.analysisEnabled === true
+      && getDatabaseSchemaVersion(scopedApp.db) >= RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION
+    ) {
+      registerRadarRecommendationRoutes(scopedApp, { recommendationDeps: options.recommendationDeps });
+    }
+
     // ---- V8-3 人工评审工作台（只读详情 + 关系裁决 + 规则证据/覆盖），共用同一安全网关 ----
     // 评审依赖 v8 候选关系表（radar_candidate_relations）。采集桥的最低 schema 为 v7；
     // v8 属受控激活（设计文档 BR-1），未激活前不注册评审路由，避免运行时 "no such table"，
@@ -130,6 +159,12 @@ export function registerRadarCaptureRoutes(
     if (getDatabaseSchemaVersion(scopedApp.db) < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
       return;
     }
+
+    // V8-6 正式晋升：与评审工作台同门禁（schema ≥ v8）。晋升写正式 Job/Application/
+    // FeedbackEvent，必须在 v8 领域表齐备的库上才注册；不随 analysisEnabled 开关，
+    // 因为晋升不依赖 AI 分析产物，只依赖候选标准化事实与用户显式触发。
+    registerRadarPromotionRoutes(scopedApp, { promotionDeps: options.promotionDeps });
+
     const review = new RadarReviewService(scopedApp.db, options.serviceDeps ?? { now: Date.now, createId: randomUUID });
     const actor = 'reviewer';
 
@@ -165,6 +200,27 @@ export function registerRadarCaptureRoutes(
     ));
     scopedApp.post('/radar/review/rule-overrides/revert', async (request) => (
       review.revertRuleOverride(parseReviewDto(RuleOverrideRevertRequestSchema, request.body), actor)
+    ));
+
+    // ---- RC-10 雷达动作（收藏/忽略/标记优先/已投待反馈）：与评审工作台同门禁（schema ≥ v8）、
+    // 同安全网关。只写 radar_actions（append-only），撤销只恢复 Radar 决策状态，
+    // 绝不触碰正式 Job/Application/FeedbackEvent，也不触发任何自动晋升。
+    // appliedPending 的审计快照锚点由服务端从候选决策详情解析，客户端不可伪造。 ----
+    const actionCoordinator = new RadarActionCoordinator(
+      scopedApp.db,
+      {
+        ...(options.serviceDeps ?? { now: Date.now, createId: randomUUID }),
+        resolveLatestSnapshotId: (candidateId) => review.getCandidateDecisionDetail(candidateId).latestSnapshotId,
+      },
+    );
+    scopedApp.get('/radar/actions/candidates/:id', async (request) => (
+      actionCoordinator.getView(parseIdParams(request.params))
+    ));
+    scopedApp.post('/radar/actions/apply', async (request) => (
+      actionCoordinator.apply(parseReviewDto(ActionApplyRequestSchema, request.body))
+    ));
+    scopedApp.post('/radar/actions/revert', async (request) => (
+      actionCoordinator.revert(parseReviewDto(ActionRevertRequestSchema, request.body))
     ));
   });
 }

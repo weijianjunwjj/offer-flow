@@ -62,3 +62,55 @@ describe('LLM provider · max_tokens 解析', () => {
     expect(capture.getLastMaxTokens()).toBe(8192);
   });
 });
+
+describe('LLM provider · transport retry 上限', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.OFFERFLOW_LLM_BASE_URL = 'https://fake';
+    process.env.OFFERFLOW_LLM_API_KEY = 'test-key';
+    process.env.OFFERFLOW_LLM_MODEL = 'fake-model';
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  async function importFresh() {
+    return import('./provider');
+  }
+
+  /** fetch 恒抛可重试错误（'fetch failed'）并计尝试次数。 */
+  function stubFetchAlwaysRetryable(): { attempts: () => number } {
+    let attempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      attempts += 1;
+      throw new Error('fetch failed');
+    }));
+    return { attempts: () => attempts };
+  }
+
+  it('显式 retryMax=0 关闭 transport 重试：只尝试一次', async () => {
+    delete process.env.OFFERFLOW_LLM_RETRY_MAX;
+    const capture = stubFetchAlwaysRetryable();
+    const { chatCompletion } = await importFresh();
+    const result = await chatCompletion('system', 'user', { retryMax: 0 });
+    expect(capture.attempts()).toBe(1);
+    expect(result.error).toBeDefined();
+  });
+
+  it('未传 retryMax 时沿用 env 默认（env=2 → 3 次尝试），旧行为不变', async () => {
+    process.env.OFFERFLOW_LLM_RETRY_MAX = '2';
+    const capture = stubFetchAlwaysRetryable();
+    const { chatCompletion } = await importFresh();
+    vi.useFakeTimers();
+    const promise = chatCompletion('system', 'user');
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(capture.attempts()).toBe(3);
+    expect(result.error).toBeDefined();
+  });
+});

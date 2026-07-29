@@ -54,6 +54,7 @@ import {
 } from './reviewDtoSchemas';
 import { createHash } from 'node:crypto';
 import type { RadarCandidateRelationStatus } from '../../src/domain/radar';
+import { currentOverrideState } from './ruleOverrideProjection';
 
 /** 人工工作台默认只显示待处理关系。 */
 const DEFAULT_REVIEW_STATUSES = ['suspected_duplicate', 'needs_recheck'] as const;
@@ -553,12 +554,9 @@ export class RadarReviewService {
     return hit;
   }
 
-  /** 当前覆盖状态：candidate 下最近一条未被撤销的 rule_override_set（按该 assessment）。 */
+  /** 当前覆盖状态：委托 ruleOverrideProjection 的权威算法（candidate 下最近未撤销的 set）。 */
   private currentOverrideState(assessmentId: string, candidateId: string): 'none' | 'pass' | 'block' {
-    const setAction = this.latestOverrideSetAction(assessmentId, candidateId);
-    if (setAction === null || setAction.revertedByActionId !== null) return 'none';
-    const value = (setAction.metadata as { overriddenValue?: unknown }).overriddenValue;
-    return value === 'pass' || value === 'block' ? value : 'none';
+    return currentOverrideState(this.actions.listByCandidate(candidateId), assessmentId);
   }
 
   private latestOverrideSetAction(assessmentId: string, candidateId: string): RadarAction | null {

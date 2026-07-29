@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api/client';
 import type {
   CandidateDecisionDetail, DecisionFeedItem, RelationDetail, RelationListItem, RelationSignals, RuleEvidenceView,
@@ -20,6 +20,28 @@ const mocks = vi.hoisted(() => ({
   revertOverride: vi.fn(),
 }));
 vi.mock('../api/radarReviewApi', () => ({ radarReviewApi: mocks }));
+
+// 可变 features mock：默认与生产一致（两个能力均关闭），单测内按需打开 V8-5 推荐门禁。
+const featureFlags = vi.hoisted(() => ({ radarAnalysisEnabled: false, radarRecommendationsEnabled: false }));
+vi.mock('../config/features', () => ({ features: featureFlags }));
+
+// 推荐面板依赖的推荐 API：本文件只验证入口可发现性（位置/标题/引导），不触发真实请求。
+vi.mock('../api/radarRecommendationApi', () => ({
+  radarRecommendationApi: { createBatch: vi.fn(), listRecentBatches: vi.fn(), getBatch: vi.fn() },
+}));
+
+// RC-10 动作栏 API：每侧候选卡挂载即拉取动作状态；默认返回全未生效态。
+const actionMocks = vi.hoisted(() => ({ getView: vi.fn(), apply: vi.fn(), revert: vi.fn() }));
+vi.mock('../api/radarActionApi', async (importActual) => {
+  const actual = await importActual<typeof import('../api/radarActionApi')>();
+  return { ...actual, radarActionApi: actionMocks };
+});
+function emptyActionView(candidateId: string) {
+  return {
+    candidateId, activeCandidateVersionId: `ver-${candidateId}`,
+    state: { saved: false, ignored: false, priority: false, appliedPending: false }, history: [],
+  };
+}
 
 function summary(company: string) {
   return {
@@ -78,7 +100,19 @@ function setupHappy(relOver: Partial<RelationListItem> = {}, feed: DecisionFeedI
   mocks.listRuleEvidence.mockResolvedValue([]);
 }
 
-afterEach(() => { vi.clearAllMocks(); });
+afterEach(() => {
+  vi.clearAllMocks();
+  // 复位 flag，避免用例间互相污染（默认与生产一致：两个能力均关闭）。
+  featureFlags.radarAnalysisEnabled = false;
+  featureFlags.radarRecommendationsEnabled = false;
+});
+
+// 动作栏 API 默认桩：每次用例前复位为全未生效态，避免真实请求与用例间串扰。
+beforeEach(() => {
+  actionMocks.getView.mockImplementation((candidateId: string) => Promise.resolve(emptyActionView(candidateId)));
+  actionMocks.apply.mockReset();
+  actionMocks.revert.mockReset();
+});
 
 async function mountPage() {
   // NModal 默认 teleport 到 body，stub teleport 让弹窗内容内联渲染，便于断言。
@@ -119,6 +153,134 @@ describe('RadarReviewPage 候选对比 + 变化 + 证据', () => {
     const changed = wrapper.find('[data-testid="changed-field"]');
     expect(changed.exists()).toBe(true);
     expect(changed.text()).toContain('salaryMinK');
+  });
+
+  it('V8-4 分析面板默认关闭：flag=false 时不渲染分析面板（V8-3 行为不变）', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // radarAnalysisEnabled 默认 false：候选对比区不嵌入任何分析面板。
+    expect(wrapper.find('[data-testid="analysis-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-panel-low"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-panel-high"]').exists()).toBe(false);
+  });
+
+  it('V8-5 推荐面板默认关闭：flag=false 时不渲染，且不影响 V8-4 分析面板行为', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // radarRecommendationsEnabled 默认 false：不渲染推荐面板；同时 V8-4 分析面板行为不因本能力改变。
+    expect(wrapper.find('[data-testid="recommendation-panel-review"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="recommendation-panel"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-panel-low"]').exists()).toBe(false);
+    // 候选对比区仍正常渲染（推荐能力关闭不破坏既有评审 UI）。
+    expect(wrapper.find('[data-testid="candidate-compare"]').exists()).toBe(true);
+  });
+
+  it('V8-5 推荐入口可发现性：未选关系即渲染面板并提示「请先选择一组岗位」', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    // 未选中任何关系：面板已可见（不再埋在长页面底部），且不显示生成/加载操作。
+    const panel = wrapper.find('[data-testid="recommendation-panel-review"]');
+    expect(panel.exists()).toBe(true);
+    expect(wrapper.find('[data-testid="recommendation-needs-selection"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('请先选择一组岗位');
+    expect(wrapper.find('[data-testid="recommendation-generate"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="recommendation-load-latest"]').exists()).toBe(false);
+    // 候选对比区尚未展开。
+    expect(wrapper.find('[data-testid="candidate-compare"]').exists()).toBe(false);
+  });
+
+  it('V8-5 推荐入口可发现性：选中关系后立即显示生成/加载按钮，标题为「本组岗位建议（0–8 条）」', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="recommendation-needs-selection"]').exists()).toBe(false);
+    // 两个入口按钮立即可见，无需下滑。
+    expect(wrapper.find('[data-testid="recommendation-generate"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="recommendation-load-latest"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('本组岗位建议（0–8 条）');
+  });
+
+  it('V8-5 推荐面板位于候选对比区之前（DOM 顺序先于候选详情）', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    const html = wrapper.html();
+    const panelAt = html.indexOf('recommendation-panel-review');
+    const compareAt = html.indexOf('candidate-compare');
+    expect(panelAt).toBeGreaterThan(-1);
+    expect(compareAt).toBeGreaterThan(-1);
+    // 入口在候选详情之前渲染：可发现性的核心断言。
+    expect(panelAt).toBeLessThan(compareAt);
+  });
+
+  it('V8-5.5 状态 Tag 中文化：关系状态与决策类型显示中文，技术码降级保留', async () => {
+    setupHappy({}, [{
+      snapshotId: 'snap-z', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',
+      decisionType: 'material_change', analysisEligible: true, blockingIssues: [],
+      needsConfirmation: [], conflictReason: null, changedFieldPaths: ['salaryMinK'], summary: summary('越迁软件'),
+    }]);
+    const wrapper = await mountPage();
+    // 关系列表：中文状态可见，原技术码仍在 DOM（降级为弱化副文本，便于排查与既有断言）。
+    expect(wrapper.text()).toContain('疑似重复');
+    expect(wrapper.find('[data-testid="relation-list"]').text()).toContain('suspected_duplicate');
+    // feed：决策类型中文化。
+    expect(wrapper.find('[data-testid="decision-feed"]').text()).toContain('实质变化');
+  });
+
+  it('V8-5.5 候选 A/B 为两张等宽卡（结构对称）', async () => {
+    setupHappy();
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    const a = wrapper.find('[data-testid="candidate-card-low"]');
+    const b = wrapper.find('[data-testid="candidate-card-high"]');
+    expect(a.exists()).toBe(true);
+    expect(b.exists()).toBe(true);
+    // 两侧同为 cand-card，等宽由 .compare 的 1fr 1fr 栅格保证。
+    expect(a.classes()).toContain('cand-card');
+    expect(b.classes()).toContain('cand-card');
+  });
+
+  it('V8-5.5 顶部两列限高内部滚动 + 内部标识默认折叠', async () => {
+    setupHappy({}, [{
+      snapshotId: 'snap-y', candidateId: 'cand-A', activeCandidateVersionId: 'ver-A',
+      decisionType: 'material_change', analysisEligible: true, blockingIssues: [],
+      needsConfirmation: [], conflictReason: null, changedFieldPaths: [], summary: summary('越迁软件'),
+    }]);
+    mocks.listRuleEvidence.mockResolvedValue([{
+      assessmentId: 'a1', ruleKey: 'salary_ceiling', evidenceState: 'structured', corruptReason: null,
+      overrideState: 'none', originalResult: 'hit', evidenceHashShort: 'cafebabe0022',
+      overrideAudit: [], matchedFieldPath: 'salaryMaxK', rawValue: '25K', normalizedValue: '25',
+      confidence: 0.9, outcome: 'block', excerpt: null, explanation: null,
+      ruleId: 'rule-1', ruleVersion: 'v1', blocking: true, matchedText: null,
+    }] satisfies RuleEvidenceView[]);
+    const wrapper = await mountPage();
+    // 顶部两列列表挂 scroll-pane（限高 + overflow-y:auto）。
+    expect(wrapper.find('[data-testid="relation-list"]').classes()).toContain('scroll-pane');
+    expect(wrapper.find('[data-testid="decision-feed"]').classes()).toContain('scroll-pane');
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 证据内部 ID/哈希收进 details（默认折叠），文本仍留在 DOM 中。
+    const details = wrapper.findAll('details.tech-details');
+    expect(details.length).toBeGreaterThan(0);
+    expect(details[0]!.attributes('open')).toBeUndefined();
+    expect(wrapper.find('[data-testid^="evidence-original-"]').exists()).toBe(true);
+  });
+
+  it('V8-5.5 推荐区标记为主决策区（primary-zone）', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    const wrapper = await mountPage();
+    expect(wrapper.find('[data-testid="recommendation-panel-review"]').classes()).toContain('primary-zone');
   });
 
   it('点击决策 feed 中带候选的条目加载单侧详情与证据（无关系裁决按钮）', async () => {
@@ -269,6 +431,48 @@ describe('RadarReviewPage 人工操作二次确认 + 语义 + 409', () => {
     });
   });
 
+  it('操作完成后展示下一步引导（继续下一条 / 去晋升）', async () => {
+    // 两条关系：裁决第一条后仍有下一条可处理，引导「继续下一条」应出现。
+    mocks.listRelations.mockResolvedValue([relation(), relation({ relationId: 'rel-2' })]);
+    mocks.getRelationDetail.mockResolvedValue(relationDetail());
+    mocks.listDecisionFeed.mockResolvedValue([]);
+    mocks.getCandidateDetail.mockResolvedValue(detail());
+    mocks.listRuleEvidence.mockResolvedValue([]);
+    mocks.confirmDistinct.mockResolvedValue({ status: 'confirmed_distinct' });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 操作前无引导。
+    expect(wrapper.find('[data-testid="post-action-guide"]').exists()).toBe(false);
+    await wrapper.find('[data-testid="btn-confirm-distinct"]').trigger('click');
+    const vm = wrapper.vm as unknown as { reasonDraft: string };
+    vm.reasonDraft = '两家为不同法人';
+    await flushPromises();
+    await wrapper.find('[data-testid="confirm-submit"]').trigger('click');
+    await flushPromises();
+    // 操作成功后出现下一步引导：继续下一条 + 去晋升（推荐能力默认关闭，不含生成建议）。
+    const guide = wrapper.find('[data-testid="post-action-guide"]');
+    expect(guide.exists()).toBe(true);
+    expect(wrapper.find('[data-testid="guide-next-relation"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="guide-promote"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="guide-recommendations"]').exists()).toBe(false);
+  });
+
+  it('技术码默认折叠到 details，但仍保留在 DOM（可排查、既有断言不破）', async () => {
+    setupHappy({ status: 'suspected_duplicate' });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 关系列表行内技术码收进折叠 details，默认 collapsed，但原码文本仍在 DOM。
+    const listFold = wrapper.find('[data-testid="relation-list"] details.tech-details');
+    expect(listFold.exists()).toBe(true);
+    expect(listFold.attributes('open')).toBeUndefined();
+    expect(wrapper.find('[data-testid="relation-list"]').text()).toContain('suspected_duplicate');
+    // relation-meta：中文状态与时间仍直出，状态原码折叠但仍可查。
+    expect(wrapper.find('[data-testid="relation-meta"]').text()).toContain('当前状态：疑似重复');
+    expect(wrapper.find('[data-testid="relation-meta"]').text()).toContain('suspected_duplicate');
+  });
+
   it('并发冲突（409）提示刷新且不清空已填原因', async () => {
     setupHappy();
     mocks.confirmSame.mockRejectedValue(new ApiError('conflict', 409, { code: 'RELATION_STATE_CONFLICT' }));
@@ -283,5 +487,40 @@ describe('RadarReviewPage 人工操作二次确认 + 语义 + 409', () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="stale-hint"]').exists()).toBe(true);
     expect(vm.reasonDraft).toBe('同一岗位'); // 输入保留
+  });
+});
+
+describe('RC-10 动作栏接入评审工作台', () => {
+  it('打开关系后，两侧候选卡各挂一个动作栏并按候选拉取状态', async () => {
+    setupHappy();
+    // 两侧候选详情按 id 区分，验证动作栏各自绑定其候选。
+    mocks.getCandidateDetail.mockImplementation((id: string) => Promise.resolve(detail({ candidateId: id })));
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 两侧各一个动作栏（low/high）。
+    expect(wrapper.find('[data-testid="action-bar-low"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="action-bar-high"]').exists()).toBe(true);
+    // 每侧以其候选 id 拉取动作状态（两侧候选详情不同）。
+    expect(actionMocks.getView).toHaveBeenCalledWith('cand-A');
+    expect(actionMocks.getView).toHaveBeenCalledWith('cand-B');
+  });
+
+  it('启用推荐能力时，动作变化让推荐面板失效重置（invalidationKey 自增）', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    setupHappy();
+    actionMocks.apply.mockResolvedValue({
+      changed: true,
+      view: { ...emptyActionView('cand-A'), state: { saved: false, ignored: true, priority: false, appliedPending: false } },
+    });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    const panel = wrapper.findComponent({ name: 'RadarRecommendationPanel' });
+    const before = panel.props('invalidationKey') as number;
+    // 在 low 侧动作栏点“忽略”，触发 changed → 页面自增失效计数。
+    await wrapper.find('[data-testid="action-bar-low"] [data-testid="action-set-ignore"]').trigger('click');
+    await flushPromises();
+    expect(panel.props('invalidationKey')).toBe(before + 1);
   });
 });

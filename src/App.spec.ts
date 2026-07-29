@@ -42,3 +42,60 @@ describe('App B3 默认导航门禁', () => {
     wrapper.unmount();
   });
 });
+
+describe('App 岗位雷达主线入口门禁', () => {
+  const EmptyPage = defineComponent({ render: () => h('p', 'page') });
+
+  it('radar 路由未注册时不显示「岗位雷达」入口', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/profile', name: 'profile', component: EmptyPage },
+        { path: '/jobs', name: 'jobs', component: EmptyPage },
+      ],
+    });
+    await router.push('/jobs');
+    await router.isReady();
+    const wrapper = mount(App, { global: { plugins: [router] } });
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain('岗位雷达');
+    wrapper.unmount();
+  });
+
+  it('radar 路由注册后显示唯一入口，点击跳转采集页', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/profile', name: 'profile', component: EmptyPage },
+        { path: '/radar/import', name: 'radar-import', component: EmptyPage },
+        { path: '/radar/review', name: 'radar-review', component: EmptyPage },
+        { path: '/jobs', name: 'jobs', component: EmptyPage },
+      ],
+    });
+    await router.push('/jobs');
+    await router.isReady();
+    const wrapper = mount(App, { global: { plugins: [router] } });
+    expect(wrapper.findAll('button').filter((b) => b.text() === '岗位雷达')).toHaveLength(1);
+    await wrapper.findAll('button').find((b) => b.text() === '岗位雷达')?.trigger('click');
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe('radar-import');
+    wrapper.unmount();
+  });
+
+  it('停留在 radar 页面时「岗位雷达」入口高亮（primary + ghost）', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/radar/import', name: 'radar-import', component: EmptyPage },
+        { path: '/radar/review', name: 'radar-review', component: EmptyPage },
+        { path: '/jobs', name: 'jobs', component: EmptyPage },
+      ],
+    });
+    await router.push('/radar/review');
+    await router.isReady();
+    const wrapper = mount(App, { global: { plugins: [router] } });
+    const radarBtn = wrapper.find('[data-testid="nav-radar"]');
+    expect(radarBtn.exists()).toBe(true);
+    expect(radarBtn.classes().join(' ')).toContain('n-button--primary-type');
+    wrapper.unmount();
+  });
+});

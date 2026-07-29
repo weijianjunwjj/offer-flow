@@ -16,8 +16,9 @@
 - 本文替代 PRD v2.0；
 - 已吸收既有红队与 Gemini 独立专家评审；
 - 本文已冻结；V8-2 已按 2026-07-22 最新批准范围关闭并冻结；
-- V8-3 状态为 `APPROVED / DESIGN ALLOWED / IMPLEMENTATION NOT STARTED`，设计完成后仍须等待用户审核，不得直接编码；
-- 合并 main、推送 main、Tag 与 Release 仍分别需要明确授权。
+- V8-3 已于 2026-07-23 完成人工验收，状态为 `ACCEPTED / ACTIVATION PENDING`，RC-05 / RC-06 = Done；
+- V8-4（持久化任务与可解释单岗位 AI 分析）已获开发授权并进入实施；生产 schema 仍为 v7，Radar 与 Analysis 正式入口仍关闭；
+- 生产 v8 激活、真实 Provider 调用、合并 main、推送 main、Tag 与 Release 仍分别需要明确授权。
 
 ### 0.2 配套文档
 

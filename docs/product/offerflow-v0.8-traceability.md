@@ -2,7 +2,8 @@
 
 > **矩阵版本：** 1.0  
 > **对应 PRD：** v2.1  
-> **状态：** V8-2 `CLOSED / FROZEN`。采集桥、预览、确认写入闭环、自动化测试、最终真实 BOSS 批量 Preview 与生产 schema v7 受控激活均已完成；Radar 正式入口保持关闭。2026-07-22 最终范围收缩为扩展当前页采集、BOSS 单条/批量、通用可见文本降级、预览纠错/取消/确认、幂等重放与终态；手工 JD 文本、“链接 + 文本”和 JSON 对象/数组输入均从产品入口、前端 API 包装、写入 DTO 和验收中删除，仅保留数据库枚举、历史数据读取与 Preview/Snapshot 反序列化兼容；扩展继续使用 JSON HTTP body 的 browser/boss/generic 协议。RC-01～RC-04 均为 Done。
+> **v0.8 总体状态：`ENGINEERING COMPLETE / RELEASE CANDIDATE`（v0.8.0-rc1，2026-07-29）——非 GA。** 判定依据：RC-01～RC-08、RC-10、RC-11 = Done；V8-4 / V8-5 / V8-6 功能开发完成；V8-UX 收口（三阶段主线 + 信息噪声降噪）实现完成，**仅剩「人工无说明 smoke」一项待补**；RC-09 Not Started、RC-12 `Partial / Blocked`。发布判定条件仍被阻塞、不由工程侧解除：**① 30 条真实评测——数据与人工标注阻塞。**（原「② 生产 v8 migration / backup / recovery——授权阻塞 BR-1」已于 2026-07-29 完成：生产库 v7→v8 受控迁移 + baseline backup + 克隆演练 + 只读启动 smoke 全通过，证据 `docs/evidence/offerflow-v0.8-production-schema-v8-activation-2026-07-29.md`；**此项非产品版本口径变更，产品仍 v0.8.0-rc1**。）因此本版本**只能声明 Release Candidate，不得声明 GA / 正式发布 / 版本完成**；GA 仍需 RC-09 完成、30 条评测通过、核心页面真实截图与产品文案人工验收、用户明确批准发布（见 Release Contract §4）。生产库 schema 已为 v8，但 Radar / Analysis 正式入口仍 DISABLED、未启用任何生产开关。
+> **状态：** V8-2 `CLOSED / FROZEN`；V8-3 `ACCEPTED / ACTIVATION PENDING`（RC-05 / RC-06 = Done，2026-07-23 验收）；V8-5 `MANUAL ACCEPTED`（2026-07-27）（RC-08 = Done，人工验收沙箱 `npm run recommendation:review` 2026-07-27 通过签字，证据见 `docs/evidence/offerflow-v0.8-v8-5-manual-acceptance-2026-07-27.md`）；V8-4 `MANUAL ACCEPTED`（2026-07-27）（RC-07、RC-12 可靠单岗位分析部分 = 人工验收通过，代码与自动化回归 2026-07-25 全绿，实施证据见 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md`；人工验收沙箱 `npm run analysis:review` 2026-07-27 验收通过、已签字），生产 schema 已于 2026-07-29 迁移到 v8、但 Radar 与 Analysis 正式入口仍保持关闭、正式开关仍未启用。采集桥、预览、确认写入闭环、自动化测试、最终真实 BOSS 批量 Preview 与生产 schema v7 受控激活均已完成；Radar 正式入口保持关闭。2026-07-22 最终范围收缩为扩展当前页采集、BOSS 单条/批量、通用可见文本降级、预览纠错/取消/确认、幂等重放与终态；手工 JD 文本、“链接 + 文本”和 JSON 对象/数组输入均从产品入口、前端 API 包装、写入 DTO 和验收中删除，仅保留数据库枚举、历史数据读取与 Preview/Snapshot 反序列化兼容；扩展继续使用 JSON HTTP body 的 browser/boss/generic 协议。RC-01～RC-04 均为 Done。RC-10（RadarAction）= `Done`：人工验收沙箱 `npm run action:review` 2026-07-28 通过签字，`action:e2e` 10/10 连跑两次稳定、`recommendation:e2e` 5/5 无回归、vitest 1409 全绿，证据见 `docs/evidence/offerflow-v0.8-rc-10-action-manual-acceptance-2026-07-28.md`。RC-11（RadarPromotion 反向追踪）= `Done`：人工验收沙箱 `npm run trace:review` 2026-07-28 通过签字，`trace:e2e` 13/13 连跑两次稳定、`promotion:e2e` 11/11 无回归、vitest 1434 全绿，证据见 `docs/evidence/offerflow-v0.8-rc-11-trace-manual-acceptance-2026-07-28.md`。V8-6 功能开发完成（RadarPromotion 功能层、反向追踪、端到端剧本三项完成；RC-11 于 2026-07-28 转 Done）；发布闭环侧仍 `PARTIAL / BLOCKED`：**30 条真实评测（数据与人工标注阻塞）、核心页面真实截图与产品验收两项未完成**（原「生产 v8 migration/backup/recovery」已于 2026-07-29 完成，证据 `docs/evidence/offerflow-v0.8-production-schema-v8-activation-2026-07-29.md`，且不改变产品版本口径），RC-12 保持 Partial/Blocked、RC-09 未启动；证据见 `docs/evidence/offerflow-v0.8-v8-6-promotion-partial-acceptance-2026-07-27.md`。V8-UX 收口波次（三阶段主线步骤条 / 行动卡 / 三问引导 + 工作台信息噪声降噪）= **实现完成**（commit `633eb0d`、`eb43f1a`；纯展示层，未改行为/契约/数据库；vitest 1456、5 组 radar E2E、build、typecheck 全绿），**仅剩「人工无说明 smoke」（不看技术码、仅凭中文文案走通三阶段主线）一项待补**。**v0.8 产品验收 = `HELD / 暂缓`**：待 30 条评测、核心页面真实截图与产品文案人工验收完成后另行组织（生产 v8 受控迁移已于 2026-07-29 完成，不单独构成产品验收条件）。本条**不得**解读为 V8-6 整体发布完成或 v0.8 产品验收通过、更**不得**解读为 GA（RC-11 Done、V8-UX 实现完成均不改变发布闭环 Partial/Blocked 状态）。
 
 ---
 
@@ -16,12 +17,12 @@
 | RC-04 | 不可变 Snapshot/Version | 4.3–4.5 / P0-04/05 | 3 / 4.2 / 4.5 | 5.1 | V8-1/2 | Done（实现、写入闭环、真实采集、最终 Preview 零写入及生产 schema v7 受控激活全部通过） | 见下方 RC-04 分项证据与生产激活记录 |
 | RC-05 | 重复与变化 | P0-06 / US-03 | 5 | 5.1 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-01/MA-02 静态截图受内层滚动容器裁切，能力已由真实浏览器验证 + Review Playwright E2E + 组件/API 测试 + 审计数据共同证明，采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | fixture、Diff 截图、hash 结果 |
 | RC-06 | 透明规则 | P0-07 / US-04 | 4.7 | 3 / 4 | V8-3 | Done（代码实现完成、自动化回归通过、人工验收 ACCEPTED；沙箱/演练 schema≥v8，生产仍 v7。MA-03/MA-04 静态证据完整；采用证据例外完成验收；生产 v8 激活仍需独立授权。证据 `docs/evidence/offerflow-v0.8-v8-3-manual-acceptance-pending.md`、`docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`） | 命中原文、覆盖动作截图 |
-| RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Not Started | Payload、Envelope、证据引用 |
-| RC-08 | 0～8 条推荐 | P0-09 / US-06 | 4.10 / 13.3 | 7 | V8-5 | Not Started | 正常批次与空推荐截图 |
+| RC-07 | 可解释单岗位分析 | P0-08 / US-05 | 4.9 / 7 / 8 | 4 / 5.2 | V8-4 | Done — V8-4 `MANUAL ACCEPTED`（2026-07-27）（输入/输出契约、Provider 与结构修复、执行器、服务编排、七个 HTTP 接口、前端面板与门禁、刷新恢复均已实现；单元/集成 + 六个浏览器 E2E 全绿；人工验收沙箱 `npm run analysis:review` 2026-07-27 通过签字；生产入口 DISABLED、schema 仍 v7、生产迁移未授权） | Payload、Envelope、证据引用；实施证据 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md` |
+| RC-08 | 0～8 条推荐 | P0-09 / US-06 | 4.10 / 13.3 | 7 | V8-5 | Done — V8-5 `MANUAL ACCEPTED`（2026-07-27）（推荐契约、确定性收敛、投影、服务编排、HTTP 接口与前端面板均已实现；0～8 条上限、允许 0 条、不凑数、硬约束/抑制阻断原因齐备；`recommendation:e2e` 5/5、`review-e2e` 11/11、vitest 1254 全绿；人工验收沙箱 `npm run recommendation:review` 2026-07-27 通过签字；生产入口 DISABLED、schema 仍 v7、生产迁移未授权） | 正常批次与空推荐截图；验收证据 `docs/evidence/offerflow-v0.8-v8-5-manual-acceptance-2026-07-27.md` |
 | RC-09 | 误区或证据不足 | 4.8 / 11.3 / US-07 | 9 | 5.4 / 7 | V8-5 | Not Started | formed/insufficient 两类样本 |
-| RC-10 | RadarAction | P0-10 / US-08 | 4.11 / 12 | 5.5 | V8-5 | Not Started | 动作流水、撤销、投影 |
-| RC-11 | RadarPromotion | P0-11 / US-09 | 4.12 / 13.4 | 8 | V8-6 | Not Started | 晋升预览、幂等、反向追踪 |
-| RC-12 | 可靠任务与发布闭环 | P0-12 / US-10 / 12.2 | 4.8 / 10 | 6 / 9 | V8-4/6 | Not Started | 故障日志、migration、恢复、截图 |
+| RC-10 | RadarAction | P0-10 / US-08 | 4.11 / 12 | 5.5 | V8-5 | Done — 人工验收通过（2026-07-28）。四族动作（收藏/忽略/标记优先/已投待反馈）+ 撤销 + append-only 历史投影全部实现；`action:e2e` 10/10（连跑两次稳定）：动作栏置位/刷新恢复/撤销恢复、忽略使旧推荐立即失效并重新生成时被排除（`ignored_unchanged`）、撤销后恢复资格、收藏/优先不误排除、历史 append-only 可追踪、幂等（重复 apply `changed=false`）、`no_response`（已投待反馈）不产生 Application/拒绝反馈/负向证据、已晋升候选执行并撤销全部动作后正式四表逐字节不变、`integrity_check`/`foreign_key_check` 通过；`recommendation:e2e` 5/5 无回归；vitest 1409、vue-tsc、build 全绿；人工验收沙箱 `npm run action:review` 2026-07-28 通过签字。生产入口 DISABLED、schema 仍 v7、生产迁移未授权 | 动作流水、撤销、投影；验收证据 `docs/evidence/offerflow-v0.8-rc-10-action-manual-acceptance-2026-07-28.md` |
+| RC-11 | RadarPromotion | P0-11 / US-09 | 4.12 / 13.4 | 8 | V8-6 | Done — 人工验收通过（2026-07-28）。晋升功能层（2026-07-27 已验收）+ 双向可追溯性只读界面全部实现。已完成并有证据：预览零写入、确认写入 Job/Application/FeedbackEvent/Promotion 各一条且 UI 与库逐字段一致、幂等重放、`no_response` 双端 409 零残留、深度钳制、原子失败整体回滚；**反向追踪：** 正向来源链（候选版本/触发原因/推荐批次/正向对象）、三类正式对象反查、link 多晋升、触发四态、批次成员推断（显式标注非确定因果 + `wasSelected`）、无来源明确不可追溯、刷新后追踪保持、追踪只读五表零写入、**撤销 RadarAction 不破坏追踪且正式事实链路保留**（RC-10 Done 后已可验证）；`trace:e2e` 13/13 连跑两次稳定、`promotion:e2e` 11/11 无回归、vitest 1434、vue-tsc、build 全绿；人工验收沙箱 `npm run trace:review` 2026-07-28 通过签字。**边界：** link 模式仍无 UI 晋升入口（仅 API 验证反查）。生产入口 DISABLED、schema 仍 v7、生产迁移未授权 | 晋升预览、幂等、反向追踪；验收证据 `docs/evidence/offerflow-v0.8-rc-11-trace-manual-acceptance-2026-07-28.md` |
+| RC-12 | 可靠任务与发布闭环 | P0-12 / US-10 / 12.2 | 4.8 / 10 | 6 / 9 | V8-4/6 | Partial / Blocked（保持）— V8-4 单岗位可靠分析任务已实现并人工验收通过（2026-07-27）（确定性 createTask、固定 Snapshot、状态机、最多一次结构修复、原子写入、cancel/迟到结果抑制、进程恢复、retry 复用快照、current/stale 投影，自动化全绿）；**发布闭环三项被阻塞、不由工程侧解除：① 30 条真实评测——数据与人工标注阻塞；② 生产 v8 migration/backup/recovery——授权阻塞（BR-1）；③ 核心页面真实截图与产品文案人工验收未完成。** | 故障日志、migration、恢复、截图；实施证据 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md` |
 
 ### 1.1 RC-04 分项证据（区分实现层次，不得合并为单一完成结论）
 
@@ -76,9 +77,29 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 - **实施证据：** `docs/evidence/offerflow-v0.8-v8-3-review-workbench-2026-07-23.md`（含 943 tests / tsc / vue-tsc / extension:typecheck、真实浏览器 E2E、v7 沙箱回归、生产库保护核验）。
 - **schema 边界（2026-07 产品裁决，纠正上一版矛盾）：** schema v7 足够支撑标准化、exact identity、no-change、material-change、Snapshot 保留与基础规则证据；**完整 V8-3 需要最小化 schema v8**（持久化疑似重复候选对、`confirmed_distinct`、防重复提示、重审状态、duplicate 裁决 action_type），schema v8 为 **V8-3 正式实施前置条件**，不再视为非阻断未来优化。本轮**只设计 v8，不编写 migration、不改生产库、不改 `PRODUCTION_SCHEMA_VERSION`**。
 - **已裁决（原 B1/B2/B3）：** B1 疑似重复用候选关系专用表 `radar_candidate_relations`（不塞入 `radar_candidate_sources`）；B2 `confirmed_distinct` 为 P0 硬需求（持久化、防反复提示、仅新实质证据可复审）；B3 responsibilities/requirements/skillTags 顺序调整不构成实质变化（fingerprint 按规范化集合比较，Snapshot 保留原始顺序）。补充裁决：`unknown→确定值`建版本；`确定值→unknown`默认视为采集质量退化，仅留 Snapshot、不建退化版本。
-- **schema v8：** 迁移 `008_v0_8_radar_candidate_relations_schema` 已编写并在**沙箱/演练/注入测试库**使用；**生产库仍为 v7、未运行 v8 迁移**。生产启用 V8-3 仍需 BR-1（v8 受控激活授权 + 迁移演练），本轮未涉及。评审路由仅在 `schema≥v8` 时注册，v7 库访问评审接口返回 404（采集桥不受影响）。
-- **仍待裁决：** BR-1 生产 schema v8 受控激活授权；BR-2 §9 规则证据缺口字段的证据严格性档位（当前实现区分 structured/legacy_scalar/corrupt 三态呈现）。
-- **边界：** 未改动 V8-2（CLOSED/FROZEN）、RC-01～RC-04、**生产 schema v7 状态**或 Radar 正式入口（仍 DISABLED）；未推进 `PRODUCTION_SCHEMA_VERSION`（保持 2）。V8-3 实现仅在受控 v8 环境可用。
+- **schema v8：** 迁移 `008_v0_8_radar_candidate_relations_schema` 已编写并在沙箱/演练/注入测试库使用；**生产库已于 2026-07-29 经用户授权受控迁移到 v8**（BR-1 迁移部分已完成，证据 `docs/evidence/offerflow-v0.8-production-schema-v8-activation-2026-07-29.md`）。评审路由在 `schema≥v8` 时注册，生产库现为 v8。**但 Radar 正式入口仍 DISABLED、未启用任何生产开关，产品版本仍 v0.8.0-rc1；V8-3 在生产的实际启用另需正式开关授权，本轮未启用。**
+- **仍待裁决：** BR-1 生产 schema v8 迁移**已于 2026-07-29 完成**（剩余仅正式开关启用授权）；BR-2 §9 规则证据缺口字段的证据严格性档位（当前实现区分 structured/legacy_scalar/corrupt 三态呈现）。
+- **边界：** 未改动 V8-2（CLOSED/FROZEN）、RC-01～RC-04 或 Radar 正式入口（仍 DISABLED）；`PRODUCTION_SCHEMA_VERSION` 常量保持 2（生产库实际 schema 已为 v8）。V8-3 实现仅在 `schema≥v8` 环境可用，生产库现已满足此条件但正式开关未启用。
+
+### 1.4 V8-4 设计状态（可靠单岗位分析）
+
+- **状态：** `MANUAL ACCEPTED`（2026-07-27）（技术设计冻结、契约明确；业务代码/测试/页面/API 已实现，2026-07-25 集成 worktree 一次完整回归全绿；实施证据见 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md`；**人工验收沙箱 `npm run analysis:review` 2026-07-27 通过签字**；**生产迁移与正式开关仍未授权**）。生产 schema 仍 v7、Radar 与 Analysis 正式入口均 `DISABLED`。
+- **范围：** 覆盖 RC-07（可解释单岗位分析）与 RC-12（可靠任务，单岗位部分）的设计裁决：`JobMatchAnalysisInputSnapshotV1` 输入快照、LLM Payload/Envelope 分离与证据目录、确定性任务 ID `analysis-task:v1:<inputHash>` + record.input_hash UNIQUE 双层幂等、状态机、attempt 语义、`JobMatchAnalysisPayloadV1` Structured Output、Provider 与一次结构修复、cancel/迟到结果、原子成功写入、进程恢复、stale 投影、API/DTO、能力门禁、`RadarAnalysisPanel.vue`、测试矩阵与文件实施计划。
+- **设计文档：** `docs/technical/offerflow-v0.8-v8-4-reliable-single-analysis-design.md`。
+- **无需 migration：** `analysis_tasks` 与 `job_match_analysis_records` 已由 schema v7 建表并含所需全部列；本设计不新增 migration、不改生产库、不推进 `PRODUCTION_SCHEMA_VERSION`（保持 2）。
+- **边界：** 未改动 V8-2/V8-3 既有结论、RC-01～RC-06、生产 schema v7 状态或 Radar 正式入口；不接新 Provider、不做 BYOK、不绑定 SSE、不承诺断点续跑；AI Payload 不含内部 ID；不使用 legacy `/api/llm/analyze-job` 作为正式契约。
+- **未决（不阻塞设计冻结）：** Resume/Profile 投影字段对齐既有领域投影、初始 promptVersion/analysisPolicyVersion/providerPolicyVersion 常量值、userOverride 是否并入 ruleProjectionHash——均在实施首个 PR 固定。
+
+### 1.5 V8-UX 收口波次状态（表达层主线收口）
+
+- **状态：** `IMPLEMENTED`（2026-07-29）——纯展示层收口，未改行为层。**仅剩「人工无说明 smoke」一项待补。**
+- **范围：** 把 v0.7 后逐波堆叠的核心页面收口为一条三阶段用户主线（① 收集整理 → ② 审核处理 → ③ 晋升跟踪），并降低岗位雷达工作台信息噪声。方案见 `docs/product/offerflow-v0.8-ux-consolidation-plan.md`。
+- **已交付（commit `633eb0d` + `eb43f1a`）：** 新增纯展示组件 `RadarStageStepper.vue`（三阶段步骤条）、`RadarNextActionCard.vue`（单一主 CTA 行动卡）、`RadarGuideBar.vue`（每页「这是做什么/现在做什么/完成后去哪」三问）；`RadarImportPage` / `RadarReviewPage` 挂载步骤条 + 三问 + 动作后下一步引导；`App.vue` 导航新增「岗位雷达」入口（受既有 `radarEnabled` 门禁，默认关，未改门禁语义）；技术码（`status`/`decisionType`/`reasonCode`/`outcome`/候选与版本/晋升/推荐批次 ID、hash）默认折叠进 `<details class="tech-details">`，默认呈现中文标签。
+- **护栏落实：** 未改路由/路由名、组件 props/emit/内部状态机；全部 `data-testid` 保留在原节点；折叠只包裹或换可见文案、不改断言目标文本值（E2E 经 `toContainText`/`.text()` 读 textContent，折叠后仍通过）。未改 `src/domain/**`、`src/api/**`、`src/storage/**`、Repository、migration、判决引擎、features 门禁默认值；未新增依赖、未动 AI/SSE/任务机制、未触碰 BOSS 自动化/BYOK/正式记忆边界。
+- **自动化验证（2026-07-29 全绿）：** `vue-tsc --noEmit` 通过；`vitest run` 1456/1456；`vite build` 通过；`review:e2e` 11/11、`recommendation:e2e` 5/5、`promotion:e2e` 11/11、`action:e2e` 10/10、`trace:e2e` 13/13；`migration:selftest` passed；`db:doctor` `ok`、`integrity=ok`、FK 违例 0。
+- **待补（不由自动化解除）：** 「人工无说明 smoke」——不看任何技术码、仅凭中文文案与三阶段主线走通「采集 → 评审 → 晋升跟踪」并截图，对照方案 §3 / §4.3。**此项完成前 V8-UX 不得标注为「验收通过」。**
+- **已知遗留（不阻断本波，交后续处理）：** `App.vue` 品牌行仍显示 `v0.7.0`（方案 §4.5 建议改为当前版本，本波未改，避免在文档收口中改动展示文案）；导航「岗位雷达」入口在生产 `radarEnabled=false` 时仍隐藏（符合门禁语义）。
+- **边界：** 未改动 RC-01～RC-12 的功能结论或验收状态；V8-UX 是表达层收口，不计入任何 RC 的「通过/不通过」判定，也不改变 v0.8 发布闭环的 Partial/Blocked 状态。
 
 ---
 
