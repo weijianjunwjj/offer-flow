@@ -20,7 +20,11 @@
  *   任务」（新 taskId，复用冻结 inputSnapshot 并注入 recovery:{of,generation}），旧任务
  *   原封不动；随后运行新任务到终态。dry-run 默认演练，--commit 才对真实库执行。
  *
- * 用法：tsx scripts/retryAnalysisTask.ts --task-id=<failed 任务 id> [--recover] [--commit] [--debug-output] [--validate-fix]
+ * - --flake-retries=N（默认 5）：对瞬时网络 flake（connect timeout / fetch failed / 网络
+ *   调用失败）的有界自动重试；仅加在本脚本这层，provider retryMax 仍 0，不消耗任务 attempt
+ *   预算。绝不重试确定性失败（截断 finish_reason=length / 空内容 / HTTP 状态 / 限流 / 配置）。
+ *
+ * 用法：tsx scripts/retryAnalysisTask.ts --task-id=<failed 任务 id> [--recover] [--commit] [--debug-output] [--validate-fix] [--flake-retries=N]
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,19 +37,28 @@ import {
   buildAnalysisUserMessage,
   buildAnalysisRepairMessage,
 } from '../server/radar/analysis/analysisPrompt';
-import { ANALYSIS_MAX_TOKENS } from '../server/radar/analysis/deepSeekProvider';
+import { ANALYSIS_MAX_TOKENS, deepSeekJobMatchAnalysisProvider } from '../server/radar/analysis/deepSeekProvider';
 import {
   AnalysisProviderError,
   type AnalysisProviderCallResult,
   type JobMatchAnalysisProvider,
 } from '../server/radar/analysis/provider';
 import { AnalysisService } from '../server/radar/analysis/analysisService';
+import { withFlakeRetry } from './flakeRetry';
 import { parseJobMatchAnalysisInputSnapshot } from '../server/radar/analysis/contracts';
 import { buildJobMatchAnalysisLlmInput } from '../server/radar/analysis/llmInput';
 import { generateAndParseJobMatchAnalysis } from '../server/radar/analysis/repair';
 
 const VALIDATE_FIX = process.argv.includes('--validate-fix');
 const RECOVER = process.argv.includes('--recover');
+
+/** --flake-retries=N：对瞬时网络 flake（connect timeout / fetch failed）的有界自动重试次数，默认 5。 */
+function readFlakeRetries(): number {
+  const hit = process.argv.find((a) => a.startsWith('--flake-retries='));
+  const n = hit !== undefined ? Number.parseInt(hit.slice('--flake-retries='.length), 10) : 5;
+  return Number.isFinite(n) && n >= 0 ? n : 5;
+}
+const FLAKE_RETRIES = readFlakeRetries();
 
 const REAL_DB = path.resolve('data/offerflow.sqlite3');
 const COMMIT = process.argv.includes('--commit');
@@ -129,6 +142,14 @@ function makeDebugProvider(runDir: string, diags: DebugCallInfo[]): JobMatchAnal
   };
 }
 
+/** 脚本这层的 flake 重试包装：带日志的 onRetry。逻辑见 scripts/flakeRetry.ts。 */
+function wrapFlakeRetry(inner: JobMatchAnalysisProvider): JobMatchAnalysisProvider {
+  return withFlakeRetry(inner, FLAKE_RETRIES, (phase, attempt, err) => {
+    const msg = err instanceof Error ? err.message.slice(0, 60) : String(err);
+    console.log(`[flake-retry] ${phase} 第 ${attempt}/${FLAKE_RETRIES} 次遇瞬时网络 flake，重试：${msg}`);
+  });
+}
+
 function countMemory(db: ReturnType<typeof openDb>): Record<string, number> {
   const one = (t: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n;
   return { jobs: one('jobs'), applications: one('applications'), feedback_events: one('feedback_events') };
@@ -170,7 +191,7 @@ async function runValidateFix(taskId: string): Promise<void> {
   fs.mkdirSync(DEBUG_DIR, { recursive: true });
   const runDir = fs.mkdtempSync(path.join(DEBUG_DIR, `validate-${taskId.slice(-8)}-`));
   const diags: DebugCallInfo[] = [];
-  const provider = makeDebugProvider(runDir, diags);
+  const provider = wrapFlakeRetry(makeDebugProvider(runDir, diags));
 
   const snapshot = parseJobMatchAnalysisInputSnapshot(JSON.parse(row.snapshotJson));
   const { llmInput, allowedEvidenceKeys } = buildJobMatchAnalysisLlmInput(snapshot);
@@ -281,7 +302,10 @@ async function main(): Promise<void> {
     console.log('[debug-output] 原始响应将落到（gitignored）：', maskDbPath(runDir));
   }
 
-  const service = new AnalysisService(debugProvider !== undefined ? { db, provider: debugProvider } : { db });
+  // 统一包一层 flake 重试：debug-output 时包调试 Provider，否则包生产 Provider。
+  // 一次 runTask 尝试内部穿越瞬时网络 flake，不消耗任务 attempt 预算。
+  const baseProvider = debugProvider ?? deepSeekJobMatchAnalysisProvider;
+  const service = new AnalysisService({ db, provider: wrapFlakeRetry(baseProvider) });
 
   // --recover：为该 failed 任务新建「人工恢复任务」（新 taskId + 关联旧任务），旧任务不动；
   // 否则走原地重试（受 6/6 上限约束）。两条路径都随后 runTask 到终态。
