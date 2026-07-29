@@ -5,10 +5,12 @@ import {
   cancelTask,
   createQueuedTask,
   interruptRunningTask,
+  manualRetryTask,
   markFailed,
   markSucceeded,
   retryTask,
   startTask,
+  MANUAL_RETRY_ATTEMPT_CEILING,
 } from './taskStateMachine';
 
 function queued(overrides: Partial<AnalysisTask> = {}): AnalysisTask {
@@ -219,6 +221,49 @@ describe('retryTask', () => {
 
   it.each(['queued', 'running', 'succeeded', 'cancelled'] as const)('rejects retry from %s', (status) => {
     expect(() => retryTask(queued({ status }), { now: 200 })).toThrow(AnalysisTaskDomainError);
+  });
+});
+
+describe('manualRetryTask (bounded, past auto budget)', () => {
+  it('within auto budget behaves like retry: keeps attemptCount and maxAttempts', () => {
+    const failed = markFailed(startTask(queued(), { now: 110 }), { now: 130, errorCode: 'STRUCTURE_REPAIR_FAILED', errorMessage: 'x' });
+    const requeued = manualRetryTask(failed, { now: 200 });
+    expect(requeued.status).toBe('queued');
+    expect(requeued.attemptCount).toBe(1);
+    expect(requeued.maxAttempts).toBe(3); // 预算内不抬升
+    expect(requeued.errorCode).toBeNull();
+    expect(requeued.errorMessage).toBeNull();
+  });
+
+  it('survives past exhausted auto budget by bumping maxAttempts to attemptCount+1 (history kept)', () => {
+    // 自动预算耗尽：attemptCount=3, maxAttempts=3。人工重新分析应放行且能再跑一次。
+    const exhausted = queued({ status: 'failed', attemptCount: 3, maxAttempts: 3, startedAt: 110, finishedAt: 130, errorCode: 'STRUCTURE_REPAIR_FAILED', errorMessage: 'x' });
+    const requeued = manualRetryTask(exhausted, { now: 200 });
+    expect(requeued.status).toBe('queued');
+    expect(requeued.attemptCount).toBe(3); // 历史保留，不清零
+    expect(requeued.maxAttempts).toBe(4); // 抬升恰好放行一次
+    // 下一次进入 running 时 attemptCount+1，且满足 attemptCount<maxAttempts 门禁。
+    const running = startTask(requeued, { now: 210 });
+    expect(running.attemptCount).toBe(4);
+  });
+
+  it('rejects once attemptCount reaches the hard ceiling (no infinite retry)', () => {
+    const atCeiling = queued({ status: 'failed', attemptCount: MANUAL_RETRY_ATTEMPT_CEILING, maxAttempts: MANUAL_RETRY_ATTEMPT_CEILING, startedAt: 110, finishedAt: 130, errorCode: 'STRUCTURE_REPAIR_FAILED', errorMessage: 'x' });
+    try {
+      manualRetryTask(atCeiling, { now: 200 });
+      throw new Error('expected ceiling rejection');
+    } catch (error) {
+      expect((error as AnalysisTaskDomainError).code).toBe('TASK_ATTEMPTS_EXHAUSTED');
+    }
+  });
+
+  it.each(['queued', 'running', 'succeeded', 'cancelled'] as const)('rejects manual retry from %s', (status) => {
+    expect(() => manualRetryTask(queued({ status }), { now: 200 })).toThrow(AnalysisTaskDomainError);
+  });
+
+  it('normal auto run still stops at maxAttempts (start refuses attemptCount>=maxAttempts)', () => {
+    const atMax = queued({ attemptCount: 3, maxAttempts: 3 });
+    expect(() => startTask(atMax, { now: 200 })).toThrow(AnalysisTaskDomainError);
   });
 });
 

@@ -294,7 +294,13 @@ const phase = computed<'disabled' | 'not_started' | 'queued' | 'running' | 'succ
 });
 
 const isStale = computed(() => displayedResult.value?.validity.status === 'stale');
-const attemptsExhausted = computed(() => task.value !== null && task.value.attemptCount >= task.value.maxAttempts);
+/**
+ * 人工「重新分析」硬上限，与后端 MANUAL_RETRY_ATTEMPT_CEILING 保持一致。
+ * 自动预算（maxAttempts，默认 3）耗尽后仍可显式再试，直至累计执行次数触及此上限；
+ * 达上限后禁用按钮并说明。后端 409 为最终权威，前端仅做体验前置。
+ */
+const MANUAL_RETRY_ATTEMPT_CEILING = 6;
+const attemptsExhausted = computed(() => task.value !== null && task.value.attemptCount >= MANUAL_RETRY_ATTEMPT_CEILING);
 const showStartButton = computed(() => phase.value === 'not_started' && !actionBusy.value);
 
 const RECOMMENDATION_LABELS: Record<string, string> = {
@@ -376,16 +382,16 @@ function timeText(ms: number | null): string {
         <NButton size="small" :disabled="actionBusy" data-testid="analysis-cancel" @click="cancelAnalysis">取消</NButton>
       </div>
 
-      <!-- 失败：安全错误 + 重试（达上限禁用并说明） -->
+      <!-- 失败：具体错误摘要 + 重新分析（达硬上限禁用并说明） -->
       <div v-else-if="phase === 'failed'" class="state-row failed" data-testid="analysis-failed">
         <NTag size="small" type="error">分析失败</NTag>
         <NText depth="3" data-testid="analysis-error-code">错误码：{{ task?.errorCode ?? '未知' }}</NText>
-        <NText depth="3" data-testid="analysis-error-message">{{ task?.errorMessage ?? '无附加信息' }}</NText>
-        <NText depth="3">尝试 {{ task?.attemptCount }}/{{ task?.maxAttempts }}</NText>
+        <p class="error-detail" data-testid="analysis-error-message">{{ task?.errorMessage ?? '无附加信息' }}</p>
+        <NText depth="3">已执行 {{ task?.attemptCount }} 次（自动上限 {{ task?.maxAttempts }}）</NText>
         <template v-if="attemptsExhausted">
-          <NText depth="3" data-testid="analysis-exhausted">已达最大重试次数，不能再重试。</NText>
+          <NText depth="3" data-testid="analysis-exhausted">已达最大重试次数（{{ MANUAL_RETRY_ATTEMPT_CEILING }} 次），不能再重新分析。请调整输入后再试。</NText>
         </template>
-        <NButton v-else type="primary" size="small" :disabled="actionBusy" data-testid="analysis-retry" @click="retryAnalysis">重试</NButton>
+        <NButton v-else type="primary" size="small" :disabled="actionBusy" data-testid="analysis-retry" @click="retryAnalysis">重新分析</NButton>
       </div>
 
       <!-- 已取消：终态，不提供重试；输入未变不再显示重新开始 -->
@@ -489,6 +495,7 @@ function timeText(ms: number | null): string {
 .mb { margin-bottom: 8px; }
 .state-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .state-row.failed { flex-direction: column; align-items: flex-start; }
+.error-detail { margin: 2px 0; color: var(--of-ink-2, #475569); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .result { font-size: 13px; }
 .summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
 .rec { font-weight: 600; color: var(--of-brand, #2563eb); }

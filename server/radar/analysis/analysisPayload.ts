@@ -7,9 +7,26 @@
  * missing 不得表达为负面事实；hardConstraints.kind 仅 fact/rule_result/unknown。
  */
 import { z } from 'zod';
-import { AnalysisContractError } from './contractErrors';
+import { AnalysisContractError, type AnalysisValidationIssue } from './contractErrors';
 import { EVIDENCE_KEY_PATTERN } from './evidenceCatalog';
 import { scanForbiddenContent, scanHtml, scanInternalIdLeak } from './safetyScan';
+
+/** 单条 issue message 上限：只保留稳定语义，避免任何长文本/明文泄漏。 */
+const ISSUE_MESSAGE_MAX = 120;
+/** 收集的 issue 条数上限：足够定位，又不会把整份错误铺开。 */
+const ISSUE_COUNT_MAX = 12;
+
+/**
+ * 把 Zod issues 收敛为**脱敏**结构化清单：只取 path + code + 稳定 message，
+ * 绝不包含 received 值 / 明文片段（Zod 部分 message 含期望类型枚举，属稳定语义，可保留并截断）。
+ */
+function toValidationIssues(issues: readonly z.ZodIssue[]): AnalysisValidationIssue[] {
+  return issues.slice(0, ISSUE_COUNT_MAX).map((issue) => ({
+    path: issue.path.join('.'),
+    code: String(issue.code),
+    message: issue.message.slice(0, ISSUE_MESSAGE_MAX),
+  }));
+}
 
 export const ANALYSIS_PAYLOAD_CONTRACT_VERSION = 1;
 export const PAYLOAD_MAX_BYTES = 32 * 1024;
@@ -118,15 +135,29 @@ export function collectReferencedEvidenceKeys(payload: JobMatchAnalysisPayloadV1
 }
 
 /**
- * 从 rawText 提取单个 JSON 对象。兼容最外层 ```json fence，但拒绝 Markdown 正文：
- * fence 前后有正文、或裸文本不以 { 开头，一律 ANALYSIS_JSON_INVALID。
+ * 稳定提取模型响应中的**唯一** JSON 对象。真实模型常在 JSON 前后附说明或用 ```json
+ * 代码块包裹；这里按优先级稳定提取，不因少量前后说明就整体判失败：
+ * 1. 最外层 ```json / ``` 代码块的**首个** fence 内容；
+ * 2. 否则取从第一个 '{' 到最后一个 '}' 的切片（覆盖“前后有说明文字”的常见情况）；
+ * 3. 都不存在 → ANALYSIS_JSON_INVALID。
+ * 仅做**定位**，不做 JSON 合法性判断（交给后续 JSON.parse）；正文里的花括号导致的坏切片
+ * 会在 JSON.parse 阶段以 ANALYSIS_JSON_INVALID 表达，从而进入一次结构修复。
  */
 function extractJsonObjectText(rawText: string): string {
   const trimmed = rawText.trim();
-  const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```$/i.exec(trimmed);
-  if (fence !== null) return fence[1]!.trim();
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
-  throw new AnalysisContractError('ANALYSIS_JSON_INVALID', '响应不是单个 JSON 对象（含 Markdown 正文或非法包裹）');
+  // 首个代码块（```json 或 ```）。用非贪婪匹配确保只取第一个 fence 的内容。
+  const fence = /```(?:json)?\s*\r?\n([\s\S]*?)\r?\n?```/i.exec(trimmed);
+  if (fence !== null) {
+    const inner = fence[1]!.trim();
+    if (inner.length > 0) return inner;
+  }
+  // 无 fence：截取第一个 '{' 到最后一个 '}'，容忍 JSON 前后的说明文字。
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    return trimmed.slice(start, end + 1).trim();
+  }
+  throw new AnalysisContractError('ANALYSIS_JSON_INVALID', '响应中未找到 JSON 对象');
 }
 
 /**
@@ -157,7 +188,12 @@ export function parseJobMatchAnalysisPayload(
   // 提前拒绝百分制匹配分等禁用字段：strictObject 已拒绝未知字段，这里给出明确信号。
   const result = JobMatchAnalysisPayloadV1Schema.safeParse(parsed);
   if (!result.success) {
-    throw new AnalysisContractError('ANALYSIS_SCHEMA_INVALID', '分析结果未通过契约校验', result.error.issues[0]?.path.join('.'));
+    throw new AnalysisContractError(
+      'ANALYSIS_SCHEMA_INVALID',
+      '分析结果未通过契约校验',
+      result.error.issues[0]?.path.join('.'),
+      toValidationIssues(result.error.issues),
+    );
   }
   const payload = result.data;
 
@@ -176,7 +212,13 @@ export function parseJobMatchAnalysisPayload(
 
   for (const key of collectReferencedEvidenceKeys(payload)) {
     if (!allowedEvidenceKeys.has(key)) {
-      throw new AnalysisContractError('ANALYSIS_UNKNOWN_EVIDENCE_KEY', `分析结果引用了目录外的 evidenceKey：${key}`, key);
+      // evidenceKey 语法受 EVIDENCE_KEY_PATTERN 约束（命名空间:类别:序号），非自由文本，可安全回显定位。
+      throw new AnalysisContractError(
+        'ANALYSIS_UNKNOWN_EVIDENCE_KEY',
+        `分析结果引用了目录外的 evidenceKey：${key}`,
+        key,
+        [{ path: 'evidenceKeys', code: 'unknown_evidence_key', message: `目录外 evidenceKey：${key}`.slice(0, ISSUE_MESSAGE_MAX) }],
+      );
     }
   }
 

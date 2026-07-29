@@ -168,9 +168,11 @@ export class AnalysisTaskRepository {
       where.push('attempt_count = @expectedAttemptCount');
       bind.expectedAttemptCount = params.expectedAttemptCount;
     }
+    // max_attempts 属可变列：人工「重新分析」越过自动预算时会抬升它（见 taskStateMachine.manualRetryTask）。
+    // 其余转移里 next.maxAttempts 原样透传，写入即无变化，语义安全。仍不写 task_type/entity_*/input_* 等不可变列。
     const result = this.db.prepare(`
       UPDATE analysis_tasks
-      SET status = @status, attempt_count = @attemptCount, started_at = @startedAt,
+      SET status = @status, attempt_count = @attemptCount, max_attempts = @maxAttempts, started_at = @startedAt,
           finished_at = @finishedAt, cancelled_at = @cancelledAt, error_code = @errorCode,
           error_message = @errorMessage, result_record_id = @resultRecordId, updated_at = @updatedAt
       WHERE ${where.join(' AND ')}

@@ -13,6 +13,7 @@ import {
   deterministicSuccessProvider,
   timeoutProvider,
   delayedCancellableProvider,
+  malformedThenRepairFailureProvider,
   type CountingProvider,
 } from './analysisProviderFakes';
 
@@ -225,15 +226,36 @@ describe('retry / cancel 状态机', () => {
     expect(res.statusCode).toBe(409);
   });
 
-  it('retry after attempts exhausted returns 409', async () => {
-    const h = setup(timeoutProvider()); // maxAttempts=3
+  it('manual retry survives past the auto budget and only 409s at the hard ceiling', async () => {
+    const h = setup(timeoutProvider()); // maxAttempts=3；人工硬上限=6（MANUAL_RETRY_ATTEMPT_CEILING）
     const task = await createTask(h);
-    for (let i = 0; i < 3; i += 1) {
-      await post(h.app, `/radar/analysis-tasks/${task.id}/run`);
-      if (i < 2) expect((await post(h.app, `/radar/analysis-tasks/${task.id}/retry`)).statusCode).toBe(200);
+    // 连续执行 6 次（每次 failed 后人工重新分析）：越过自动预算 3，仍应放行直到累计 6 次。
+    for (let i = 0; i < 6; i += 1) {
+      await post(h.app, `/radar/analysis-tasks/${task.id}/run`); // → failed
+      if (i < 5) {
+        const retry = await post(h.app, `/radar/analysis-tasks/${task.id}/retry`);
+        expect(retry.statusCode).toBe(200); // 含 attemptCount=3/4/5 这些越预算但未达上限的情形
+        expect((retry.json() as { status: string }).status).toBe('queued');
+      }
     }
+    const view = (await get(h.app, `/radar/analysis-tasks/${task.id}`)).json() as { attemptCount: number };
+    expect(view.attemptCount).toBe(6); // 历史保留累加，不清零
     const exhausted = await post(h.app, `/radar/analysis-tasks/${task.id}/retry`);
-    expect(exhausted.statusCode).toBe(409);
+    expect(exhausted.statusCode).toBe(409); // 触及硬上限，杜绝无限重试
+  });
+
+  it('failure error_message carries the specific validation summary (not a generic string)', async () => {
+    const h = setup(malformedThenRepairFailureProvider());
+    const task = await createTask(h);
+    await post(h.app, `/radar/analysis-tasks/${task.id}/run`); // 首答坏 + 修复仍坏 → failed
+    const view = (await get(h.app, `/radar/analysis-tasks/${task.id}`)).json() as {
+      status: string; errorCode: string; errorMessage: string;
+    };
+    expect(view.status).toBe('failed');
+    expect(view.errorCode).toBe('STRUCTURE_REPAIR_FAILED');
+    // 具体摘要而非泛化：至少含结构错误码定位信息，且绝不泄漏 rawText。
+    expect(view.errorMessage).toContain('ANALYSIS_JSON_INVALID');
+    expect(view.errorMessage).not.toContain('坏的两次');
   });
 });
 

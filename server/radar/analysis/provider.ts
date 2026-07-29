@@ -8,6 +8,7 @@
  * **绝不**回显 rawText 全文、Prompt、JD、Token、API key 或 Provider 响应正文。
  */
 import type { JobMatchAnalysisLlmInputV1 } from './llmContracts';
+import type { AnalysisValidationIssue } from './contractErrors';
 
 /** Provider / 编排层安全错误码（终态可映射为任务 error_code）。 */
 export const ANALYSIS_PROVIDER_ERROR_CODES = [
@@ -29,6 +30,11 @@ export class AnalysisProviderError extends Error {
     message: string,
     /** 仅稳定的字段路径 / evidenceKey 等安全定位信息，不含敏感值。 */
     readonly detail?: string,
+    /**
+     * 脱敏结构化校验问题清单（结构/校验类错误专用）。
+     * 用于在任务失败时持久化“具体失败摘要”，替代泛化的“结构修复失败”。
+     */
+    readonly issues?: readonly AnalysisValidationIssue[],
   ) {
     super(message);
     this.name = 'AnalysisProviderError';

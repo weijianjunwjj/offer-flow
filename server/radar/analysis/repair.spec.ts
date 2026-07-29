@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { validSnapshot } from './contractFixtures';
 import { parseJobMatchAnalysisInputSnapshot } from './contracts';
 import { buildJobMatchAnalysisLlmInput } from './llmInput';
-import { generateAndParseJobMatchAnalysis, isRepairableContractError } from './repair';
+import { generateAndParseJobMatchAnalysis, isRepairableContractError, buildValidationSummary } from './repair';
 import { AnalysisProviderError } from './provider';
 import {
   deterministicSuccessProvider,
@@ -122,6 +122,39 @@ describe('generateAndParseJobMatchAnalysis', () => {
       expect(message).not.toContain('坏的两次');
       expect(message).not.toContain('evidenceCatalog');
     }
+  });
+});
+
+describe('buildValidationSummary', () => {
+  it('includes the target contract version and each desensitized issue (path + code)', () => {
+    const summary = buildValidationSummary('ANALYSIS_SCHEMA_INVALID', 'dimensions.roleFit.kind', [
+      { path: 'dimensions.roleFit.assessment', code: 'invalid_enum_value', message: '期望 strong|moderate|weak|unknown' },
+      { path: '', code: 'unrecognized_keys', message: '存在未知字段' },
+    ]);
+    expect(summary).toContain('ANALYSIS_SCHEMA_INVALID');
+    expect(summary).toContain('contractVersion=1');
+    expect(summary).toContain('dimensions.roleFit.assessment');
+    expect(summary).toContain('invalid_enum_value');
+    expect(summary).toContain('(根对象)'); // 顶层空 path 的可读化
+  });
+
+  it('falls back to detail when no structured issues are present, and stays bounded', () => {
+    const summary = buildValidationSummary('ANALYSIS_JSON_INVALID', 'x'.repeat(2000), undefined);
+    expect(summary).toContain('ANALYSIS_JSON_INVALID');
+    expect(summary.length).toBeLessThanOrEqual(800);
+  });
+
+  it('passes a summary carrying issues into the repair call', async () => {
+    let capturedSummary = '';
+    const provider = schemaInvalidThenRepairProvider();
+    const originalRepair = provider.repair.bind(provider);
+    provider.repair = (input, prev, summary, signal) => {
+      capturedSummary = summary;
+      return originalRepair(input, prev, summary, signal);
+    };
+    await run(provider);
+    expect(capturedSummary).toContain('contractVersion=1');
+    expect(capturedSummary).toContain('具体问题');
   });
 });
 

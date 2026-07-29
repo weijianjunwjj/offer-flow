@@ -168,23 +168,54 @@ export function cancelTask(task: AnalysisTask, opts: { now: number }): AnalysisT
 }
 
 /**
- * failed → queued（人工 retry）。attemptCount 不变；复用原 inputHash/inputSnapshot。
+ * failed → queued（自动预算内 retry）。attemptCount 不变；复用原 inputHash/inputSnapshot。
  * attemptCount >= maxAttempts 时拒绝（避免产生永远无法进入 running 的僵尸 queued）。
+ * 用户显式「重新分析」请走 manualRetryTask（可越过自动预算，受硬上限约束）。
  */
 export function retryTask(task: AnalysisTask, opts: { now: number }): AnalysisTask {
   if (task.status !== 'failed') throw invalidTransition(task.status, 'retry');
   if (task.attemptCount >= task.maxAttempts) {
     throw attemptsExhausted(task.attemptCount, task.maxAttempts);
   }
+  return requeueFailed(task, opts.now, task.maxAttempts);
+}
+
+/**
+ * 人工「重新分析」硬上限：同一任务累计执行次数的绝对天花板。
+ * 自动预算（maxAttempts，默认 3）耗尽后，用户仍可显式再试，但累计不得超过此上限，杜绝无限重试。
+ */
+export const MANUAL_RETRY_ATTEMPT_CEILING = 6;
+
+/**
+ * failed → queued（用户显式「重新分析」）。与自动 retry 的区别：
+ * - 允许在 attemptCount >= maxAttempts（自动预算已耗尽）时继续；
+ * - 但受 MANUAL_RETRY_ATTEMPT_CEILING 硬上限约束：attemptCount >= 上限即拒绝（防无限重试）；
+ * - **保留 attemptCount 历史**（不清零），仅把 maxAttempts 抬升到 attemptCount+1，
+ *   使下一次 queued→running 能再执行恰好一次（start 门禁 attemptCount < maxAttempts 仍成立）。
+ * 复用原 inputHash/inputSnapshot（字节语义不变），不重跑 snapshot builder，不引入新事实。
+ */
+export function manualRetryTask(task: AnalysisTask, opts: { now: number }): AnalysisTask {
+  if (task.status !== 'failed') throw invalidTransition(task.status, 'manualRetry');
+  if (task.attemptCount >= MANUAL_RETRY_ATTEMPT_CEILING) {
+    throw attemptsExhausted(task.attemptCount, MANUAL_RETRY_ATTEMPT_CEILING);
+  }
+  // 自动预算内：保持原 maxAttempts；已越预算：抬到 attemptCount+1 恰好放行一次（永不超过硬上限）。
+  const nextMax = Math.max(task.maxAttempts, task.attemptCount + 1);
+  return requeueFailed(task, opts.now, nextMax);
+}
+
+/** failed → queued 的公共重置：清执行/错误痕迹、保留 attemptCount、写入目标 maxAttempts。 */
+function requeueFailed(task: AnalysisTask, now: number, maxAttempts: number): AnalysisTask {
   return freeze({
     ...task,
     status: 'queued',
+    maxAttempts,
     startedAt: null,
     finishedAt: null,
     cancelledAt: null,
     errorCode: null,
     errorMessage: null,
     resultRecordId: null,
-    updatedAt: opts.now,
+    updatedAt: now,
   });
 }

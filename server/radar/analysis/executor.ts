@@ -16,6 +16,7 @@ import type { SqliteDatabase } from '../../db';
 import { AnalysisTaskRepository } from '../analysisTaskRepository';
 import { AnalysisRecordRepository } from '../analysisRecordRepository';
 import { AnalysisProviderError, type AnalysisProviderErrorCode } from './provider';
+import type { AnalysisValidationIssue } from './contractErrors';
 import type { JobMatchAnalysisPayloadV1 } from './analysisPayload';
 import {
   cancelTask,
@@ -69,10 +70,37 @@ const PROVIDER_TO_TASK_ERROR: Record<AnalysisProviderErrorCode, AnalysisTaskErro
   INTERNAL_ID_LEAK: 'SCHEMA_INVALID',
 };
 
-/** 把 analyze 抛出的错误映射为安全终态码；非 AnalysisProviderError 归 CONFIGURATION_ERROR（内部管线异常，可人工重试）。 */
+/** error_message 落库上限：保留具体失败摘要又不至于无界。error_message 列无 CHECK，可安全承载。 */
+const ERROR_MESSAGE_MAX = 1_000;
+
+/**
+ * 由稳定语义 + 脱敏 issues 组装**具体**失败摘要，替代泛化文案。
+ * 绝不含 rawText / Prompt / JD / 敏感值：issues 已在解析层脱敏（仅 path + code + 稳定 message）。
+ */
+function buildFailureMessage(
+  base: string,
+  detail: string | undefined,
+  issues: readonly AnalysisValidationIssue[] | undefined,
+): string {
+  // detail 承载稳定契约错误码（如 ANALYSIS_JSON_INVALID）；JSON 解析失败无逐条 issues 时仍能定位。
+  const codePart = detail !== undefined && detail !== '' ? `（${detail}）` : '';
+  if (issues === undefined || issues.length === 0) {
+    return `${base}${codePart}`.slice(0, ERROR_MESSAGE_MAX);
+  }
+  const lines = issues.map((i) => `· ${i.path !== '' ? i.path : '(根对象)'}：${i.code} ${i.message}`);
+  return `${base}${codePart}｜具体问题：${lines.join('；')}`.slice(0, ERROR_MESSAGE_MAX);
+}
+
+/**
+ * 把 analyze 抛出的错误映射为安全终态码；非 AnalysisProviderError 归 CONFIGURATION_ERROR（内部管线异常，可人工重试）。
+ * 结构/校验类错误附带脱敏 issues，使失败任务展示“具体哪里不合契约”，而非泛化“结构修复失败”。
+ */
 function classifyAnalyzeError(error: unknown): { errorCode: AnalysisTaskErrorCode; message: string } {
   if (error instanceof AnalysisProviderError) {
-    return { errorCode: PROVIDER_TO_TASK_ERROR[error.code], message: error.message };
+    return {
+      errorCode: PROVIDER_TO_TASK_ERROR[error.code],
+      message: buildFailureMessage(error.message, error.detail, error.issues),
+    };
   }
   return { errorCode: 'CONFIGURATION_ERROR', message: '分析执行遇到内部错误，可人工重试' };
 }
