@@ -84,6 +84,15 @@ describe('deepSeekJobMatchAnalysisProvider', () => {
     }
   });
 
+  it('generate & repair disable thinking (推理模型思维链会挤占 max_tokens 致答案截断)', async () => {
+    chatMock.mockResolvedValue({ rawText: minimalValidPayloadJson(), model: 'deepseek-v4-flash', finishReason: 'stop' });
+    await provider.generate(llmInput);
+    expect(chatMock.mock.calls[0]![2].disableThinking).toBe(true);
+    chatMock.mockClear();
+    await provider.repair(llmInput, 'prev', 'summary');
+    expect(chatMock.mock.calls[0]![2].disableThinking).toBe(true);
+  });
+
   it('requests a max_tokens large enough for reasoning + JSON answer (8192)', async () => {
     // 根因回归：推理模型 reasoning_content 与 content 共享 max_tokens，4096 被思维链吃光 →
     // content 空 → JSON 非法。预算必须足以同时容纳推理与答案。

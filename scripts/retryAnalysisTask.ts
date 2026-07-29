@@ -12,7 +12,11 @@
  *   finish_reason、content/reasoning_content 长度，并把原始正文落到 gitignored
  *   .analysis-debug/ 供根因排查；绝不打印 API Key / 正文 / JD，绝不入库。
  *
- * 用法：tsx scripts/retryAnalysisTask.ts --task-id=<failed 任务 id> [--commit] [--debug-output]
+ * - --validate-fix（只读，与 --commit 互斥）：读任务冻结的 inputSnapshot，直接走生产
+ *   编排 generate+repair+解析校验，绕过状态机与 attempt 上限，验证根因修复是否产出合法
+ *   Payload。不写任何库、不改 attempt。用于任务已撞 6/6 上限、无法经 retryTask 验证时。
+ *
+ * 用法：tsx scripts/retryAnalysisTask.ts --task-id=<failed 任务 id> [--commit] [--debug-output] [--validate-fix]
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -32,6 +36,11 @@ import {
   type JobMatchAnalysisProvider,
 } from '../server/radar/analysis/provider';
 import { AnalysisService } from '../server/radar/analysis/analysisService';
+import { parseJobMatchAnalysisInputSnapshot } from '../server/radar/analysis/contracts';
+import { buildJobMatchAnalysisLlmInput } from '../server/radar/analysis/llmInput';
+import { generateAndParseJobMatchAnalysis } from '../server/radar/analysis/repair';
+
+const VALIDATE_FIX = process.argv.includes('--validate-fix');
 
 const REAL_DB = path.resolve('data/offerflow.sqlite3');
 const COMMIT = process.argv.includes('--commit');
@@ -76,6 +85,7 @@ function makeDebugProvider(runDir: string, diags: DebugCallInfo[]): JobMatchAnal
       maxTokens: ANALYSIS_MAX_TOKENS,
       temperature: ANALYSIS_TEMPERATURE,
       retryMax: 0,
+      disableThinking: true, // 与生产 Provider 对齐：关闭思维链，dry-run 才真实反映修复。
       signal,
       onRawResponse: (info) => { raw = info; },
     });
@@ -132,6 +142,54 @@ function taskRow(db: ReturnType<typeof openDb>, id: string) {
     | undefined;
 }
 
+/**
+ * 只读校验根因修复（thinking disabled）：不碰任务状态机、不碰真实库、不改 attempt。
+ * 复制真实库到临时文件仅为读取冻结 inputSnapshot；调试 Provider（disableThinking:true，
+ * 与生产对齐）走生产编排解析校验。校验产出可解析为合法 Payload 即算一次成功。
+ */
+async function runValidateFix(taskId: string): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-validate-'));
+  const dbPath = path.join(dir, 'copy.sqlite3');
+  fs.copyFileSync(REAL_DB, dbPath);
+  const db = openDb(dbPath);
+  const memoryBefore = countMemory(db);
+  const row = db
+    .prepare('SELECT status, input_snapshot_json AS snapshotJson FROM analysis_tasks WHERE id = ?')
+    .get(taskId) as { status: string; snapshotJson: string } | undefined;
+  if (row === undefined) {
+    console.error('未找到任务：', taskId);
+    process.exit(1);
+  }
+  console.log('[validate-fix] 只读校验（不写任何库、不改 attempt）', { db: maskDbPath(dbPath), taskId, status: row.status });
+
+  fs.mkdirSync(DEBUG_DIR, { recursive: true });
+  const runDir = fs.mkdtempSync(path.join(DEBUG_DIR, `validate-${taskId.slice(-8)}-`));
+  const diags: DebugCallInfo[] = [];
+  const provider = makeDebugProvider(runDir, diags);
+
+  const snapshot = parseJobMatchAnalysisInputSnapshot(JSON.parse(row.snapshotJson));
+  const { llmInput, allowedEvidenceKeys } = buildJobMatchAnalysisLlmInput(snapshot);
+  const result = await generateAndParseJobMatchAnalysis({ provider, llmInput, allowedEvidenceKeys });
+
+  for (const d of diags) {
+    console.log(`[debug] ${d.phase}:`, {
+      httpStatus: d.httpStatus, finishReason: d.finishReason, contentLength: d.contentLength,
+      reasoningContentLength: d.reasoningContentLength, startsWithBrace: d.startsWithBrace, endsWithBrace: d.endsWithBrace,
+    });
+  }
+  console.log('[validate-fix] 解析校验通过：', {
+    repaired: result.repaired,
+    recommendation: result.payload.recommendation,
+    confidence: result.payload.confidence,
+  });
+
+  const memoryUnchanged = JSON.stringify(memoryBefore) === JSON.stringify(countMemory(db));
+  console.log('正式记忆行数：', memoryUnchanged ? '未变' : '变化！');
+  db.close();
+  if (!memoryUnchanged) process.exit(1);
+  console.log('[validate-fix] 一次成功（真实库未改动、attempt 未变）。');
+}
+
 async function main(): Promise<void> {
   loadProjectEnv();
 
@@ -149,9 +207,23 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // --validate-fix 是只读校验：与 --commit 互斥，绝不写库。
+  if (VALIDATE_FIX && COMMIT) {
+    console.error('--validate-fix 为只读校验，禁止与 --commit 同用。');
+    process.exit(1);
+  }
+
   if (!isLlmConfigured()) {
     console.error('LLM 未配置：无法执行真实分析。请确认 server/.env 中的 OFFERFLOW_LLM_* / DEEPSEEK_* 已设置。');
     process.exit(1);
+  }
+
+  // --validate-fix：只读校验根因修复。读副本里冻结的 inputSnapshot，直接走生产编排
+  // generateAndParseJobMatchAnalysis（generate + 至多一次 repair + 解析校验），绕过任务
+  // 状态机与 attempt 上限（任务已 6/6 撞顶，无法再经 retryTask 验证）。不写任何库、不改 attempt。
+  if (VALIDATE_FIX) {
+    await runValidateFix(taskId);
+    return;
   }
 
   // dry-run：把真实库复制到临时文件；commit：直接对真实库执行（V8-4 授权范围：仅分析两表）。

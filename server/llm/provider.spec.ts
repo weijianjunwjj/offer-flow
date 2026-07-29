@@ -63,6 +63,46 @@ describe('LLM provider · max_tokens 解析', () => {
   });
 });
 
+describe('LLM provider · thinking 关闭（推理模型思维链）', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.OFFERFLOW_LLM_BASE_URL = 'https://fake';
+    process.env.OFFERFLOW_LLM_API_KEY = 'test-key';
+    process.env.OFFERFLOW_LLM_MODEL = 'deepseek-v4-flash';
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+  });
+
+  function stubFetchCapturingBody(): { body: () => Record<string, unknown> } {
+    let captured: Record<string, unknown> = {};
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      captured = JSON.parse(init.body as string) as Record<string, unknown>;
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' }, finish_reason: 'stop' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }));
+    return { body: () => captured };
+  }
+
+  it('disableThinking:true → body 含 thinking:{type:"disabled"}', async () => {
+    const cap = stubFetchCapturingBody();
+    const { chatCompletion } = await import('./provider');
+    await chatCompletion('system', 'user', { disableThinking: true });
+    expect(cap.body().thinking).toEqual({ type: 'disabled' });
+  });
+
+  it('缺省不传 disableThinking → body 不含 thinking 字段（其它调用零变化）', async () => {
+    const cap = stubFetchCapturingBody();
+    const { chatCompletion } = await import('./provider');
+    await chatCompletion('system', 'user');
+    expect('thinking' in cap.body()).toBe(false);
+  });
+});
+
 describe('LLM provider · finish_reason / reasoning_content 映射', () => {
   const originalEnv = { ...process.env };
 

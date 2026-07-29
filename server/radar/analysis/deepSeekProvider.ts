@@ -62,6 +62,7 @@ async function call(
     maxTokens: ANALYSIS_MAX_TOKENS,
     temperature: ANALYSIS_TEMPERATURE,
     retryMax: 0, // transport 重试关闭：重试语义属任务层。
+    disableThinking: true, // 推理模型思维链会挤占 max_tokens 导致答案截断；分析只要结构化 JSON。
     signal,
   });
   if (signal?.aborted) {

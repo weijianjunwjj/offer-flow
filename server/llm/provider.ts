@@ -47,6 +47,13 @@ export interface LlmOptions {
    * 生产路径不传 → 零行为变化。含原始正文，绝不进生产日志/错误。
    */
   onRawResponse?: (info: LlmRawResponseInfo) => void;
+  /**
+   * 关闭 DeepSeek 推理模型的思维链（OpenAI 兼容 `thinking: { type: 'disabled' }`）。
+   * 推理模型下 reasoning_content 与 content 共享 max_tokens，思维链会挤占答案预算导致
+   * 截断（content 空 → JSON 非法）。岗位分析要结构化 JSON、不需要思维链，故显式关闭。
+   * 缺省不传该字段 → 其它调用维持默认（enabled），零行为变化。
+   */
+  disableThinking?: boolean;
 }
 
 /** 解析 transport 重试上限：显式值优先（钳制 [0,5]），否则沿用环境默认。 */
@@ -222,6 +229,30 @@ function buildFetchOptions(
   return { maxTokens, temperature, timeoutMs, messages, promptChars };
 }
 
+/**
+ * 组装 chat/completions 请求体。disableThinking=true 时加 OpenAI 兼容
+ * `thinking: { type: 'disabled' }` 关闭 DeepSeek 推理模型思维链；缺省不加该字段。
+ * stream 由调用方按需附加，避免两处 body 分叉。
+ */
+function buildRequestBody(
+  config: LlmConfig,
+  messages: LlmMessage[],
+  temperature: number,
+  maxTokens: number,
+  options: LlmOptions | undefined,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: config.model,
+    messages,
+    temperature,
+    max_tokens: maxTokens,
+  };
+  if (options?.disableThinking === true) {
+    body.thinking = { type: 'disabled' };
+  }
+  return body;
+}
+
 export async function chatCompletion(
   systemPrompt: string,
   userMessage: string,
@@ -262,12 +293,7 @@ export async function chatCompletion(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.apiKey}`,
         },
-        body: JSON.stringify({
-          model: config.model,
-          messages,
-          temperature,
-          max_tokens: maxTokens,
-        }),
+        body: JSON.stringify(buildRequestBody(config, messages, temperature, maxTokens, options)),
         timeoutMs,
       },
       startTime,
@@ -407,13 +433,7 @@ export async function* chatCompletionStream(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.apiKey}`,
         },
-        body: JSON.stringify({
-          model: config.model,
-          messages,
-          temperature,
-          max_tokens: maxTokens,
-          stream: true,
-        }),
+        body: JSON.stringify({ ...buildRequestBody(config, messages, temperature, maxTokens, options), stream: true }),
         timeoutMs,
       },
       startTime,
