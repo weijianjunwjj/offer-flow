@@ -16,11 +16,11 @@ v0.8 已达 **工程完成 / 发布候选（Release Candidate）**：面向用�
 阻塞项（不由工程侧解除）：
 
 1. **30 条真实评测** —— 数据与人工标注阻塞（RC-09 相关、RC-12 发布闭环）。
-2. **生产 v8 migration / backup / recovery** —— 授权阻塞（BR-1，需用户单独授权 + 演练）。
+2. ~~**生产 v8 migration / backup / recovery** —— 授权阻塞（BR-1）。~~ **已解除（2026-07-29）：** 经用户授权完成生产库 v7→v8 受控迁移（baseline backup + 克隆演练 + 预迁移备份 + 只读启动 smoke，`integrity=ok`、FK 0、业务行数保持），证据见 `docs/evidence/offerflow-v0.8-production-schema-v8-activation-2026-07-29.md`。**注：此项非 GA 判定条件；GA 仍受 §4 下列 1/3 阻塞。**
 3. **核心页面真实截图与产品文案人工验收** —— 未完成。
 4. **V8-UX「人工无说明 smoke」** —— 待补（不看技术码、仅凭中文文案走通三阶段主线）。
 
-以上 1～3 属 Release Contract §4 判定条件，未满足前不得 GA。
+其中 1、3 属 Release Contract §4 判定条件，未满足前不得 GA；2 已于 2026-07-29 解除（生产 schema 已迁移到 v8），但**产品版本口径不变，仍为 v0.8.0-rc1**。
 
 ---
 
@@ -39,7 +39,7 @@ v0.8 已达 **工程完成 / 发布候选（Release Candidate）**：面向用�
 | RC-09 误区/证据不足 | **Not Started** | 待 formed/insufficient 样本 |
 | RC-10 雷达动作 | Done | 人工验收（2026-07-28） |
 | RC-11 正式晋升/反向追踪 | Done | 人工验收（2026-07-28） |
-| RC-12 可靠任务与发布闭环 | **Partial / Blocked** | 分析任务已验收；发布闭环三项被阻塞 |
+| RC-12 可靠任务与发布闭环 | **Partial / Blocked** | 分析任务已验收；生产 v8 迁移已完成（2026-07-29）；发布闭环仍余评测、截图两项被阻塞 |
 
 ---
 
@@ -52,7 +52,7 @@ v0.8 已达 **工程完成 / 发布候选（Release Candidate）**：面向用�
 | V8-3 标准化/重复/变化/规则 | `ACCEPTED / ACTIVATION PENDING` | schema v8 仅沙箱；生产 v7 |
 | V8-4 任务与单岗位分析 | 功能开发完成（人工验收通过） | RC-07 + RC-12 单分析部分 |
 | V8-5 推荐批次 | 功能开发完成（人工验收通过） | RC-08 |
-| V8-6 晋升/评测/发布验收 | 功能开发完成；发布闭环 Partial/Blocked | RC-11 Done；评测/迁移/截图未完成 |
+| V8-6 晋升/评测/发布验收 | 功能开发完成；发布闭环 Partial/Blocked | RC-11 Done；生产 v8 迁移已完成（2026-07-29）；评测/截图未完成 |
 | V8-UX 表达层收口 | **实现完成，人工 smoke 待补** | commit `633eb0d`、`eb43f1a` |
 
 **V8-UX 交付：** 纯展示层——`RadarStageStepper`（三阶段步骤条）、`RadarNextActionCard`（单一主 CTA 行动卡）、`RadarGuideBar`（每页三问）、导航「岗位雷达」入口（受既有 `radarEnabled` 门禁，默认关）、技术码默认折叠进 `<details class="tech-details">`。**未改**行为层：路由/route name、props/emit/状态机、全部 `data-testid`、E2E/单测断言目标文本值、`src/domain|api|storage/**`、Repository、migration、判决引擎、features 门禁默认值均未变；未新增依赖、未动 AI/SSE/任务机制、未触碰 BOSS 自动化/BYOK/正式记忆。
@@ -89,7 +89,7 @@ radar E2E 合计 **50 / 50**。`promotion:e2e` 日志中 `UNIQUE constraint fail
 
 ## 6. 边界与授权状态
 
-- 生产 schema 仍 **v7**；`PRODUCTION_SCHEMA_VERSION` 保持 **2**；Radar 与 Analysis 正式入口 **DISABLED**。
+- 生产 schema 已受控迁移到 **v8**（2026-07-29，证据 `docs/evidence/offerflow-v0.8-production-schema-v8-activation-2026-07-29.md`）；`PRODUCTION_SCHEMA_VERSION` 常量仍保持 **2**；Radar 与 Analysis 正式入口 **DISABLED**。schema 迁移不改变产品版本口径：产品仍为 **v0.8.0-rc1**，不得据此声明 GA。
 - 真实 AI Provider 仍为 DeepSeek；未接新 Provider、未做 BYOK、未绑定 SSE。
 - Human-in-the-loop 全程保留（预览与确认分离、无自动晋升、append-only 审计）。
 - **合并 main / 推送 main / Tag / Release 均未授权**，本次不执行。
@@ -100,9 +100,9 @@ radar E2E 合计 **50 / 50**。`promotion:e2e` 日志中 `UNIQUE constraint fail
 
 1. **RC-09（误区/证据不足）Not Started** —— 需 formed/insufficient 样本。
 2. **30 条真实评测** —— 数据与人工标注阻塞。
-3. **生产 v8 受控激活（BR-1）** —— 授权阻塞；未运行 v8 生产 migration/backup/recovery 演练。
+3. ~~**生产 v8 受控激活（BR-1）**~~ —— **已完成（2026-07-29）**：生产库 v7→v8 受控迁移 + baseline backup + 克隆演练 + 只读启动 smoke 全通过，证据见 `docs/evidence/offerflow-v0.8-production-schema-v8-activation-2026-07-29.md`。产品版本口径不变（仍 v0.8.0-rc1）。
 4. **核心页面真实截图 + 产品文案人工验收** —— 未完成（含 V8-UX「人工无说明 smoke」）。
 5. **BR-2** —— §9 规则证据缺口字段证据严格性档位仍待裁决。
 6. **已知遗留：** `App.vue` 品牌行仍显示 `v0.7.0`（V8-UX 方案 §4.5 建议改为当前版本，本波未改）。
 
-**以上 2～4 属 GA 前置且不由工程侧解除。在其全部满足并获用户明确批准前，v0.8 保持 Release Candidate，不得声明 GA。**
+**其中 2、4 属 GA 前置且不由工程侧解除（3 已于 2026-07-29 完成生产 v8 迁移，但不改变产品版本口径）。在 GA 前置全部满足并获用户明确批准前，v0.8 保持 Release Candidate，不得声明 GA。**
