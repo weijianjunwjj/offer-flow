@@ -1,4 +1,10 @@
-export const OFFERFLOW_BASE_URL = 'http://127.0.0.1:17365';
+// 后端 API 地址：本机 OfferFlow 服务，固定走 127.0.0.1 回环。
+export const apiBaseUrl = 'http://127.0.0.1:17365';
+// 前端应用地址：开发默认走 localhost（127.0.0.1:5173 当前不可访问）。
+// 不再把 host 统一替换成 127.0.0.1，两个地址各自独立。
+export const appBaseUrl = 'http://localhost:5173';
+// 兼容旧引用（e2e 会按此字面量替换 API 基址）。
+export const OFFERFLOW_BASE_URL = apiBaseUrl;
 const CAPTURE_CLIENT_HEADER = 'x-offerflow-capture-client';
 const CAPTURE_CLIENT_VALUE = 'offerflow-capture-extension';
 
@@ -36,7 +42,7 @@ export class OfferFlowNotRunningError extends Error {
 async function postJson(pathname: string, body: unknown): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(`${OFFERFLOW_BASE_URL}${pathname}`, {
+    response = await fetch(`${apiBaseUrl}${pathname}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -64,5 +70,6 @@ export async function addCaptureItem(sessionId: string, payload: AddCaptureItemP
 }
 
 export function buildPreviewUrl(sessionId: string): string {
-  return `${OFFERFLOW_BASE_URL}/#/radar/import?sessionId=${encodeURIComponent(sessionId)}`;
+  // Radar 导入页由前端应用提供，使用 appBaseUrl；sessionId 需 URL 编码。
+  return `${appBaseUrl}/#/radar/import?sessionId=${encodeURIComponent(sessionId)}`;
 }
