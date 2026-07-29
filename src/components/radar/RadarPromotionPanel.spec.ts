@@ -8,7 +8,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NSelect } from 'naive-ui';
 import { ApiError } from '../../api/client';
-import type { PromotionPlanView, PromotionView } from '../../api/radarPromotionApi';
+import type { PromotionPlanView, PromotionTrigger, PromotionView } from '../../api/radarPromotionApi';
 import RadarPromotionPanel from './RadarPromotionPanel.vue';
 
 const mocks = vi.hoisted(() => ({ preview: vi.fn(), promote: vi.fn() }));
@@ -43,7 +43,9 @@ function promotion(over: Partial<PromotionView> = {}): PromotionView {
   };
 }
 
-function render(props: Partial<{ candidateVersionId: string | null; enabled: boolean }> = {}) {
+function render(
+  props: Partial<{ candidateVersionId: string | null; enabled: boolean; initialTrigger: PromotionTrigger }> = {},
+) {
   return mount(RadarPromotionPanel, {
     props: { candidateVersionId: 'cv-1', enabled: true, ...props },
   });
@@ -100,6 +102,22 @@ describe('晋升面板 · 预览零写入与 Human-in-the-loop', () => {
 
     expect(mocks.promote).toHaveBeenCalledTimes(1);
     expect(w.find('[data-testid="promotion-result"]').exists()).toBe(true);
+  });
+
+  it('默认触发原因为 hr_replied（推荐入口）：预览按该触发原因发起', async () => {
+    mocks.preview.mockResolvedValue({ plan: plan() });
+    const w = render();
+    await w.find('[data-testid="promotion-preview"]').trigger('click');
+    await flushPromises();
+    expect(mocks.preview).toHaveBeenCalledWith('cv-1', expect.objectContaining({ trigger: 'hr_replied' }));
+  });
+
+  it('initialTrigger=user_explicit_request（已投待反馈入口）：预览按该触发原因发起，不代写外部反馈', async () => {
+    mocks.preview.mockResolvedValue({ plan: plan({ trigger: 'user_explicit_request', feedbackEventType: null }) });
+    const w = render({ initialTrigger: 'user_explicit_request' });
+    await w.find('[data-testid="promotion-preview"]').trigger('click');
+    await flushPromises();
+    expect(mocks.preview).toHaveBeenCalledWith('cv-1', expect.objectContaining({ trigger: 'user_explicit_request' }));
   });
 
   it('改动触发原因后旧计划作废，必须重新预览', async () => {

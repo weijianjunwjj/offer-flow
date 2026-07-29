@@ -20,7 +20,14 @@ const props = withDefaults(defineProps<{
   /** 要晋升的候选正式版本 id；为空则面板只显示引导。 */
   candidateVersionId: string | null;
   enabled: boolean;
-}>(), { enabled: true });
+  /**
+   * 打开面板时的默认触发原因。从「已投待反馈」入口进入时传 user_explicit_request：
+   * 该状态是"无回复"语义，默认 hr_replied 会代写一条不存在的外部反馈事件（伪造事实）。
+   * user_explicit_request 是 promotionPlan 为"我主动跟进、无外部事实"留的合法出口
+   * （只建岗位+投递、不写反馈）。用户若确已收到回复，可自行切到 hr_replied。
+   */
+  initialTrigger?: PromotionTrigger;
+}>(), { enabled: true, initialTrigger: 'hr_replied' });
 
 /**
  * 晋升成功后的主线出口：不在面板内直接路由（保持面板可无 router 单测），
@@ -35,7 +42,7 @@ const promoted = ref<PromotionView | null>(null);
 const actionBusy = ref(false);
 const errorText = ref('');
 
-const trigger = ref<PromotionTrigger>('hr_replied');
+const trigger = ref<PromotionTrigger>(props.initialTrigger);
 const requestedDepth = ref<PromotionDepth>('feedback');
 
 /** 迟到响应保护：候选切换即自增；异步回调只在 gen 未变时写状态。 */
@@ -102,6 +109,8 @@ function resetForCandidate(): void {
   plan.value = null;
   promoted.value = null;
   errorText.value = '';
+  // 每次切换候选（含从不同入口打开）都回到该入口的默认触发原因，避免沿用上一候选的选择。
+  trigger.value = props.initialTrigger;
 }
 
 watch(() => [props.candidateVersionId, props.enabled] as const, () => resetForCandidate(), { immediate: true });

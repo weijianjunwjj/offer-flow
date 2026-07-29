@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { NAlert, NButton, NCard, NEmpty, NInput, NModal, NSpace, NSpin, NTag, NText } from 'naive-ui';
 import { ApiError } from '../api/client';
@@ -12,6 +12,7 @@ import { features } from '../config/features';
 import RadarAnalysisPanel from '../components/radar/RadarAnalysisPanel.vue';
 import RadarRecommendationPanel from '../components/radar/RadarRecommendationPanel.vue';
 import RadarPromotionPanel from '../components/radar/RadarPromotionPanel.vue';
+import type { PromotionTrigger } from '../api/radarPromotionApi';
 import RadarActionBar from '../components/radar/RadarActionBar.vue';
 import RadarStageStepper from '../components/radar/RadarStageStepper.vue';
 import RadarGuideBar from '../components/radar/RadarGuideBar.vue';
@@ -26,10 +27,24 @@ const recommendationsEnabled = features.radarRecommendationsEnabled;
  * 不新增生产开关。晋升入口只由用户在某条建议上点击"晋升"打开。
  */
 const promotingCandidateVersionId = ref<string | null>(null);
+/** 晋升面板默认触发原因：推荐入口维持 hr_replied；已投待反馈入口用 user_explicit_request（见下）。 */
+const promotionInitialTrigger = ref<PromotionTrigger>('hr_replied');
 function selectForPromotion(candidateVersionId: string): void {
+  // 从推荐卡片进入：维持既有默认触发原因。
+  promotionInitialTrigger.value = 'hr_replied';
   // 再次点击同一条即收起，避免误留一个已打开的晋升面板。
   promotingCandidateVersionId.value =
     promotingCandidateVersionId.value === candidateVersionId ? null : candidateVersionId;
+}
+
+/**
+ * 从「已投待反馈」动作栏进入晋升：已投=无回复语义，默认触发原因用 user_explicit_request，
+ * 避免默认 hr_replied 代写不存在的外部反馈。始终打开（不做 toggle 收起），并滚入视野。
+ */
+function promoteFollowupFromAction(candidateVersionId: string): void {
+  promotionInitialTrigger.value = 'user_explicit_request';
+  promotingCandidateVersionId.value = candidateVersionId;
+  void scrollPromotionIntoView();
 }
 
 const loading = ref(true);
@@ -172,6 +187,14 @@ const hasNextRelation = computed(() =>
 const recommendationPanel = ref<HTMLElement | null>(null);
 function scrollToRecommendations(): void {
   const el = recommendationPanel.value;
+  if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/** 晋升面板锚点：从已投待反馈入口打开后滚入视野（面板条件渲染，需等 DOM 出现）。 */
+const promotionPanel = ref<HTMLElement | null>(null);
+async function scrollPromotionIntoView(): Promise<void> {
+  await nextTick();
+  const el = promotionPanel.value;
   if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -422,16 +445,20 @@ function signalValueText(v: string | number | boolean | null): string {
         @promote="selectForPromotion"
       />
 
-      <!-- V8-6 晋升面板：仅在用户点击某条建议的「晋升」后出现，紧随建议区，
-           保持"看到建议 → 决定晋升 → 预览 → 确认"的线性动线。无任何自动晋升。 -->
+      <!-- V8-6 晋升面板：由某条建议的「晋升」或已投待反馈的「晋升跟进」打开，紧随建议区，
+           保持"看到建议 → 决定晋升 → 预览 → 确认"的线性动线。无任何自动晋升。
+           initial-trigger 随入口切换：推荐→hr_replied；已投待反馈→user_explicit_request。 -->
+      <div ref="promotionPanel">
       <RadarPromotionPanel
         v-if="recommendationsEnabled && promotingCandidateVersionId !== null"
         :candidate-version-id="promotingCandidateVersionId"
         :enabled="recommendationsEnabled"
+        :initial-trigger="promotionInitialTrigger"
         class="mt primary-zone"
         data-testid="promotion-panel-review"
         @track="onPromotionTrack"
       />
+      </div>
       </div>
 
       <!-- 区域 2/3/4：候选对比 + 变化摘要 + 阻断信息（选中关系后展开） -->
@@ -471,6 +498,7 @@ function signalValueText(v: string | number | boolean | null): string {
                 :candidate-id="d.candidateId"
                 :data-testid="`action-bar-${side}`"
                 @changed="onActionChanged"
+                @promote-followup="promoteFollowupFromAction"
               />
               <!-- V8-4 单岗位分析：仅在能力开启且该侧有当前正式版本时展示；每侧独立，避免双候选歧义 -->
               <RadarAnalysisPanel

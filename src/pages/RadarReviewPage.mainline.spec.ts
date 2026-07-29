@@ -169,4 +169,27 @@ describe('RadarReviewPage 主线接线', () => {
     await flushPromises();
     expect(push).toHaveBeenCalledWith({ name: 'jobs' });
   });
+
+  it('已投待反馈「晋升跟进」打开晋升面板，且默认触发原因为 user_explicit_request（不代写外部反馈）', async () => {
+    featureFlags.radarRecommendationsEnabled = true;
+    // 该候选处于已投待反馈：动作栏据此渲染「晋升跟进」入口。
+    actionMocks.getView.mockImplementation((candidateId: string) => Promise.resolve({
+      candidateId, activeCandidateVersionId: `ver-${candidateId}`,
+      state: { saved: false, ignored: false, priority: false, appliedPending: true }, history: [],
+    }));
+    setupHappy();
+    const { wrapper } = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+
+    // 进入前晋升面板不存在（无推荐、无已投入口触发）。
+    expect(wrapper.findComponent(RadarPromotionPanel).exists()).toBe(false);
+    // 点击已投待反馈侧的「晋升跟进」——走真实 @promote-followup 契约。
+    await wrapper.find('[data-testid="action-bar-low"] [data-testid="action-promote-followup"]').trigger('click');
+    await flushPromises();
+
+    const promo = wrapper.findComponent(RadarPromotionPanel);
+    expect(promo.exists()).toBe(true);
+    expect(promo.props('initialTrigger')).toBe('user_explicit_request');
+  });
 });

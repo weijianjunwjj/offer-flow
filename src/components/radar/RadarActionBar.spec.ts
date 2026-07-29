@@ -120,3 +120,35 @@ describe('动作栏 · 刷新恢复与候选切换', () => {
     expect(mocks.getView).toHaveBeenLastCalledWith('cand-2');
   });
 });
+
+describe('动作栏 · 已投待反馈的晋升跟进入口（只发意图，不触碰 promotion API）', () => {
+  const applied = { saved: false, ignored: false, priority: false, appliedPending: true };
+
+  it('已投待反馈生效 + 有当前版本 → 显示「晋升跟进」，点击 emit promote-followup(版本id)', async () => {
+    mocks.getView.mockResolvedValue(view({ state: applied, activeCandidateVersionId: 'cv-9' }));
+    const w = render();
+    await flushPromises();
+
+    const btn = w.find('[data-testid="action-promote-followup"]');
+    expect(btn.exists()).toBe(true);
+    await btn.trigger('click');
+    expect(w.emitted('promote-followup')).toEqual([['cv-9']]);
+    // 边界：只发意图，绝不调用任何动作/晋升 API。
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(mocks.revert).not.toHaveBeenCalled();
+  });
+
+  it('未处于已投待反馈 → 不显示「晋升跟进」', async () => {
+    mocks.getView.mockResolvedValue(view());
+    const w = render();
+    await flushPromises();
+    expect(w.find('[data-testid="action-promote-followup"]').exists()).toBe(false);
+  });
+
+  it('已投待反馈但无当前正式版本（activeCandidateVersionId=null）→ 不显示，避免 emit 空版本', async () => {
+    mocks.getView.mockResolvedValue(view({ state: applied, activeCandidateVersionId: null }));
+    const w = render();
+    await flushPromises();
+    expect(w.find('[data-testid="action-promote-followup"]').exists()).toBe(false);
+  });
+});

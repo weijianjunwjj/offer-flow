@@ -6,7 +6,8 @@
  * - 每一族都是一键切换：未生效→执行 set，已生效→显示对应撤销入口；
  * - 状态由服务端 append-only 事件流派生，刷新后重新拉取即恢复（不依赖本地缓存）；
  * - 撤销只恢复 Radar 决策状态，绝不触碰正式 Job/Application/FeedbackEvent（服务端保证）；
- * - 没有任何自动晋升：本组件只调用动作 API，不触发 promote；
+ * - 没有任何自动晋升：本组件只调用动作 API，绝不触碰 promotion API、不做任何写入；
+ *   「晋升跟进」按钮只 emit('promote-followup') 意图，由页面打开晋升面板，用户仍需预览+确认；
  * - 动作变化后 emit('changed')，由页面让旧推荐批次失效（复用服务端 handledStateHash/stale）。
  */
 import { onBeforeUnmount, ref, watch } from 'vue';
@@ -17,7 +18,15 @@ import {
 } from '../../api/radarActionApi';
 
 const props = defineProps<{ candidateId: string }>();
-const emit = defineEmits<{ (e: 'changed', candidateId: string): void }>();
+const emit = defineEmits<{
+  (e: 'changed', candidateId: string): void;
+  /**
+   * 「已投待反馈」候选的晋升跟进意图。只发意图、由页面接管打开晋升面板，
+   * 用户仍需在面板内独立预览 + 确认——本组件不触碰任何 promotion API、不做写入。
+   * 已投待反馈会被推荐永久抑制（跨版本），此入口是它够到晋升面板的唯一动线。
+   */
+  (e: 'promote-followup', candidateVersionId: string): void;
+}>();
 
 const view = ref<CandidateActionView | null>(null);
 const loading = ref(false);
@@ -102,6 +111,10 @@ const FAMILIES: Array<{ family: ActionFamily; setLabel: string; revertLabel: str
             <NTag size="small" type="success">{{ f.activeText }}</NTag>
             <NButton size="tiny" :loading="busy === f.family" :disabled="busy !== null"
               :data-testid="`action-revert-${f.family}`" @click="toggle(f.family)">{{ f.revertLabel }}</NButton>
+            <!-- 已投待反馈是推荐永久抑制态：给唯一一条够到晋升面板的动线（只发意图，不写入）。 -->
+            <NButton v-if="f.family === 'appliedPending' && view.activeCandidateVersionId"
+              size="tiny" :disabled="busy !== null" data-testid="action-promote-followup"
+              @click="emit('promote-followup', view.activeCandidateVersionId)">晋升跟进</NButton>
           </span>
           <NButton v-else size="small" :loading="busy === f.family" :disabled="busy !== null"
             :data-testid="`action-set-${f.family}`" @click="toggle(f.family)">{{ f.setLabel }}</NButton>
