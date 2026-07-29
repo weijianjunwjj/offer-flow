@@ -21,7 +21,12 @@ import {
 } from './analysisPrompt';
 
 const PROVIDER_NAME = 'deepseek';
-const ANALYSIS_MAX_TOKENS = 4096;
+/**
+ * 分析调用 max_tokens。deepseek-v4-flash 为推理模型：reasoning_content（思维链）与
+ * content（答案）共享该预算。实测 4096 全被 reasoning 吃光 → content 为空 → JSON 非法。
+ * 提到硬上限 8192，为「推理 + JSON 答案」都留出空间。
+ */
+export const ANALYSIS_MAX_TOKENS = 8192;
 const ANALYSIS_TEMPERATURE = 0.1;
 
 /**
@@ -59,11 +64,21 @@ async function call(
     retryMax: 0, // transport 重试关闭：重试语义属任务层。
     signal,
   });
-  if (result.error !== undefined && result.error !== '') {
-    throw mapProviderError(result.error, signal);
-  }
   if (signal?.aborted) {
     throw new AnalysisProviderError('CANCELLED_BY_USER', '分析已被用户取消');
+  }
+  // 截断优先诊断：finish_reason='length' 表示答案被 max_tokens 截断（推理模型思维链吃光预算，
+  // content 为空）。此前一律落泛化「返回空内容/网络错误」，无法定位。给出稳定可诊断语义
+  // （不含正文），便于运维识别为预算问题而非网络问题。
+  if (result.finishReason === 'length') {
+    throw new AnalysisProviderError(
+      'PROVIDER_NETWORK_ERROR',
+      '模型响应被 max_tokens 截断（finish_reason=length），未产出完整答案',
+      'finish_reason=length',
+    );
+  }
+  if (result.error !== undefined && result.error !== '') {
+    throw mapProviderError(result.error, signal);
   }
   if (result.rawText === '') {
     throw new AnalysisProviderError('PROVIDER_NETWORK_ERROR', 'Provider 返回空内容');

@@ -13,6 +13,22 @@ interface LlmCallResult {
   rawText: string;
   model: string;
   error?: string;
+  /** OpenAI-compatible finish_reason（'stop' | 'length' | ...）；用于识别截断。缺省 null。 */
+  finishReason?: string | null;
+}
+
+/**
+ * 诊断回调载荷：仅供运维/调试脚本捕获**原始**响应字段映射（是否取错字段、是否截断、
+ * content 是否为空但 reasoning_content 有内容）。含原始正文，**绝不**用于生产日志/错误，
+ * 由调用方（调试脚本）自行落地到 gitignored 目录，绝不提交。
+ */
+export interface LlmRawResponseInfo {
+  httpStatus: number;
+  finishReason: string | null;
+  contentLength: number;
+  reasoningContentLength: number;
+  content: string;
+  reasoningContent: string;
 }
 
 export interface LlmOptions {
@@ -26,6 +42,11 @@ export interface LlmOptions {
    * 显式传入时钳制到 [0,5]，V8-4 分析 Provider 显式传 0 关闭 transport 重试。
    */
   retryMax?: number;
+  /**
+   * 诊断回调（仅运维/调试脚本注入）：拿到解析后的**原始**响应字段映射。
+   * 生产路径不传 → 零行为变化。含原始正文，绝不进生产日志/错误。
+   */
+  onRawResponse?: (info: LlmRawResponseInfo) => void;
 }
 
 /** 解析 transport 重试上限：显式值优先（钳制 [0,5]），否则沿用环境默认。 */
@@ -272,25 +293,48 @@ export async function chatCompletion(
     console.log('[llm] upstream responded', { status: response.status, elapsedMs: upstreamElapsed });
 
     const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{
+        message?: { content?: string; reasoning_content?: string };
+        finish_reason?: string;
+      }>;
     };
 
-    const content = data.choices?.[0]?.message?.content ?? '';
+    const choice = data.choices?.[0];
+    const content = choice?.message?.content ?? '';
+    const reasoningContent = choice?.message?.reasoning_content ?? '';
+    const finishReason = choice?.finish_reason ?? null;
     const totalElapsed = Date.now() - startTime;
 
-    console.log('[llm] done', { elapsedMs: totalElapsed, rawTextChars: content.length });
+    // 诊断回调：仅调试脚本注入；含原始正文，绝不进生产日志。
+    options?.onRawResponse?.({
+      httpStatus: response.status,
+      finishReason,
+      contentLength: content.length,
+      reasoningContentLength: reasoningContent.length,
+      content,
+      reasoningContent,
+    });
+
+    // 稳定诊断字段：不含正文，可安全进日志。finishReason='length' 即被 max_tokens 截断。
+    console.log('[llm] done', {
+      elapsedMs: totalElapsed,
+      rawTextChars: content.length,
+      finishReason,
+    });
 
     if (content === '') {
       return {
         rawText: '',
         model: config.model,
         error: 'LLM 返回空内容',
+        finishReason,
       };
     }
 
     return {
       rawText: content,
       model: config.model,
+      finishReason,
     };
   } catch (error) {
     const totalElapsed = Date.now() - startTime;

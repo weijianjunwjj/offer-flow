@@ -83,4 +83,35 @@ describe('deepSeekJobMatchAnalysisProvider', () => {
       expect((error as AnalysisProviderError).message).not.toContain('secret-upstream-body-xyz');
     }
   });
+
+  it('requests a max_tokens large enough for reasoning + JSON answer (8192)', async () => {
+    // 根因回归：推理模型 reasoning_content 与 content 共享 max_tokens，4096 被思维链吃光 →
+    // content 空 → JSON 非法。预算必须足以同时容纳推理与答案。
+    chatMock.mockResolvedValue({ rawText: minimalValidPayloadJson(), model: 'deepseek-chat', finishReason: 'stop' });
+    await provider.generate(llmInput);
+    const [, , options] = chatMock.mock.calls[0]!;
+    expect(options.maxTokens).toBe(8192);
+  });
+
+  it('maps truncation (finish_reason=length) to a diagnosable error, prioritized over empty-content', async () => {
+    // 截断（推理吃光预算 → content 空）此前落泛化「返回空内容」，无法定位。现给出稳定语义。
+    chatMock.mockResolvedValue({ rawText: '', model: 'deepseek-chat', error: 'LLM 返回空内容', finishReason: 'length' });
+    try {
+      await provider.generate(llmInput);
+      throw new Error('expected throw');
+    } catch (error) {
+      const err = error as AnalysisProviderError;
+      expect(err.code).toBe('PROVIDER_NETWORK_ERROR');
+      expect(err.message).toContain('max_tokens');
+      expect(err.message).toContain('finish_reason=length');
+      expect(err.detail).toBe('finish_reason=length');
+    }
+  });
+
+  it('aborted signal still wins over truncation classification', async () => {
+    chatMock.mockResolvedValue({ rawText: '', model: 'm', error: 'LLM 返回空内容', finishReason: 'length' });
+    const controller = new AbortController();
+    controller.abort();
+    await expectCode(() => provider.generate(llmInput, controller.signal), 'CANCELLED_BY_USER');
+  });
 });

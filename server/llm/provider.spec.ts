@@ -63,6 +63,74 @@ describe('LLM provider · max_tokens 解析', () => {
   });
 });
 
+describe('LLM provider · finish_reason / reasoning_content 映射', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.OFFERFLOW_LLM_BASE_URL = 'https://fake';
+    process.env.OFFERFLOW_LLM_API_KEY = 'test-key';
+    process.env.OFFERFLOW_LLM_MODEL = 'fake-model';
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+  });
+
+  function stubFetchReturning(payload: unknown): void {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    ));
+  }
+
+  it('surfaces finish_reason on success', async () => {
+    stubFetchReturning({ choices: [{ message: { content: '{"ok":true}' }, finish_reason: 'stop' }] });
+    const { chatCompletion } = await import('./provider');
+    const result = await chatCompletion('system', 'user');
+    expect(result.rawText).toBe('{"ok":true}');
+    expect(result.finishReason).toBe('stop');
+  });
+
+  it('reports empty content + finish_reason=length when reasoning_content ate the budget (truncation root cause)', async () => {
+    // 推理模型：content 空，reasoning_content 有内容，finish_reason=length。
+    stubFetchReturning({
+      choices: [{ message: { content: '', reasoning_content: 'x'.repeat(10000) }, finish_reason: 'length' }],
+    });
+    const { chatCompletion } = await import('./provider');
+    const result = await chatCompletion('system', 'user');
+    expect(result.rawText).toBe('');
+    expect(result.error).toBe('LLM 返回空内容');
+    expect(result.finishReason).toBe('length');
+  });
+
+  it('does not treat reasoning_content as the answer (content stays the source of truth)', async () => {
+    stubFetchReturning({
+      choices: [{ message: { content: '{"real":1}', reasoning_content: 'chain of thought' }, finish_reason: 'stop' }],
+    });
+    const { chatCompletion } = await import('./provider');
+    const result = await chatCompletion('system', 'user');
+    expect(result.rawText).toBe('{"real":1}');
+  });
+
+  it('invokes onRawResponse with the raw field mapping (for debug tooling only)', async () => {
+    stubFetchReturning({
+      choices: [{ message: { content: 'C', reasoning_content: 'RRR' }, finish_reason: 'length' }],
+    });
+    const { chatCompletion } = await import('./provider');
+    let captured: unknown;
+    await chatCompletion('system', 'user', { onRawResponse: (info) => { captured = info; } });
+    expect(captured).toMatchObject({
+      httpStatus: 200,
+      finishReason: 'length',
+      contentLength: 1,
+      reasoningContentLength: 3,
+      content: 'C',
+      reasoningContent: 'RRR',
+    });
+  });
+});
+
 describe('LLM provider · transport retry 上限', () => {
   const originalEnv = { ...process.env };
 

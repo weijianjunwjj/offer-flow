@@ -61,6 +61,9 @@ sync/.offerflow-publish-*/
 # Task 0 临时候选代码解压目录（不入库）
 .step0-candidate/
 
+# 岗位分析重试脚本 --debug-output 落地的原始响应（可能含 JD/正文，绝不入库）
+.analysis-debug/
+
 # Claude Code 本机权限配置（不入库）
 .claude/settings.local.json
 
