@@ -26,7 +26,7 @@ import { AnalysisRecordRepository } from '../analysisRecordRepository';
 import { RadarCandidateRepository } from '../candidateRepository';
 import { normalizeJobMatchCity } from '../../job-match-profile/inputSnapshot';
 import { buildJobMatchAnalysisInputSnapshot } from './inputSnapshot';
-import { buildJobMatchAnalysisTaskId } from './inputHash';
+import { buildJobMatchAnalysisInputHash, buildJobMatchAnalysisTaskId } from './inputHash';
 import { parseJobMatchAnalysisInputSnapshot } from './contracts';
 import { buildJobMatchAnalysisLlmInput } from './llmInput';
 import { generateAndParseJobMatchAnalysis } from './repair';
@@ -197,6 +197,46 @@ export class AnalysisService {
       entityId: candidateVersionId,
       inputHash: built.inputHash,
       inputSnapshot: built.snapshot,
+      now: this.now(),
+    });
+    const { task, created } = this.tasks.insertOrGet(queued);
+    return { task, created };
+  }
+
+  /**
+   * 为一个 failed 任务新建「人工恢复任务」：复用其冻结的 inputSnapshot（忠实重试同一输入，
+   * 只是修复后思维链已关闭），注入 recovery:{of, generation} → 改变 inputHash → 派生出与
+   * 前序不同的新 taskId。旧任务原封不动（不重置 attempt、不删除），保住不可变审计记录。
+   * 幂等：对同一前序任务重复调用得到相同新 taskId（recovery 字段相同）；可链式恢复
+   * （恢复任务再失败时，以其为前序继续 +1 代次）。仅接受 failed 的 job_match_analysis 任务。
+   */
+  createRecoveryTask(previousTaskId: string): CreateAnalysisTaskResult {
+    const prev = this.tasks.getById(previousTaskId);
+    if (prev === null) throw new Error(`未找到前序任务：${previousTaskId}`);
+    if (prev.taskType !== 'job_match_analysis') throw new Error('仅支持 job_match_analysis 任务的人工恢复');
+    if (prev.status !== 'failed') throw new Error(`仅允许恢复 failed 任务，当前为 ${prev.status}`);
+
+    const prevSnapshot = parseJobMatchAnalysisInputSnapshot(prev.inputSnapshot);
+    const generation = (prevSnapshot.recovery?.generation ?? 0) + 1;
+    const recoverySnapshot = parseJobMatchAnalysisInputSnapshot({
+      ...prevSnapshot,
+      recovery: { of: previousTaskId, generation },
+      createdAt: this.now(),
+    });
+    const inputHash = buildJobMatchAnalysisInputHash(recoverySnapshot);
+    const taskId = this.createTaskId(inputHash);
+
+    const existing = this.tasks.getById(taskId);
+    if (existing !== null && existing.inputHash === inputHash) {
+      return { task: existing, created: false };
+    }
+    const queued = createQueuedTask({
+      id: taskId,
+      taskType: 'job_match_analysis',
+      entityType: prev.entityType,
+      entityId: prev.entityId,
+      inputHash,
+      inputSnapshot: recoverySnapshot,
       now: this.now(),
     });
     const { task, created } = this.tasks.insertOrGet(queued);

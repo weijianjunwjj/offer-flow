@@ -16,7 +16,11 @@
  *   编排 generate+repair+解析校验，绕过状态机与 attempt 上限，验证根因修复是否产出合法
  *   Payload。不写任何库、不改 attempt。用于任务已撞 6/6 上限、无法经 retryTask 验证时。
  *
- * 用法：tsx scripts/retryAnalysisTask.ts --task-id=<failed 任务 id> [--commit] [--debug-output] [--validate-fix]
+ * - --recover：不原地重试（会撞 attempt 上限），而是为该 failed 任务新建「人工恢复
+ *   任务」（新 taskId，复用冻结 inputSnapshot 并注入 recovery:{of,generation}），旧任务
+ *   原封不动；随后运行新任务到终态。dry-run 默认演练，--commit 才对真实库执行。
+ *
+ * 用法：tsx scripts/retryAnalysisTask.ts --task-id=<failed 任务 id> [--recover] [--commit] [--debug-output] [--validate-fix]
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -41,6 +45,7 @@ import { buildJobMatchAnalysisLlmInput } from '../server/radar/analysis/llmInput
 import { generateAndParseJobMatchAnalysis } from '../server/radar/analysis/repair';
 
 const VALIDATE_FIX = process.argv.includes('--validate-fix');
+const RECOVER = process.argv.includes('--recover');
 
 const REAL_DB = path.resolve('data/offerflow.sqlite3');
 const COMMIT = process.argv.includes('--commit');
@@ -213,6 +218,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // --validate-fix 与 --recover 语义互斥（一个只读校验、一个新建并运行任务）。
+  if (VALIDATE_FIX && RECOVER) {
+    console.error('--validate-fix 与 --recover 不可同用。');
+    process.exit(1);
+  }
+
   if (!isLlmConfigured()) {
     console.error('LLM 未配置：无法执行真实分析。请确认 server/.env 中的 OFFERFLOW_LLM_* / DEEPSEEK_* 已设置。');
     process.exit(1);
@@ -271,10 +282,25 @@ async function main(): Promise<void> {
   }
 
   const service = new AnalysisService(debugProvider !== undefined ? { db, provider: debugProvider } : { db });
-  const requeued = service.retryTask(taskId);
-  console.log('人工重新分析 → queued：', { status: requeued.status, attemptCount: requeued.attemptCount, maxAttempts: requeued.maxAttempts });
 
-  const outcome = await service.runTask(taskId);
+  // --recover：为该 failed 任务新建「人工恢复任务」（新 taskId + 关联旧任务），旧任务不动；
+  // 否则走原地重试（受 6/6 上限约束）。两条路径都随后 runTask 到终态。
+  let runId = taskId;
+  if (RECOVER) {
+    const { task: recovery, created } = service.createRecoveryTask(taskId);
+    runId = recovery.id;
+    console.log('人工恢复任务 →', created ? '新建' : '命中已有', {
+      newTaskId: recovery.id,
+      previousTaskId: taskId,
+      status: recovery.status,
+      attemptCount: recovery.attemptCount,
+    });
+  } else {
+    const requeued = service.retryTask(taskId);
+    console.log('人工重新分析 → queued：', { status: requeued.status, attemptCount: requeued.attemptCount, maxAttempts: requeued.maxAttempts });
+  }
+
+  const outcome = await service.runTask(runId);
   console.log('运行结果 outcome：', outcome.kind, outcome.kind === 'failed' ? outcome.errorCode : '');
 
   // 打印稳定诊断（不含正文）：HTTP 状态 / finish_reason / content 长度 / reasoning 长度 / 括号闭合线索。
@@ -292,8 +318,12 @@ async function main(): Promise<void> {
     if (diags.length === 0) console.log('[debug] 无调用诊断（可能在调用前失败）。');
   }
 
-  const after = taskRow(db, taskId);
-  console.log('执行后任务：', after);
+  const after = taskRow(db, runId);
+  console.log('执行后任务：', { taskId: runId, ...after });
+  if (RECOVER) {
+    // 明确核验旧任务未被触碰（保持 failed，attempt 不变）——不可变审计边界。
+    console.log('旧任务（应保持不动）：', { taskId, ...taskRow(db, taskId) });
+  }
 
   const memoryAfter = countMemory(db);
   const memoryUnchanged = JSON.stringify(memoryBefore) === JSON.stringify(memoryAfter);

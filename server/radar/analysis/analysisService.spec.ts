@@ -18,6 +18,7 @@ import {
   timeoutProvider,
   type CountingProvider,
 } from './analysisProviderFakes';
+import { parseJobMatchAnalysisInputSnapshot } from './contracts';
 
 let tempDir: string;
 let db: SqliteDatabase;
@@ -253,6 +254,75 @@ describe('listCandidateAnalyses — 有效性投影（派生，不新增字段�
     const view = service.listCandidateAnalyses(candidateId)[0]!;
     expect(view.validity.status).toBe('stale');
     expect(view.validity.staleReasons).toContain('job_match_profile_changed');
+  });
+});
+
+describe('createRecoveryTask — 新 taskId / 关联旧任务 / 旧任务不动 / 幂等 / 链式', () => {
+  it('从 failed 任务派生新 taskId，注入 recovery，旧任务原封不动', async () => {
+    const { versionId } = setup();
+    const { service } = makeService(timeoutProvider());
+    const { task: failed } = service.createTask(versionId);
+    await service.runTask(failed.id);
+    const before = service.getTask(failed.id)!;
+
+    const { task: recovery, created } = service.createRecoveryTask(failed.id);
+    expect(created).toBe(true);
+    expect(recovery.id).not.toBe(failed.id); // 新 taskId
+    expect(recovery.status).toBe('queued');
+    expect(recovery.attemptCount).toBe(0);
+    expect(recovery.entityId).toBe(failed.entityId);
+    const snap = parseJobMatchAnalysisInputSnapshot(recovery.inputSnapshot);
+    expect(snap.recovery).toEqual({ of: failed.id, generation: 1 });
+
+    // 旧任务保持 failed，attempt 未变（不可变审计记录）。
+    const after = service.getTask(failed.id)!;
+    expect(after.status).toBe('failed');
+    expect(after.attemptCount).toBe(before.attemptCount);
+  });
+
+  it('幂等：对同一前序任务重复调用返回同一恢复任务', async () => {
+    const { versionId } = setup();
+    const { service } = makeService(timeoutProvider());
+    const { task: failed } = service.createTask(versionId);
+    await service.runTask(failed.id);
+    const a = service.createRecoveryTask(failed.id);
+    const b = service.createRecoveryTask(failed.id);
+    expect(b.created).toBe(false);
+    expect(b.task.id).toBe(a.task.id);
+  });
+
+  it('链式：恢复任务再失败后可继续恢复，generation 递增', async () => {
+    const { versionId } = setup();
+    const { service } = makeService(timeoutProvider());
+    const { task: failed } = service.createTask(versionId);
+    await service.runTask(failed.id);
+    const gen1 = service.createRecoveryTask(failed.id).task;
+    await service.runTask(gen1.id); // 恢复任务也失败
+    const gen2 = service.createRecoveryTask(gen1.id).task;
+    expect(gen2.id).not.toBe(gen1.id);
+    expect(parseJobMatchAnalysisInputSnapshot(gen2.inputSnapshot).recovery).toEqual({ of: gen1.id, generation: 2 });
+  });
+
+  it('拒绝恢复非 failed 任务', async () => {
+    const { versionId } = setup();
+    const { service } = makeService(deterministicSuccessProvider());
+    const { task } = service.createTask(versionId);
+    await service.runTask(task.id); // succeeded
+    expect(() => service.createRecoveryTask(task.id)).toThrow(/仅允许恢复 failed/);
+  });
+
+  it('恢复任务用关闭思维链的 Provider 可成功产出记录', async () => {
+    const { versionId } = setup();
+    // 先用超时 Provider 造一个 failed 任务，再用成功 Provider 的 service 恢复并运行。
+    const failService = makeService(timeoutProvider()).service;
+    const { task: failed } = failService.createTask(versionId);
+    await failService.runTask(failed.id);
+
+    const { service } = makeService(deterministicSuccessProvider());
+    const { task: recovery } = service.createRecoveryTask(failed.id);
+    const outcome = await service.runTask(recovery.id);
+    expect(outcome.kind).toBe('succeeded');
+    expect(service.getTask(recovery.id)!.resultRecordId).not.toBeNull();
   });
 });
 

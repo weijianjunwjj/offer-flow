@@ -169,6 +169,19 @@ export const JobMatchAnalysisInputSnapshotV1Schema = z.strictObject({
     modelName: bounded(SHORT_TEXT),
     modelVersion: bounded(SHORT_TEXT).nullable(),
   }),
+  /**
+   * 人工恢复链（可选）：仅在为一个 failed 任务新建「人工恢复任务」时写入。
+   * of = 前序任务 id（被恢复的那个）；generation = 恢复代次（1 起）。
+   * 该字段纳入 inputHash（仅 createdAt 被剔除）→ 天然派生出与前序不同的 taskId，
+   * 从而在不改表结构、不重置旧任务 attempt 的前提下新建关联任务。仅审计/派生用，
+   * 不进 LLM 输入（llmInput 白名单不含该字段）。缺省不写 → 旧快照照常解析。
+   */
+  recovery: z
+    .strictObject({
+      of: ID,
+      generation: z.number().int().positive(),
+    })
+    .optional(),
   createdAt: z.number().finite().nonnegative(),
 });
 
