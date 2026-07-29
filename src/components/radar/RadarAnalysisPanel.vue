@@ -337,10 +337,14 @@ const DIMENSION_ORDER: Array<{ key: keyof JobMatchAnalysisPayloadV1['dimensions'
   { key: 'businessAndCompanyFit', label: '业务与公司匹配' },
   { key: 'cityAndSalaryFit', label: '城市与薪资匹配' },
 ];
-const EVIDENCE_SECTIONS: Array<{ key: keyof JobMatchAnalysisPayloadV1; label: string }> = [
+/** 决策关键：硬约束会直接否决、风险会显著影响判断，永远显著呈现（不折叠）。 */
+const CRITICAL_SECTIONS: Array<{ key: keyof JobMatchAnalysisPayloadV1; label: string; tone: 'danger' | 'warning' }> = [
+  { key: 'hardConstraints', label: '硬性约束', tone: 'danger' },
+  { key: 'risks', label: '风险', tone: 'warning' },
+];
+/** 补充证据：支撑性/参考性信息，默认折叠，需要时再展开，避免淹没结论。 */
+const SUPPORTING_SECTIONS: Array<{ key: keyof JobMatchAnalysisPayloadV1; label: string }> = [
   { key: 'transferableEvidence', label: '可迁移证据' },
-  { key: 'hardConstraints', label: '硬性约束' },
-  { key: 'risks', label: '风险' },
   { key: 'gaps', label: '差距' },
   { key: 'counterEvidence', label: '反证' },
   { key: 'uncertainties', label: '不确定项' },
@@ -348,6 +352,26 @@ const EVIDENCE_SECTIONS: Array<{ key: keyof JobMatchAnalysisPayloadV1; label: st
 function pointsOf(payload: JobMatchAnalysisPayloadV1, key: keyof JobMatchAnalysisPayloadV1): AnalysisPoint[] {
   return payload[key] as AnalysisPoint[];
 }
+type TagType = 'success' | 'info' | 'warning' | 'error' | 'default';
+/** 匹配档 → 语义色：强=成功、中=信息、弱=警告。让四维一眼可辨强弱。 */
+function assessmentTagType(v: string): TagType {
+  return v === 'strong' ? 'success' : v === 'moderate' ? 'info' : v === 'weak' ? 'warning' : 'default';
+}
+/** 置信度 → 语义色：高=成功、中=信息、低=警告（低置信提醒谨慎采信）。 */
+function confidenceTagType(v: string): TagType {
+  return v === 'high' ? 'success' : v === 'medium' ? 'info' : v === 'low' ? 'warning' : 'default';
+}
+
+/** 是否存在关键约束/风险；决定第 3 层是否呈现。 */
+const hasCritical = computed(() => displayedResult.value !== null
+  && CRITICAL_SECTIONS.some((s) => pointsOf(displayedResult.value!.payload, s.key).length > 0));
+/** 补充信息总条数（含四类证据 + 岗位事实 + 三份清单）；为 0 则不渲染折叠区。 */
+const supplementCount = computed(() => {
+  const p = displayedResult.value?.payload;
+  if (!p) return 0;
+  const secs = SUPPORTING_SECTIONS.reduce((n, s) => n + pointsOf(p, s.key).length, 0);
+  return secs + p.jobFacts.length + p.missingEvidence.length + p.recruiterQuestions.length + p.communicationAngles.length;
+});
 function timeText(ms: number | null): string {
   if (ms === null) return '—';
   const d = new Date(ms);
@@ -410,73 +434,109 @@ function timeText(ms: number | null): string {
           </div>
         </NAlert>
 
-        <!-- 顶部摘要：结论 + 置信度 + summary -->
-        <div class="summary" data-testid="analysis-summary">
-          <span class="rec" data-testid="analysis-recommendation">{{ recommendationLabel(displayedResult.recommendation) }}</span>
-          <NTag size="small" data-testid="analysis-confidence">置信度：{{ confidenceLabel(displayedResult.confidence) }}</NTag>
-          <NTag size="small" :type="isStale ? 'warning' : 'success'" data-testid="analysis-validity">{{ isStale ? '历史参考' : '当前有效' }}</NTag>
-        </div>
-        <p class="summary-text">{{ displayedResult.payload.summary }}</p>
-
-        <!-- 四维分析 -->
-        <div v-for="dim in DIMENSION_ORDER" :key="dim.key" class="section" :data-testid="`analysis-dim-${dim.key}`">
-          <div class="section-head">
-            <NText strong>{{ dim.label }}</NText>
-            <NTag size="tiny">{{ assessmentLabel(displayedResult.payload.dimensions[dim.key].assessment) }}</NTag>
+        <!-- ① 结论 hero：一眼看到"该不该投 + 有多大把握"，按建议类型着色。 -->
+        <div class="hero" :class="`rec-${displayedResult.recommendation}`" data-testid="analysis-summary">
+          <div class="hero-head">
+            <span class="rec" data-testid="analysis-recommendation">{{ recommendationLabel(displayedResult.recommendation) }}</span>
+            <NTag size="small" round :type="confidenceTagType(displayedResult.confidence)" data-testid="analysis-confidence">
+              置信度：{{ confidenceLabel(displayedResult.confidence) }}
+            </NTag>
+            <NTag size="small" round :type="isStale ? 'warning' : 'success'" data-testid="analysis-validity">{{ isStale ? '历史参考' : '当前有效' }}</NTag>
           </div>
-          <p class="dim-summary">{{ displayedResult.payload.dimensions[dim.key].summary }}</p>
-          <div v-for="(pt, i) in displayedResult.payload.dimensions[dim.key].points" :key="i" class="point">
-            <NTag size="tiny" :data-testid="`analysis-kind-${pt.kind}`">{{ kindLabel(pt.kind) }}</NTag>
-            <span class="point-stmt">{{ pt.statement }}</span>
-            <details v-if="pt.evidenceKeys.length > 0" class="evidence">
-              <summary>证据引用（{{ pt.evidenceKeys.length }}）</summary>
-              <code v-for="k in pt.evidenceKeys" :key="k" class="ekey">{{ k }}</code>
+          <p class="summary-text">{{ displayedResult.payload.summary }}</p>
+        </div>
+
+        <!-- ② 四维匹配：档位一眼可辨（色条 + Tag），逐点依据默认折叠，先看结论再看细节。 -->
+        <div class="dims" data-testid="analysis-dims">
+          <div v-for="dim in DIMENSION_ORDER" :key="dim.key"
+            class="dim-card" :class="`a-${displayedResult.payload.dimensions[dim.key].assessment}`"
+            :data-testid="`analysis-dim-${dim.key}`">
+            <div class="section-head">
+              <NText strong>{{ dim.label }}</NText>
+              <NTag size="tiny" :type="assessmentTagType(displayedResult.payload.dimensions[dim.key].assessment)">
+                {{ assessmentLabel(displayedResult.payload.dimensions[dim.key].assessment) }}
+              </NTag>
+            </div>
+            <p class="dim-summary">{{ displayedResult.payload.dimensions[dim.key].summary }}</p>
+            <details v-if="displayedResult.payload.dimensions[dim.key].points.length > 0" class="detail-points">
+              <summary>{{ displayedResult.payload.dimensions[dim.key].points.length }} 条依据</summary>
+              <div v-for="(pt, i) in displayedResult.payload.dimensions[dim.key].points" :key="i" class="point">
+                <NTag size="tiny" :data-testid="`analysis-kind-${pt.kind}`">{{ kindLabel(pt.kind) }}</NTag>
+                <span class="point-stmt">{{ pt.statement }}</span>
+                <details v-if="pt.evidenceKeys.length > 0" class="evidence">
+                  <summary>证据引用（{{ pt.evidenceKeys.length }}）</summary>
+                  <code v-for="k in pt.evidenceKeys" :key="k" class="ekey">{{ k }}</code>
+                </details>
+              </div>
             </details>
           </div>
         </div>
 
-        <!-- 岗位事实 -->
-        <div v-if="displayedResult.payload.jobFacts.length > 0" class="section" data-testid="analysis-jobfacts">
-          <NText strong>岗位事实</NText>
-          <div v-for="(f, i) in displayedResult.payload.jobFacts" :key="i" class="point">
-            <NTag size="tiny">{{ kindLabel(f.kind) }}</NTag>
-            <span class="point-stmt">{{ f.statement }}</span>
-            <details v-if="f.evidenceKeys.length > 0" class="evidence">
-              <summary>证据引用（{{ f.evidenceKeys.length }}）</summary>
-              <code v-for="k in f.evidenceKeys" :key="k" class="ekey">{{ k }}</code>
-            </details>
-          </div>
-        </div>
-
-        <!-- 证据分区（可迁移证据 / 硬约束 / 风险 / 差距 / 反证 / 不确定项） -->
-        <div v-for="sec in EVIDENCE_SECTIONS" :key="sec.key" class="section">
-          <template v-if="pointsOf(displayedResult.payload, sec.key).length > 0">
-            <NText strong>{{ sec.label }}</NText>
-            <div v-for="(pt, i) in pointsOf(displayedResult.payload, sec.key)" :key="i" class="point" :data-testid="`analysis-${String(sec.key)}`">
-              <NTag size="tiny">{{ kindLabel(pt.kind) }}</NTag>
-              <span class="point-stmt">{{ pt.statement }}</span>
-              <NText depth="3" class="point-expl">{{ pt.explanation }}</NText>
-              <details v-if="pt.evidenceKeys.length > 0" class="evidence">
-                <summary>证据引用（{{ pt.evidenceKeys.length }}）</summary>
-                <code v-for="k in pt.evidenceKeys" :key="k" class="ekey">{{ k }}</code>
-              </details>
+        <!-- ③ 关键约束与风险：直接影响决策，命中即显著呈现（不折叠），无则整段不出现。 -->
+        <div v-if="hasCritical" class="critical" data-testid="analysis-critical">
+          <template v-for="sec in CRITICAL_SECTIONS" :key="sec.key">
+            <div v-if="pointsOf(displayedResult.payload, sec.key).length > 0" class="crit-block" :class="`tone-${sec.tone}`">
+              <div class="section-head">
+                <NText strong>{{ sec.label }}</NText>
+                <NTag size="tiny" :type="sec.tone === 'danger' ? 'error' : 'warning'">{{ pointsOf(displayedResult.payload, sec.key).length }}</NTag>
+              </div>
+              <div v-for="(pt, i) in pointsOf(displayedResult.payload, sec.key)" :key="i" class="point" :data-testid="`analysis-${String(sec.key)}`">
+                <NTag size="tiny">{{ kindLabel(pt.kind) }}</NTag>
+                <span class="point-stmt">{{ pt.statement }}</span>
+                <NText depth="3" class="point-expl">{{ pt.explanation }}</NText>
+                <details v-if="pt.evidenceKeys.length > 0" class="evidence">
+                  <summary>证据引用（{{ pt.evidenceKeys.length }}）</summary>
+                  <code v-for="k in pt.evidenceKeys" :key="k" class="ekey">{{ k }}</code>
+                </details>
+              </div>
             </div>
           </template>
         </div>
 
-        <!-- 纯文本清单：缺失证据 / 招聘方问题 / 沟通切入点 -->
-        <div v-if="displayedResult.payload.missingEvidence.length > 0" class="section" data-testid="analysis-missing">
-          <NText strong>缺失证据</NText>
-          <ul class="lines"><li v-for="(l, i) in displayedResult.payload.missingEvidence" :key="i">{{ l }}</li></ul>
-        </div>
-        <div v-if="displayedResult.payload.recruiterQuestions.length > 0" class="section" data-testid="analysis-questions">
-          <NText strong>建议向招聘方核实</NText>
-          <ul class="lines"><li v-for="(l, i) in displayedResult.payload.recruiterQuestions" :key="i">{{ l }}</li></ul>
-        </div>
-        <div v-if="displayedResult.payload.communicationAngles.length > 0" class="section" data-testid="analysis-angles">
-          <NText strong>沟通切入点</NText>
-          <ul class="lines"><li v-for="(l, i) in displayedResult.payload.communicationAngles" :key="i">{{ l }}</li></ul>
-        </div>
+        <!-- ④ 补充信息：支撑证据 / 岗位事实 / 建议清单，整体默认折叠，需要时展开。 -->
+        <details v-if="supplementCount > 0" class="supplement" data-testid="analysis-supplement">
+          <summary class="supplement-summary">补充信息（{{ supplementCount }}）：证据、岗位事实与沟通建议</summary>
+
+          <div v-for="sec in SUPPORTING_SECTIONS" :key="sec.key" class="section">
+            <template v-if="pointsOf(displayedResult.payload, sec.key).length > 0">
+              <NText strong class="sub-title">{{ sec.label }}</NText>
+              <div v-for="(pt, i) in pointsOf(displayedResult.payload, sec.key)" :key="i" class="point" :data-testid="`analysis-${String(sec.key)}`">
+                <NTag size="tiny">{{ kindLabel(pt.kind) }}</NTag>
+                <span class="point-stmt">{{ pt.statement }}</span>
+                <NText depth="3" class="point-expl">{{ pt.explanation }}</NText>
+                <details v-if="pt.evidenceKeys.length > 0" class="evidence">
+                  <summary>证据引用（{{ pt.evidenceKeys.length }}）</summary>
+                  <code v-for="k in pt.evidenceKeys" :key="k" class="ekey">{{ k }}</code>
+                </details>
+              </div>
+            </template>
+          </div>
+
+          <div v-if="displayedResult.payload.jobFacts.length > 0" class="section" data-testid="analysis-jobfacts">
+            <NText strong class="sub-title">岗位事实</NText>
+            <div v-for="(f, i) in displayedResult.payload.jobFacts" :key="i" class="point">
+              <NTag size="tiny">{{ kindLabel(f.kind) }}</NTag>
+              <span class="point-stmt">{{ f.statement }}</span>
+              <details v-if="f.evidenceKeys.length > 0" class="evidence">
+                <summary>证据引用（{{ f.evidenceKeys.length }}）</summary>
+                <code v-for="k in f.evidenceKeys" :key="k" class="ekey">{{ k }}</code>
+              </details>
+            </div>
+          </div>
+
+          <div v-if="displayedResult.payload.missingEvidence.length > 0" class="section" data-testid="analysis-missing">
+            <NText strong class="sub-title">缺失证据</NText>
+            <ul class="lines"><li v-for="(l, i) in displayedResult.payload.missingEvidence" :key="i">{{ l }}</li></ul>
+          </div>
+          <div v-if="displayedResult.payload.recruiterQuestions.length > 0" class="section" data-testid="analysis-questions">
+            <NText strong class="sub-title">建议向招聘方核实</NText>
+            <ul class="lines"><li v-for="(l, i) in displayedResult.payload.recruiterQuestions" :key="i">{{ l }}</li></ul>
+          </div>
+          <div v-if="displayedResult.payload.communicationAngles.length > 0" class="section" data-testid="analysis-angles">
+            <NText strong class="sub-title">沟通切入点</NText>
+            <ul class="lines"><li v-for="(l, i) in displayedResult.payload.communicationAngles" :key="i">{{ l }}</li></ul>
+          </div>
+        </details>
 
         <!-- 模型 / 版本号默认折叠：生成时间等排查信息保留在 DOM，默认不占视觉 -->
         <details class="meta tech-details" data-testid="analysis-meta">
@@ -497,12 +557,42 @@ function timeText(ms: number | null): string {
 .state-row.failed { flex-direction: column; align-items: flex-start; }
 .error-detail { margin: 2px 0; color: var(--of-ink-2, #475569); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .result { font-size: 13px; }
-.summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
-.rec { font-weight: 600; color: var(--of-brand, #2563eb); }
-.summary-text { margin: 4px 0 12px; color: var(--of-ink, #0f172a); line-height: 1.5; }
+
+/* ① 结论 hero：整块着色 + 左侧色条，作为视觉锚点。配色取 DESIGN.md 语义对（浅底+深字/深边） */
+.hero { margin-bottom: 14px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); background: var(--of-neutral-tag-bg, #eef1f5); }
+.hero-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.hero .rec { font-size: 16px; font-weight: 700; }
+.hero .summary-text { margin: 8px 0 0; color: var(--of-ink, #0f172a); line-height: 1.55; }
+/* 建议着色：DESIGN.md 语义对（浅底+深字），结论文字承载语义，不用强调色边框 */
+.rec-apply_now, .rec-apply { background: #dcfce7; }
+.rec-apply_now .rec, .rec-apply .rec { color: #166534; }
+.rec-consider, .rec-monitor, .rec-insufficient_evidence { background: #fef3c7; }
+.rec-consider .rec, .rec-monitor .rec, .rec-insufficient_evidence .rec { color: #92400e; }
+.rec-skip, .rec-avoid { background: #fee2e2; }
+.rec-skip .rec, .rec-avoid .rec { color: #991b1b; }
+
+/* ② 四维匹配：卡片网格，左色条按档位区分强弱 */
+.dims { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+/* 档位由 section-head 的语义色 Tag 承载，卡片本身保持扁平描边（不使用强调色侧边） */
+.dim-card { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); background: var(--of-card, #fff); }
+.dim-summary { margin: 6px 0 0; color: var(--of-ink-2, #475569); line-height: 1.5; }
+.detail-points { margin-top: 6px; }
+.detail-points > summary { cursor: pointer; font-size: 12px; color: var(--of-ink-2, #475569); }
+
+/* ③ 关键约束与风险：强调块，命中即高亮 */
+.critical { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+/* 语义色由浅底 + 计数 Tag 承载，不使用强调色侧边 */
+.crit-block { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); }
+.crit-block.tone-danger { background: #fee2e2; }
+.crit-block.tone-warning { background: #fef3c7; }
+
+/* ④ 补充信息：整体折叠，收起时不占视觉 */
+.supplement { margin-bottom: 8px; padding: 8px 0; border-top: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); border-bottom: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); }
+.supplement-summary { cursor: pointer; font-weight: 600; color: var(--of-ink, #0f172a); }
+.sub-title { display: block; margin-top: 4px; }
+
 .section { margin-top: 12px; }
 .section-head { display: flex; gap: 8px; align-items: center; }
-.dim-summary { margin: 4px 0; color: var(--of-ink-2, #475569); line-height: 1.5; }
 .point { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 3px 0; border-bottom: 1px dashed var(--of-line, rgba(15, 23, 42, 0.08)); }
 .point-stmt { flex: 1; min-width: 200px; }
 .point-expl { width: 100%; }
@@ -515,4 +605,5 @@ function timeText(ms: number | null): string {
 /* 技术细节折叠：模型与版本号默认收起，靠颜色弱化 summary */
 .tech-summary { cursor: pointer; font-size: 12px; color: var(--of-muted, #94a3b8); }
 .stale-reasons { font-size: 12px; margin-top: 4px; }
+@media (max-width: 560px) { .dims { grid-template-columns: 1fr; } }
 </style>
