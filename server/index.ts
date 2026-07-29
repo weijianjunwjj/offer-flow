@@ -1,7 +1,10 @@
 import { loadProjectEnv } from './config/loadEnv';
 loadProjectEnv();
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import Database from 'better-sqlite3';
 import Fastify from 'fastify';
 import { getDbPath, openDb, type SqliteDatabase } from './db';
 import type { JobMemoryServiceDeps } from './job-memory/jobMemoryService';
@@ -24,6 +27,7 @@ import {
   LATEST_SCHEMA_VERSION,
   MARKET_POSITION_SCHEMA_VERSION,
   PRODUCTION_SCHEMA_VERSION,
+  RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION,
   RADAR_DOMAIN_SCHEMA_VERSION,
   STRATEGY_WINDOW_SCHEMA_VERSION,
 } from './migrations';
@@ -240,17 +244,70 @@ export function buildServer(
   return app;
 }
 
+/** 读取后端布尔开关：未配置或空串时返回默认值（默认 false，保持生产关闭行为）。 */
+function readBackendFlag(value: string | undefined, defaultValue = false): boolean {
+  if (value === undefined || value.trim() === '') return defaultValue;
+  return value.trim().toLowerCase() === 'true';
+}
+
+/** 启动日志用：把绝对 DB 路径脱敏为 <repo-root> 相对形式，不泄露机器绝对路径。 */
+function desensitizeDbPath(dbPath: string): string {
+  const root = process.cwd();
+  const relative = path.relative(root, dbPath);
+  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+    return `<repo-root>/${relative.split(path.sep).join('/')}`;
+  }
+  return path.basename(dbPath);
+}
+
+/** 只读探测真实库 schema 版本（不写、不迁移）；文件不存在时返回 0。 */
+function probeSchemaVersion(dbPath: string): number {
+  if (!fs.existsSync(dbPath)) return 0;
+  const probe = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    return getDatabaseSchemaVersion(probe);
+  } finally {
+    probe.close();
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // 真实服务入口显式开启 G2 能力基线（schema v3）、基础漏斗（无需迁移）、G3 历史补录（schema v4）。
   // G6-B 生产切换：真实生产库已通过显式授权命令（db:upgrade-real --confirm）升级到 schema v6
   // 并导入 G4/G5 正式版本晋升包，现正式在真实入口开启 G4 市场位置画像（需 schema v5）与
   // G5 求职策略（需 schema v6）；服务启动仍不会自动迁移真实库，schema 低于所需版本或高于本代码
   // 支持版本时均会按 schemaStartup 的拒绝逻辑直接报错退出（启动门禁为固定能力版本，不依赖浮动 LATEST）。
+  // 岗位雷达前后端开发开关统一：真实入口从后端环境变量读取，默认关闭（未配置时保持生产关闭行为）。
+  // 后端 OFFERFLOW_RADAR / OFFERFLOW_RADAR_ANALYSIS 与前端 VITE_OFFERFLOW_RADAR /
+  // VITE_OFFERFLOW_RADAR_ANALYSIS 一一对应，避免 npm run dev 下前端显示雷达但后端 404。
+  // 推荐/动作/晋升/追踪不新增开关：沿用 radar 路由内既有 schema/analysis 门禁自动接线。
+  const radarEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR);
+  const radarAnalysisEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR_ANALYSIS);
+  const realDbPath = getDbPath();
+  const realSchemaVersion = probeSchemaVersion(realDbPath);
+  // schema < v8 时禁止启用雷达：评审/晋升/动作/推荐均依赖 v8 候选关系表，
+  // 否则会出现"前端有入口、后端读接口 404 / no such table"的不一致。给出明确启动错误并拒绝启动。
+  if (radarEnabled && realSchemaVersion < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
+    console.error(
+      `[radar] 拒绝启动：已启用 OFFERFLOW_RADAR，但真实数据库 schema 版本为 ${realSchemaVersion}，`
+      + `低于岗位雷达所需的 ${RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION}。`
+      + '请先经授权将真实库升级到 schema v8（npm run db:upgrade-real -- --confirm），或取消 OFFERFLOW_RADAR。',
+    );
+    process.exit(1);
+  }
+  if (radarAnalysisEnabled && !radarEnabled) {
+    console.warn('[radar] OFFERFLOW_RADAR_ANALYSIS=true 但 OFFERFLOW_RADAR 未启用；分析路由挂在雷达网关下，不会注册。');
+  }
+  console.log(
+    `[startup] db=${desensitizeDbPath(realDbPath)} schema=v${realSchemaVersion} `
+    + `radar=${radarEnabled ? 'ENABLED' : 'DISABLED'} analysis=${radarAnalysisEnabled ? 'ENABLED' : 'DISABLED'}`,
+  );
   const app = buildServer({
     capabilityBaseline: { enabled: true },
     historyImport: { enabled: true },
     marketPosition: { enabled: true },
     strategyWindow: { enabled: true },
+    radar: radarEnabled ? { enabled: true, analysisEnabled: radarAnalysisEnabled } : undefined,
   });
   let isClosing = false;
   const closeAndExit = (signal: NodeJS.Signals): void => {
