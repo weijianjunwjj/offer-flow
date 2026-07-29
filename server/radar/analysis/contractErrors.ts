@@ -30,12 +30,28 @@ export const ANALYSIS_CONTRACT_ERROR_CODES = [
 ] as const;
 export type AnalysisContractErrorCode = (typeof ANALYSIS_CONTRACT_ERROR_CODES)[number];
 
+/**
+ * 单条脱敏校验问题：只承载稳定的字段路径与稳定语义码/文案，
+ * **绝不**包含模型 received 值、rawText 片段、JSON 明文或敏感内容。
+ * 供 repair prompt 精确定位与失败摘要持久化使用。
+ */
+export interface AnalysisValidationIssue {
+  /** 字段路径（点连接，例 'dimensions.roleFit.points.0.kind'）；顶层为空串。 */
+  path: string;
+  /** 稳定语义码（Zod issue code 或自定义码，例 'invalid_type' / 'unrecognized_keys'）。 */
+  code: string;
+  /** 稳定语义文案（不含 received 值），已截断。 */
+  message: string;
+}
+
 export class AnalysisContractError extends Error {
   constructor(
     readonly code: AnalysisContractErrorCode,
     message: string,
     /** 仅稳定的字段路径等安全定位信息，不含敏感值。 */
     readonly detail?: string,
+    /** 结构化脱敏校验问题清单（Zod/交叉校验），用于精确修复与失败摘要。 */
+    readonly issues?: readonly AnalysisValidationIssue[],
   ) {
     super(message);
     this.name = 'AnalysisContractError';

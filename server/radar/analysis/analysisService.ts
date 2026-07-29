@@ -37,7 +37,7 @@ import {
   JOB_MATCH_ANALYSIS_POLICY_VERSION,
   JOB_MATCH_ANALYSIS_PROVIDER_POLICY_VERSION,
 } from './analysisPrompt';
-import { createQueuedTask, retryTask as retryTaskCommand } from './taskStateMachine';
+import { createQueuedTask, manualRetryTask } from './taskStateMachine';
 import { invalidTransition, stateConflict } from './errors';
 import { AnalysisExecutor, type AnalyzeResult, type RunOutcome } from './executor';
 import {
@@ -214,13 +214,15 @@ export class AnalysisService {
   }
 
   /**
-   * 人工 retry：仅 failed→queued，复用原 inputSnapshot（不重跑 snapshot builder），attemptCount 不变。
+   * 人工「重新分析」：仅 failed→queued，复用原 inputSnapshot（不重跑 snapshot builder）。
+   * 允许在自动预算（maxAttempts）耗尽后继续，但受硬上限约束（见 manualRetryTask），杜绝无限重试；
+   * attemptCount 历史保留（不清零），越预算时抬升 maxAttempts 恰好放行一次。
    * cancelled 不允许 retry（状态机拒绝）。不立即执行——调用方随后 runTask 才真正运行。
    */
   retryTask(taskId: string): AnalysisTask {
     const current = this.tasks.getById(taskId);
     if (current === null) throw invalidTransition('missing', 'retry');
-    const requeued = retryTaskCommand(current, { now: this.now() });
+    const requeued = manualRetryTask(current, { now: this.now() });
     const ok = this.tasks.transition({
       taskId,
       expectedStatus: 'failed',

@@ -187,10 +187,24 @@ describe('RadarAnalysisPanel failed / retry / 上限 / cancel', () => {
     expect(wrapper.find('[data-testid="analysis-result"]').exists()).toBe(true);
   });
 
-  it('达 maxAttempts：禁用 retry 并说明原因', async () => {
+  it('自动预算耗尽（attemptCount=maxAttempts）仍可人工重新分析', async () => {
+    // 新语义：maxAttempts 是自动预算；越过后用户仍可显式重新分析，直至硬上限（6）。
     mocks.createTask.mockResolvedValue(task({ status: 'queued' }));
     mocks.runTask.mockResolvedValue(task({ status: 'failed' }));
-    mocks.getTask.mockResolvedValue(task({ status: 'failed', attemptCount: 3, maxAttempts: 3, errorCode: 'PROVIDER_ERROR', errorMessage: 'x' }));
+    mocks.getTask.mockResolvedValue(task({ status: 'failed', attemptCount: 3, maxAttempts: 3, errorCode: 'STRUCTURE_REPAIR_FAILED', errorMessage: 'x' }));
+
+    const wrapper = mountPanel();
+    await micro();
+    await wrapper.find('[data-testid="analysis-start"]').trigger('click');
+    await micro();
+    expect(wrapper.find('[data-testid="analysis-exhausted"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="analysis-retry"]').exists()).toBe(true);
+  });
+
+  it('达人工硬上限（attemptCount=6）：禁用重新分析并说明原因', async () => {
+    mocks.createTask.mockResolvedValue(task({ status: 'queued' }));
+    mocks.runTask.mockResolvedValue(task({ status: 'failed' }));
+    mocks.getTask.mockResolvedValue(task({ status: 'failed', attemptCount: 6, maxAttempts: 6, errorCode: 'STRUCTURE_REPAIR_FAILED', errorMessage: 'x' }));
 
     const wrapper = mountPanel();
     await micro();
