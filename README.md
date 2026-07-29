@@ -6,29 +6,31 @@ OfferFlow 将分散的岗位信息、个人履历、能力证据、求职反馈�
 
 ## 当前版本
 
-**v0.7.0 已正式发布。**
+**v0.8.0（发版冻结，尚未 GA；发布待人工确认）。**
 
-- 产品与生产验收已完成
-- 真实运行库已升级至 **schema v6**
-- 岗位匹配画像、能力基线、历史补录、市场位置和求职策略等正式能力已开放
-- 全量测试 **635 / 635** 通过
-- 采用经过验证的 SQLite 一致性备份与恢复方案
+- 版本号与发版文档已冻结在 v0.8.0；这不是 GA / 正式发布声明
+- 真实运行库已受控升级至 **schema v8**（migration 1..8）
+- 可解释岗位雷达、当前页采集桥、单岗位分析、推荐批次、雷达动作与正式晋升等能力**随 v0.8.0 发布但默认关闭**，按功能开关启用（见下方「功能开关」）
+- GA 前置尚未全部解除：30 条真实评测、核心页面真实截图与产品文案验收、用户明确批准发布均未完成（见 [Release Contract §4](docs/product/offerflow-v0.8-release-contract.md)）
+
+正式发布说明见 [docs/release/v0.8.0.md](docs/release/v0.8.0.md)。
 
 ## 当前状态
 
-- 已发布：v0.7.0
-- 规划中：v0.8.0 —— 可解释岗位雷达与 JD 采集桥
-- 当前阶段：V8-0 文档审阅与冻结
-- v0.8 实施状态：尚未开始
+- 当前版本：v0.8.0（发版冻结，尚未 GA）
+- 生产 schema：v8（migration 1..8）
+- Radar / Analysis 正式入口：默认关闭，按开关启用
+- 发布判定：Release Candidate，GA 待人工确认
 
 v0.8 权威文档：
 
+- [docs/release/v0.8.0.md](docs/release/v0.8.0.md)
 - [docs/prd/offerflow-v0.8.md](docs/prd/offerflow-v0.8.md)
 - [docs/product/offerflow-v0.8-release-contract.md](docs/product/offerflow-v0.8-release-contract.md)
 - [docs/technical/offerflow-v0.8-technical-design.md](docs/technical/offerflow-v0.8-technical-design.md)
 - [docs/product/offerflow-v0.8-traceability.md](docs/product/offerflow-v0.8-traceability.md)
 
-请不要把规划中的 v0.8 能力当作已经实现的能力；以下内容仍然是 v0.7.0 当前已发布的真实能力。
+以下「核心能力」章节描述的是 v0.7 起已开放的正式能力；v0.8 新增的雷达类能力默认关闭、按开关启用，不要当作默认开放能力。
 
 ## 核心产品闭环
 
@@ -60,7 +62,7 @@ JD / 岗位信息
 → 状态流转与后续决策建议
 ```
 
-## v0.7.0 核心能力
+## 核心能力（v0.7 起已开放）
 
 ### 岗位与机会台账
 
@@ -191,13 +193,44 @@ npm.cmd run test
 npm.cmd run selftest
 ```
 
+### 本地地址
+
+- 本地前端：http://localhost:5173
+- 本地 API：http://127.0.0.1:17365
+
+## 岗位雷达功能开关（随 v0.8.0 发布，默认关闭）
+
+岗位雷达、单岗位分析、推荐批次、雷达动作与正式晋升等 v0.8 能力**随 v0.8.0 一起发布，但默认关闭**，需要显式开关启用。前端为构建期开关，后端为运行期环境变量，两侧需成对开启，否则会出现「前端有入口、后端 404」。
+
+| 能力 | 前端（构建期） | 后端（运行期） | 默认 |
+|---|---|---|---|
+| 岗位雷达采集桥 | `VITE_OFFERFLOW_RADAR` | `OFFERFLOW_RADAR` | 关闭 |
+| 单岗位分析 | `VITE_OFFERFLOW_RADAR_ANALYSIS` | `OFFERFLOW_RADAR_ANALYSIS` | 关闭 |
+| 推荐批次面板 | `VITE_OFFERFLOW_RADAR_RECOMMENDATIONS` | —（随雷达网关自动接线） | 关闭 |
+
+- 后端启用 `OFFERFLOW_RADAR=true` 时，真实库 schema 必须 ≥ v8，否则服务**拒绝启动**并提示先经授权升级。
+- `OFFERFLOW_RADAR_ANALYSIS` 依赖 `OFFERFLOW_RADAR`；单独开启分析而未开雷达时，分析路由不注册。
+- 推荐 / 动作 / 晋升 / 追踪不新增开关，沿用雷达路由内既有 schema / analysis 门禁自动接线。
+
+## 浏览器扩展
+
+当前页采集桥为独立的浏览器扩展（`browser-extension/`，自身版本 `0.1.0`，与应用版本独立）。改动后需**重新构建并在 Chrome 中重新加载**：
+
+```bash
+npm run extension:typecheck
+npm run extension:build
+```
+
+然后在 `chrome://extensions` 打开「开发者模式」→「加载已解压的扩展程序」选择 `browser-extension/` 目录（已加载过则点「重新加载」）。详见 [browser-extension/README.md](browser-extension/README.md)。
+
 ## 本地数据与恢复策略
 
 OfferFlow 采用本地数据优先：
 
 - `data/offerflow.sqlite3`：本地真实运行库，不进入 Git
 - `backups/`：本地一致性数据库备份目录，不进入 Git
-- 当前生产 schema：**v6**
+- 当前生产 schema：**v8**（migration 1..8）
+- 从任何旧版本升级前**必须**先创建一致性备份（`npm run db:backup`），并在真实库副本上演练迁移
 
 v0.7.0 正式恢复机制采用 Snapshot 方案 B：
 

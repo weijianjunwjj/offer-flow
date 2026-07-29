@@ -102,11 +102,12 @@ v0.8 当前定位为：
 当前状态：
 
 * PRD 版本：v2.1，已冻结；
-* V8-1 已有本地检查点 `043dca7`；
-* V8-2：`CLOSED / FROZEN`；生产数据库已受控激活到 schema v7，Radar 正式入口仍关闭；
-* V8-3：`ACCEPTED / ACTIVATION PENDING`；RC-05 / RC-06 = Done；schema v8 已存在于代码与沙箱，生产未激活；
-* 当前阶段：V8-4 = 持久化任务与可解释单岗位 AI 分析（已获开发授权）；
-* 生产 schema 仍为 v7；Radar 正式入口仍 `DISABLED`；生产 v8 激活仍需独立授权；
+* 当前版本：**v0.8.0（发版冻结，尚未 GA；发布待人工确认）**——不得据此声明 GA / 正式发布；
+* V8-1～V8-6 功能开发完成；V8-2 `CLOSED / FROZEN`、V8-3 `ACCEPTED`、V8-4/V8-5 `MANUAL ACCEPTED`；
+* 生产数据库已受控升级到 **schema v8**（migration 1..8，2026-07-29），`PRODUCTION_SCHEMA_VERSION` 常量仍为 2（生产底座下限语义）；
+* Radar 与 Analysis 正式入口**随 v0.8.0 发布但默认关闭**（`DISABLED`），按开关启用；
+* GA 前置未全解除：30 条真实评测、核心页面真实截图与产品文案验收、用户明确批准发布均未完成；
+* 启用生产 Radar / 执行新的生产 migration / 合并·推送 main / Tag / Release 仍各自需要独立授权；
 * 具体实施状态以 `docs/product/offerflow-v0.8-traceability.md` 为准；
 * 未经用户批准不得再次修改真实生产数据库、push、merge、Tag、Release 或 PR。
 
@@ -820,12 +821,12 @@ AI 不得因为“判断明显”而绕过确认。
 
 ### 当前 P0
 
-* V8-2 已正式关闭并冻结；
-* V8-3 已验收（`ACCEPTED / ACTIVATION PENDING`），RC-05 / RC-06 = Done；
-* 当前进入 V8-4：持久化任务与可解释单岗位 AI 分析；
-* 真实生产数据库仍为 schema v7，Radar 12 张表保持为空；
-* Radar 正式入口与 Analysis 正式入口继续关闭，不自动创建 Radar 数据；
-* 生产 v8 激活与真实 Provider 调用仍需独立授权，V8-4 仅在沙箱 / 测试内以 deterministic fake provider 验证。
+* v0.8.0 发版冻结（版本号 + 发版文档），尚未 GA，发布待人工确认；
+* V8-1～V8-6 功能开发完成；V8-2 关闭冻结、V8-3 已验收、V8-4/V8-5 人工验收通过；
+* 真实生产数据库已受控升级到 schema v8（migration 1..8）；Radar 候选关系等表已建但正式入口关闭，不自动创建 Radar 数据；
+* Radar 与 Analysis 正式入口随 v0.8.0 发布但默认关闭，按开关启用；
+* GA 前置未全解除：30 条真实评测、核心页面真实截图与产品文案验收、用户明确批准发布；
+* 启用生产 Radar、真实 Provider 调用、执行新的生产 migration 仍各自需要独立授权。
 
 ### 持续禁止擅自开展
 
