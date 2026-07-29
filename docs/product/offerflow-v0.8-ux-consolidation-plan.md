@@ -1,8 +1,10 @@
 # OfferFlow v0.8 · UX 收口波次 — 审计与改造方案
 
-> 状态：**方案（未实施）**。本文档只做审计与改造设计，不含任何代码改动。
-> 波次 id 待用户指定（本文内暂记为「UX 收口波次」）。
-> 生成日期：2026-07-28。
+> 状态：**已实施（IMPLEMENTED，2026-07-29）**。方案 §4 全部改造项已落地（commit `633eb0d` 建立三阶段主线、`eb43f1a` 降低工作台信息噪声），纯展示层、未改行为层；**仅剩「人工无说明 smoke」（§7）待补**。原始审计与改造设计原文保留在下，作为实施依据；实施状态与验证结果以 `docs/product/offerflow-v0.8-traceability.md` §1.5 为准。
+> 波次 id：**V8-UX 收口**（不占用 V8-6 范围）。
+> 生成日期：2026-07-28（实施完成 2026-07-29）。
+>
+> **实施完成对照（§4）：** ①§4.1 步骤条 `RadarStageStepper.vue`✅；②§4.2 行动卡 `RadarNextActionCard.vue`✅；③§4.3 三问引导 `RadarGuideBar.vue`✅；④§4.4 动作后下一步引导（Import「去评审」CTA、Review 动作后下一步）✅；⑤§4.5 技术码默认折叠进 `<details class="tech-details">`✅；⑥导航「岗位雷达」入口（受既有 `radarEnabled` 门禁，默认关）✅。**未做：** 品牌行 `v0.7.0` 版本号未改（§4.5 建议项，列为已知遗留）；`JobListPage`/`BattlefieldPage` 阶段 3「过桥说明」为方案标注的可选项，本波未加。**验证（2026-07-29 全绿）：** `vue-tsc`、`vitest` 1456/1456、`vite build`、`review/recommendation/promotion/action/trace` E2E（11/5/11/10/13）、`migration:selftest`、`db:doctor` 全部通过；**人工无说明 smoke 仍待补**（§7 核心三页真实截图 + 中文文案人工验收，此项完成前不得标注为「验收通过」）。
 
 ## 0. 目的与硬边界
 
@@ -157,10 +159,12 @@
 - **testid：** 现有 `data-testid` 一律保留在原节点；折叠改造只包裹或换可见文案，不移除/改名 testid。新增元素用新增 testid（如 `radar-stage-stepper`、`radar-next-action`、`radar-guide-bar`）。
 - **E2E：** 现有 selector 若依赖当前可见的技术码文本，需先跑一遍现有 `radar` / `review` / `promotion` / `trace` E2E，定位受影响断言；折叠时把该文本保留在折叠内的同一 testid 节点，使断言不破。实施波次以「先跑基线 → 改 → 再全绿」为准。
 
-## 7. 验证计划（实施波次执行，本波次不跑）
+## 7. 验证计划（实施波次执行）
 
-实施时按序：`vue-tsc` 类型检查 → `vitest` 全量 → 相关 E2E（radar/review/promotion/trace）→ `vite build`。
+按序：`vue-tsc` 类型检查 → `vitest` 全量 → 相关 E2E（radar/review/recommendation/promotion/action/trace）→ `vite build`。
 核心三页需真实截图 + 中文文案人工验收（对照 §3 三阶段与 §4.3 三问表）。未运行的验证必须显式说明。
+
+**执行结果（2026-07-29）：** 自动化门禁**全部执行并全绿** —— `vue-tsc --noEmit` 通过；`vitest run` 1456/1456；`vite build` 通过；`review:e2e` 11/11、`recommendation:e2e` 5/5、`promotion:e2e` 11/11、`action:e2e` 10/10、`trace:e2e` 13/13；`migration:selftest` passed；`db:doctor` `ok`/`integrity=ok`/FK 0。**未运行 / 待补：核心三页真实截图 + 中文文案「人工无说明 smoke」尚未进行**，此项完成前 V8-UX 不得声明「验收通过」。
 
 ## 8. 风险与遗留
 

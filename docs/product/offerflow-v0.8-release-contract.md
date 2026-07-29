@@ -2,8 +2,8 @@
 
 > **合同版本：** 1.0  
 > **对应 PRD：** v2.1  
-> **状态：** 已冻结；V8-2 已关闭并冻结；V8-3 已验收（`ACCEPTED / ACTIVATION PENDING`，RC-05 / RC-06 = Done）；V8-4 `IMPLEMENTATION COMPLETE / MANUAL ACCEPTANCE PENDING`（RC-07 / RC-12 单岗位分析部分 = Partial，代码与自动化回归 2026-07-25 全绿；人工验收未签字，实施证据见 `docs/technical/offerflow-v0.8-v8-4-implementation-evidence.md`）。生产 schema 仍为 v7，Radar 与 Analysis 正式入口关闭。
-> **日期：** 2026-07-17（状态摘要 2026-07-25 更新）
+> **状态：`ENGINEERING COMPLETE / RELEASE CANDIDATE`（v0.8.0-rc1，2026-07-29）——非 GA。** 合同已冻结。RC-01～RC-08、RC-10、RC-11 = Done；V8-4 / V8-5 / V8-6 功能开发完成；V8-UX 收口（三阶段主线 + 信息噪声降噪）实现完成，仅剩「人工无说明 smoke」待补；RC-09 Not Started、RC-12 `Partial / Blocked`。**§4 版本完成判定尚未全部满足**：30 条真实评测（数据与人工标注阻塞）、生产 v8 migration/backup/recovery（授权阻塞）、核心页面真实截图与产品文案验收、用户明确批准发布均未完成。因此本版本**只能声明 Release Candidate，不得声明 GA / 正式发布 / 版本完成**。生产 schema 仍为 v7，Radar 与 Analysis 正式入口关闭；合并 main / 推送 main / Tag / Release 仍未授权（§5）。
+> **日期：** 2026-07-17（状态摘要 2026-07-29 更新为 v0.8.0-rc1）
 
 ---
 
