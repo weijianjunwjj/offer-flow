@@ -148,6 +148,20 @@ describe('RadarRecommendationPanel 结果展示', () => {
     expect(w.find('[data-testid="recommendation-blocked-hard_constraint_hit"]').text()).toContain('命中硬性约束');
     expect(w.find('[data-testid="recommendation-blocked-ignored_unchanged"]').text()).toContain('已忽略且未变化');
   });
+
+  it('内部 ID / 批次号默认折叠到 details，但文本仍在 DOM', async () => {
+    mocks.createBatch.mockResolvedValue(batch([rec()], { id: 'batch-fold' }));
+    const w = mountPanel();
+    await w.find('[data-testid="recommendation-generate"]').trigger('click');
+    await flushPromises();
+    // 每条建议的候选版本 ID 收进折叠 details，默认 collapsed。
+    const itemFold = w.find('[data-testid="recommendation-item-1"] details.tech-details');
+    expect(itemFold.exists()).toBe(true);
+    expect(itemFold.attributes('open')).toBeUndefined();
+    // 批次号仍可查（testid 文本保留），但位于折叠 details 内。
+    expect(w.find('[data-testid="recommendation-meta"]').text()).toContain('batch-fold');
+    expect(w.find('details.tech-details [data-testid="recommendation-meta"]').exists()).toBe(true);
+  });
 });
 
 describe('RadarRecommendationPanel 加载最新与健壮性', () => {

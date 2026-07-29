@@ -211,6 +211,22 @@ describe('晋升面板 · 结果与错误', () => {
     expect(w.find('[data-testid="promotion-result-id"]').text()).toContain('promo-1');
   });
 
+  it('正式记录 ID 默认折叠到 details，但文本仍在 DOM 供回溯', async () => {
+    mocks.preview.mockResolvedValue({ plan: plan() });
+    mocks.promote.mockResolvedValue({ promotion: promotion(), plan: plan(), created: true });
+    const w = render();
+    await w.find('[data-testid="promotion-preview"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-testid="promotion-confirm"]').trigger('click');
+    await flushPromises();
+    // 成功结论（NAlert 标题）直出，ID 收进折叠 details，默认 collapsed。
+    const fold = w.find('[data-testid="promotion-result"] details.tech-details');
+    expect(fold.exists()).toBe(true);
+    expect(fold.attributes('open')).toBeUndefined();
+    // ID 文本仍可查（既有断言不破）。
+    expect(w.find('[data-testid="promotion-result-id"]').text()).toContain('promo-1');
+  });
+
   it('job_only 结果只展示岗位 ID，不臆造投递/事件 ID', async () => {
     mocks.preview.mockResolvedValue({ plan: plan() });
     mocks.promote.mockResolvedValue({

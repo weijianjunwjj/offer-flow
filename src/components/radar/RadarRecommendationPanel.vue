@@ -163,7 +163,11 @@ function emptyReasonLabel(v: string | null): string {
       <div v-if="batch" class="result" data-testid="recommendation-result">
         <NAlert v-if="isEmptyBatch" type="info" class="mb" data-testid="recommendation-empty"
           :title="emptyReasonLabel(emptyReason)">
-          <NText depth="3" data-testid="recommendation-empty-reason-code">原因码：{{ emptyReason ?? 'none' }}</NText>
+          <!-- 原因码默认折叠：中文说明已在 title 呈现，原码保留供排查 -->
+          <details class="tech-details">
+            <summary class="tech-summary">技术细节</summary>
+            <NText depth="3" data-testid="recommendation-empty-reason-code">原因码：{{ emptyReason ?? 'none' }}</NText>
+          </details>
         </NAlert>
 
         <template v-else>
@@ -174,7 +178,6 @@ function emptyReasonLabel(v: string | null): string {
               <span class="priority" data-testid="recommendation-priority">#{{ rec.priority }}</span>
               <NTag size="small" :type="kindTagType(rec.kind)" data-testid="recommendation-kind">{{ kindLabel(rec.kind) }}</NTag>
               <NTag size="small" data-testid="recommendation-confidence">置信度：{{ confidenceLabel(rec.confidence) }}</NTag>
-              <code class="cvid">{{ rec.candidateVersionId }}</code>
               <!-- 晋升入口：只选中该建议，不触发任何写操作 -->
               <NButton v-if="promotionEnabled" size="tiny"
                 :type="promotingCandidateVersionId === rec.candidateVersionId ? 'primary' : 'default'"
@@ -191,6 +194,11 @@ function emptyReasonLabel(v: string | null): string {
               <code v-for="(ref, i) in rec.evidenceRefs" :key="i" class="ekey" :class="ref.polarity"
                 :data-testid="`recommendation-evidence-${ref.polarity}`">{{ ref.polarity === 'support' ? '＋' : '－' }} {{ ref.evidenceKey }}</code>
             </details>
+            <!-- 内部候选版本 ID 默认折叠：保留可复制回溯，默认不与结论/理由争夺注意力 -->
+            <details class="tech-details">
+              <summary class="tech-summary">技术细节</summary>
+              <code class="cvid">{{ rec.candidateVersionId }}</code>
+            </details>
           </div>
         </template>
 
@@ -199,13 +207,21 @@ function emptyReasonLabel(v: string | null): string {
           <NText strong>被排除的候选（{{ blocked.length }}）</NText>
           <div v-for="(b, i) in blocked" :key="i" class="blocked-item" :data-testid="`recommendation-blocked-${b.reason}`">
             <NTag size="tiny" type="error">{{ blockReasonLabel(b.reason) }}</NTag>
-            <code class="cvid">{{ b.candidateVersionId }}</code>
+            <!-- 内部候选版本 ID 默认折叠：保留可查，默认只显示中文阻断原因 -->
+            <details class="tech-details">
+              <summary class="tech-summary">技术细节</summary>
+              <code class="cvid">{{ b.candidateVersionId }}</code>
+            </details>
           </div>
         </div>
 
-        <div class="meta" data-testid="recommendation-meta">
-          <NText depth="3">批次 {{ batch.id }} · 状态 {{ batch.status }}</NText>
-        </div>
+        <!-- 批次号 + 状态默认折叠到「技术细节」：保留可查，默认不占视觉 -->
+        <details class="tech-details meta">
+          <summary class="tech-summary">技术细节</summary>
+          <div data-testid="recommendation-meta">
+            <NText depth="3">批次 {{ batch.id }} · 状态 {{ batch.status }}</NText>
+          </div>
+        </details>
       </div>
     </template>
   </NCard>
@@ -233,4 +249,7 @@ function emptyReasonLabel(v: string | null): string {
 .blocked { margin-top: 12px; }
 .blocked-item { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
 .meta { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); }
+/* 技术细节折叠：内部 ID / 批次号 / 原因码默认收起，靠颜色弱化 summary */
+.tech-details { margin-top: 4px; }
+.tech-summary { cursor: pointer; font-size: 12px; color: var(--of-muted, #94a3b8); }
 </style>

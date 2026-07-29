@@ -163,6 +163,11 @@ function selectNextRelation(): void {
   if (next) void selectRelation(next);
 }
 
+/** 操作完成后是否还有下一条可处理（用于引导「继续下一条」）。 */
+const hasNextRelation = computed(() =>
+  relations.value.some((r) => r.relationId !== selectedRelation.value?.relationId),
+);
+
 /** 建议面板锚点：选中后引导用户滚动到建议区，收敛为单一主 CTA。 */
 const recommendationPanel = ref<HTMLElement | null>(null);
 function scrollToRecommendations(): void {
@@ -338,6 +343,13 @@ function signalValueText(v: string | number | boolean | null): string {
     />
     <NAlert v-if="errorText" type="error" :title="errorText" data-testid="review-error" />
     <NAlert v-if="notice" type="success" :title="notice" data-testid="review-notice" closable @close="notice = ''" />
+    <!-- 操作完成后明确引导下一步：继续下一条 / 生成建议 / 去晋升，收敛用户动线 -->
+    <div v-if="notice" class="post-guide" data-testid="post-action-guide">
+      <NText depth="3">下一步：</NText>
+      <NButton v-if="hasNextRelation" size="small" type="primary" data-testid="guide-next-relation" @click="selectNextRelation">继续下一条</NButton>
+      <NButton v-if="recommendationsEnabled" size="small" data-testid="guide-recommendations" @click="scrollToRecommendations">生成建议</NButton>
+      <NButton size="small" data-testid="guide-promote" @click="goStage('promote')">去晋升</NButton>
+    </div>
     <NSpin :show="loading">
       <div class="review-grid">
         <!-- 区域 1：待处理关系 -->
@@ -360,8 +372,11 @@ function signalValueText(v: string | number | boolean | null): string {
                 <NTag size="small" :type="rel.status === 'needs_recheck' ? 'warning' : 'info'">{{ relationStatusLabel(rel.status) }}</NTag>
                 {{ rel.lowSummary.company ?? '?' }} × {{ rel.highSummary.company ?? '?' }}
               </NButton>
-              <!-- 技术码降级：保留在 DOM 供排查，视觉弱化为次要副文本 -->
-              <span class="tech-code">{{ rel.status }}</span>
+              <!-- 技术码默认折叠到「技术细节」：保留在 DOM 供排查与既有断言，默认不占视觉 -->
+              <details class="tech-details">
+                <summary class="tech-summary">技术细节</summary>
+                <span class="tech-code">{{ rel.status }}</span>
+              </details>
             </li>
           </ul>
         </NCard>
@@ -375,8 +390,11 @@ function signalValueText(v: string | number | boolean | null): string {
                 <NTag size="small" :type="f.analysisEligible ? 'success' : 'error'">{{ decisionTypeLabel(f.decisionType) }}</NTag>
                 <NText depth="3">{{ f.summary?.company ?? '（无候选）' }}</NText>
               </NButton>
-              <!-- 技术码降级：保留 decisionType 原码供排查（e2e testid 亦依赖该码） -->
-              <span class="tech-code">{{ f.decisionType }}</span>
+              <!-- 技术码默认折叠：保留 decisionType 原码供排查（e2e testid 亦依赖该码），默认不占视觉 -->
+              <details class="tech-details">
+                <summary class="tech-summary">技术细节</summary>
+                <span class="tech-code">{{ f.decisionType }}</span>
+              </details>
               <div v-if="f.conflictReason" class="reason" data-testid="feed-conflict-reason">
                 冲突原因：{{ f.conflictReason }}
               </div>
@@ -437,10 +455,12 @@ function signalValueText(v: string | number | boolean | null): string {
               <div class="field-row"><span>经验</span><span>{{ d.currentVersion?.experienceRequirement ?? '—' }}</span></div>
               <div class="field-row"><span>JD</span><span>{{ d.currentVersion?.jdExcerpt ?? '—' }}</span></div>
               <div class="field-row"><span>来源</span><span>{{ d.currentVersion?.normalizedSourceUrl ?? '—' }}</span></div>
-              <!-- 内部版本号弱化：保留可查，视觉降级 -->
-              <div class="field-row tech-row"><span>当前版本</span><span class="tech-code">{{ d.activeCandidateVersionId ?? '—' }}</span></div>
-              <!-- 决策类型中文 Tag 已上移至卡头；此处仅保留技术码（弱化） -->
-              <div class="tech-code">{{ d.decisionType }}</div>
+              <!-- 内部版本号 + 决策类型技术码默认折叠到「技术细节」：保留可查，默认不占视觉 -->
+              <details class="tech-details">
+                <summary class="tech-summary">技术细节</summary>
+                <div class="field-row tech-row"><span>当前版本</span><span class="tech-code">{{ d.activeCandidateVersionId ?? '—' }}</span></div>
+                <div class="tech-code">{{ d.decisionType }}</div>
+              </details>
               <div v-if="d.conflictReason" class="reason">冲突原因：{{ d.conflictReason }}</div>
               <div v-for="cf in d.changedFields" :key="cf.fieldPath" class="reason" data-testid="changed-field">
                 {{ cf.fieldPath }}：{{ cf.before ?? '∅' }} → {{ cf.after ?? '∅' }}（{{ cf.classification }}：{{ cf.reason }}）
@@ -481,11 +501,15 @@ function signalValueText(v: string | number | boolean | null): string {
           </ul>
           <div class="reason" data-testid="relation-meta">
             当前状态：{{ relationStatusLabel(relationDetail.status) }}
-            <span class="tech-code">{{ relationDetail.status }}</span>
-            ｜ 原因码：{{ relationDetail.reasonCode ?? '—' }}
             ｜ 首次检测：{{ timeText(relationDetail.firstDetectedAt) }}
             ｜ 最近检测：{{ timeText(relationDetail.lastDetectedAt) }}
             ｜ 裁决时间：{{ timeText(relationDetail.decidedAt) }}
+            <!-- 状态原码 + 原因码默认折叠：保留在 DOM 供排查，默认只显示中文结论与时间 -->
+            <details class="tech-details">
+              <summary class="tech-summary">技术细节</summary>
+              <span class="tech-code">{{ relationDetail.status }}</span>
+              ｜ 原因码：{{ relationDetail.reasonCode ?? '—' }}
+            </details>
           </div>
           <div v-if="relationDetail.decisionReason" class="reason" data-testid="relation-decision-reason">
             用户裁决原因：{{ relationDetail.decisionReason }}
@@ -497,10 +521,14 @@ function signalValueText(v: string | number | boolean | null): string {
               <li v-for="a in relationDetail.auditTimeline" :key="a.actionId" class="audit-item" :data-testid="`relation-audit-${a.actionType}`">
                 <NTag size="small">{{ relationActionLabel(a.actionType) }}</NTag>
                 <span>{{ timeText(a.occurredAt) }}</span>
-                <span>→ {{ a.resultingStatus }}</span>
                 <span v-if="a.evidenceReason">（证据：{{ a.evidenceReason }}）</span>
                 <span v-if="a.reason" class="reason">原因：{{ a.reason }}</span>
                 <NTag v-if="a.reverted" size="tiny" type="warning">已被后续撤销</NTag>
+                <!-- 结果状态原码默认折叠：保留在 DOM 供排查，默认不占视觉 -->
+                <details class="tech-details">
+                  <summary class="tech-summary">技术细节</summary>
+                  <span class="tech-code">→ {{ a.resultingStatus }}</span>
+                </details>
               </li>
             </ul>
           </div>
@@ -515,7 +543,6 @@ function signalValueText(v: string | number | boolean | null): string {
               <NTag size="small">{{ e.ruleKey }}</NTag>
               <NTag size="small" :type="e.evidenceState === 'corrupt' ? 'error' : e.evidenceState === 'legacy_scalar' ? 'warning' : 'default'">{{ evidenceStateLabel(e.evidenceState) }}</NTag>
               <NTag size="small" :type="e.overrideState === 'none' ? 'default' : 'info'">覆盖：{{ overrideStateLabel(e.overrideState) }}</NTag>
-              <NText v-if="e.outcome" depth="3" class="tech-code">outcome={{ e.outcome }}</NText>
             </NSpace>
             <div v-if="e.evidenceState === 'structured'" class="reason">
               字段 {{ e.matchedFieldPath }} · 原值 {{ e.rawValue }} · 规范化 {{ e.normalizedValue }} · 置信度 {{ e.confidence }}
@@ -530,6 +557,7 @@ function signalValueText(v: string | number | boolean | null): string {
               <div class="reason" :data-testid="`evidence-original-${e.assessmentId}`">
                 原评估 {{ e.assessmentId }} · 结果 {{ e.originalResult }}
                 <span v-if="e.evidenceHashShort"> · 证据哈希 {{ e.evidenceHashShort }}</span>
+                <span v-if="e.outcome" class="tech-code">· outcome={{ e.outcome }}</span>
               </div>
             </details>
             <div class="immutable-note" :data-testid="`evidence-immutable-${e.assessmentId}`">
@@ -626,6 +654,8 @@ function signalValueText(v: string | number | boolean | null): string {
 /* 主决策区：靠版面位置（列表之下、候选详情之上）与卡片标题建立层级，不加装饰性标边 */
 .primary-zone { border-radius: 10px; }
 .filter-bar { margin-bottom: 8px; }
+/* 操作完成后的下一步引导：横排、贴着成功提示，弱边界不喧宾夺主 */
+.post-guide { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .signal-list, .audit-list { list-style: none; padding: 0; margin: 4px 0; }
 .signal-item, .audit-item {
   padding: 4px 0; border-bottom: 1px dashed var(--of-line, rgba(15, 23, 42, 0.08));

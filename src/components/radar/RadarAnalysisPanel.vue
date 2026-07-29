@@ -472,11 +472,13 @@ function timeText(ms: number | null): string {
           <ul class="lines"><li v-for="(l, i) in displayedResult.payload.communicationAngles" :key="i">{{ l }}</li></ul>
         </div>
 
-        <div class="meta" data-testid="analysis-meta">
+        <!-- 模型 / 版本号默认折叠：生成时间等排查信息保留在 DOM，默认不占视觉 -->
+        <details class="meta tech-details" data-testid="analysis-meta">
+          <summary class="tech-summary">技术细节（模型与版本号）</summary>
           <NText depth="3">模型：{{ displayedResult.modelProvider }} / {{ displayedResult.modelName }}</NText>
           <NText depth="3">规则 {{ displayedResult.ruleVersion }} · 提示词 {{ displayedResult.promptVersion }} · 策略 {{ displayedResult.analysisPolicyVersion }}</NText>
           <NText depth="3">生成于 {{ timeText(displayedResult.createdAt) }}</NText>
-        </div>
+        </details>
       </div>
     </template>
   </NCard>
@@ -503,5 +505,7 @@ function timeText(ms: number | null): string {
 .lines { margin: 4px 0; padding-left: 18px; }
 .lines li { line-height: 1.5; }
 .meta { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; padding-top: 8px; border-top: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); }
+/* 技术细节折叠：模型与版本号默认收起，靠颜色弱化 summary */
+.tech-summary { cursor: pointer; font-size: 12px; color: var(--of-muted, #94a3b8); }
 .stale-reasons { font-size: 12px; margin-top: 4px; }
 </style>

@@ -229,16 +229,20 @@ const wasClamped = computed(() => (
 
       <!-- 晋升成功：给出正式对象 ID 供用户回溯 -->
       <NAlert v-if="promoted" type="success" class="result" title="已晋升为正式记录" data-testid="promotion-result">
-        <div class="ids">
-          <div data-testid="promotion-result-job">岗位 ID：<code class="oid">{{ promoted.jobId }}</code></div>
-          <div v-if="promoted.applicationId" data-testid="promotion-result-application">
-            投递 ID：<code class="oid">{{ promoted.applicationId }}</code>
+        <!-- 正式对象 ID 默认折叠：晋升成功的中文结论已在标题呈现，ID 保留供回溯 -->
+        <details class="tech-details">
+          <summary class="tech-summary">正式记录 ID（供回溯）</summary>
+          <div class="ids">
+            <div data-testid="promotion-result-job">岗位 ID：<code class="oid">{{ promoted.jobId }}</code></div>
+            <div v-if="promoted.applicationId" data-testid="promotion-result-application">
+              投递 ID：<code class="oid">{{ promoted.applicationId }}</code>
+            </div>
+            <div v-if="promoted.feedbackEventId" data-testid="promotion-result-feedback">
+              反馈事件 ID：<code class="oid">{{ promoted.feedbackEventId }}</code>
+            </div>
+            <div data-testid="promotion-result-id">晋升记录 ID：<code class="oid">{{ promoted.id }}</code></div>
           </div>
-          <div v-if="promoted.feedbackEventId" data-testid="promotion-result-feedback">
-            反馈事件 ID：<code class="oid">{{ promoted.feedbackEventId }}</code>
-          </div>
-          <div data-testid="promotion-result-id">晋升记录 ID：<code class="oid">{{ promoted.id }}</code></div>
-        </div>
+        </details>
         <!-- 晋升成功后的主线出口：去岗位详情或岗位台账跟踪，不把用户留在评审页 -->
         <div class="track-actions" data-testid="promotion-track">
           <NButton size="small" type="primary" data-testid="promotion-track-job"
@@ -280,4 +284,7 @@ const wasClamped = computed(() => (
 .track-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 /* 正式对象 ID：可复制回溯，但弱化为辅助信息 */
 .oid { padding: 0 6px; background: rgba(15, 23, 42, 0.05); border-radius: 8px; font-size: 12px; color: var(--of-ink-2, #475569); }
+/* 技术细节折叠：正式记录 ID 默认收起，靠颜色弱化 summary */
+.tech-details { margin-top: 4px; }
+.tech-summary { cursor: pointer; font-size: 12px; color: var(--of-muted, #94a3b8); }
 </style>

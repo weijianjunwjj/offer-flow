@@ -431,6 +431,48 @@ describe('RadarReviewPage 人工操作二次确认 + 语义 + 409', () => {
     });
   });
 
+  it('操作完成后展示下一步引导（继续下一条 / 去晋升）', async () => {
+    // 两条关系：裁决第一条后仍有下一条可处理，引导「继续下一条」应出现。
+    mocks.listRelations.mockResolvedValue([relation(), relation({ relationId: 'rel-2' })]);
+    mocks.getRelationDetail.mockResolvedValue(relationDetail());
+    mocks.listDecisionFeed.mockResolvedValue([]);
+    mocks.getCandidateDetail.mockResolvedValue(detail());
+    mocks.listRuleEvidence.mockResolvedValue([]);
+    mocks.confirmDistinct.mockResolvedValue({ status: 'confirmed_distinct' });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 操作前无引导。
+    expect(wrapper.find('[data-testid="post-action-guide"]').exists()).toBe(false);
+    await wrapper.find('[data-testid="btn-confirm-distinct"]').trigger('click');
+    const vm = wrapper.vm as unknown as { reasonDraft: string };
+    vm.reasonDraft = '两家为不同法人';
+    await flushPromises();
+    await wrapper.find('[data-testid="confirm-submit"]').trigger('click');
+    await flushPromises();
+    // 操作成功后出现下一步引导：继续下一条 + 去晋升（推荐能力默认关闭，不含生成建议）。
+    const guide = wrapper.find('[data-testid="post-action-guide"]');
+    expect(guide.exists()).toBe(true);
+    expect(wrapper.find('[data-testid="guide-next-relation"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="guide-promote"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="guide-recommendations"]').exists()).toBe(false);
+  });
+
+  it('技术码默认折叠到 details，但仍保留在 DOM（可排查、既有断言不破）', async () => {
+    setupHappy({ status: 'suspected_duplicate' });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="relation-rel-1"]').trigger('click');
+    await flushPromises();
+    // 关系列表行内技术码收进折叠 details，默认 collapsed，但原码文本仍在 DOM。
+    const listFold = wrapper.find('[data-testid="relation-list"] details.tech-details');
+    expect(listFold.exists()).toBe(true);
+    expect(listFold.attributes('open')).toBeUndefined();
+    expect(wrapper.find('[data-testid="relation-list"]').text()).toContain('suspected_duplicate');
+    // relation-meta：中文状态与时间仍直出，状态原码折叠但仍可查。
+    expect(wrapper.find('[data-testid="relation-meta"]').text()).toContain('当前状态：疑似重复');
+    expect(wrapper.find('[data-testid="relation-meta"]').text()).toContain('suspected_duplicate');
+  });
+
   it('并发冲突（409）提示刷新且不清空已填原因', async () => {
     setupHappy();
     mocks.confirmSame.mockRejectedValue(new ApiError('conflict', 409, { code: 'RELATION_STATE_CONFLICT' }));
