@@ -1,0 +1,369 @@
+/** cc-auto 编排器：串联分类、探路、构建、验证、修复、仲裁与预算闭环。 */
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { CcAutoConfig } from './config';
+import { budgetForComplexity } from './config';
+import { classifyTask } from './classify';
+import { computeFailureFingerprint, truncateLog } from './fingerprint';
+import { redactForDisk } from './redact';
+import {
+  createRunState, saveRunState, loadRunState, runStateExists,
+  savePhaseRecord, loadPhaseRecord, newRunId, writeReport,
+  type RunState,
+} from './store';
+import { renderReport } from './report';
+import { shouldEscalateToArbiter, budgetGate, changedFilesExceeded } from './stateMachine';
+import { validateConfiguredModelPricing } from './budget';
+import { changedFilesSince, shortStatus } from './git';
+import type { ClaudeCallOptions, ClaudeCallResult } from './runner';
+import type { Phase } from './types';
+
+export interface OrchestratorDeps {
+  cwd: string;
+  config: CcAutoConfig;
+  runClaude: (options: ClaudeCallOptions) => Promise<ClaudeCallResult>;
+  /** 定向验证：同名 spec -> 同模块 spec -> 全量测试兜底；永不「找不到测试=通过」。 */
+  runTests: (files: string[]) => Promise<{ passed: boolean; output: string }>;
+  /** FINAL_VERIFY 专用：至少一次全量 typecheck + 一次全量 vitest。 */
+  runFullVerification: () => Promise<{ passed: boolean; output: string }>;
+  currentDailyRmb: () => number;
+  recordDailySpend: (rmb: number) => void;
+  hookSettingsInlineJson: string;
+  log: (line: string) => void;
+}
+
+const SCOUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    relevantFiles: { type: 'array', items: { type: 'string' }, maxItems: 10 },
+    notes: { type: 'string' },
+  },
+  required: ['relevantFiles'],
+};
+
+const BUILDER_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary: { type: 'string' },
+    changedFiles: { type: 'array', items: { type: 'string' } },
+    needsArbitration: { type: 'boolean' },
+    arbitrationReason: { type: 'string' },
+  },
+  required: ['summary', 'changedFiles'],
+};
+
+function stop(state: RunState, reason: RunState['stopReason'], detail: string): void {
+  state.currentPhase = 'STOPPED';
+  state.stopReason = reason;
+  state.stopDetail = detail;
+  state.done = true;
+}
+
+async function guardedCall(
+  deps: OrchestratorDeps,
+  state: RunState,
+  phase: Phase,
+  role: ClaudeCallOptions['role'],
+  taskBudgetRmb: number,
+  optionsBase: ClaudeCallOptions,
+): Promise<ClaudeCallResult | null> {
+  // 粗略预估（元），基于各角色模型单次调用的典型花费，用于「调用前」预算闭环；
+  // 真实花费在调用返回后累加进 state.calls，下一次调用会用真实累计值再校验一次。
+  const estimate = role === 'arbiter' ? 3 : role === 'builder' ? 1.5 : 0.3;
+  const gate = budgetGate(state, deps.config, taskBudgetRmb, deps.currentDailyRmb(), estimate);
+  if (gate.blocked) {
+    stop(state, gate.reason, gate.detail ?? '');
+    deps.log(`预算超限，停止于 ${phase}：${gate.detail}`);
+    return null;
+  }
+  const result = await deps.runClaude(optionsBase);
+  // 调用已经真实发生：无论能否定价，先把 usage 计入 state.calls（含 token、官方费用、role、耗时），再判断是否停止。
+  state.calls.push(result.usage);
+  if (result.pricingError) {
+    stop(state, 'PRICING_NOT_FOUND', `模型 ID「${result.pricingError.modelId}」未在第三方渠道价格表中，不使用默认价格猜测，已停止（该调用已记录为 UNPRICED）`);
+    deps.log(`价格表未命中模型 ID：${result.pricingError.modelId}，停止于 ${phase}`);
+    return null;
+  }
+  // 仅 PRICED 调用有确切人民币费用可累计当日花费；UNPRICED（null）不得写成 0。
+  if (result.usage.costRmb !== null) deps.recordDailySpend(result.usage.costRmb);
+  savePhaseRecord(deps.cwd, state.runId, phase, { role, resultText: result.resultText, structuredOutput: result.structuredOutput, isError: result.isError, subtype: result.subtype });
+  return result;
+}
+
+function builderPrompt(task: string, scoutFiles: string[], failureContext?: string): string {
+  const parts = [`任务：${task}`];
+  if (scoutFiles.length > 0) parts.push(`已知相关文件（来自探路阶段）：${scoutFiles.join(', ')}`);
+  parts.push('必须遵守本仓库 AGENTS.md/CLAUDE.md 的边界：不新增依赖、不改数据库 schema、不推送/合并/打 Tag，不做产品验收替代。');
+  if (failureContext) parts.push(`上一轮验证失败，请修复：\n${failureContext}`);
+  return parts.join('\n\n');
+}
+
+async function runScout(deps: OrchestratorDeps, state: RunState, taskBudgetRmb: number): Promise<string[]> {
+  const rule = deps.config.models.scout;
+  const result = await guardedCall(deps, state, 'SCOUT', 'scout', taskBudgetRmb, {
+    prompt: `只读探路，找出与以下任务最相关的最多 ${deps.config.limits.maxContextFiles} 个文件，不要修改任何文件：\n${state.taskDescription}`,
+    role: 'scout',
+    rule,
+    tools: ['Read', 'Grep', 'Glob'],
+    jsonSchema: SCOUT_SCHEMA,
+    cwd: deps.cwd,
+  });
+  if (!result) return [];
+  const structured = result.structuredOutput as { relevantFiles?: string[] } | undefined;
+  return structured?.relevantFiles ?? [];
+}
+
+interface BuilderOutput {
+  summary: string;
+  changedFiles: string[];
+  needsArbitration: boolean;
+  arbitrationReason?: string;
+}
+
+async function runBuilder(
+  deps: OrchestratorDeps,
+  state: RunState,
+  phase: Phase,
+  taskBudgetRmb: number,
+  scoutFiles: string[],
+  failureContext: string | undefined,
+  highRisk: boolean,
+): Promise<BuilderOutput | null> {
+  const rule = highRisk ? deps.config.models.builderHighRisk : deps.config.models.builderDefault;
+  const result = await guardedCall(deps, state, phase, 'builder', taskBudgetRmb, {
+    prompt: builderPrompt(state.taskDescription, scoutFiles, failureContext),
+    role: 'builder',
+    rule,
+    tools: ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob'],
+    jsonSchema: BUILDER_SCHEMA,
+    settingsInlineJson: deps.hookSettingsInlineJson,
+    cwd: deps.cwd,
+  });
+  if (!result) return null;
+  const structured = result.structuredOutput as BuilderOutput | undefined;
+  if (!structured) return null;
+  for (const file of structured.changedFiles) {
+    if (!state.changedFiles.includes(file)) state.changedFiles.push(file);
+  }
+  return structured;
+}
+
+const ARBITRATION_BUNDLE_MAX_CHARS = 8000;
+
+/**
+ * Opus 仲裁硬隔离：
+ * - cwd 是每次调用新建的独立临时目录，绝不是仓库根目录，Opus 无法通过任何文件工具触达仓库；
+ * - 该临时目录内只写入脱敏 + 裁剪后的 arbitration-bundle.json，不放任何其他文件；
+ * - tools 传空数组：不开放 Bash/Edit/Write/Glob/Grep，也不开放 Read——上下文只通过 prompt 文本直接给出；
+ * - 结构化输出仍必须满足 JSON Schema。
+ */
+async function runArbiter(
+  deps: OrchestratorDeps,
+  state: RunState,
+  taskBudgetRmb: number,
+  contextBundle: string,
+): Promise<{ decision: string; rootCause: string } | null> {
+  if (state.opusCalls >= deps.config.limits.maxOpusCalls) return null;
+  const rule = deps.config.models.arbiter;
+
+  const redactedBundle = redactForDisk(contextBundle).slice(0, ARBITRATION_BUNDLE_MAX_CHARS);
+  const isolatedCwd = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-arbiter-'));
+  try {
+    writeFileSync(path.join(isolatedCwd, 'arbitration-bundle.json'), JSON.stringify({ bundle: redactedBundle }, null, 2), 'utf8');
+
+    const result = await guardedCall(deps, state, 'ARBITRATE', 'arbiter', taskBudgetRmb, {
+      prompt: `请诊断根因并给出决策，不要尝试探索或读取任何文件（也没有文件工具可用），只依据以下上下文：\n${redactedBundle}`,
+      role: 'arbiter',
+      rule,
+      tools: [],
+      jsonSchema: { type: 'object', properties: { rootCause: { type: 'string' }, decision: { type: 'string' } }, required: ['rootCause', 'decision'] },
+      cwd: isolatedCwd,
+    });
+    state.opusCalls += 1;
+    if (!result) return null;
+    return result.structuredOutput as { decision: string; rootCause: string };
+  } finally {
+    rmSync(isolatedCwd, { recursive: true, force: true });
+  }
+}
+
+export async function runTask(deps: OrchestratorDeps, taskDescription: string, estimatedFiles?: number): Promise<RunState> {
+  const runId = newRunId();
+  const state = createRunState(deps.cwd, runId, taskDescription, deps.config.pricingMode);
+  return driveStateMachine(deps, state, estimatedFiles);
+}
+
+export async function resumeTask(deps: OrchestratorDeps, runId: string): Promise<RunState> {
+  if (!runStateExists(deps.cwd, runId)) throw new Error(`未找到 run：${runId}`);
+  const state = loadRunState(deps.cwd, runId);
+  if (state.done) {
+    deps.log(`run ${runId} 已处于终态（${state.currentPhase}），无需 resume`);
+    return state;
+  }
+  return driveStateMachine(deps, state, undefined);
+}
+
+function finish(deps: OrchestratorDeps, state: RunState): RunState {
+  saveRunState(deps.cwd, state);
+  const markdown = renderReport(state);
+  const reportPath = writeReport(deps.cwd, state.runId, markdown);
+  deps.log(`报告已写入：${reportPath}`);
+  return state;
+}
+
+/**
+ * flaky 检测：只在「第一次结果为失败」时才重跑一次同配置校验——第一次通过就直接采信，
+ * 避免每次验证都多花一倍成本。若第一次失败、第二次通过（或反之），判定为不稳定，交给上层 STOPPED。
+ */
+async function verifyWithFlakyGuard(
+  runOnce: () => Promise<{ passed: boolean; output: string }>,
+): Promise<{ passed: boolean; output: string; flaky: boolean }> {
+  const first = await runOnce();
+  if (first.passed) return { ...first, flaky: false };
+  const second = await runOnce();
+  if (second.passed !== first.passed) {
+    return { passed: false, output: `${first.output}\n\n--- 重跑结果不一致 ---\n${second.output}`, flaky: true };
+  }
+  return { ...second, flaky: false };
+}
+
+async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estimatedFiles: number | undefined): Promise<RunState> {
+  // 启动任何 claude 子进程之前：校验四个角色配置的具体模型 ID 都能定价，否则立即 STOPPED / PRICING_NOT_FOUND，
+  // 绝不 spawn 任何子进程（run 与 resume 都经由本函数，因而两条路径都受此校验保护）。
+  const pricingCheck = validateConfiguredModelPricing(deps.config);
+  if (!pricingCheck.ok) {
+    const detail = pricingCheck.missing.map((m) => `${m.role}=${m.modelId}`).join('、');
+    stop(state, 'PRICING_NOT_FOUND', `配置的模型未在第三方渠道价格表中，无法在启动前定价：${detail}；不使用默认价格猜测，未发起任何模型调用`);
+    deps.log(`配置校验失败：以下角色模型缺少渠道价格 ${detail}，未启动任何 claude 子进程`);
+    return finish(deps, state);
+  }
+
+  const dirty = shortStatus(deps.cwd);
+  if (state.currentPhase === 'INTAKE') {
+    state.currentPhase = 'PREFLIGHT';
+    saveRunState(deps.cwd, state);
+  }
+  if (state.currentPhase === 'PREFLIGHT') {
+    if (dirty.length > 0) deps.log(`工作区存在未提交改动（${dirty.length} 项），继续执行但请注意区分`);
+    state.currentPhase = 'CLASSIFY';
+    saveRunState(deps.cwd, state);
+  }
+
+  if (state.currentPhase === 'CLASSIFY') {
+    state.classification = classifyTask(state.taskDescription, estimatedFiles);
+    saveRunState(deps.cwd, state);
+    deps.log(`分类结果：${state.classification.complexity}（风险分 ${state.classification.riskScore}）`);
+    state.currentPhase = state.classification.complexity === 'simple' ? 'IMPLEMENT' : 'SCOUT';
+    saveRunState(deps.cwd, state);
+  }
+
+  const classification = state.classification!;
+  const taskBudgetRmb = budgetForComplexity(deps.config, classification.complexity);
+  let scoutFiles: string[] = loadPhaseRecord<{ structuredOutput?: { relevantFiles?: string[] } }>(deps.cwd, state.runId, 'SCOUT')?.structuredOutput?.relevantFiles ?? [];
+
+  if (state.currentPhase === 'SCOUT') {
+    scoutFiles = await runScout(deps, state, taskBudgetRmb);
+    if (state.done) return finish(deps, state);
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(deps.cwd, state);
+  }
+
+  let failureContext: string | undefined;
+  let lastFingerprint: string | undefined;
+
+  while (!state.done) {
+    if (state.currentPhase === 'IMPLEMENT' || state.currentPhase === 'REPAIR_1' || state.currentPhase === 'REPAIR_2') {
+      const builderResult = await runBuilder(deps, state, state.currentPhase, taskBudgetRmb, scoutFiles, failureContext, classification.touchesHighRisk);
+      if (state.done) break;
+      if (!builderResult) { stop(state, 'PROVIDER_ERROR', 'builder 未返回结构化输出'); break; }
+      if (changedFilesExceeded(state, deps.config)) { stop(state, 'MAX_CHANGED_FILES_EXCEEDED', `改动文件数 ${state.changedFiles.length} 超过上限 ${deps.config.limits.maxChangedFiles}`); break; }
+
+      const escalate = shouldEscalateToArbiter({
+        riskScore: classification.riskScore,
+        touchesHighRisk: classification.touchesHighRisk,
+        repeatedFingerprint: false,
+        acceptanceConflict: builderResult.needsArbitration,
+      });
+      if (escalate) { state.currentPhase = 'ARBITRATE'; saveRunState(deps.cwd, state); continue; }
+      state.currentPhase = 'VERIFY';
+      saveRunState(deps.cwd, state);
+      continue;
+    }
+
+    if (state.currentPhase === 'VERIFY' || state.currentPhase === 'FINAL_VERIFY') {
+      const isFinal = state.currentPhase === 'FINAL_VERIFY';
+      const runOnce = isFinal
+        ? () => deps.runFullVerification()
+        : () => {
+            const targetFiles = changedFilesSince(deps.cwd);
+            return deps.runTests(targetFiles.length > 0 ? targetFiles : state.changedFiles);
+          };
+      const verifyResult = await verifyWithFlakyGuard(runOnce);
+      savePhaseRecord(deps.cwd, state.runId, state.currentPhase, verifyResult);
+      if (verifyResult.flaky) {
+        stop(state, 'FLAKY_TESTS', '同配置重跑一次后结果仍不稳定（两次结果不一致），停止等待人工确认');
+        break;
+      }
+      if (verifyResult.passed) {
+        if (isFinal) { state.currentPhase = 'DONE'; state.done = true; }
+        else { state.currentPhase = 'FINAL_VERIFY'; }
+        saveRunState(deps.cwd, state);
+        continue;
+      }
+      const fingerprint = computeFailureFingerprint(verifyResult.output);
+      const repeated = fingerprint === lastFingerprint;
+      lastFingerprint = fingerprint;
+      failureContext = truncateLog(verifyResult.output);
+      state.failures.push({ phase: state.currentPhase, fingerprint, summary: '验证失败', truncatedLog: failureContext, createdAt: new Date().toISOString() });
+
+      if (shouldEscalateToArbiter({ riskScore: classification.riskScore, touchesHighRisk: classification.touchesHighRisk, repeatedFingerprint: repeated, acceptanceConflict: false })) {
+        state.currentPhase = 'ARBITRATE';
+        saveRunState(deps.cwd, state);
+        continue;
+      }
+      if (state.repairCycles >= deps.config.limits.maxRepairCycles) {
+        stop(state, 'REPEATED_FAILURE_FINGERPRINT', '已用尽修复配额，仍未通过验证');
+        break;
+      }
+      state.repairCycles += 1;
+      state.currentPhase = state.repairCycles === 1 ? 'REPAIR_1' : 'REPAIR_2';
+      saveRunState(deps.cwd, state);
+      continue;
+    }
+
+    if (state.currentPhase === 'ARBITRATE') {
+      const bundle = [
+        `任务：${state.taskDescription}`,
+        `已改动文件：${state.changedFiles.join(', ') || '（无）'}`,
+        failureContext ? `最近一次失败日志：\n${failureContext}` : '（无失败日志，为高风险/冲突升级）',
+      ].join('\n\n');
+      const arbiterResult = await runArbiter(deps, state, taskBudgetRmb, bundle);
+      if (state.done) break;
+      if (!arbiterResult) { stop(state, 'ARBITRATION_FAILED', '仲裁未返回有效决策或已用尽仲裁配额'); break; }
+      savePhaseRecord(deps.cwd, state.runId, 'ARBITRATE', arbiterResult);
+      state.currentPhase = 'APPLY_DECISION';
+      saveRunState(deps.cwd, state);
+      continue;
+    }
+
+    if (state.currentPhase === 'APPLY_DECISION') {
+      // 仲裁决策仅作为下一轮修复的上下文，不自动执行任何高风险动作；沿用 failureContext 走 REPAIR。
+      const arbitration = loadPhaseRecord<{ decision: string; rootCause: string }>(deps.cwd, state.runId, 'ARBITRATE');
+      failureContext = [failureContext, arbitration ? `仲裁根因：${arbitration.rootCause}\n仲裁决策：${arbitration.decision}` : ''].filter(Boolean).join('\n\n');
+      if (state.repairCycles >= deps.config.limits.maxRepairCycles) {
+        stop(state, 'ARBITRATION_FAILED', '仲裁后仍无修复配额可用');
+        break;
+      }
+      state.repairCycles += 1;
+      state.currentPhase = state.repairCycles === 1 ? 'REPAIR_1' : 'REPAIR_2';
+      saveRunState(deps.cwd, state);
+      continue;
+    }
+
+    stop(state, 'PROVIDER_ERROR', `未知阶段：${state.currentPhase}`);
+    break;
+  }
+
+  return finish(deps, state);
+}

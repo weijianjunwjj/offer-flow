@@ -69,7 +69,10 @@
     "snapshot:selftest": "tsx scripts/snapshotConsistency.selftest.ts",
     "sync:selftest": "tsx scripts/sync.selftest.ts",
     "selftest": "tsx scripts/storage.selftest.ts && tsx scripts/offerFlowJson.selftest.ts && tsx scripts/targetProfileScore.selftest.ts && tsx scripts/decision.selftest.ts && tsx scripts/reviewWorkflow.selftest.ts && tsx scripts/jdImageOcr.selftest.ts && tsx scripts/migrations.selftest.ts && tsx scripts/sync.selftest.ts && tsx scripts/snapshotConsistency.selftest.ts",
-    "eval:offerflow-json": "tsx scripts/offerFlowJson.eval.ts"
+    "eval:offerflow-json": "tsx scripts/offerFlowJson.eval.ts",
+    "cc:auto": "tsx scripts/ccAuto/cli.ts run",
+    "cc:auto:resume": "tsx scripts/ccAuto/cli.ts resume",
+    "cc:auto:report": "tsx scripts/ccAuto/cli.ts report"
   },
   "dependencies": {
     "fastify": "^5.9.0",
