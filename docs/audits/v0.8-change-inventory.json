@@ -1,0 +1,236 @@
+{
+  "auditDate": "2026-07-30",
+  "requestedWindow": { "start": "2026-07-20", "end": "2026-07-30" },
+  "baseline": {
+    "tag": "v0.7.0",
+    "commit": "5eeaa51",
+    "commitDate": "2026-07-17T13:23:47+08:00",
+    "note": "Only v0.7 tag present in repo; used verbatim as baseline per instructions."
+  },
+  "head": {
+    "commit": "ac5ef65",
+    "commitDate": "2026-07-30T11:52:30+08:00",
+    "subject": "\u6587\u6863\uff1a\u6279\u51c6 OfferFlow v0.8.0 \u6b63\u5f0f\u53d1\u5e03"
+  },
+  "gitStats": {
+    "commitCount": 100,
+    "commitsPerDay": {
+      "2026-07-17": 2,
+      "2026-07-20": 1,
+      "2026-07-22": 14,
+      "2026-07-23": 17,
+      "2026-07-24": 10,
+      "2026-07-25": 8,
+      "2026-07-26": 0,
+      "2026-07-27": 16,
+      "2026-07-28": 14,
+      "2026-07-29": 13,
+      "2026-07-30": 5
+    },
+    "filesChanged": 322,
+    "filesAdded": 294,
+    "filesModified": 28,
+    "filesDeleted_netView": 0,
+    "insertions": 48299,
+    "deletions": 490,
+    "netChange": 47809,
+    "churnByCategory": {
+      "code": 21200,
+      "test": 17442,
+      "doc": 8443,
+      "migration": 1134,
+      "config": 184,
+      "other": 386
+    },
+    "addedThenDeletedFiles": [
+      "analysis-e2e/gatedProvider.ts",
+      "docs/evidence/v8-3-ma-02-list-after-confirm-distinct.png",
+      "docs/evidence/v8-3-ma-04-rule-evidence-override.png"
+    ],
+    "top20ChurnFiles": [
+      { "file": "browser-extension/src/extractors/bossExtractor.ts", "churn": 1740 },
+      { "file": "docs/prd/offerflow-v0.8.md", "churn": 1079 },
+      { "file": "browser-extension/src/content/batchCapture.ts", "churn": 1060 },
+      { "file": "AGENTS.md", "churn": 1021 },
+      { "file": "docs/technical/offerflow-v0.8-technical-design.md", "churn": 851 },
+      { "file": "server/radar/routes.spec.ts", "churn": 847 },
+      { "file": "browser-extension/src/extractors/extractors.spec.ts", "churn": 794 },
+      { "file": "src/pages/RadarReviewPage.vue", "churn": 695 },
+      { "file": "docs/technical/offerflow-v0.8-v8-3-normalization-dedup-change-design.md", "churn": 680 },
+      { "file": "docs/technical/offerflow-v0.8-v8-4-reliable-single-analysis-design.md", "churn": 628 },
+      { "file": "src/components/radar/RadarAnalysisPanel.vue", "churn": 609 },
+      { "file": "scripts/migrations.selftest.ts", "churn": 608 },
+      { "file": "server/radar/rowMappers.ts", "churn": 601 },
+      { "file": "browser-extension/e2e/batch-capture.e2e.spec.ts", "churn": 597 },
+      { "file": "server/radar/reviewService.ts", "churn": 570 },
+      { "file": "src/pages/RadarReviewPage.spec.ts", "churn": 526 },
+      { "file": "server/radar/service.ts", "churn": 486 },
+      { "file": "server/radar/promotion/promotionService.spec.ts", "churn": 460 },
+      { "file": "src/components/radar/RadarAnalysisPanel.spec.ts", "churn": 459 },
+      { "file": "src/pages/RadarImportPage.vue", "churn": 432 }
+    ],
+    "mostRevisedNewFiles": [
+      { "file": "docs/product/offerflow-v0.8-traceability.md", "commits": 18 },
+      { "file": "src/pages/RadarReviewPage.vue", "commits": 13 },
+      { "file": "src/pages/RadarReviewPage.spec.ts", "commits": 9 },
+      { "file": "server/radar/routes.ts", "commits": 8 },
+      { "file": "server/radar/index.ts", "commits": 7 },
+      { "file": "docs/product/offerflow-v0.8-release-contract.md", "commits": 7 },
+      { "file": "src/components/radar/RadarRecommendationPanel.vue", "commits": 6 },
+      { "file": "scripts/retryAnalysisTask.ts", "commits": 6 }
+    ]
+  },
+  "testStats": {
+    "specFilesAtBaseline": 75,
+    "specFilesAtHead": 154,
+    "newSpecFiles": 79,
+    "totalItTestBlocksAtHead": 1416,
+    "vitestRunResult": {
+      "executedAt": "2026-07-30",
+      "testFiles": 143,
+      "tests": 1506,
+      "failed": 4,
+      "passedFiles": 139,
+      "failedFiles": [
+        "server/market-position/service.spec.ts",
+        "server/radar/routes.spec.ts",
+        "server/strategy-window/service.spec.ts",
+        "server/radar/analysis/analysisRoutes.spec.ts"
+      ],
+      "failureCause": "5000ms timeout under full concurrent run (resource contention); all 4 files pass in isolation (46/46) on re-run",
+      "verdict": "not a real regression"
+    },
+    "vueTscResult": { "errors": 0 }
+  },
+  "schemaAndApi": {
+    "migrationsAdded": ["radarDomainSchemaV7 (v7)", "radarCandidateRelationsSchemaV8 (v8)"],
+    "tablesAddedV7": [
+      "radar_capture_sessions", "radar_capture_snapshots", "radar_source_records",
+      "radar_candidates", "radar_candidate_versions", "radar_candidate_sources",
+      "radar_rule_assessments", "analysis_tasks", "job_match_analysis_records",
+      "radar_recommendation_batches", "radar_actions", "radar_promotions"
+    ],
+    "tablesAddedV8": ["radar_candidate_relations"],
+    "productionSchemaPhysicalUpgrade": {
+      "from": 7,
+      "to": 8,
+      "date": "2026-07-29",
+      "authorized": true,
+      "note": "PRODUCTION_SCHEMA_VERSION constant remains 2 (min-required-without-radar semantic); physical sqlite file is at schema 8 per prod-schema-v8-activation memory and traceability doc"
+    },
+    "newHttpRoutes": 37,
+    "routesByModule": {
+      "server/radar/routes.ts": 19,
+      "server/radar/analysis/analysisRoutes.ts": 7,
+      "server/radar/recommendation/recommendationRoutes.ts": 3,
+      "server/radar/promotion/promotionRoutes.ts": 8
+    },
+    "featureFlags": {
+      "radarEnabled": false,
+      "radarAnalysisEnabled": false,
+      "radarRecommendationsEnabled": false,
+      "verifiedBy": "direct read of src/config/features.ts at HEAD"
+    }
+  },
+  "newDomainFiles": {
+    "serverRadarFileCount": 117,
+    "newPages": ["src/pages/RadarImportPage.vue", "src/pages/RadarReviewPage.vue"],
+    "newComponents": [
+      "RadarActionBar", "RadarAnalysisPanel", "RadarGuideBar", "RadarNextActionCard",
+      "RadarPromotionOriginTrace", "RadarPromotionPanel", "RadarPromotionTracePanel",
+      "RadarRecommendationPanel", "RadarStageStepper"
+    ]
+  },
+  "categorization": {
+    "A_userVisibleFeatures": [
+      { "item": "BOSS capture bridge", "commits": ["e9fe2f9"], "files": ["browser-extension/src/extractors/bossExtractor.ts", "browser-extension/src/content/batchCapture.ts"], "survives": true, "tested": true, "userVisible": true, "v08Required": true },
+      { "item": "Radar review workbench", "commits": ["V8-3 wave"], "files": ["src/pages/RadarReviewPage.vue", "server/radar/reviewService.ts"], "survives": true, "tested": true, "userVisible": "gated off", "v08Required": true },
+      { "item": "Single-job AI analysis panel", "commits": ["V8-4 wave", "60dbbb0-area fixes"], "files": ["src/components/radar/RadarAnalysisPanel.vue", "server/radar/analysis"], "survives": true, "tested": true, "userVisible": "gated off", "v08Required": true },
+      { "item": "Recommendation batches", "commits": ["V8-5 wave"], "files": ["src/components/radar/RadarRecommendationPanel.vue", "server/radar/recommendation"], "survives": true, "tested": true, "userVisible": "gated off", "v08Required": true },
+      { "item": "Formal promotion + reverse trace", "commits": ["V8-6 wave"], "files": ["src/components/radar/RadarPromotionPanel.vue", "server/radar/promotion"], "survives": true, "tested": true, "userVisible": "gated off", "v08Required": true },
+      { "item": "Promotion follow-up entry for submitted-pending candidates", "commits": ["5db96f3"], "files": [], "survives": true, "tested": "unverified", "userVisible": true, "v08Required": true }
+    ],
+    "B_infrastructure": [
+      { "item": "Radar domain model (Candidate/Version/Action/Promotion)", "commits": ["V8-1/V8-3/V8-6"], "files": ["server/radar/**"], "survives": true, "tested": true, "userVisible": false, "v08Required": true },
+      { "item": "schema v7/v8 migrations + selftest", "commits": ["043dca7", "eee6009", "a68db89"], "files": ["server/migrations/radarDomainSchemaV7.ts", "server/migrations/radarCandidateRelationsSchemaV8.ts"], "survives": true, "tested": true, "userVisible": false, "v08Required": true },
+      { "item": "CodeGraph local index adoption", "commits": ["e40f461"], "files": [".gitignore"], "survives": true, "tested": false, "userVisible": false, "v08Required": false },
+      { "item": "Production v7->v8 controlled upgrade + backup verification", "commits": ["c4e1be1"], "files": ["docs/runbooks/offerflow-v0.8-migration-recovery.md"], "survives": true, "tested": true, "userVisible": false, "v08Required": true }
+    ],
+    "C_bugfixesAndCompat": [
+      { "item": "DeepSeek reasoning-model JSON truncation (symptomatic fix)", "commit": "0c55d29", "rootCause": false },
+      { "item": "DeepSeek reasoning-model JSON truncation (root-cause fix: disable thinking)", "commit": "60dbbbd", "rootCause": true },
+      { "item": "Manual recovery task for capped-retry failed analyses", "commit": "d41f400", "rootCause": null },
+      { "item": "Bounded auto-retry for transient network flake", "commit": "5a7972e", "rootCause": null },
+      { "item": "Unify radar dev-mode feature flags frontend/backend", "commit": "dcfb940", "rootCause": true },
+      { "item": "Use actual local frontend access address", "commit": "c34e865", "rootCause": true }
+    ],
+    "D_testsDocsQuality": {
+      "newSpecFiles": 79,
+      "testChurnLines": 17442,
+      "docChurnLines": 8443,
+      "note": "Test churn is same order of magnitude as code churn (17442 vs 21200), indicating tests were added alongside features rather than after the fact."
+    },
+    "E_refactorNoBehaviorChange": [
+      { "item": "Single-job analysis panel restructured to 4-tier priority, conclusion-first", "commit": "81cc4d8" },
+      { "item": "Reduce radar workbench information noise", "commit": "eb43f1a" }
+    ],
+    "F_reworkAndWaste": [
+      { "item": "analysis-e2e/gatedProvider.ts created then removed", "scale": "small" },
+      { "item": "DeepSeek JSON fix: symptomatic pass before root-cause pass", "scale": "one cycle, contained same-day" },
+      { "item": "12 of 40 sessions are handoff/takeover sessions requiring re-verification of prior state", "scale": "structural, cross-session overhead" }
+    ],
+    "G_undeterminedValue": [
+      { "item": ".impeccable/design.json, browser-extension/src/popup/popup.html changes", "reason": "cannot judge contribution from diff alone" },
+      { "item": "Session in isolated worktree with branch name 'feat/nova-wing-v0.1' (unrelated product name) but cwd pointing at this repo", "reason": "needs user confirmation whether intentional" }
+    ]
+  },
+  "sessionAudit": {
+    "dataSource": "local .jsonl logs under C:\\Users\\Administrator\\.claude\\projects\\D--VSCode-offer-pilot and ...-offer-flow-v8-4-e2e",
+    "disclaimer": "Session logs contain per-message model + token usage fields but no RMB cost field. Cost figures in this report are taken verbatim from user-provided billing aggregates; token-derived numbers are used only for relative comparison, not cost back-calculation.",
+    "sessionsInWindow": 29,
+    "totalUserTurns": 7019,
+    "totalAssistantMessages": 13646,
+    "handoffOrTakeoverSessions": 12,
+    "handoffSessionFraction": 0.30,
+    "passiveInterruptionSessions": 3,
+    "passiveInterruptionCause": "Upstream Provider 400 error or quota exhaustion",
+    "subagentToolCalls": 15,
+    "toolCallCounts": {
+      "Bash": 2722, "Read": 1495, "Edit": 1240, "Write": 337,
+      "TaskUpdate": 266, "TaskCreate": 195, "Grep": 191, "Agent": 15,
+      "Glob": 23, "WebSearch": 8, "WebFetch": 8, "codegraph_explore": 5
+    },
+    "tokenLogVsBillingReconciliation": {
+      "logDerivedTotalTokensM": 2030.9,
+      "userProvidedTotalTokensM": 991.97,
+      "ratio": 2.05,
+      "explanation": "cache_read_input_tokens likely billed at a fraction of base input rate; log totals are raw token counts, not billing-equivalent tokens. Not usable for exact cost back-calculation.",
+      "opusShareLogTokens": 0.861,
+      "opusShareUserBilling": 0.906,
+      "note": "directionally consistent, corroborates Opus-4.8-dominant-cost conclusion without claiming precise percentage equivalence"
+    }
+  },
+  "billingDataAsProvidedByUser": {
+    "claude-opus-4-8": { "requests": 5648, "tokensM": 849.4, "costRMB": 645.2405 },
+    "claude-sonnet-5": { "requests": 731, "tokensM": 79.6, "costRMB": 22.6473 },
+    "claude-opus-5": { "requests": 475, "tokensM": 62.6, "costRMB": 43.6179 },
+    "claude-haiku-4-5": { "requests": 41, "tokensM": 0.3729, "costRMB": 0.3461 },
+    "total": { "requests": 6895, "tokensM": 991.97, "costRMB": 711.85 }
+  },
+  "verification": {
+    "commandsRun": [
+      "git log/diff/show (read-only)",
+      "npx vitest run",
+      "npx vue-tsc --noEmit",
+      "node scripts for session .jsonl aggregation (temp, deleted after use)"
+    ],
+    "businessCodeModified": false,
+    "configModified": false,
+    "dependenciesModified": false,
+    "testsModified": false,
+    "onlyFilesAdded": [
+      "docs/audits/v0.8-cost-audit.md",
+      "docs/audits/v0.8-change-inventory.json"
+    ]
+  }
+}
