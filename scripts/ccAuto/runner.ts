@@ -12,6 +12,10 @@ export interface ClaudeCallOptions {
   appendSystemPrompt?: string;
   jsonSchema?: object;
   settingsInlineJson?: string;
+  /** 仅供无工具、临时目录隔离的 Arbiter 使用：--bare 最小模式。有工具角色不可用（会导致工具无法执行）。 */
+  bare?: boolean;
+  /** 有工具角色（Builder/Scout）的上下文隔离：禁用 MCP/Skills/Chrome/会话持久化，同时保留工具可执行。 */
+  isolateContext?: boolean;
   cwd: string;
   timeoutMs?: number;
 }
@@ -47,15 +51,23 @@ interface RawClaudeResult {
   permission_denials?: Array<{ tool_name: string; tool_input: unknown }>;
 }
 
-function buildArgs(options: ClaudeCallOptions): string[] {
-  const args = [
+export function buildArgs(options: ClaudeCallOptions): string[] {
+  const args: string[] = [];
+  // --bare：最小模式，跳过 hooks/自动记忆/CLAUDE.md 自动发现等。经验证：--bare 下内置工具无法执行，
+  // 故仅供 tools 为空的 Arbiter 使用；有工具角色改用下方 isolateContext 做等效的上下文隔离。
+  if (options.bare) args.push('--bare');
+  // 有工具角色（Builder/Scout）的上下文隔离：不继承 GUI 的 MCP/Skills/Chrome/会话，但保留工具可执行。
+  if (options.isolateContext) {
+    args.push('--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands', '--no-chrome', '--no-session-persistence');
+  }
+  args.push(
     '-p', options.prompt,
     '--model', options.rule.model,
     '--effort', options.rule.effort,
     '--max-turns', String(options.rule.maxTurns),
     '--output-format', 'json',
     '--tools', options.tools.join(','),
-  ];
+  );
   if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt);
   if (options.jsonSchema) args.push('--json-schema', JSON.stringify(options.jsonSchema));
   if (options.settingsInlineJson) args.push('--settings', options.settingsInlineJson);

@@ -33,6 +33,24 @@ export interface OrchestratorDeps {
   log: (line: string) => void;
 }
 
+// --bare 下不再自动加载 CLAUDE.md/AGENTS.md，各角色所需最小规则改为经 --append-system-prompt 显式注入。
+// 三段规则均要求「所有报告使用简体中文」，并各自附最小边界。
+const SCOUT_SYSTEM_RULE = [
+  '你是只读探路角色。只允许使用 Read/Grep/Glob 定位相关文件，禁止修改、创建或删除任何文件。',
+  '所有报告使用简体中文。',
+].join('\n');
+
+const BUILDER_SYSTEM_RULE = [
+  '你是受控实施角色，必须遵守本仓库 AGENTS.md/CLAUDE.md 的边界：',
+  '不新增依赖、不修改数据库 schema、不推送/合并/打 Tag、不做产品验收替代、不擅自扩大范围。',
+  '所有报告使用简体中文。',
+].join('\n');
+
+const ARBITER_SYSTEM_RULE = [
+  '你是仲裁角色。只依据 prompt 中给出的上下文进行根因诊断与决策，禁止探索或读取任何文件（也没有文件工具可用）。',
+  '所有报告使用简体中文。',
+].join('\n');
+
 const SCOUT_SCHEMA = {
   type: 'object',
   properties: {
@@ -107,6 +125,8 @@ async function runScout(deps: OrchestratorDeps, state: RunState, taskBudgetRmb: 
     rule,
     tools: ['Read', 'Grep', 'Glob'],
     jsonSchema: SCOUT_SCHEMA,
+    appendSystemPrompt: SCOUT_SYSTEM_RULE,
+    isolateContext: true,
     cwd: deps.cwd,
   });
   if (!result) return [];
@@ -137,7 +157,9 @@ async function runBuilder(
     rule,
     tools: ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob'],
     jsonSchema: BUILDER_SCHEMA,
+    appendSystemPrompt: BUILDER_SYSTEM_RULE,
     settingsInlineJson: deps.hookSettingsInlineJson,
+    isolateContext: true,
     cwd: deps.cwd,
   });
   if (!result) return null;
@@ -178,6 +200,8 @@ async function runArbiter(
       rule,
       tools: [],
       jsonSchema: { type: 'object', properties: { rootCause: { type: 'string' }, decision: { type: 'string' } }, required: ['rootCause', 'decision'] },
+      appendSystemPrompt: ARBITER_SYSTEM_RULE,
+      bare: true,
       cwd: isolatedCwd,
     });
     state.opusCalls += 1;
