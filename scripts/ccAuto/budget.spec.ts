@@ -9,6 +9,7 @@ function call(model: CallUsage['model'], costRmb: number): CallUsage {
     cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
     costUsd: costRmb / DEFAULT_CONFIG.usdToRmbRate,
     costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 0, numTurns: 1, pricingStatus: 'PRICED',
+    subtype: 'success', isError: false, permissionDenialsCount: 0,
   };
 }
 

@@ -1,8 +1,21 @@
 /** 实际拉起全局 claude CLI 的封装：仅本模块知道如何 spawn 子进程。 */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import type { CallUsage, ModelRole } from './types';
 import type { ModelRuleConfig, CcAutoConfig } from './config';
 import { usdToRmb, customRmbCost } from './budget';
+
+/** 在启动任何模型调用前验证 claude 可执行文件能否启动。 */
+export function verifyClaudeBinary(): { ok: boolean; error?: string } {
+  const claudeBin = process.env.CC_AUTO_CLAUDE_BIN || 'claude';
+  try {
+    const result = spawnSync(claudeBin, ['--version'], { encoding: 'utf8', timeout: 5000 });
+    if (result.error) return { ok: false, error: `spawn ${claudeBin}: ${result.error.message}` };
+    if (result.status !== 0) return { ok: false, error: `${claudeBin} --version 退出码 ${result.status}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
 
 export interface ClaudeCallOptions {
   prompt: string;
@@ -49,6 +62,16 @@ interface RawClaudeResult {
   };
   structured_output?: unknown;
   permission_denials?: Array<{ tool_name: string; tool_input: unknown }>;
+  /** 若 CLI 返回完整 conversation（实验性），用于提取可观测性元数据；不持久化完整 transcript */
+  conversation?: Array<{ role: string; content?: string | ConversationContentBlock[] }>;
+}
+
+interface ConversationContentBlock {
+  type: string;
+  name?: string;
+  text?: string;
+  tool_use_id?: string;
+  is_error?: boolean;
 }
 
 export function buildArgs(options: ClaudeCallOptions): string[] {
@@ -74,6 +97,42 @@ export function buildArgs(options: ClaudeCallOptions): string[] {
   return args;
 }
 
+function extractObservability(raw: RawClaudeResult): Pick<CallUsage, 'toolUseCounts' | 'toolErrorCounts' | 'mcpServers' | 'lastAssistantTextSummary'> {
+  const toolUseCounts: Record<string, number> = {};
+  const toolErrorCounts: Record<string, number> = {};
+  let lastAssistantText = '';
+
+  if (raw.conversation && Array.isArray(raw.conversation)) {
+    for (const turn of raw.conversation) {
+      if (turn.role === 'assistant' && typeof turn.content === 'string') {
+        lastAssistantText = turn.content;
+      } else if (turn.role === 'assistant' && Array.isArray(turn.content)) {
+        for (const block of turn.content) {
+          if (block.type === 'tool_use' && block.name) {
+            toolUseCounts[block.name] = (toolUseCounts[block.name] ?? 0) + 1;
+          } else if (block.type === 'text' && typeof block.text === 'string') {
+            lastAssistantText = block.text;
+          }
+        }
+      } else if (turn.role === 'user' && Array.isArray(turn.content)) {
+        for (const block of turn.content) {
+          if (block.type === 'tool_result' && block.is_error) {
+            const name = block.tool_use_id || 'unknown';
+            toolErrorCounts[name] = (toolErrorCounts[name] ?? 0) + 1;
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    toolUseCounts: Object.keys(toolUseCounts).length > 0 ? toolUseCounts : undefined,
+    toolErrorCounts: Object.keys(toolErrorCounts).length > 0 ? toolErrorCounts : undefined,
+    mcpServers: undefined, // CLI 不暴露 MCP server 列表，isolateContext 已确保无 MCP
+    lastAssistantTextSummary: lastAssistantText.slice(0, 300) || undefined,
+  };
+}
+
 function toUsage(role: ModelRole, configuredModelId: string, raw: RawClaudeResult, config: CcAutoConfig): { usage: CallUsage; pricingError?: { modelId: string } } {
   const costUsd = raw.total_cost_usd ?? 0;
   // 定价以「实际返回的模型 ID」为准；CLI 未回传时退回配置模型。未知模型不猜默认价，记为 UNPRICED。
@@ -86,6 +145,7 @@ function toUsage(role: ModelRole, configuredModelId: string, raw: RawClaudeResul
   };
   const costRmbOfficial = usdToRmb(costUsd, config);
   const customResult = customRmbCost(modelId, tokens, config);
+  const observability = extractObservability(raw);
   const usage: CallUsage = {
     model: role,
     modelId,
@@ -98,6 +158,10 @@ function toUsage(role: ModelRole, configuredModelId: string, raw: RawClaudeResul
     durationMs: raw.duration_ms ?? 0,
     numTurns: raw.num_turns ?? 0,
     pricingStatus: customResult.ok ? 'PRICED' : 'UNPRICED',
+    subtype: raw.subtype ?? 'unknown',
+    isError: raw.is_error ?? false,
+    permissionDenialsCount: raw.permission_denials?.length ?? 0,
+    ...observability,
   };
   if (!customResult.ok) return { usage, pricingError: { modelId: customResult.unknownModelId! } };
   return { usage };
@@ -105,10 +169,11 @@ function toUsage(role: ModelRole, configuredModelId: string, raw: RawClaudeResul
 
 /** 拉起 `claude -p ...` 子进程，收集 stdout，解析末尾的 result JSON。 */
 export function runClaude(options: ClaudeCallOptions, config: CcAutoConfig): Promise<ClaudeCallResult> {
+  const claudeBin = process.env.CC_AUTO_CLAUDE_BIN || 'claude';
   const args = buildArgs(options);
   const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
   return new Promise((resolvePromise, reject) => {
-    const child = spawn('claude', args, {
+    const child = spawn(claudeBin, args, {
       cwd: options.cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

@@ -1,5 +1,5 @@
-import { expect, it, describe } from 'vitest';
-import { buildArgs, type ClaudeCallOptions } from './runner';
+import { expect, it, describe, afterEach } from 'vitest';
+import { buildArgs, verifyClaudeBinary, type ClaudeCallOptions } from './runner';
 import type { ModelRuleConfig } from './config';
 
 const RULE: ModelRuleConfig = { model: 'claude-haiku-4-5', effort: 'low', maxTurns: 6 };
@@ -67,5 +67,28 @@ describe('buildArgs：按角色的隔离与显式上下文注入', () => {
     expect(flagValue(buildArgs(SCOUT), '--tools')).toBe('Read,Grep,Glob');
     expect(flagValue(buildArgs(BUILDER), '--tools')).toBe('Read,Edit,Write,Bash,Grep,Glob');
     expect(flagValue(buildArgs(ARBITER), '--tools')).toBe('');
+  });
+});
+
+describe('verifyClaudeBinary：Windows 可执行文件校验（不发起任何真实模型调用，仅 --version 探活）', () => {
+  const ORIGINAL_BIN = process.env.CC_AUTO_CLAUDE_BIN;
+
+  afterEach(() => {
+    if (ORIGINAL_BIN === undefined) delete process.env.CC_AUTO_CLAUDE_BIN;
+    else process.env.CC_AUTO_CLAUDE_BIN = ORIGINAL_BIN;
+  });
+
+  it('CC_AUTO_CLAUDE_BIN 指向不存在的可执行文件时返回 ok=false 且带 error', () => {
+    process.env.CC_AUTO_CLAUDE_BIN = 'D:/definitely-not-a-real-claude-binary-xyz.exe';
+    const result = verifyClaudeBinary();
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('未设置 CC_AUTO_CLAUDE_BIN 时默认使用裸命令名 "claude"（不拼接 shell、不使用 shell:true）', () => {
+    delete process.env.CC_AUTO_CLAUDE_BIN;
+    // 仅验证「未设置时退回默认值」这一契约本身可执行且不抛异常；
+    // 是否真的存在全局 claude 由运行环境决定，不在此处断言具体 ok 值。
+    expect(() => verifyClaudeBinary()).not.toThrow();
   });
 });

@@ -36,7 +36,7 @@ describe('shouldEscalateToArbiter', () => {
 });
 
 function usage(model: CallUsage['model'], costRmb: number): CallUsage {
-  return { model, modelId: 'x', inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, costUsd: 0, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 0, numTurns: 1, pricingStatus: 'PRICED' };
+  return { model, modelId: 'x', inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, costUsd: 0, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 0, numTurns: 1, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0 };
 }
 
 describe('opusShareExceeded / changedFilesExceeded', () => {

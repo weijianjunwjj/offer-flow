@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /** cc-auto CLI 入口：run | resume | report。真实拉起全局 claude CLI，不引入新依赖。 */
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { DEFAULT_CONFIG, type CcAutoConfig } from './config';
 import { runTask, resumeTask, type OrchestratorDeps } from './orchestrator';
-import { runClaude, type ClaudeCallOptions } from './runner';
-import { latestRunId, ccAutoRoot, loadRunState } from './store';
+import { runClaude, verifyClaudeBinary, type ClaudeCallOptions } from './runner';
+import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded } from './store';
 import { renderReport } from './report';
 
 const CWD = process.cwd();
@@ -123,14 +124,53 @@ function buildDeps(config: CcAutoConfig): OrchestratorDeps {
     recordDailySpend: writeDailySpend,
     hookSettingsInlineJson: hookSettingsInlineJson(),
     log: (line: string) => console.log(`[cc-auto] ${line}`),
+    verifyClaudeBinary,
   };
 }
 
-function parseEstimatedFiles(args: string[]): number | undefined {
-  const flag = args.find((a) => a.startsWith('--estimated-files='));
-  if (!flag) return undefined;
-  const value = Number(flag.split('=')[1]);
-  return Number.isFinite(value) ? value : undefined;
+
+/**
+ * 取值型 flag：既支持新格式 `--key=value`，也兼容旧调用方式 `--key value`（空格分隔，下一个 token 是值）。
+ * 不在此列表中的 `--flag` 视为布尔开关（如 --no-commit），不会消费下一个 token，
+ * 从而保证旧式 `--budget 2.00 --max-files 2 ...` 调用不会把数值拼进任务正文。
+ */
+const VALUE_FLAGS = new Set(['estimated-files', 'budget', 'max-files', 'max-fix-rounds']);
+
+export function parseFlags(args: string[]): { flags: Map<string, string>; positional: string[] } {
+  const flags = new Map<string, string>();
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg.startsWith('--')) {
+      positional.push(arg);
+      continue;
+    }
+    const [key, inlineVal] = arg.slice(2).split('=', 2);
+    if (inlineVal !== undefined) {
+      flags.set(key, inlineVal);
+      continue;
+    }
+    if (VALUE_FLAGS.has(key) && i + 1 < args.length && !args[i + 1].startsWith('--')) {
+      flags.set(key, args[i + 1]);
+      i += 1; // 消费下一个 token 作为该 flag 的值，防止其落入 positional
+    } else {
+      flags.set(key, 'true');
+    }
+  }
+  return { flags, positional };
+}
+
+/**
+ * package.json 的 cc:auto 脚本已经绑定了 `run` 子命令；若调用方又手动追加一次
+ * `pnpm cc:auto run "<任务>"`，第二个 "run" 会成为 positional[0]，与真实任务描述无关。
+ * 兼容旧调用习惯：剥离这个多余的子命令 token，而不是让它污染任务正文。
+ * 抽成纯函数，便于不拉起真实模型即可单测。
+ */
+export function stripDuplicateRunToken(positional: string[]): { positional: string[]; stripped: boolean } {
+  if (positional[0] === 'run') {
+    return { positional: positional.slice(1), stripped: true };
+  }
+  return { positional, stripped: false };
 }
 
 async function main(): Promise<void> {
@@ -138,18 +178,24 @@ async function main(): Promise<void> {
   const config = DEFAULT_CONFIG;
 
   if (command === 'run') {
-    const taskDescription = rest.filter((a) => !a.startsWith('--')).join(' ').trim();
+    const { flags, positional: rawPositional } = parseFlags(rest);
+    const { positional, stripped } = stripDuplicateRunToken(rawPositional);
+    if (stripped) {
+      console.log('[cc-auto] 检测到重复的 run 子命令（pnpm cc:auto 脚本已内置 run），已剥离，不计入任务正文');
+    }
+    const taskDescription = positional.join(' ').trim();
     if (!taskDescription) {
-      console.error('用法：pnpm cc:auto run "<任务描述>" [--estimated-files=N]');
+      console.error('用法：pnpm cc:auto run "<任务描述>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit]');
       process.exit(1);
     }
-    const estimatedFiles = parseEstimatedFiles(rest);
+    const estimatedFiles = flags.has('estimated-files') ? Number(flags.get('estimated-files')) : undefined;
     const deps = buildDeps(config);
     const state = await runTask(deps, taskDescription, estimatedFiles);
     console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
-    process.exit(state.done && state.currentPhase !== 'STOPPED' ? 0 : 1);
+    process.exit(isTaskSucceeded(state) ? 0 : 1);
   } else if (command === 'resume') {
-    const runId = rest[0] ?? latestRunId(CWD);
+    const { positional } = parseFlags(rest);
+    const runId = positional[0] ?? latestRunId(CWD);
     if (!runId) {
       console.error('未找到可 resume 的 run，请显式指定 run-id');
       process.exit(1);
@@ -157,22 +203,38 @@ async function main(): Promise<void> {
     const deps = buildDeps(config);
     const state = await resumeTask(deps, runId);
     console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
-    process.exit(state.done && state.currentPhase !== 'STOPPED' ? 0 : 1);
+    process.exit(isTaskSucceeded(state) ? 0 : 1);
   } else if (command === 'report') {
-    const runId = rest[0] ?? latestRunId(CWD);
+    const { positional } = parseFlags(rest);
+    const runId = positional[0] ?? latestRunId(CWD);
     if (!runId) {
       console.error('未找到任何 run');
       process.exit(1);
     }
     const state = loadRunState(CWD, runId);
     console.log(renderReport(state));
+  } else if (command === '--help' || command === '-h') {
+    console.log('用法：pnpm cc:auto <run|resume|report> ...');
+    console.log('');
+    console.log('  run "<任务>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit]');
+    console.log('    启动新任务');
+    console.log('');
+    console.log('  resume [run-id]');
+    console.log('    恢复未完成的任务，默认恢复最后一个');
+    console.log('');
+    console.log('  report [run-id]');
+    console.log('    查看指定运行任务的模型调用、渠道费用和验证结果，默认显示最后一个');
   } else {
     console.error('用法：pnpm cc:auto <run|resume|report> ...');
     process.exit(1);
   }
 }
 
-main().catch((err) => {
-  console.error(`[cc-auto] 致命错误：${(err as Error).message}`);
-  process.exit(1);
-});
+/** 仅作为直接执行入口时才运行；被测试 import 时不触发真实 main()。 */
+const isDirectRun = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(`[cc-auto] 致命错误：${(err as Error).message}`);
+    process.exit(1);
+  });
+}

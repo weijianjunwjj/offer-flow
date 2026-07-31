@@ -1,10 +1,12 @@
 /** 从 RunState 渲染 report.md：状态、费用、改动文件、失败与仲裁记录。 */
 import type { RunState } from './store';
+import { isTaskSucceeded } from './store';
 import { summarizeUsage, opusShare } from './budget';
 
 export function renderReport(state: RunState): string {
   const totals = summarizeUsage(state.calls);
   const share = opusShare(totals);
+  const succeeded = isTaskSucceeded(state);
   const lines: string[] = [];
 
   lines.push(`# cc-auto 运行报告：${state.runId}`);
@@ -12,7 +14,8 @@ export function renderReport(state: RunState): string {
   lines.push(`- 任务：${state.taskDescription}`);
   lines.push(`- 创建时间：${state.createdAt}`);
   lines.push(`- 最终阶段：${state.currentPhase}`);
-  lines.push(`- 是否完成：${state.done ? '是' : '否'}`);
+  lines.push(`- 运行是否结束：${state.done ? '是' : '否'}`);
+  lines.push(`- 任务是否成功：${succeeded ? '是' : '否'}`);
   if (state.stopReason) {
     lines.push(`- 停止原因：${state.stopReason}${state.stopDetail ? ` — ${state.stopDetail}` : ''}`);
   }
@@ -49,12 +52,12 @@ export function renderReport(state: RunState): string {
 
   lines.push('## 调用记录');
   lines.push('');
-  lines.push('| 角色 | 模型 | 输入 tokens | 输出 tokens | 耗时(ms) | 渠道估算(元) | CLI官方参考(元) | 定价状态 |');
-  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
+  lines.push('| 角色 | 模型 | 输入 tokens | 输出 tokens | 缓存写 tokens | 缓存读 tokens | 耗时(ms) | 渠道估算(元) | CLI官方参考(元) | 定价状态 | subtype |');
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const call of state.calls) {
     // UNPRICED 调用 costRmbCustom 为 null：显示「未定价」，绝不 null.toFixed / 写成 0。
     const customCell = call.costRmbCustom === null ? '未定价' : call.costRmbCustom.toFixed(3);
-    lines.push(`| ${call.model} | ${call.modelId} | ${call.inputTokens} | ${call.outputTokens} | ${call.durationMs} | ${customCell} | ${call.costRmbOfficial.toFixed(3)} | ${call.pricingStatus} |`);
+    lines.push(`| ${call.model} | ${call.modelId} | ${call.inputTokens} | ${call.outputTokens} | ${call.cacheCreationInputTokens} | ${call.cacheReadInputTokens} | ${call.durationMs} | ${customCell} | ${call.costRmbOfficial.toFixed(3)} | ${call.pricingStatus} | ${call.subtype} |`);
   }
   lines.push('');
 
@@ -77,6 +80,25 @@ export function renderReport(state: RunState): string {
       lines.push(`- [${failure.phase}] fingerprint=${failure.fingerprint}：${failure.summary}`);
     }
     lines.push('');
+  }
+
+  const callsWithObservability = state.calls.filter(
+    (c) => c.toolUseCounts || c.toolErrorCounts || c.permissionDenialsCount > 0 || c.mcpServers?.length || c.lastAssistantTextSummary,
+  );
+  if (callsWithObservability.length > 0) {
+    lines.push('## 调用可观测性明细');
+    lines.push('');
+    for (const call of callsWithObservability) {
+      lines.push(`### ${call.model}（${call.modelId}，subtype=${call.subtype}）`);
+      lines.push(`- 工具调用次数：${call.toolUseCounts ? JSON.stringify(call.toolUseCounts) : '（无记录）'}`);
+      lines.push(`- 工具错误次数：${call.toolErrorCounts ? JSON.stringify(call.toolErrorCounts) : '（无记录）'}`);
+      lines.push(`- permission_denials 数量：${call.permissionDenialsCount}`);
+      lines.push(`- MCP server：${call.mcpServers && call.mcpServers.length > 0 ? call.mcpServers.join(', ') : '（无）'}`);
+      if (call.lastAssistantTextSummary) {
+        lines.push(`- 最后一次 assistant 文本摘要：${call.lastAssistantTextSummary}`);
+      }
+      lines.push('');
+    }
   }
 
   lines.push('## 人工确认');

@@ -31,6 +31,8 @@ export interface OrchestratorDeps {
   recordDailySpend: (rmb: number) => void;
   hookSettingsInlineJson: string;
   log: (line: string) => void;
+  /** 启动任何模型调用前验证 claude 可执行文件；未提供时跳过该校验（测试可省略）。 */
+  verifyClaudeBinary?: () => { ok: boolean; error?: string };
 }
 
 // --bare 下不再自动加载 CLAUDE.md/AGENTS.md，各角色所需最小规则改为经 --append-system-prompt 显式注入。
@@ -109,9 +111,29 @@ async function guardedCall(
   return result;
 }
 
-function builderPrompt(task: string, scoutFiles: string[], failureContext?: string): string {
+/** 任务正文中直接给出的文件路径（形如 a/b.ts、a/b.spec.ts），用于 simple 任务收敛提示。 */
+const EXPLICIT_FILE_PATTERN = /[\w./-]+\.(ts|tsx|js|jsx|json|md)\b/g;
+
+export function extractExplicitFiles(task: string): string[] {
+  const matches = task.match(EXPLICIT_FILE_PATTERN) ?? [];
+  return Array.from(new Set(matches));
+}
+
+export function builderPrompt(task: string, scoutFiles: string[], failureContext: string | undefined, complexity: 'simple' | 'normal' | 'complex'): string {
   const parts = [`任务：${task}`];
   if (scoutFiles.length > 0) parts.push(`已知相关文件（来自探路阶段）：${scoutFiles.join(', ')}`);
+
+  const explicitFiles = extractExplicitFiles(task);
+  if (complexity === 'simple' && explicitFiles.length > 0) {
+    parts.push(
+      [
+        `任务已明确给出目标文件：${explicitFiles.join(', ')}。`,
+        '禁止进行全仓探索：不要用 Grep/Glob 遍历无关目录或搜集额外上下文，只读取上面列出的目标文件（及其对应的测试文件）。',
+        '收敛顺序：1) 直接 Read 目标文件；2) 尽快用 Edit 完成改动；3) 运行一个定向测试验证改动；4) 立即输出结构化 JSON（summary/changedFiles），不要继续探索或反复读取其他文件。',
+      ].join('\n'),
+    );
+  }
+
   parts.push('必须遵守本仓库 AGENTS.md/CLAUDE.md 的边界：不新增依赖、不改数据库 schema、不推送/合并/打 Tag，不做产品验收替代。');
   if (failureContext) parts.push(`上一轮验证失败，请修复：\n${failureContext}`);
   return parts.join('\n\n');
@@ -149,10 +171,11 @@ async function runBuilder(
   scoutFiles: string[],
   failureContext: string | undefined,
   highRisk: boolean,
+  complexity: 'simple' | 'normal' | 'complex',
 ): Promise<BuilderOutput | null> {
   const rule = highRisk ? deps.config.models.builderHighRisk : deps.config.models.builderDefault;
   const result = await guardedCall(deps, state, phase, 'builder', taskBudgetRmb, {
-    prompt: builderPrompt(state.taskDescription, scoutFiles, failureContext),
+    prompt: builderPrompt(state.taskDescription, scoutFiles, failureContext, complexity),
     role: 'builder',
     rule,
     tools: ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob'],
@@ -253,14 +276,23 @@ async function verifyWithFlakyGuard(
 }
 
 async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estimatedFiles: number | undefined): Promise<RunState> {
-  // 启动任何 claude 子进程之前：校验四个角色配置的具体模型 ID 都能定价，否则立即 STOPPED / PRICING_NOT_FOUND，
-  // 绝不 spawn 任何子进程（run 与 resume 都经由本函数，因而两条路径都受此校验保护）。
+  // 启动任何 claude 子进程之前：先校验四个角色配置的模型 ID 都能定价，
+  // 再验证 claude 可执行文件能否启动，否则立即 STOPPED，绝不 spawn 任何子进程。
   const pricingCheck = validateConfiguredModelPricing(deps.config);
   if (!pricingCheck.ok) {
     const detail = pricingCheck.missing.map((m) => `${m.role}=${m.modelId}`).join('、');
     stop(state, 'PRICING_NOT_FOUND', `配置的模型未在第三方渠道价格表中，无法在启动前定价：${detail}；不使用默认价格猜测，未发起任何模型调用`);
     deps.log(`配置校验失败：以下角色模型缺少渠道价格 ${detail}，未启动任何 claude 子进程`);
     return finish(deps, state);
+  }
+
+  if (deps.verifyClaudeBinary) {
+    const binaryCheck = deps.verifyClaudeBinary();
+    if (!binaryCheck.ok) {
+      stop(state, 'CLAUDE_BINARY_NOT_FOUND', `claude 可执行文件无法启动：${binaryCheck.error}；请设置 CC_AUTO_CLAUDE_BIN 环境变量或确保全局 claude CLI 可用`);
+      deps.log(`claude 二进制文件校验失败：${binaryCheck.error}`);
+      return finish(deps, state);
+    }
   }
 
   const dirty = shortStatus(deps.cwd);
@@ -298,9 +330,18 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
 
   while (!state.done) {
     if (state.currentPhase === 'IMPLEMENT' || state.currentPhase === 'REPAIR_1' || state.currentPhase === 'REPAIR_2') {
-      const builderResult = await runBuilder(deps, state, state.currentPhase, taskBudgetRmb, scoutFiles, failureContext, classification.touchesHighRisk);
+      const builderResult = await runBuilder(deps, state, state.currentPhase, taskBudgetRmb, scoutFiles, failureContext, classification.touchesHighRisk, classification.complexity);
       if (state.done) break;
-      if (!builderResult) { stop(state, 'PROVIDER_ERROR', 'builder 未返回结构化输出'); break; }
+      if (!builderResult) {
+        // Builder 未返回结构化输出：先检查最后一次调用的 subtype
+        const lastCall = state.calls[state.calls.length - 1];
+        if (lastCall && lastCall.subtype === 'error_max_turns') {
+          stop(state, 'MAX_TURNS_EXCEEDED', `builder 达到最大轮次限制（${lastCall.numTurns} 轮）但未输出结构化 JSON`);
+        } else {
+          stop(state, 'STRUCTURED_OUTPUT_MISSING', 'builder 未返回结构化输出');
+        }
+        break;
+      }
       if (changedFilesExceeded(state, deps.config)) { stop(state, 'MAX_CHANGED_FILES_EXCEEDED', `改动文件数 ${state.changedFiles.length} 超过上限 ${deps.config.limits.maxChangedFiles}`); break; }
 
       const escalate = shouldEscalateToArbiter({

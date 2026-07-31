@@ -55,6 +55,20 @@ export interface CallUsage {
   durationMs: number;
   numTurns: number;
   pricingStatus: PricingStatus;
+  /** CLI 返回的 subtype（success / error_max_turns / ...），原样保留 */
+  subtype: string;
+  /** CLI 返回的 is_error */
+  isError: boolean;
+  /** 工具调用次数统计（工具名 -> 次数），不存密钥/请求头/环境变量 */
+  toolUseCounts?: Record<string, number>;
+  /** 工具错误次数统计（工具名 -> 次数） */
+  toolErrorCounts?: Record<string, number>;
+  /** permission_denials 数量 */
+  permissionDenialsCount: number;
+  /** MCP server 名称列表（若有） */
+  mcpServers?: string[];
+  /** 最后一次 assistant 文本的受限摘要（最多 300 字符） */
+  lastAssistantTextSummary?: string;
 }
 
 export interface FailureRecord {
@@ -74,5 +88,8 @@ export type StopReason =
   | 'ACCEPTANCE_CONFLICT'
   | 'HIGH_RISK_OPERATION_DETECTED'
   | 'FLAKY_TESTS'
+  | 'MAX_TURNS_EXCEEDED'
+  | 'STRUCTURED_OUTPUT_MISSING'
   | 'PROVIDER_ERROR'
-  | 'PRICING_NOT_FOUND';
+  | 'PRICING_NOT_FOUND'
+  | 'CLAUDE_BINARY_NOT_FOUND';

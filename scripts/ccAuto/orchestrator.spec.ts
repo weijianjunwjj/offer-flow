@@ -1,9 +1,9 @@
-import { expect, it, beforeEach, afterEach } from 'vitest';
+import { expect, it, describe, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { runTask, resumeTask } from './orchestrator';
+import { runTask, resumeTask, builderPrompt, extractExplicitFiles } from './orchestrator';
 import { DEFAULT_CONFIG, type CcAutoConfig } from './config';
 import { createRunState, loadRunState, saveRunState } from './store';
 import { customRmbCost, usdToRmb, summarizeUsage } from './budget';
@@ -32,7 +32,7 @@ const MODEL_ID_BY_ROLE: Record<CallUsage['model'], string> = {
 };
 
 function usage(model: CallUsage['model'], costRmb = 0.01): CallUsage {
-  return { model, modelId: MODEL_ID_BY_ROLE[model], inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, costUsd: 0.001, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 10, numTurns: 1, pricingStatus: 'PRICED' };
+  return { model, modelId: MODEL_ID_BY_ROLE[model], inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, costUsd: 0.001, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 10, numTurns: 1, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0 };
 }
 
 function fakeResult(role: CallUsage['model'], structuredOutput: unknown): ClaudeCallResult {
@@ -246,6 +246,7 @@ it('验收 B：自定义渠道价格能正确触发预算停止（官方 CLI 费
     model: 'builder', modelId: 'claude-sonnet-5', ...tokens,
     costUsd, costRmbOfficial: official, costRmbCustom: custom, costRmb: custom,
     durationMs: 10, numTurns: 1, pricingStatus: 'PRICED',
+    subtype: 'success', isError: false, permissionDenialsCount: 0,
   };
   let builderCalls = 0;
   const deps = {
@@ -277,6 +278,7 @@ it('验收 D：返回的模型 ID 未在价格表中时立即停止（PRICING_NO
     inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
     costUsd: 0.001, costRmbOfficial: 0.007, costRmbCustom: null, costRmb: null,
     durationMs: 10, numTurns: 1, pricingStatus: 'UNPRICED',
+    subtype: 'success', isError: false, permissionDenialsCount: 0,
   };
   let builderCalls = 0;
   let recordedSpend = 0;
@@ -378,6 +380,7 @@ it('验收 F（报告）：UNPRICED 调用计入调用数/Token/官方费用但�
       inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10, cacheReadInputTokens: 5,
       costUsd: 0.002, costRmbOfficial: 0.0144, costRmbCustom: null, costRmb: null,
       durationMs: 20, numTurns: 2, pricingStatus: 'UNPRICED',
+      subtype: 'success', isError: false, permissionDenialsCount: 0,
     },
   ];
   const totals = summarizeUsage(calls);
@@ -397,4 +400,111 @@ it('验收 F（报告）：UNPRICED 调用计入调用数/Token/官方费用但�
   expect(md).toContain('claude-unreleased-model');
   expect(md).not.toContain('null'); // 不得出现 null.toFixed 之类的裸 null
   expect(md).toContain('未定价'); // 表格单元格用「未定价」而非 0
+});
+
+it('验收 G：builder 用尽 max-turns 且未输出结构化 JSON 时分类为 MAX_TURNS_EXCEEDED，不再落入 PROVIDER_ERROR', async () => {
+  const maxTurnsUsage: CallUsage = {
+    model: 'builder', modelId: 'claude-sonnet-5', inputTokens: 5000, outputTokens: 100,
+    cacheCreationInputTokens: 0, cacheReadInputTokens: 270000,
+    costUsd: 0.05, costRmbOfficial: 0.36, costRmbCustom: 0.36, costRmb: 0.36,
+    durationMs: 60000, numTurns: 16, pricingStatus: 'PRICED',
+    subtype: 'error_max_turns', isError: true, permissionDenialsCount: 0,
+  };
+  const deps = {
+    cwd, config: DEFAULT_CONFIG,
+    runClaude: async (): Promise<ClaudeCallResult> => ({
+      raw: {}, resultText: '', structuredOutput: undefined, isError: true, subtype: 'error_max_turns',
+      usage: maxTurnsUsage, permissionDenials: [],
+    }),
+    runTests: async () => ({ passed: true, output: '' }),
+    runFullVerification: async () => ({ passed: true, output: '' }),
+    currentDailyRmb: () => 0,
+    recordDailySpend: () => {},
+    hookSettingsInlineJson: '{}',
+    log: () => {},
+  };
+  const state = await runTask(deps, '修改文案：调整按钮文案');
+  expect(state.currentPhase).toBe('STOPPED');
+  expect(state.stopReason).toBe('MAX_TURNS_EXCEEDED');
+  expect(state.stopReason).not.toBe('PROVIDER_ERROR');
+});
+
+it('验收 H：builder 正常结束但缺少结构化输出（非 error_max_turns）时分类为 STRUCTURED_OUTPUT_MISSING', async () => {
+  const noStructuredUsage: CallUsage = {
+    model: 'builder', modelId: 'claude-sonnet-5', inputTokens: 100, outputTokens: 50,
+    cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
+    costUsd: 0.001, costRmbOfficial: 0.007, costRmbCustom: 0.007, costRmb: 0.007,
+    durationMs: 500, numTurns: 3, pricingStatus: 'PRICED',
+    subtype: 'success', isError: false, permissionDenialsCount: 0,
+  };
+  const deps = {
+    cwd, config: DEFAULT_CONFIG,
+    runClaude: async (): Promise<ClaudeCallResult> => ({
+      raw: {}, resultText: '完成了，但忘了按 schema 输出', structuredOutput: undefined, isError: false, subtype: 'success',
+      usage: noStructuredUsage, permissionDenials: [],
+    }),
+    runTests: async () => ({ passed: true, output: '' }),
+    runFullVerification: async () => ({ passed: true, output: '' }),
+    currentDailyRmb: () => 0,
+    recordDailySpend: () => {},
+    hookSettingsInlineJson: '{}',
+    log: () => {},
+  };
+  const state = await runTask(deps, '修改文案：调整按钮文案');
+  expect(state.currentPhase).toBe('STOPPED');
+  expect(state.stopReason).toBe('STRUCTURED_OUTPUT_MISSING');
+});
+
+describe('builderPrompt / extractExplicitFiles：simple 任务收敛提示', () => {
+  it('extractExplicitFiles 从任务正文中提取显式文件路径', () => {
+    const files = extractExplicitFiles('优化 scripts/ccAuto/cli.ts 中 report 子命令的一处帮助文案，同步更新 scripts/ccAuto/cli.spec.ts');
+    expect(files).toEqual(['scripts/ccAuto/cli.ts', 'scripts/ccAuto/cli.spec.ts']);
+  });
+
+  it('simple 任务且任务正文含显式文件时，注入禁止全仓探索 + 立即收敛的规则', () => {
+    const task = '优化 scripts/ccAuto/cli.ts 中 report 子命令的一处帮助文案';
+    const prompt = builderPrompt(task, [], undefined, 'simple');
+    expect(prompt).toContain('禁止进行全仓探索');
+    expect(prompt).toContain('立即输出结构化 JSON');
+    expect(prompt).toContain('scripts/ccAuto/cli.ts');
+  });
+
+  it('normal/complex 任务即使含显式文件也不注入收敛规则（不改变现有复杂任务路由）', () => {
+    const task = '重构 scripts/ccAuto/cli.ts 的整体架构';
+    expect(builderPrompt(task, [], undefined, 'normal')).not.toContain('禁止进行全仓探索');
+    expect(builderPrompt(task, [], undefined, 'complex')).not.toContain('禁止进行全仓探索');
+  });
+
+  it('simple 任务但正文没有显式文件时不注入收敛规则（无法收敛到不存在的目标）', () => {
+    const prompt = builderPrompt('修改按钮文案', [], undefined, 'simple');
+    expect(prompt).not.toContain('禁止进行全仓探索');
+  });
+});
+
+describe('renderReport：四类 token 与可观测性明细必须出现在报告中', () => {
+  it('报告表格包含输入/输出/缓存写/缓存读四类 token 列及对应数值', () => {
+    const state = createRunState(cwd, 'run-report-tokens', '演示任务', 'custom');
+    state.calls = [
+      {
+        model: 'builder', modelId: 'claude-sonnet-5',
+        inputTokens: 111, outputTokens: 222, cacheCreationInputTokens: 333, cacheReadInputTokens: 444,
+        costUsd: 0.01, costRmbOfficial: 0.07, costRmbCustom: 0.07, costRmb: 0.07,
+        durationMs: 100, numTurns: 2, pricingStatus: 'PRICED',
+        subtype: 'success', isError: false, permissionDenialsCount: 0,
+        toolUseCounts: { Read: 3, Edit: 1 },
+        toolErrorCounts: { Bash: 1 },
+        mcpServers: [],
+        lastAssistantTextSummary: '已完成帮助文案调整并通过定向测试',
+      },
+    ];
+    const md = renderReport(state);
+    expect(md).toContain('111');
+    expect(md).toContain('222');
+    expect(md).toContain('333');
+    expect(md).toContain('444');
+    expect(md).toContain('调用可观测性明细');
+    expect(md).toContain('Read');
+    expect(md).toContain('permission_denials 数量：0');
+    expect(md).toContain('已完成帮助文案调整并通过定向测试');
+  });
 });

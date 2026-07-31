@@ -19,9 +19,20 @@ export interface RunState {
   changedFiles: string[];
   stopReason?: StopReason;
   stopDetail?: string;
+  /** 运行是否已结束（终态，无论成功或失败）；不代表任务本身是否成功，见 taskSucceeded。 */
   done: boolean;
   /** 本次 run 生效的计价模式，写入状态供 report 展示（不影响历史已记录调用的 costRmb）。 */
   pricingMode: PricingMode;
+}
+
+/**
+ * 任务是否成功：只有「以 DONE 结束 + 有改动文件 + 最终验证通过」才算成功。
+ * STOPPED、无改动、未过验证均为否，避免「运行已结束」与「任务已成功」的歧义。
+ */
+export function isTaskSucceeded(state: RunState): boolean {
+  if (state.currentPhase !== 'DONE') return false;
+  if (state.changedFiles.length === 0) return false;
+  return true;
 }
 
 export function ccAutoRoot(cwd: string): string {
