@@ -113,6 +113,48 @@ it('同一指纹反复失败：第二次起升级仲裁，仲裁配额用尽后 
   expect(state.opusCalls).toBe(1);
 });
 
+it('仲裁前预算门禁拦截：Arbiter 子进程未启动 → runClaude 未被以 arbiter 调用、state.calls 不增、opusCalls 恒为 0、报告不称 Opus 已被调用', async () => {
+  // 任务上限设为 2 元；builder 首轮真实花费接近上限，使得下一次 arbiter 调用的调用前粗估（3 元）
+  // 叠加已花费后必然超限，从而在真正 spawn arbiter 之前被预算门禁拦截。
+  const cfg: CcAutoConfig = { ...DEFAULT_CONFIG, budget: { ...DEFAULT_CONFIG.budget, simpleTaskRmb: 2, absoluteTaskMaxRmb: 2 } };
+  const roles: string[] = [];
+  const priced = (model: CallUsage['model'], rmb: number): CallUsage => ({
+    model, modelId: MODEL_ID_BY_ROLE[model], inputTokens: 10, outputTokens: 10,
+    cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
+    costUsd: 0.01, costRmbOfficial: rmb, costRmbCustom: rmb, costRmb: rmb,
+    durationMs: 10, numTurns: 1, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0,
+  });
+  const deps = {
+    cwd, config: cfg,
+    runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+      roles.push(options.role);
+      if (options.role === 'scout') {
+        return { raw: {}, resultText: '', structuredOutput: { relevantFiles: ['a.ts'] }, isError: false, subtype: 'success', usage: priced('scout', 0.05), permissionDenials: [] };
+      }
+      // builder 触发 needsArbitration 以进入 ARBITRATE；返回接近预算上限的真实花费（1.9 元）。
+      return { raw: {}, resultText: '', structuredOutput: { summary: 'x', changedFiles: ['a.ts'], needsArbitration: true, arbitrationReason: '需要仲裁' }, isError: false, subtype: 'success', usage: priced('builder', 1.9), permissionDenials: [] };
+    },
+    runTests: async () => ({ passed: true, output: 'ok' }),
+    runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+    currentDailyRmb: () => 0,
+    recordDailySpend: () => {},
+    hookSettingsInlineJson: '{}',
+    log: () => {},
+  };
+  const state = await runTask(deps, '修复登录页跳转报错的 bug', 2);
+  // 只有一次 builder 调用真实发生；arbiter 在预算门禁前被拦截，从未以 arbiter 角色调用 runClaude。
+  expect(roles).toEqual(['scout', 'builder']);
+  expect(roles).not.toContain('arbiter');
+  expect(state.calls.length).toBe(2); // 只有 scout + builder；arbiter 未 push 任何 usage
+  expect(state.opusCalls).toBe(0); // 关键：预算门禁前拦截不得虚增 opusCalls
+  expect(state.currentPhase).toBe('STOPPED');
+  expect(state.stopReason).toBe('BUDGET_TASK_EXCEEDED');
+  // 报告不得声称 Opus 已被调用：arbiter 费用为 0、无 arbiter 调用记录。
+  const md = renderReport(state);
+  expect(md).toContain('arbiter（仲裁）：约 0.00 元');
+  expect(state.calls.some((c) => c.model === 'arbiter')).toBe(false);
+});
+
 it('预算超限：任务预算被设为极小值时在首次调用前停止', async () => {
   const tinyConfig = { ...DEFAULT_CONFIG, budget: { ...DEFAULT_CONFIG.budget, simpleTaskRmb: 0, absoluteTaskMaxRmb: 0 } };
   let called = false;

@@ -336,6 +336,9 @@ async function runArbiter(
   try {
     writeFileSync(path.join(isolatedCwd, 'arbitration-bundle.json'), JSON.stringify({ bundle: redactedBundle }, null, 2), 'utf8');
 
+    // 只有 Arbiter 子进程真实启动、形成调用记录后才计数：guardedCall 在「调用前预算门禁」拦截时
+    // 返回 null 且不会 push 任何 usage，此时 opusCalls 必须保持不变，报告不得声称 Opus 已被调用。
+    const callsBefore = state.calls.length;
     const result = await guardedCall(deps, state, 'ARBITRATE', 'arbiter', taskBudgetRmb, {
       prompt: `请诊断根因并给出决策，不要尝试探索或读取任何文件（也没有文件工具可用），只依据以下上下文：\n${redactedBundle}`,
       role: 'arbiter',
@@ -346,7 +349,8 @@ async function runArbiter(
       bare: true,
       cwd: isolatedCwd,
     });
-    state.opusCalls += 1;
+    // 调用真实发生的充要标志：state.calls 增长了一条（guardedCall 在真正 spawn 后才 push usage）。
+    if (state.calls.length > callsBefore) state.opusCalls += 1;
     if (!result) return null;
     return result.structuredOutput as { decision: string; rootCause: string };
   } finally {

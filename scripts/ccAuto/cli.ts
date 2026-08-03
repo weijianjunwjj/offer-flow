@@ -9,9 +9,12 @@ import { runTask, resumeTask, type OrchestratorDeps } from './orchestrator';
 import { runClaude, verifyClaudeBinary, type ClaudeCallOptions } from './runner';
 import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded } from './store';
 import { renderReport } from './report';
+import { resolveLocalPackageBin } from './localBin';
 
 const CWD = process.cwd();
 const HOOK_SCRIPT_PATH = path.join('scripts', 'ccAuto', 'hookScript.cjs');
+/** 机器侧验证子进程超时上限（毫秒）：区分「校验超时」与「测试真实失败」。 */
+const VERIFY_TIMEOUT_MS = 10 * 60 * 1000;
 
 function hookSettingsInlineJson(): string {
   return JSON.stringify({
@@ -48,14 +51,45 @@ function writeDailySpend(deltaRmb: number): void {
   writeFileSync(file, JSON.stringify({ totalRmb: current + deltaRmb }, null, 2), 'utf8');
 }
 
-function runVitest(targets: string[]): { passed: boolean; output: string } {
+/**
+ * 通过当前 Node 进程直接执行本地包的 JS bin，不依赖 PATH、不使用 shell、不调用 .cmd shim。
+ * 参数一律数组传入，绝不拼接命令字符串，也绝不执行任何模型生成的命令（如 suggestedTests）。
+ * 错误信息区分四类：本地 bin 不存在 / 子进程无法启动 / 子进程正常启动但校验失败 / 超时。
+ */
+function runLocalBin(
+  packageName: string,
+  preferredBinName: string,
+  args: string[],
+): { passed: boolean; output: string } {
+  const resolved = resolveLocalPackageBin(CWD, packageName, preferredBinName);
+  if (!resolved.ok) {
+    return { passed: false, output: `[本地 bin 解析失败:${resolved.kind}] ${resolved.reason}` };
+  }
   try {
-    const output = execFileSync('pnpm', ['vitest', 'run', ...targets], { cwd: CWD, encoding: 'utf8' });
+    const output = execFileSync(process.execPath, [resolved.binPath!, ...args], {
+      cwd: CWD,
+      encoding: 'utf8',
+      timeout: VERIFY_TIMEOUT_MS,
+      maxBuffer: 32 * 1024 * 1024,
+    });
     return { passed: true, output };
   } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message: string };
+    const e = err as { stdout?: string; stderr?: string; message: string; code?: string; signal?: string; killed?: boolean };
+    // ENOENT/无法 spawn：区别于「测试正常启动后失败」。
+    if (e.code === 'ENOENT') {
+      return { passed: false, output: `[子进程无法启动] ${process.execPath} ${resolved.binPath}：${e.message}` };
+    }
+    if (e.killed || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT') {
+      return { passed: false, output: `[校验超时(${VERIFY_TIMEOUT_MS}ms)]\n${e.stdout ?? ''}\n${e.stderr ?? ''}` };
+    }
+    // 子进程正常启动但退出码非 0：真实的校验失败，保留 stdout/stderr 直接原因。
     return { passed: false, output: `${e.stdout ?? ''}\n${e.stderr ?? e.message}` };
   }
+}
+
+/** 定向/全量 vitest：node <本地 vitest bin> run [...targets]。targets 恒为受控测试路径，绝不含模型建议命令。 */
+function runVitest(targets: string[]): { passed: boolean; output: string } {
+  return runLocalBin('vitest', 'vitest', ['run', ...targets]);
 }
 
 /** 同名 spec：a/b.ts -> a/b.spec.ts。 */
@@ -99,15 +133,8 @@ async function runRelatedTests(files: string[]): Promise<{ passed: boolean; outp
 
 /** FINAL_VERIFY 专用：至少跑一次全量 typecheck 和一次全量 vitest，不接受任何定向子集替代。 */
 async function runFullVerification(): Promise<{ passed: boolean; output: string }> {
-  const typecheck = (() => {
-    try {
-      const output = execFileSync('pnpm', ['typecheck'], { cwd: CWD, encoding: 'utf8' });
-      return { passed: true, output };
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; message: string };
-      return { passed: false, output: `${e.stdout ?? ''}\n${e.stderr ?? e.message}` };
-    }
-  })();
+  // typecheck 用本地 vue-tsc bin（对应 pnpm typecheck = vue-tsc --noEmit），同样不依赖 PATH/pnpm。
+  const typecheck = runLocalBin('vue-tsc', 'vue-tsc', ['--noEmit']);
   if (!typecheck.passed) return { passed: false, output: `[typecheck 失败]\n${typecheck.output}` };
   const tests = runVitest([]);
   return { passed: tests.passed, output: `[typecheck 通过]\n${typecheck.output}\n\n[全量 vitest]\n${tests.output}` };
