@@ -23,6 +23,27 @@ export interface RunState {
   done: boolean;
   /** 本次 run 生效的计价模式，写入状态供 report 展示（不影响历史已记录调用的 costRmb）。 */
   pricingMode: PricingMode;
+  /**
+   * 仅当**真实进入并成功执行** Simple Direct Edit 执行路径（机器读取上下文 → tools:[] Builder →
+   * 机器原子应用 edits）时才为 true。仅满足命中条件但准备/应用阶段失败时不得置 true，
+   * 报告据此判断是否标记 Simple Direct Edit（不允许「标记但仍走标准 Agent Builder」）。
+   */
+  directEdit?: boolean;
+  /** Direct Edit 真实执行的机器侧记录，供报告展示目标文件、edit 数量与应用结果。仅在 directEdit=true 时存在。 */
+  directEditDetail?: DirectEditDetail;
+}
+
+export interface DirectEditDetail {
+  /** 机器准备上下文时读取的目标文件（相对仓库根路径）。 */
+  targetFiles: string[];
+  /** 校验并原子应用的 edit 数量。 */
+  editCount: number;
+  /** 实际写盘且产生真实 git diff 的文件。 */
+  appliedFiles: string[];
+  /** Builder 返回的改动摘要。 */
+  summary: string;
+  /** Builder 建议的定向测试（若有）。 */
+  suggestedTests: string[];
 }
 
 /**

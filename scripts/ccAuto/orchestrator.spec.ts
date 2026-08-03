@@ -3,12 +3,17 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { runTask, resumeTask, builderPrompt, extractExplicitFiles } from './orchestrator';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { runTask, resumeTask, builderPrompt, extractExplicitFiles, directEditPrompt } from './orchestrator';
 import { DEFAULT_CONFIG, type CcAutoConfig } from './config';
 import { createRunState, loadRunState, saveRunState } from './store';
 import { customRmbCost, usdToRmb, summarizeUsage } from './budget';
 import { renderReport } from './report';
 import { classifyTask } from './classify';
+import {
+  evaluateDirectEditEligibility, prepareDirectEditContext, validateDirectEdits, applyDirectEdits,
+  isPathWithinRepo, type PreparedFile,
+} from './directEdit';
 import type { ClaudeCallOptions, ClaudeCallResult } from './runner';
 import type { CallUsage } from './types';
 
@@ -506,5 +511,400 @@ describe('renderReport：四类 token 与可观测性明细必须出现在报告
     expect(md).toContain('Read');
     expect(md).toContain('permission_denials 数量：0');
     expect(md).toContain('已完成帮助文案调整并通过定向测试');
+  });
+});
+
+describe('evaluateDirectEditEligibility：Direct Edit 命中条件（纯函数，不调用模型）', () => {
+  const simpleZeroRisk = { complexity: 'simple' as const, riskScore: 0, reasons: [], touchesHighRisk: false };
+
+  it('simple + riskScore 0 + 1~2 个显式文件 + 非高风险话题：合格', () => {
+    const r = evaluateDirectEditEligibility(simpleZeroRisk, '优化 scripts/ccAuto/cli.ts 的一处帮助文案', DEFAULT_CONFIG);
+    expect(r.eligible).toBe(true);
+    expect(r.targetFiles).toEqual(['scripts/ccAuto/cli.ts']);
+  });
+
+  it('复杂度非 simple：不合格', () => {
+    const r = evaluateDirectEditEligibility({ ...simpleZeroRisk, complexity: 'normal' }, '优化 a.ts', DEFAULT_CONFIG);
+    expect(r.eligible).toBe(false);
+  });
+
+  it('riskScore 非 0：不合格', () => {
+    const r = evaluateDirectEditEligibility({ ...simpleZeroRisk, riskScore: 2 }, '优化 a.ts', DEFAULT_CONFIG);
+    expect(r.eligible).toBe(false);
+  });
+
+  it('无显式文件或超过 2 个文件：不合格', () => {
+    expect(evaluateDirectEditEligibility(simpleZeroRisk, '修改按钮文案', DEFAULT_CONFIG).eligible).toBe(false);
+    expect(evaluateDirectEditEligibility(simpleZeroRisk, '改 a.ts b.ts c.ts', DEFAULT_CONFIG).eligible).toBe(false);
+  });
+
+  it('涉及数据库/依赖/配置/Provider/SSE 等高风险话题：不合格', () => {
+    expect(evaluateDirectEditEligibility(simpleZeroRisk, '改 a.ts 的 schema migration', DEFAULT_CONFIG).eligible).toBe(false);
+    expect(evaluateDirectEditEligibility(simpleZeroRisk, '在 a.ts 新增一个依赖', DEFAULT_CONFIG).eligible).toBe(false);
+    expect(evaluateDirectEditEligibility(simpleZeroRisk, '改 a.ts 的 SSE 逻辑', DEFAULT_CONFIG).eligible).toBe(false);
+  });
+});
+
+describe('isPathWithinRepo：路径安全校验', () => {
+  it('仓库内相对路径通过', () => {
+    expect(isPathWithinRepo(cwd, 'scripts/ccAuto/cli.ts')).toBe(true);
+  });
+  it('绝对路径被拒', () => {
+    expect(isPathWithinRepo(cwd, path.resolve(cwd, 'a.ts'))).toBe(false);
+    expect(isPathWithinRepo(cwd, '/etc/passwd')).toBe(false);
+  });
+  it('`..` 穿越被拒', () => {
+    expect(isPathWithinRepo(cwd, '../outside.ts')).toBe(false);
+    expect(isPathWithinRepo(cwd, 'scripts/../../outside.ts')).toBe(false);
+  });
+  it('仓库根目录本身不算可编辑文件', () => {
+    expect(isPathWithinRepo(cwd, '.')).toBe(false);
+  });
+});
+
+describe('prepareDirectEditContext：机器准备上下文（读盘 + 校验）', () => {
+  it('目标外/穿越路径被拒，绝不读盘', () => {
+    expect(prepareDirectEditContext(cwd, ['../outside.ts']).ok).toBe(false);
+    expect(prepareDirectEditContext(cwd, [path.resolve(cwd, 'x.ts')]).ok).toBe(false);
+  });
+
+  it('目标文件不存在被拒', () => {
+    expect(prepareDirectEditContext(cwd, ['nope/missing.ts']).ok).toBe(false);
+  });
+
+  it('超过单文件安全上限被拒', () => {
+    writeFileSync(path.join(cwd, 'big.ts'), 'x'.repeat(64 * 1024 + 1), 'utf8');
+    expect(prepareDirectEditContext(cwd, ['big.ts']).ok).toBe(false);
+  });
+
+  it('合规文件被读取', () => {
+    writeFileSync(path.join(cwd, 'ok.ts'), 'export const a = 1;\n', 'utf8');
+    const ctx = prepareDirectEditContext(cwd, ['ok.ts']);
+    expect(ctx.ok).toBe(true);
+    expect(ctx.files[0].content).toContain('export const a = 1;');
+  });
+});
+
+describe('validateDirectEdits：edits 校验（零/多匹配、目标外、search==replace）', () => {
+  const files: PreparedFile[] = [{ path: 'a.ts', content: 'const x = 1;\nconst y = 2;\n', bytes: 24 }];
+
+  it('edits 为空被拒', () => {
+    expect(validateDirectEdits([], files, DEFAULT_CONFIG).ok).toBe(false);
+  });
+  it('目标外文件被拒', () => {
+    expect(validateDirectEdits([{ path: 'b.ts', search: 'x', replace: 'z' }], files, DEFAULT_CONFIG).ok).toBe(false);
+  });
+  it('search===replace 被拒', () => {
+    expect(validateDirectEdits([{ path: 'a.ts', search: 'const x = 1;', replace: 'const x = 1;' }], files, DEFAULT_CONFIG).ok).toBe(false);
+  });
+  it('search 零匹配被拒', () => {
+    expect(validateDirectEdits([{ path: 'a.ts', search: 'not-present', replace: 'z' }], files, DEFAULT_CONFIG).ok).toBe(false);
+  });
+  it('search 多匹配被拒（要求唯一）', () => {
+    expect(validateDirectEdits([{ path: 'a.ts', search: 'const ', replace: 'let ' }], files, DEFAULT_CONFIG).ok).toBe(false);
+  });
+  it('唯一匹配通过', () => {
+    expect(validateDirectEdits([{ path: 'a.ts', search: 'const x = 1;', replace: 'const x = 42;' }], files, DEFAULT_CONFIG).ok).toBe(true);
+  });
+});
+
+describe('applyDirectEdits：原子应用（失败不部分写入）', () => {
+  it('多 edit 全部有效时统一写入并产生真实内容变更', () => {
+    writeFileSync(path.join(cwd, 'm.ts'), 'const x = 1;\nconst y = 2;\n', 'utf8');
+    const files = prepareDirectEditContext(cwd, ['m.ts']).files;
+    const edits = [
+      { path: 'm.ts', search: 'const x = 1;', replace: 'const x = 10;' },
+      { path: 'm.ts', search: 'const y = 2;', replace: 'const y = 20;' },
+    ];
+    const r = applyDirectEdits(cwd, edits, files);
+    expect(r.ok).toBe(true);
+    const written = readFileSync(path.join(cwd, 'm.ts'), 'utf8');
+    expect(written).toContain('const x = 10;');
+    expect(written).toContain('const y = 20;');
+  });
+
+  it('某个 edit 在应用阶段无法匹配时整体失败，不产生部分修改', () => {
+    const original = 'const x = 1;\nconst y = 2;\n';
+    writeFileSync(path.join(cwd, 'p.ts'), original, 'utf8');
+    const files = prepareDirectEditContext(cwd, ['p.ts']).files;
+    // 第一条有效、第二条 search 不存在：整体失败，文件保持原样。
+    const edits = [
+      { path: 'p.ts', search: 'const x = 1;', replace: 'const x = 10;' },
+      { path: 'p.ts', search: 'DOES-NOT-EXIST', replace: 'z' },
+    ];
+    const r = applyDirectEdits(cwd, edits, files);
+    expect(r.ok).toBe(false);
+    expect(readFileSync(path.join(cwd, 'p.ts'), 'utf8')).toBe(original); // 未部分写入
+  });
+});
+
+describe('directEditPrompt：只包含任务、允许文件与文件内容，不含探索指令', () => {
+  it('包含任务、文件路径与内容', () => {
+    const files: PreparedFile[] = [{ path: 'a.ts', content: 'export const a = 1;', bytes: 20 }];
+    const prompt = directEditPrompt('优化 a.ts', files);
+    expect(prompt).toContain('优化 a.ts');
+    expect(prompt).toContain('a.ts');
+    expect(prompt).toContain('export const a = 1;');
+  });
+});
+
+describe('renderReport：执行模式与可观测性缺失字段显式「不可用」', () => {
+  function baseCall(overrides: Partial<CallUsage>): CallUsage {
+    return {
+      model: 'builder', modelId: 'claude-sonnet-5',
+      inputTokens: 10, outputTokens: 20, cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
+      costUsd: 0.01, costRmbOfficial: 0.07, costRmbCustom: 0.07, costRmb: 0.07,
+      durationMs: 100, numTurns: 1, pricingStatus: 'PRICED',
+      subtype: 'success', isError: false, permissionDenialsCount: 0,
+      ...overrides,
+    };
+  }
+
+  it('directEdit=true 且有明细时报告标注 Simple Direct Edit 并展示目标文件/edit数量/应用结果', () => {
+    const state = createRunState(cwd, 'run-mode-direct', '优化 scripts/ccAuto/cli.ts 文案', 'custom');
+    state.directEdit = true;
+    state.directEditDetail = {
+      targetFiles: ['scripts/ccAuto/cli.ts'], editCount: 2,
+      appliedFiles: ['scripts/ccAuto/cli.ts'], summary: '调整两处帮助文案', suggestedTests: ['scripts/ccAuto/cli.spec.ts'],
+    };
+    const md = renderReport(state);
+    expect(md).toContain('执行模式：Simple Direct Edit');
+    expect(md).toContain('Simple Direct Edit 明细');
+    expect(md).toContain('应用的 edit 数量：2');
+    expect(md).toContain('scripts/ccAuto/cli.ts');
+    expect(md).toContain('调整两处帮助文案');
+  });
+
+  it('directEdit=false/未设置时报告标注标准执行模式，且不出现 Direct Edit 明细', () => {
+    const state = createRunState(cwd, 'run-mode-standard', '重构整体架构', 'custom');
+    const md = renderReport(state);
+    expect(md).toContain('执行模式：标准');
+    expect(md).not.toContain('Simple Direct Edit 明细');
+  });
+
+  it('CLI 未回传可观测字段的调用：不再整段跳过，且缺失字段显式标注「不可用」', () => {
+    const state = createRunState(cwd, 'run-obs-missing', '演示任务', 'custom');
+    // 全字段缺失（CLI 未回传 conversation）：旧实现会整段跳过，新实现必须列出并标「不可用」。
+    state.calls = [baseCall({ model: 'scout', modelId: 'claude-haiku-4-5' })];
+    const md = renderReport(state);
+    expect(md).toContain('调用可观测性明细');
+    expect(md).toContain('scout（claude-haiku-4-5');
+    expect(md).toContain('不可用（CLI 未返回该字段）');
+    // permission_denials 恒由 CLI 直接回传，即使为 0 也是真实值，不标「不可用」。
+    expect(md).toContain('permission_denials 数量：0');
+    // 缺失字段不得再退化成「（无记录）/（无）」这类会掩盖可观测缺口的措辞。
+    expect(md).not.toContain('（无记录）');
+  });
+
+  it('mcpServers 为空数组（已隔离，真实为空）与 undefined（CLI 未返回）区分展示', () => {
+    const state = createRunState(cwd, 'run-obs-mcp', '演示任务', 'custom');
+    state.calls = [
+      baseCall({ mcpServers: [] }),
+      baseCall({ model: 'scout', modelId: 'claude-haiku-4-5' }),
+    ];
+    const md = renderReport(state);
+    expect(md).toContain('MCP server：（无，已隔离）');
+    expect(md).toContain(`MCP server：不可用（CLI 未返回该字段）`);
+  });
+});
+
+describe('runDirectEdit 端到端：真实执行路径（不调用真实模型）', () => {
+  /** 在测试 git 仓库里写入并提交一个文件，使 changedFilesSince 能检出后续真实 diff。 */
+  function commitFile(rel: string, content: string): void {
+    const abs = path.join(cwd, rel);
+    mkdirSync(path.dirname(abs), { recursive: true });
+    writeFileSync(abs, content, 'utf8');
+    execFileSync('git', ['add', '-A'], { cwd });
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd });
+  }
+
+  function directEditResult(edits: unknown, summary = 'ok'): ClaudeCallResult {
+    return { raw: {}, resultText: '', structuredOutput: { edits, summary, suggestedTests: ['x.spec.ts'] }, isError: false, subtype: 'success', usage: usage('builder'), permissionDenials: [] };
+  }
+
+  it('合格任务真实进入 Direct Edit：tools 为空、maxTurns<=2、应用后产生真实 diff 并标记 directEdit', async () => {
+    commitFile('note.ts', 'export const label = "旧文案";\n');
+    let capturedTools: string[] | undefined;
+    let capturedMaxTurns: number | undefined;
+    let scoutCalled = false;
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        if (options.role === 'scout') { scoutCalled = true; return fakeResult('scout', { relevantFiles: [] }); }
+        capturedTools = options.tools;
+        capturedMaxTurns = options.rule.maxTurns;
+        return directEditResult([{ path: 'note.ts', search: '旧文案', replace: '新文案' }]);
+      },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 note.ts 的一处文案');
+    expect(scoutCalled).toBe(false); // simple 任务不加 Scout
+    expect(capturedTools).toEqual([]); // Direct Edit Builder 无任何文件工具
+    expect(capturedMaxTurns).toBeLessThanOrEqual(2);
+    expect(state.directEdit).toBe(true);
+    expect(state.directEditDetail?.editCount).toBe(1);
+    expect(state.currentPhase).toBe('DONE');
+    expect(readFileSync(path.join(cwd, 'note.ts'), 'utf8')).toContain('新文案');
+  });
+
+  it('不合格任务（无显式文件）回退标准 Agent Builder 路径，不标记 directEdit', async () => {
+    let sawBuilderTools: string[] | undefined;
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        sawBuilderTools = options.tools;
+        return fakeResult('builder', { summary: 'ok', changedFiles: ['a.ts'], needsArbitration: false });
+      },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '修改按钮文案'); // 无显式文件 -> 不合格
+    expect(state.directEdit).toBeFalsy();
+    expect(sawBuilderTools).toContain('Edit'); // 走的是标准 Agent Builder（有文件工具）
+  });
+
+  it('search 多匹配导致校验失败：STOPPED(DIRECT_EDIT_APPLY_FAILED)，不写盘', async () => {
+    const original = 'const a = 1;\nconst b = 2;\n';
+    commitFile('multi.ts', original);
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        if (options.role === 'scout') return fakeResult('scout', { relevantFiles: [] });
+        return directEditResult([{ path: 'multi.ts', search: 'const ', replace: 'let ' }]); // 多匹配
+      },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 multi.ts 的一处写法');
+    expect(state.currentPhase).toBe('STOPPED');
+    expect(state.stopReason).toBe('DIRECT_EDIT_APPLY_FAILED');
+    expect(state.directEdit).toBeFalsy(); // 未成功执行，不得伪装
+    expect(readFileSync(path.join(cwd, 'multi.ts'), 'utf8')).toBe(original); // 未写盘
+  });
+
+  it('edits 为空导致校验失败：STOPPED(DIRECT_EDIT_APPLY_FAILED)', async () => {
+    commitFile('empty.ts', 'export const z = 0;\n');
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        if (options.role === 'scout') return fakeResult('scout', { relevantFiles: [] });
+        return directEditResult([]); // 空 edits
+      },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 empty.ts 的一处逻辑');
+    expect(state.currentPhase).toBe('STOPPED');
+    expect(state.stopReason).toBe('DIRECT_EDIT_APPLY_FAILED');
+  });
+
+  it('报告只在真实执行 Direct Edit 时标记；应用失败的运行报告显示标准路径', async () => {
+    commitFile('fail.ts', 'const p = 1;\nconst q = 1;\n');
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        if (options.role === 'scout') return fakeResult('scout', { relevantFiles: [] });
+        return directEditResult([{ path: 'fail.ts', search: 'const ', replace: 'let ' }]); // 多匹配 -> 失败
+      },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 fail.ts 的一处写法');
+    const md = renderReport(state);
+    expect(md).toContain('执行模式：标准');
+    expect(md).not.toContain('Simple Direct Edit 明细');
+    expect(md).toContain('DIRECT_EDIT_APPLY_FAILED');
+  });
+
+  it('候选任务路径穿越：STOPPED(DIRECT_EDIT_PREPARE_FAILED)，不调用任何标准 Builder', async () => {
+    let builderCalled = false;
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        // 准备阶段应在任何模型调用之前就安全拒绝：这里若被调用即视为绕过安全边界。
+        builderCalled = true;
+        if (options.role === 'scout') return fakeResult('scout', { relevantFiles: [] });
+        return directEditResult([{ path: '../outside.ts', search: 'a', replace: 'b' }]);
+      },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 ../outside.ts 的一处文案');
+    expect(state.currentPhase).toBe('STOPPED');
+    expect(state.stopReason).toBe('DIRECT_EDIT_PREPARE_FAILED');
+    expect(builderCalled).toBe(false); // 准备失败绝不落入拥有 Read/Edit/Bash 的标准 Builder
+    expect(state.directEdit).toBeFalsy();
+  });
+
+  it('候选文件不存在：STOPPED(DIRECT_EDIT_PREPARE_FAILED)，不调用标准 Builder', async () => {
+    let builderCalled = false;
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (): Promise<ClaudeCallResult> => { builderCalled = true; return fakeResult('builder', { summary: 'x', changedFiles: [], needsArbitration: false }); },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 nope-missing.ts 的一处文案');
+    expect(state.currentPhase).toBe('STOPPED');
+    expect(state.stopReason).toBe('DIRECT_EDIT_PREPARE_FAILED');
+    expect(builderCalled).toBe(false);
+  });
+
+  it('候选文件超过安全上限：STOPPED(DIRECT_EDIT_PREPARE_FAILED)，不调用标准 Builder', async () => {
+    // 建一个存在但超过 64KB 的目标文件：eligibility 通过（simple/risk0/1文件），prepare 因超限安全拒绝。
+    writeFileSync(path.join(cwd, 'huge.ts'), `// ${'x'.repeat(64 * 1024 + 10)}\n`, 'utf8');
+    let builderCalled = false;
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (): Promise<ClaudeCallResult> => { builderCalled = true; return fakeResult('builder', { summary: 'x', changedFiles: [], needsArbitration: false }); },
+      runTests: async () => ({ passed: true, output: 'ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 huge.ts 的一处文案');
+    expect(state.currentPhase).toBe('STOPPED');
+    expect(state.stopReason).toBe('DIRECT_EDIT_PREPARE_FAILED');
+    expect(builderCalled).toBe(false);
+  });
+
+  it('恶意 suggestedTests 不会被执行：只作为报告数据，VERIFY 仍用机器侧受控命令', async () => {
+    commitFile('safe.ts', 'export const greeting = "hi";\n');
+    const runTestsTargets: string[][] = [];
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        if (options.role === 'scout') return fakeResult('scout', { relevantFiles: [] });
+        // 模型返回一个「像 shell 注入」的 suggestedTests：绝不能被当作命令执行。
+        return {
+          raw: {}, resultText: '',
+          structuredOutput: {
+            edits: [{ path: 'safe.ts', search: '"hi"', replace: '"hello"' }],
+            summary: '调整问候语',
+            suggestedTests: ['x.spec.ts; rm -rf /', '$(touch /tmp/pwned)'],
+          },
+          isError: false, subtype: 'success', usage: usage('builder'), permissionDenials: [],
+        };
+      },
+      // 机器侧受控测试选择：只接收改动文件，绝不接收 suggestedTests。
+      runTests: async (files: string[]) => { runTestsTargets.push(files); return { passed: true, output: 'ok' }; },
+      runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+      currentDailyRmb: () => 0, recordDailySpend: () => {}, hookSettingsInlineJson: '{}', log: () => {},
+    };
+    const state = await runTask(deps, '优化 safe.ts 的一处文案');
+    expect(state.currentPhase).toBe('DONE');
+    expect(state.directEdit).toBe(true);
+    // runTests 收到的目标里绝不含 suggestedTests 的任何注入字符串。
+    const allTargets = runTestsTargets.flat();
+    expect(allTargets.some((t) => t.includes('rm -rf') || t.includes('$(') || t.includes(';'))).toBe(false);
+    // suggestedTests 原样保留在报告数据中（仅作建议展示，不参与执行）。
+    expect(state.directEditDetail?.suggestedTests).toContain('x.spec.ts; rm -rf /');
   });
 });

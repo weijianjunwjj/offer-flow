@@ -22,7 +22,22 @@ export function renderReport(state: RunState): string {
   if (state.classification) {
     lines.push(`- 任务分类：${state.classification.complexity}（风险分 ${state.classification.riskScore}/10）`);
   }
+  // 执行模式只在**真实进入并成功执行** Direct Edit 路径（directEdit=true）时标记，
+  // 仅满足命中条件但准备/应用失败的运行一律显示标准路径，绝不伪装为 Direct Edit。
+  lines.push(`- 执行模式：${state.directEdit ? 'Simple Direct Edit（机器读取上下文 → tools:[] 定向编辑 → 机器原子应用）' : '标准 Agent Builder（探路 → 构建 → 验证）'}`);
   lines.push('');
+
+  if (state.directEdit && state.directEditDetail) {
+    const d = state.directEditDetail;
+    lines.push('## Simple Direct Edit 明细');
+    lines.push('');
+    lines.push(`- 目标文件（机器读取）：${d.targetFiles.join(', ')}`);
+    lines.push(`- 应用的 edit 数量：${d.editCount}`);
+    lines.push(`- 实际写盘并产生 diff 的文件：${d.appliedFiles.join(', ') || '（无）'}`);
+    lines.push(`- 改动摘要：${d.summary || '（无）'}`);
+    lines.push(`- 建议的定向测试：${d.suggestedTests.length > 0 ? d.suggestedTests.join(', ') : '（无）'}`);
+    lines.push('');
+  }
 
   lines.push('## 费用估算（人民币，非账单）');
   lines.push('');
@@ -82,21 +97,23 @@ export function renderReport(state: RunState): string {
     lines.push('');
   }
 
-  const callsWithObservability = state.calls.filter(
-    (c) => c.toolUseCounts || c.toolErrorCounts || c.permissionDenialsCount > 0 || c.mcpServers?.length || c.lastAssistantTextSummary,
-  );
-  if (callsWithObservability.length > 0) {
+  // 可观测性明细：每个调用都列出，不再整段跳过「无任何可观测字段」的调用。
+  // CLI 未回传的字段一律显式标注「不可用」，绝不写成「（无记录）/（无）」——
+  // 「无记录」会把「CLI 未提供」与「确实为空」混为一谈，掩盖可观测性缺口。
+  const UNAVAILABLE = '不可用（CLI 未返回该字段）';
+  if (state.calls.length > 0) {
     lines.push('## 调用可观测性明细');
     lines.push('');
-    for (const call of callsWithObservability) {
+    lines.push('> 说明：以下字段依赖 claude CLI 回传的 conversation 元数据。当前 CLI 未稳定回传 tool_use 明细与 MCP server 列表，');
+    lines.push('> 相应字段会显示为「不可用」，代表**缺少可观测数据**，而非「该调用未使用工具/无错误」。permission_denials 数量为 CLI 直接回传，恒可用。');
+    lines.push('');
+    for (const call of state.calls) {
       lines.push(`### ${call.model}（${call.modelId}，subtype=${call.subtype}）`);
-      lines.push(`- 工具调用次数：${call.toolUseCounts ? JSON.stringify(call.toolUseCounts) : '（无记录）'}`);
-      lines.push(`- 工具错误次数：${call.toolErrorCounts ? JSON.stringify(call.toolErrorCounts) : '（无记录）'}`);
+      lines.push(`- 工具调用次数：${call.toolUseCounts ? JSON.stringify(call.toolUseCounts) : UNAVAILABLE}`);
+      lines.push(`- 工具错误次数：${call.toolErrorCounts ? JSON.stringify(call.toolErrorCounts) : UNAVAILABLE}`);
       lines.push(`- permission_denials 数量：${call.permissionDenialsCount}`);
-      lines.push(`- MCP server：${call.mcpServers && call.mcpServers.length > 0 ? call.mcpServers.join(', ') : '（无）'}`);
-      if (call.lastAssistantTextSummary) {
-        lines.push(`- 最后一次 assistant 文本摘要：${call.lastAssistantTextSummary}`);
-      }
+      lines.push(`- MCP server：${call.mcpServers ? (call.mcpServers.length > 0 ? call.mcpServers.join(', ') : '（无，已隔离）') : UNAVAILABLE}`);
+      lines.push(`- 最后一次 assistant 文本摘要：${call.lastAssistantTextSummary ? call.lastAssistantTextSummary : UNAVAILABLE}`);
       lines.push('');
     }
   }

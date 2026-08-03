@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFlags, stripDuplicateRunToken } from './cli';
+import { parseFlags, stripDuplicateRunToken, parseRunArgv } from './cli';
 
 describe('parseFlags：CLI 参数解析', () => {
   it('旧调用方式（空格分隔 --budget 2.00 --max-files 2 --max-fix-rounds 1 --no-commit）：取值型 flag 消费下一个 token，不泄漏进任务正文', () => {
@@ -56,6 +56,18 @@ describe('parseFlags：CLI 参数解析', () => {
     expect(flags.get('budget')).toBe('true');
     expect(positional).toEqual(['修改文案']);
   });
+
+  it('独立的 -- 分隔符（pnpm 参数边界）被过滤，不进入 positional', () => {
+    const { flags, positional } = parseFlags(['--', '--budget', '2.00', '任务正文']);
+    expect(flags.get('budget')).toBe('2.00');
+    expect(positional).toEqual(['任务正文']);
+  });
+
+  it('--max-repairs 是 --max-fix-rounds 的历史别名，归一化到同一个内部键', () => {
+    const { flags } = parseFlags(['--max-repairs', '1']);
+    expect(flags.get('max-fix-rounds')).toBe('1');
+    expect(flags.has('max-repairs')).toBe(false);
+  });
 });
 
 describe('stripDuplicateRunToken：剥离 package.json 已内置的重复 run 子命令', () => {
@@ -88,5 +100,75 @@ describe('stripDuplicateRunToken：剥离 package.json 已内置的重复 run �
     const { positional, stripped } = stripDuplicateRunToken(rawPositional);
     expect(stripped).toBe(true);
     expect(positional).toEqual(['一次冒烟测试']);
+  });
+});
+
+describe('parseRunArgv：模拟真实 process.argv 的端到端集成测试', () => {
+  it('复现 run-1785486160735-87nses 真实故障：pnpm cc:auto -- --budget 2.00 --max-files 2 --max-repairs 1 "任务正文"', () => {
+    // package.json 的 "cc:auto": "tsx scripts/ccAuto/cli.ts run" 已预置 run 子命令；
+    // 用户实际敲的是 `pnpm cc:auto -- --budget 2.00 --max-files 2 --max-repairs 1 "任务正文"`，
+    // pnpm 会把 `--` 之后的内容原样透传给脚本，故真实 argv 形如下方数组。
+    // 故障前的解析结果错误地把 "1" 拼进了任务正文（"1 任务正文"），本用例锁定修复后的正确结果。
+    const argv = [
+      'node',
+      'scripts/ccAuto/cli.ts',
+      'run',
+      '--',
+      '--budget',
+      '2.00',
+      '--max-files',
+      '2',
+      '--max-repairs',
+      '1',
+      '任务正文',
+    ];
+    const parsed = parseRunArgv(argv);
+    expect(parsed.command).toBe('run');
+    expect(parsed.taskDescription).toBe('任务正文');
+    expect(parsed.budget).toBe(2.00);
+    expect(parsed.maxFiles).toBe(2);
+    expect(parsed.maxRepairs).toBe(1);
+    expect(parsed.strippedDuplicateRun).toBe(false);
+  });
+
+  it('--key=value 形式 + -- 分隔符：同样解析正确', () => {
+    const argv = [
+      'node', 'scripts/ccAuto/cli.ts', 'run', '--',
+      '--budget=2.00', '--max-files=2', '--max-repairs=1', '任务正文',
+    ];
+    const parsed = parseRunArgv(argv);
+    expect(parsed.taskDescription).toBe('任务正文');
+    expect(parsed.budget).toBe(2.00);
+    expect(parsed.maxFiles).toBe(2);
+    expect(parsed.maxRepairs).toBe(1);
+  });
+
+  it('用户误重复输入 run（pnpm cc:auto -- run --budget 2.00 ... "任务正文"）：兼容剥离，不污染任务正文', () => {
+    const argv = [
+      'node', 'scripts/ccAuto/cli.ts', 'run', '--',
+      'run', '--budget', '2.00', '--max-files', '2', '--max-repairs', '1', '任务正文',
+    ];
+    const parsed = parseRunArgv(argv);
+    expect(parsed.taskDescription).toBe('任务正文');
+    expect(parsed.strippedDuplicateRun).toBe(true);
+  });
+
+  it('无 -- 分隔符（直接 tsx scripts/ccAuto/cli.ts run --budget 2.00 ... "任务正文"）：同样解析正确', () => {
+    const argv = [
+      'node', 'scripts/ccAuto/cli.ts', 'run',
+      '--budget', '2.00', '--max-files', '2', '--max-repairs', '1', '任务正文',
+    ];
+    const parsed = parseRunArgv(argv);
+    expect(parsed.taskDescription).toBe('任务正文');
+    expect(parsed.budget).toBe(2.00);
+    expect(parsed.maxFiles).toBe(2);
+    expect(parsed.maxRepairs).toBe(1);
+  });
+
+  it('--no-commit 布尔开关经端到端解析后正确置位', () => {
+    const argv = ['node', 'scripts/ccAuto/cli.ts', 'run', '--', '--no-commit', '任务正文'];
+    const parsed = parseRunArgv(argv);
+    expect(parsed.noCommit).toBe(true);
+    expect(parsed.taskDescription).toBe('任务正文');
   });
 });

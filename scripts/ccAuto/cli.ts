@@ -133,24 +133,40 @@ function buildDeps(config: CcAutoConfig): OrchestratorDeps {
  * 取值型 flag：既支持新格式 `--key=value`，也兼容旧调用方式 `--key value`（空格分隔，下一个 token 是值）。
  * 不在此列表中的 `--flag` 视为布尔开关（如 --no-commit），不会消费下一个 token，
  * 从而保证旧式 `--budget 2.00 --max-files 2 ...` 调用不会把数值拼进任务正文。
+ *
+ * max-repairs 与 max-fix-rounds 是历史别名，统一映射到同一个内部键（见 normalizeFlag）。
  */
-const VALUE_FLAGS = new Set(['estimated-files', 'budget', 'max-files', 'max-fix-rounds']);
+const VALUE_FLAGS = new Set(['estimated-files', 'budget', 'max-files', 'max-fix-rounds', 'max-repairs']);
 
+/** 归一化 flag 键：将历史别名统一映射到标准键，避免重复判断。 */
+function normalizeFlag(key: string): string {
+  if (key === 'max-repairs') return 'max-fix-rounds';
+  return key;
+}
+
+/**
+ * 真实 CLI 参数解析：支持 `--key=value` 与 `--key value` 两种形式，
+ * 过滤独立的 `--` 分隔符（pnpm 用于分隔 pnpm 自身参数与脚本参数），
+ * 并对历史别名做归一化（max-repairs -> max-fix-rounds）。
+ */
 export function parseFlags(args: string[]): { flags: Map<string, string>; positional: string[] } {
   const flags = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
+    // 跳过独立的 `--` 分隔符（pnpm 用于分隔参数边界）
+    if (arg === '--') continue;
     if (!arg.startsWith('--')) {
       positional.push(arg);
       continue;
     }
-    const [key, inlineVal] = arg.slice(2).split('=', 2);
+    const [rawKey, inlineVal] = arg.slice(2).split('=', 2);
+    const key = normalizeFlag(rawKey);
     if (inlineVal !== undefined) {
       flags.set(key, inlineVal);
       continue;
     }
-    if (VALUE_FLAGS.has(key) && i + 1 < args.length && !args[i + 1].startsWith('--')) {
+    if (VALUE_FLAGS.has(rawKey) && i + 1 < args.length && !args[i + 1].startsWith('--')) {
       flags.set(key, args[i + 1]);
       i += 1; // 消费下一个 token 作为该 flag 的值，防止其落入 positional
     } else {
@@ -173,28 +189,60 @@ export function stripDuplicateRunToken(positional: string[]): { positional: stri
   return { positional, stripped: false };
 }
 
+export interface ParsedRunArgv {
+  command: string | undefined;
+  taskDescription: string;
+  budget?: number;
+  maxFiles?: number;
+  maxRepairs?: number;
+  estimatedFiles?: number;
+  noCommit: boolean;
+  strippedDuplicateRun: boolean;
+}
+
+/**
+ * 解析完整的真实 `process.argv`（含 node 可执行文件路径、脚本路径），
+ * 覆盖 `pnpm cc:auto -- --budget 2.00 ...` 场景：package.json 预置的 `run` 子命令
+ * + pnpm 的 `--` 分隔符 + 取值型 flag + 用户误重复输入 `run` 的兼容场景。
+ * 纯函数、无 IO，main() 与 argv 级集成测试共用同一条解析路径。
+ */
+export function parseRunArgv(argv: string[]): ParsedRunArgv {
+  const [command, ...rest] = argv.slice(2);
+  const { flags, positional: rawPositional } = parseFlags(rest);
+  const { positional, stripped } = stripDuplicateRunToken(rawPositional);
+  return {
+    command,
+    taskDescription: positional.join(' ').trim(),
+    budget: flags.has('budget') ? Number(flags.get('budget')) : undefined,
+    maxFiles: flags.has('max-files') ? Number(flags.get('max-files')) : undefined,
+    maxRepairs: flags.has('max-fix-rounds') ? Number(flags.get('max-fix-rounds')) : undefined,
+    estimatedFiles: flags.has('estimated-files') ? Number(flags.get('estimated-files')) : undefined,
+    noCommit: flags.get('no-commit') === 'true',
+    strippedDuplicateRun: stripped,
+  };
+}
+
 async function main(): Promise<void> {
-  const [command, ...rest] = process.argv.slice(2);
+  const parsed = parseRunArgv(process.argv);
+  const command = parsed.command;
   const config = DEFAULT_CONFIG;
 
   if (command === 'run') {
-    const { flags, positional: rawPositional } = parseFlags(rest);
-    const { positional, stripped } = stripDuplicateRunToken(rawPositional);
-    if (stripped) {
+    if (parsed.strippedDuplicateRun) {
       console.log('[cc-auto] 检测到重复的 run 子命令（pnpm cc:auto 脚本已内置 run），已剥离，不计入任务正文');
     }
-    const taskDescription = positional.join(' ').trim();
+    const taskDescription = parsed.taskDescription;
     if (!taskDescription) {
       console.error('用法：pnpm cc:auto run "<任务描述>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit]');
       process.exit(1);
     }
-    const estimatedFiles = flags.has('estimated-files') ? Number(flags.get('estimated-files')) : undefined;
+    const estimatedFiles = parsed.estimatedFiles;
     const deps = buildDeps(config);
     const state = await runTask(deps, taskDescription, estimatedFiles);
     console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
     process.exit(isTaskSucceeded(state) ? 0 : 1);
   } else if (command === 'resume') {
-    const { positional } = parseFlags(rest);
+    const { positional } = parseFlags(process.argv.slice(3));
     const runId = positional[0] ?? latestRunId(CWD);
     if (!runId) {
       console.error('未找到可 resume 的 run，请显式指定 run-id');
@@ -205,7 +253,7 @@ async function main(): Promise<void> {
     console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
     process.exit(isTaskSucceeded(state) ? 0 : 1);
   } else if (command === 'report') {
-    const { positional } = parseFlags(rest);
+    const { positional } = parseFlags(process.argv.slice(3));
     const runId = positional[0] ?? latestRunId(CWD);
     if (!runId) {
       console.error('未找到任何 run');

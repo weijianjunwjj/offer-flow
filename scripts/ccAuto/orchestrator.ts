@@ -16,6 +16,10 @@ import { renderReport } from './report';
 import { shouldEscalateToArbiter, budgetGate, changedFilesExceeded } from './stateMachine';
 import { validateConfiguredModelPricing } from './budget';
 import { changedFilesSince, shortStatus } from './git';
+import {
+  evaluateDirectEditEligibility, prepareDirectEditContext, validateDirectEdits, applyDirectEdits,
+  DIRECT_EDIT_SCHEMA, type DirectEditBuilderOutput, type PreparedFile,
+} from './directEdit';
 import type { ClaudeCallOptions, ClaudeCallResult } from './runner';
 import type { Phase } from './types';
 
@@ -119,6 +123,34 @@ export function extractExplicitFiles(task: string): string[] {
   return Array.from(new Set(matches));
 }
 
+// Direct Edit Builder 系统规则：无任何文件工具，只依据 prompt 内的文件内容返回 search/replace edits。
+const DIRECT_EDIT_SYSTEM_RULE = [
+  '你是「定向编辑」角色。没有任何文件工具（不能读取、搜索或写入文件），',
+  '只能依据 prompt 中直接给出的目标文件内容，返回 search/replace 形式的最小改动。',
+  'search 必须是目标文件中逐字存在、且唯一出现的片段；不要臆造未提供的文件或路径。',
+  '所有报告使用简体中文。',
+].join('\n');
+
+/** 构造 Direct Edit Builder 的 prompt：只包含任务、允许文件路径与机器读取出的文件内容。 */
+export function directEditPrompt(task: string, files: PreparedFile[]): string {
+  const parts = [
+    `任务：${task}`,
+    `允许编辑的文件（只能改这些，禁止引用其他路径）：${files.map((f) => f.path).join(', ')}`,
+    '以下是这些文件的完整当前内容（由机器读取，不要假设任何未在此列出的内容）：',
+  ];
+  for (const f of files) {
+    parts.push(`===== 文件：${f.path} =====\n${f.content}`);
+  }
+  parts.push(
+    [
+      '请返回结构化 JSON：edits 数组（每项含 path/search/replace）、summary、可选 suggestedTests。',
+      '每个 search 必须逐字取自上面对应文件内容，且在该文件中唯一出现；search 与 replace 不得相同。',
+      '只做任务要求的最小改动，不要顺手重构无关代码。',
+    ].join('\n'),
+  );
+  return parts.join('\n\n');
+}
+
 export function builderPrompt(task: string, scoutFiles: string[], failureContext: string | undefined, complexity: 'simple' | 'normal' | 'complex'): string {
   const parts = [`任务：${task}`];
   if (scoutFiles.length > 0) parts.push(`已知相关文件（来自探路阶段）：${scoutFiles.join(', ')}`);
@@ -192,6 +224,93 @@ async function runBuilder(
     if (!state.changedFiles.includes(file)) state.changedFiles.push(file);
   }
   return structured;
+}
+
+/** Direct Edit 执行结果：'applied' 已真实写盘并产生 diff；'stopped' 已置 STOPPED（不回退标准 Builder）。 */
+type DirectEditOutcome = 'applied' | 'stopped';
+
+/**
+ * 真实 Simple Direct Edit 执行路径：机器准备上下文 → tools:[] 的 Direct Edit Builder →
+ * 机器校验并原子应用 edits → 确认产生真实 git diff。不调用 Scout，不提高 Agent Builder maxTurns。
+ *
+ * 失败语义（关键安全边界）：
+ * - 本函数只在任务**已被判定为 Direct Edit 候选**（evaluateDirectEditEligibility 通过）后调用；
+ * - 准备阶段（路径穿越/绝对路径/仓库外/文件不存在/超上限/读取失败/文件数超限）失败
+ *   → STOPPED(DIRECT_EDIT_PREPARE_FAILED)，**绝不**回退到拥有 Read/Edit/Bash 的标准 Builder，
+ *   以免标准 Builder 绕过 Direct Edit 的机器侧安全拒绝；
+ * - Builder 未返回结构化输出、edits 校验失败或应用失败 → STOPPED(DIRECT_EDIT_APPLY_FAILED)。
+ */
+async function runDirectEdit(
+  deps: OrchestratorDeps,
+  state: RunState,
+  taskBudgetRmb: number,
+  targetFiles: string[],
+): Promise<DirectEditOutcome> {
+  const context = prepareDirectEditContext(deps.cwd, targetFiles);
+  if (!context.ok) {
+    stop(state, 'DIRECT_EDIT_PREPARE_FAILED', `Direct Edit 机器准备阶段失败：${context.reason}`);
+    deps.log(`Direct Edit 准备阶段安全拒绝（${context.reason}），停止且不回退标准 Builder`);
+    return 'stopped';
+  }
+
+  // Direct Edit Builder：固定 claude-sonnet-5、tools:[]、maxTurns<=2；上下文只经 prompt 文本给出。
+  const rule = { model: 'claude-sonnet-5', effort: 'medium' as const, maxTurns: Math.min(2, deps.config.models.builderDefault.maxTurns) };
+  const result = await guardedCall(deps, state, 'IMPLEMENT', 'builder', taskBudgetRmb, {
+    prompt: directEditPrompt(state.taskDescription, context.files),
+    role: 'builder',
+    rule,
+    tools: [],
+    jsonSchema: DIRECT_EDIT_SCHEMA,
+    appendSystemPrompt: DIRECT_EDIT_SYSTEM_RULE,
+    isolateContext: true,
+    cwd: deps.cwd,
+  });
+  if (state.done) return 'stopped'; // 预算/定价在 guardedCall 内已置 STOPPED
+  if (!result) return 'stopped';
+
+  const output = result.structuredOutput as DirectEditBuilderOutput | undefined;
+  if (!output || !Array.isArray(output.edits)) {
+    stop(state, 'DIRECT_EDIT_APPLY_FAILED', 'Direct Edit Builder 未返回有效 edits');
+    return 'stopped';
+  }
+
+  const validation = validateDirectEdits(output.edits, context.files, deps.config);
+  if (!validation.ok) {
+    stop(state, 'DIRECT_EDIT_APPLY_FAILED', `edits 校验失败：${validation.reason}`);
+    return 'stopped';
+  }
+
+  const applied = applyDirectEdits(deps.cwd, output.edits, context.files);
+  if (!applied.ok) {
+    stop(state, 'DIRECT_EDIT_APPLY_FAILED', `edits 应用失败：${applied.reason}`);
+    return 'stopped';
+  }
+
+  // 确认应用后确实产生真实 git diff；否则视为空改动，按应用失败处理，不伪装成功。
+  const diffFiles = changedFilesSince(deps.cwd);
+  const producedDiff = applied.changedFiles.some((f) => diffFiles.includes(f));
+  if (!producedDiff) {
+    stop(state, 'DIRECT_EDIT_APPLY_FAILED', '应用后未检测到真实 git diff（可能为等价改动）');
+    return 'stopped';
+  }
+
+  for (const file of applied.changedFiles) {
+    if (!state.changedFiles.includes(file)) state.changedFiles.push(file);
+  }
+  state.directEdit = true;
+  state.directEditDetail = {
+    targetFiles: context.files.map((f) => f.path),
+    editCount: output.edits.length,
+    appliedFiles: applied.changedFiles,
+    summary: output.summary,
+    suggestedTests: output.suggestedTests ?? [],
+  };
+  savePhaseRecord(deps.cwd, state.runId, 'IMPLEMENT', {
+    mode: 'direct-edit', targetFiles: state.directEditDetail.targetFiles,
+    editCount: state.directEditDetail.editCount, appliedFiles: applied.changedFiles, summary: output.summary,
+  });
+  deps.log(`Direct Edit 已应用 ${output.edits.length} 处改动到 ${applied.changedFiles.join(', ')}，进入验证`);
+  return 'applied';
 }
 
 const ARBITRATION_BUNDLE_MAX_CHARS = 8000;
@@ -310,6 +429,8 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
     state.classification = classifyTask(state.taskDescription, estimatedFiles);
     saveRunState(deps.cwd, state);
     deps.log(`分类结果：${state.classification.complexity}（风险分 ${state.classification.riskScore}）`);
+    // Direct Edit 命中判定只决定「是否尝试」；是否真正走该路径由准备/应用是否成功决定，
+    // 复杂/高风险任务一律进 SCOUT，保持原 Agent Builder 路径。
     state.currentPhase = state.classification.complexity === 'simple' ? 'IMPLEMENT' : 'SCOUT';
     saveRunState(deps.cwd, state);
   }
@@ -323,6 +444,23 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
     if (state.done) return finish(deps, state);
     state.currentPhase = 'IMPLEMENT';
     saveRunState(deps.cwd, state);
+  }
+
+  // 首个 IMPLEMENT 且命中 Direct Edit 条件时，先尝试真实 Direct Edit 执行路径。
+  // 仅当真实应用成功才置 directEdit=true 并直接进入验证；准备失败回退标准 Builder；应用失败已 STOPPED。
+  if (state.currentPhase === 'IMPLEMENT' && state.repairCycles === 0 && !state.directEdit) {
+    const eligibility = evaluateDirectEditEligibility(classification, state.taskDescription, deps.config);
+    if (eligibility.eligible) {
+      deps.log(`命中 Simple Direct Edit 条件（目标文件：${eligibility.targetFiles.join(', ')}），尝试机器定向编辑`);
+      const outcome = await runDirectEdit(deps, state, taskBudgetRmb, eligibility.targetFiles);
+      // 候选任务的准备/校验/应用失败都会置 STOPPED（DIRECT_EDIT_PREPARE_FAILED / DIRECT_EDIT_APPLY_FAILED），
+      // 一律在此结束，绝不落入下方标准 Agent Builder 路径。
+      if (state.done) return finish(deps, state);
+      if (outcome === 'applied') {
+        state.currentPhase = 'VERIFY';
+        saveRunState(deps.cwd, state);
+      }
+    }
   }
 
   let failureContext: string | undefined;
