@@ -249,6 +249,9 @@ export function parseRunArgv(argv: string[]): ParsedRunArgv {
   };
 }
 
+/** report 子命令帮助文案：明确说明可查看模型调用、渠道费用与验证结果这三类信息。 */
+export const REPORT_HELP_TEXT = '查看指定运行任务的模型调用、渠道费用和验证结果，默认显示最后一个';
+
 async function main(): Promise<void> {
   const parsed = parseRunArgv(process.argv);
   const command = parsed.command;
@@ -298,7 +301,7 @@ async function main(): Promise<void> {
     console.log('    恢复未完成的任务，默认恢复最后一个');
     console.log('');
     console.log('  report [run-id]');
-    console.log('    查看指定运行任务的模型调用、渠道费用和验证结果，默认显示最后一个');
+    console.log(`    ${REPORT_HELP_TEXT}`);
   } else {
     console.error('用法：pnpm cc:auto <run|resume|report> ...');
     process.exit(1);

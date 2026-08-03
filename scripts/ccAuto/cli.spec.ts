@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFlags, stripDuplicateRunToken, parseRunArgv } from './cli';
+import { parseFlags, stripDuplicateRunToken, parseRunArgv, REPORT_HELP_TEXT } from './cli';
 
 describe('parseFlags：CLI 参数解析', () => {
   it('旧调用方式（空格分隔 --budget 2.00 --max-files 2 --max-fix-rounds 1 --no-commit）：取值型 flag 消费下一个 token，不泄漏进任务正文', () => {
@@ -170,5 +170,13 @@ describe('parseRunArgv：模拟真实 process.argv 的端到端集成测试', ()
     const parsed = parseRunArgv(argv);
     expect(parsed.noCommit).toBe(true);
     expect(parsed.taskDescription).toBe('任务正文');
+  });
+});
+
+describe('REPORT_HELP_TEXT：report 子命令帮助文案', () => {
+  it('明确表达可查看指定运行任务的模型调用、渠道费用和验证结果', () => {
+    expect(REPORT_HELP_TEXT).toContain('模型调用');
+    expect(REPORT_HELP_TEXT).toContain('渠道费用');
+    expect(REPORT_HELP_TEXT).toContain('验证结果');
   });
 });
