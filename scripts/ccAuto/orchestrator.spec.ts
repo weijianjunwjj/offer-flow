@@ -12,7 +12,7 @@ import { renderReport } from './report';
 import { classifyTask } from './classify';
 import {
   evaluateDirectEditEligibility, prepareDirectEditContext, validateDirectEdits, applyDirectEdits,
-  isPathWithinRepo, type PreparedFile,
+  isPathWithinRepo, resolveExplicitFileReferences, type PreparedFile,
 } from './directEdit';
 import type { ClaudeCallOptions, ClaudeCallResult } from './runner';
 import type { CallUsage } from './types';
@@ -542,6 +542,64 @@ describe('evaluateDirectEditEligibility：Direct Edit 命中条件（纯函数�
     expect(evaluateDirectEditEligibility(simpleZeroRisk, '改 a.ts 的 schema migration', DEFAULT_CONFIG).eligible).toBe(false);
     expect(evaluateDirectEditEligibility(simpleZeroRisk, '在 a.ts 新增一个依赖', DEFAULT_CONFIG).eligible).toBe(false);
     expect(evaluateDirectEditEligibility(simpleZeroRisk, '改 a.ts 的 SSE 逻辑', DEFAULT_CONFIG).eligible).toBe(false);
+  });
+});
+
+describe('resolveExplicitFileReferences：文件路径规范化（读盘，纯函数不改文件）', () => {
+  /** 在测试仓库里写入一个文件（含目录），供 basename 唯一定位。 */
+  function touch(rel: string): void {
+    const abs = path.join(cwd, rel);
+    mkdirSync(path.dirname(abs), { recursive: true });
+    writeFileSync(abs, '// x\n', 'utf8');
+  }
+
+  it('scripts/ccAuto/cli.ts + 裸 cli.ts → 只得到 scripts/ccAuto/cli.ts（同一文件，不重复计数）', () => {
+    touch('scripts/ccAuto/cli.ts');
+    const r = resolveExplicitFileReferences('优化 scripts/ccAuto/cli.ts，同步更新 cli.ts', cwd);
+    expect(r.ok).toBe(true);
+    expect(r.files).toEqual(['scripts/ccAuto/cli.ts']);
+  });
+
+  it('scripts/ccAuto/cli.ts + 裸 cli.ts + 裸 cli.spec.ts（仓库唯一）→ 恰好两个真实文件', () => {
+    touch('scripts/ccAuto/cli.ts');
+    touch('scripts/ccAuto/cli.spec.ts');
+    const r = resolveExplicitFileReferences('优化 scripts/ccAuto/cli.ts 与 cli.ts，并更新 cli.spec.ts', cwd);
+    expect(r.ok).toBe(true);
+    expect(new Set(r.files)).toEqual(new Set(['scripts/ccAuto/cli.ts', 'scripts/ccAuto/cli.spec.ts']));
+    expect(r.files.length).toBe(2);
+  });
+
+  it('仓库中两个不同目录都有 cli.ts 时，单独的裸 cli.ts 不得被猜测解析（ok:false）', () => {
+    touch('a/cli.ts');
+    touch('b/cli.ts');
+    const r = resolveExplicitFileReferences('优化 cli.ts 的一处文案', cwd);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('cli.ts');
+  });
+
+  it('./scripts/ccAuto/cli.ts 与 scripts/ccAuto/cli.ts 归一去重为同一路径', () => {
+    touch('scripts/ccAuto/cli.ts');
+    const r = resolveExplicitFileReferences('优化 ./scripts/ccAuto/cli.ts 和 scripts/ccAuto/cli.ts', cwd);
+    expect(r.ok).toBe(true);
+    expect(r.files).toEqual(['scripts/ccAuto/cli.ts']);
+  });
+
+  it('.. 穿越原样透传（不规范化、不映射），且被仓库边界校验拒绝（绝对路径由 prepare 阶段用例覆盖）', () => {
+    const r = resolveExplicitFileReferences('优化 ../outside.ts 的一处文案', cwd);
+    expect(r.ok).toBe(true);
+    expect(r.files).toContain('../outside.ts'); // 原样保留，未被规范化成仓库内路径
+    // 穿越项无法通过仓库边界校验，prepare 阶段会安全拒绝。
+    expect(r.files.every((f) => isPathWithinRepo(cwd, f))).toBe(false);
+  });
+
+  it('修复后的原真实回归任务能命中 Direct Edit eligibility（去重后恰为两个真实文件）', () => {
+    touch('scripts/ccAuto/cli.ts');
+    touch('scripts/ccAuto/cli.spec.ts');
+    const task = '优化 scripts/ccAuto/cli.ts 中 report 子命令的一处帮助文案，使其明确表达：查看指定运行任务的模型调用、渠道费用和验证结果。同步更新对应测试。只允许修改 cli.ts 和对应的 cli.spec.ts，不得改变命令参数、状态机、预算逻辑或实际运行行为。';
+    const simpleZeroRisk = { complexity: 'simple' as const, riskScore: 0, reasons: [], touchesHighRisk: false };
+    const r = evaluateDirectEditEligibility(simpleZeroRisk, task, DEFAULT_CONFIG, cwd);
+    expect(r.eligible).toBe(true);
+    expect(new Set(r.targetFiles)).toEqual(new Set(['scripts/ccAuto/cli.ts', 'scripts/ccAuto/cli.spec.ts']));
   });
 });
 

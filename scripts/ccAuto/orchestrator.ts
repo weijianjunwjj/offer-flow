@@ -449,7 +449,7 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
   // 首个 IMPLEMENT 且命中 Direct Edit 条件时，先尝试真实 Direct Edit 执行路径。
   // 仅当真实应用成功才置 directEdit=true 并直接进入验证；准备失败回退标准 Builder；应用失败已 STOPPED。
   if (state.currentPhase === 'IMPLEMENT' && state.repairCycles === 0 && !state.directEdit) {
-    const eligibility = evaluateDirectEditEligibility(classification, state.taskDescription, deps.config);
+    const eligibility = evaluateDirectEditEligibility(classification, state.taskDescription, deps.config, deps.cwd);
     if (eligibility.eligible) {
       deps.log(`命中 Simple Direct Edit 条件（目标文件：${eligibility.targetFiles.join(', ')}），尝试机器定向编辑`);
       const outcome = await runDirectEdit(deps, state, taskBudgetRmb, eligibility.targetFiles);

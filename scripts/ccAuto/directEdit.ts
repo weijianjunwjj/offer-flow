@@ -32,6 +32,105 @@ export interface DirectEditEligibility {
   reason?: string;
 }
 
+/** 递归遍历时跳过的目录（体积大或与源码无关，避免误命中同名文件）。 */
+const RESOLVE_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.cc-auto', '.next', '.turbo']);
+
+/**
+ * 把任务正文里的单个引用规范化为仓库相对路径：统一用 `/`、去掉开头 `./`、规范化 `.` 段。
+ * 绝对路径或包含 `..` 穿越的引用返回 null（不在此静默修复，交由上层原样透传给 prepare 阶段安全拒绝）。
+ */
+function normalizeRelReference(token: string): string | null {
+  if (path.isAbsolute(token)) return null;
+  // 统一分隔符后按 posix 语义规范化，保留末段文件名。
+  const unified = token.split('\\').join('/');
+  const normalized = path.posix.normalize(unified);
+  if (normalized.startsWith('..') || normalized === '.' || path.posix.isAbsolute(normalized)) return null;
+  return normalized;
+}
+
+/** 在仓库内按 basename 查找同名文件，返回规范化后的仓库相对路径（跳过 node_modules 等目录）。 */
+function findByBasename(repoRoot: string, basename: string): string[] {
+  const matches: string[] = [];
+  const walk = (absDir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (RESOLVE_SKIP_DIRS.has(entry.name)) continue;
+        walk(path.join(absDir, entry.name));
+      } else if (entry.isFile() && entry.name === basename) {
+        matches.push(path.relative(repoRoot, path.join(absDir, entry.name)).split(path.sep).join('/'));
+      }
+    }
+  };
+  walk(repoRoot);
+  return matches;
+}
+
+export interface ResolvedFileReferences {
+  ok: boolean;
+  /** 规范化 + 去重后的仓库相对路径（含无法在仓库定位、原样透传的引用，交由 prepare 阶段判定）。 */
+  files: string[];
+  /** ok=false 时的原因（同名文件在仓库多处、无法唯一确定）。 */
+  reason?: string;
+}
+
+/**
+ * 把任务正文中的显式文件引用解析为去重后的真实仓库相对路径（纯函数，只读磁盘、不改任何文件）。
+ *
+ * 规则（见任务说明一）：
+ * 1. 先提取带目录的完整仓库相对路径并规范化（`/`、去 `./`、规范 `.` 段）；
+ * 2. 仅含文件名的引用（如 `cli.ts`）：
+ *    - 若其 basename 与已提取的某个完整路径唯一匹配 → 映射到该完整路径；
+ *    - 否则在仓库内查找同名文件，仅当唯一匹配时才映射；
+ *    - 仓库内多处同名 → 不猜测，返回 ok:false（该任务不符合 Direct Edit）；
+ *    - 仓库内查无此名且不匹配任何完整路径 → 原样保留（交由 prepare 阶段以「文件不存在」拒绝）；
+ * 3. 绝对路径 / `..` 穿越引用原样保留（不规范化、不映射），由 prepare 阶段的仓库边界校验拒绝；
+ * 4. 最终按规范化后的仓库相对路径去重；不通过 basename 合并两个真实存在的不同文件。
+ */
+export function resolveExplicitFileReferences(task: string, repoRoot: string): ResolvedFileReferences {
+  const raw = extractExplicitFiles(task);
+  const fullPaths: string[] = []; // 含目录的规范化完整路径
+  const bareNames: string[] = []; // 仅文件名
+  const passthrough: string[] = []; // 绝对/穿越路径，原样透传给 prepare 拒绝
+  for (const token of raw) {
+    const normalized = normalizeRelReference(token);
+    if (normalized === null) {
+      passthrough.push(token);
+      continue;
+    }
+    if (normalized.includes('/')) fullPaths.push(normalized);
+    else bareNames.push(normalized);
+  }
+
+  const resolved = new Set<string>(fullPaths);
+  for (const name of bareNames) {
+    const inFull = fullPaths.filter((p) => p.split('/').pop() === name);
+    if (inFull.length === 1) {
+      resolved.add(inFull[0]);
+      continue;
+    }
+    if (inFull.length > 1) {
+      return { ok: false, files: [], reason: `文件名 ${name} 同时匹配多个已给出的路径，无法唯一确定` };
+    }
+    const repoMatches = findByBasename(repoRoot, name);
+    if (repoMatches.length === 1) {
+      resolved.add(repoMatches[0]);
+    } else if (repoMatches.length === 0) {
+      resolved.add(name); // 交由 prepare 以「文件不存在」拒绝
+    } else {
+      return { ok: false, files: [], reason: `仓库中存在 ${repoMatches.length} 个名为 ${name} 的文件，无法唯一确定` };
+    }
+  }
+  for (const p of passthrough) resolved.add(p);
+
+  return { ok: true, files: Array.from(resolved) };
+}
+
 /**
  * Direct Edit 命中条件（纯函数，不触碰磁盘，供路由判定与单测复用）：
  * - complexity === 'simple'；
@@ -48,8 +147,20 @@ export function evaluateDirectEditEligibility(
   classification: Classification,
   task: string,
   config: CcAutoConfig,
+  repoRoot?: string,
 ): DirectEditEligibility {
-  const targetFiles = extractExplicitFiles(task);
+  // 传入 repoRoot 时用规范化解析（cli.ts↔scripts/ccAuto/cli.ts 视为同一文件、仓库内唯一定位裸文件名）；
+  // 不传时退回按正文原样提取（保持既有纯函数单测行为）。
+  let targetFiles: string[];
+  if (repoRoot) {
+    const resolvedRefs = resolveExplicitFileReferences(task, repoRoot);
+    if (!resolvedRefs.ok) {
+      return { eligible: false, targetFiles: [], reason: resolvedRefs.reason };
+    }
+    targetFiles = resolvedRefs.files;
+  } else {
+    targetFiles = extractExplicitFiles(task);
+  }
   if (classification.complexity !== 'simple') {
     return { eligible: false, targetFiles, reason: '复杂度非 simple' };
   }
