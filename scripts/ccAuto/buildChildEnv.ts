@@ -9,8 +9,13 @@
  * 6. 不修改 parentEnv
  * 7/8. 跨 Provider 凭证隔离由 allowlist + 显式注入保证
  * 9. 日志只允许出现凭证变量名，不允许出现正文
+ *
+ * v0.2.0 Slice 1C 补全：
+ * - 合并顺序：allowlist → staticEnv → credentialEnvVars（凭证最后覆盖所有其他来源）
+ * - staticEnv 与 credentialEnvVars 同名冲突时 fail closed（第二层防御）
  */
 import type { ProviderProfile } from './types';
+import { normalizeEnvVarName } from './envNamespace';
 
 export class CredentialMissingError extends Error {
   constructor(
@@ -19,6 +24,17 @@ export class CredentialMissingError extends Error {
   ) {
     super(`Provider "${providerId}" 凭证环境变量 "${missingVar}" 缺失或为空——fail closed`);
     this.name = 'CredentialMissingError';
+  }
+}
+
+/** staticEnv 与 credentialEnvVars 命名空间冲突——仅报告变量名，不含值 */
+export class EnvironmentNamespaceConflictError extends Error {
+  constructor(
+    public readonly providerId: string,
+    public readonly conflictingVar: string,
+  ) {
+    super(`Provider "${providerId}" 环境变量命名空间冲突：变量 "${conflictingVar}" 同时出现在 staticEnv 和 credentialEnvVars 中`);
+    this.name = 'EnvironmentNamespaceConflictError';
   }
 }
 
@@ -51,20 +67,26 @@ export function buildChildEnv(
     }
   }
 
-  // 2. 注入声明的凭证——缺失即 fail closed
+  // 2. 合并 staticEnv（非敏感值）
+  if (profile.staticEnv) {
+    // 第二层防御：检查 staticEnv 与 credentialEnvVars 冲突
+    const credNormed = new Set(profile.credentialEnvVars.map((k) => normalizeEnvVarName(k)));
+    for (const key of Object.keys(profile.staticEnv)) {
+      if (credNormed.has(normalizeEnvVarName(key))) {
+        throw new EnvironmentNamespaceConflictError(profile.id, key);
+      }
+      childEnv[key] = profile.staticEnv[key];
+    }
+  }
+
+  // 3. 注入声明的凭证——凭证最后注入，覆盖其他所有来源
+  // 缺失即 fail closed
   for (const key of profile.credentialEnvVars) {
     const value = parentEnv[key];
     if (value === undefined || value === '') {
       throw new CredentialMissingError(profile.id, key);
     }
     childEnv[key] = value;
-  }
-
-  // 3. 合并 staticEnv（已在配置校验阶段确认为非敏感）
-  if (profile.staticEnv) {
-    for (const [key, value] of Object.entries(profile.staticEnv)) {
-      childEnv[key] = value;
-    }
   }
 
   return {

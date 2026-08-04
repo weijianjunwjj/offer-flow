@@ -1,6 +1,6 @@
 /** buildChildEnv.spec.ts —— 环境隔离测试 */
 import { describe, it, expect } from 'vitest';
-import { buildChildEnv, CredentialMissingError, credentialNamesForLog } from './buildChildEnv';
+import { buildChildEnv, CredentialMissingError, EnvironmentNamespaceConflictError, credentialNamesForLog } from './buildChildEnv';
 import type { ProviderProfile } from './types';
 
 /** 构造仅用于测试的 ProviderProfile 模板 */
@@ -168,5 +168,76 @@ describe('buildChildEnv', () => {
     const parentEnv = makeParentEnv();
     const { credentialVarNames } = buildChildEnv(profile, parentEnv);
     expect(credentialVarNames).toEqual(['DEEPSEEK_API_KEY']);
+  });
+});
+
+// ============================================================================
+// Slice 1C: buildChildEnv 第二层防御——staticEnv 不得覆盖凭证
+// ============================================================================
+
+describe('buildChildEnv — credential override protection', () => {
+  // 8. buildChildEnv 直接调用时拒绝 staticEnv/credential 冲突
+  it('fail closed when staticEnv key conflicts with credentialEnvVars (same case)', () => {
+    const profile = makeProfile({
+      credentialEnvVars: ['DEEPSEEK_API_KEY'],
+      staticEnv: { DEEPSEEK_API_KEY: 'static-value' },
+    });
+    const parentEnv = makeParentEnv();
+    expect(() => buildChildEnv(profile, parentEnv)).toThrow(EnvironmentNamespaceConflictError);
+  });
+
+  it('fail closed when staticEnv key conflicts with credentialEnvVars (different case)', () => {
+    const profile = makeProfile({
+      credentialEnvVars: ['DEEPSEEK_API_KEY'],
+      staticEnv: { deepseek_api_key: 'static-value' },
+    });
+    const parentEnv = makeParentEnv();
+    expect(() => buildChildEnv(profile, parentEnv)).toThrow(EnvironmentNamespaceConflictError);
+  });
+
+  // 9. 正常 Profile 凭证最终值只来自 parentEnv
+  it('credential value comes from parentEnv, not staticEnv', () => {
+    const profile = makeProfile({
+      credentialEnvVars: ['DEEPSEEK_API_KEY'],
+      staticEnv: { CUSTOM_VAR: 'hello' },
+    });
+    const parentEnv = makeParentEnv({ DEEPSEEK_API_KEY: 'sk-from-parent' });
+    const { childEnv } = buildChildEnv(profile, parentEnv);
+    // 凭证来自 parentEnv（覆盖 staticEnv 中的 CUSTOM_VAR 不会覆盖凭证）
+    expect(childEnv.DEEPSEEK_API_KEY).toBe('sk-from-parent');
+  });
+
+  // 10. EnvironmentNamespaceConflictError 不包含凭证值
+  it('EnvironmentNamespaceConflictError message does not contain credential values', () => {
+    const profile = makeProfile({
+      credentialEnvVars: ['DEEPSEEK_API_KEY'],
+      staticEnv: { DEEPSEEK_API_KEY: 'static-value' },
+    });
+    try {
+      buildChildEnv(profile, makeParentEnv());
+      expect.fail('Expected EnvironmentNamespaceConflictError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(EnvironmentNamespaceConflictError);
+      // 错误消息包含 Provider ID 和变量名，但不含值
+      const msg = (err as Error).message;
+      expect(msg).toContain('DEEPSEEK_API_KEY');
+      expect(msg).toContain('test-provider');
+      expect(msg).not.toContain('sk-');
+      expect(msg).not.toContain('static-value');
+    }
+  });
+
+  // 11. 校验失败时 fetch 调用次数为 0 & 不创建 PendingCall（executor 层面已覆盖，
+  //     此处再验证 Adapter 层面 validateProfile 拒绝）
+  it('OpenAIChatAdapter.validateProfile rejects credentials in staticEnv', async () => {
+    const { OpenAIChatAdapter } = await import('./openaiChatAdapter');
+    const adapter = new OpenAIChatAdapter();
+    const profile = makeProfile({
+      apiBaseUrl: 'https://api.example.com/v1',
+      staticEnv: { DEEPSEEK_API_KEY: 'static-value' },
+    });
+    const result = adapter.validateProfile(profile);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('命名空间冲突');
   });
 });

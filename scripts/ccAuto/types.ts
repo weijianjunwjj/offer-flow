@@ -107,7 +107,8 @@ export type StopReason =
   | 'MODEL_IDENTITY_MISMATCH'
   | 'COST_UNAVAILABLE'
   | 'TRANSPORT_NOT_IMPLEMENTED'
-  | 'PROVIDER_TIMEOUT';
+  | 'PROVIDER_TIMEOUT'
+  | 'PROVIDER_AUTH_ERROR';
 
 // ============================================================================
 // v0.2.0 Dual Model Relay 新增类型（与 v0.1 共存）
@@ -250,6 +251,8 @@ export interface ProviderConfigLoadResult {
 export interface ProviderExecutionContext {
   childEnv: NodeJS.ProcessEnv;
   timeoutMs: number;
+  /** 当前执行对应的 ProviderProfile——Adapter 不持有 Profile，由 executor 传入 */
+  profile: ProviderProfile;
 }
 
 /** 标准化调用请求 */
@@ -272,6 +275,15 @@ export interface RawProviderUsage {
   cacheReadInputTokens: number | null;
 }
 
+/** Provider 返回的错误结构 */
+export interface ProviderResponseError {
+  kind: 'AUTH' | 'RATE_LIMIT' | 'HTTP' | 'UNSUPPORTED';
+  httpStatus: number | null;
+  code: string | null;
+  type: string | null;
+  message: string;
+}
+
 /** Provider Adapter 返回的标准化响应 */
 export interface ProviderCallResponse {
   callId: string;
@@ -284,11 +296,29 @@ export interface ProviderCallResponse {
   numTurns: number;
   subtype: string;
   isError: boolean;
+  /** 结构化错误信息，isError=true 时填充；成功时为 null */
+  error: ProviderResponseError | null;
+}
+
+/** Adapter Profile 预校验结果 */
+export interface AdapterProfileValidationResult {
+  ok: boolean;
+  message?: string;
 }
 
 /** Provider Adapter 接口——根据 transport 选择实现，不根据 vendor 选择 */
 export interface ProviderAdapter {
   readonly transport: ProviderProfile['transport'];
+
+  /**
+   * Profile 预校验（可选）——在创建 PendingCall 前执行。
+   * 校验失败的 Profile 不创建 PREPARED、不创建 DISPATCHED、不调用 fetch。
+   * 未实现此方法的 Adapter 默认视为通过。
+   */
+  validateProfile?(
+    profile: ProviderProfile,
+  ): AdapterProfileValidationResult;
+
   execute(
     request: ProviderCallRequest,
     context: ProviderExecutionContext,
@@ -377,6 +407,7 @@ export type ProviderExecutionStopReason =
   | 'MODEL_IDENTITY_MISMATCH'
   | 'COST_UNAVAILABLE'
   | 'PROVIDER_ERROR'
+  | 'PROVIDER_AUTH_ERROR'
   | 'PROVIDER_TIMEOUT'
   | 'TRANSPORT_NOT_IMPLEMENTED';
 

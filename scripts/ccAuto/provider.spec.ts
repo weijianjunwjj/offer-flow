@@ -127,6 +127,62 @@ describe('validateProviderProfile', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('acceptedReportedModelIds');
   });
+
+  // === 环境变量命名空间冲突（大小写不敏感）===
+
+  // 1. staticEnv 与 credentialEnvVars 完全同名 → 拒绝
+  it('rejects staticEnv key identical to credentialEnvVars key', () => {
+    const bad = { ...validProfile, staticEnv: { DEEPSEEK_API_KEY: 'static-value' } };
+    const result = validateProviderProfile('test', bad);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('命名空间冲突');
+  });
+
+  // 2. 大小写不同 → 拒绝
+  it('rejects staticEnv key that differs only in case from credentialEnvVars', () => {
+    const bad = { ...validProfile, staticEnv: { deepseek_api_key: 'static-value' } };
+    const result = validateProviderProfile('test', bad);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('命名空间冲突');
+  });
+
+  // 3. runtimeEnvAllowlist 与 credentialEnvVars 同名 → 拒绝
+  it('rejects runtimeEnvAllowlist containing credentialEnvVars key', () => {
+    const bad = { ...validProfile, runtimeEnvAllowlist: ['PATH', 'DEEPSEEK_API_KEY'] };
+    const result = validateProviderProfile('test', bad);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('命名空间冲突');
+  });
+
+  // 4. runtimeEnvAllowlist 含敏感变量（未声明在 credentialEnvVars）→ 拒绝
+  it('rejects allowlist with suspicious credential-like var not in credentialEnvVars', () => {
+    const bad = { ...validProfile, runtimeEnvAllowlist: ['PATH', 'ANTHROPIC_AUTH_TOKEN'] };
+    const result = validateProviderProfile('test', bad);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('命名空间冲突');
+  });
+
+  // 5. credentialEnvVars 内部重复 → 拒绝
+  it('rejects duplicate in credentialEnvVars (case-insensitive)', () => {
+    const bad = {
+      ...validProfile,
+      credentialEnvVars: ['DEEPSEEK_API_KEY', 'deepseek_api_key'],
+    };
+    const result = validateProviderProfile('test', bad);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('命名空间冲突');
+  });
+
+  // 6. runtimeEnvAllowlist 内部重复 → 拒绝
+  it('rejects duplicate in runtimeEnvAllowlist (case-insensitive)', () => {
+    const bad = {
+      ...validProfile,
+      runtimeEnvAllowlist: ['PATH', 'path'],
+    };
+    const result = validateProviderProfile('test', bad);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('命名空间冲突');
+  });
 });
 
 describe('loadProviderProfiles', () => {

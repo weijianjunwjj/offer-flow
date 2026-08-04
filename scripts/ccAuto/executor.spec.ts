@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { executeProviderCall } from './executor';
 import { MockProviderAdapter, AdapterRegistry } from './adapter';
+import { TimeoutError, TransportError, ProviderProtocolError } from './providerErrors';
 import { loadRunState, createRunState } from './store';
 import type { ProviderProfile, MockProviderScenario } from './types';
 import { mkdirSync, rmSync } from 'node:fs';
@@ -516,5 +517,298 @@ describe('executeProviderCall — atomic state consistency', () => {
       expect(state.calls.length).toBe(1);
       expect(state.pendingCall).toBeUndefined();
     }
+  });
+});
+
+// ============================================================================
+// 切片 1C 修复：stable timeout, isError semantics, unsupported_tool_calls
+// ============================================================================
+
+describe('executeProviderCall — stable error classification', () => {
+  beforeEach(setupFixture);
+  afterEach(cleanupFixture);
+
+  // 4. TimeoutError 稳定映射 PROVIDER_TIMEOUT
+  it('TimeoutError maps to PROVIDER_TIMEOUT with instanceof', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'stable-to-1', '测试', 'custom').runId;
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat' as const,
+      execute: async () => { throw new TimeoutError('timed out'); },
+    });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.stopReason).toBe('PROVIDER_TIMEOUT');
+    }
+  });
+
+  // 5. message 含 "timeout" 的 TransportError 仍映射 PROVIDER_ERROR
+  it('TransportError with timeout in message is still PROVIDER_ERROR', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'stable-to-2', '测试', 'custom').runId;
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat' as const,
+      execute: async () => { throw new TransportError('connection timeout after 30s'); },
+    });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.stopReason).toBe('PROVIDER_ERROR');  // NOT PROVIDER_TIMEOUT
+    }
+  });
+
+  // 6. ProviderProtocolError 不被识别为 TimeoutError
+  it('ProviderProtocolError is NOT classified as PROVIDER_TIMEOUT', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'stable-to-3', '测试', 'custom').runId;
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat' as const,
+      execute: async () => { throw new ProviderProtocolError('parse error'); },
+    });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.stopReason).toBe('PROVIDER_ERROR');
+      expect(result.stopReason).not.toBe('PROVIDER_TIMEOUT');
+    }
+  });
+
+  // All unknown results → UNKNOWN_AFTER_CRASH, calls[] unchanged
+  it('all exception types mark UNKNOWN_AFTER_CRASH and preserve calls[]', async () => {
+    const errors: Array<{ name: string; fn: () => Error }> = [
+      { name: 'TimeoutError', fn: () => new TimeoutError('t') },
+      { name: 'TransportError', fn: () => new TransportError('t') },
+      { name: 'Error', fn: () => new Error('t') },
+    ];
+    for (const { name, fn } of errors) {
+      cleanupFixture();
+      mkdirSync(FIXTURE_CWD, { recursive: true });
+      const runId = createRunState(FIXTURE_CWD, `stable-unk-${name}`, '测试', 'custom').runId;
+      const registry = new AdapterRegistry();
+      registry.register({
+        transport: 'openai-chat' as const,
+        execute: async () => { throw fn(); },
+      });
+      const result = await executeProviderCall({
+        profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+        systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+        adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+      });
+      expect(result.ok).toBe(false);
+      const state = loadRunState(FIXTURE_CWD, runId);
+      expect(state.pendingCall!.status).toBe('UNKNOWN_AFTER_CRASH');
+      expect(state.calls.length).toBe(0);
+    }
+  });
+});
+
+describe('executeProviderCall — isError UsageRecord semantics', () => {
+  beforeEach(setupFixture);
+  afterEach(cleanupFixture);
+
+  // 8. HTTP 401 UsageRecord pricingStatus=PRICED
+  it('HTTP 401 error: pricingStatus=PRICED (not UNPRICED)', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'iserr-401', '测试', 'custom').runId;
+    const { registry } = makeRegistry('PROVIDER_ERROR');
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.usageRecord).not.toBeNull();
+      // price table has deepseek-chat → PRICED
+      expect(result.usageRecord!.pricingStatus).toBe('PRICED');
+      expect(result.usageRecord!.usageStatus).toBe('MISSING');
+      expect(result.usageRecord!.costStatus).toBe('UNAVAILABLE');
+      expect(result.usageRecord!.costRmbCustom).toBeNull();
+    }
+    const state = loadRunState(FIXTURE_CWD, runId);
+    expect(state.pendingCall).toBeUndefined(); // known terminal
+    expect(state.calls.length).toBe(1);
+  });
+
+  // 9, 10, 11. All HTTP errors → PRICED, UNAVAILABLE, null cost, pendingCall cleared
+  it('all HTTP errors clear pendingCall and record with PRICED', async () => {
+    // Test with mock PROVIDER_ERROR which has kind=HTTP
+    const runId = createRunState(FIXTURE_CWD, 'iserr-all', '测试', 'custom').runId;
+    const { registry } = makeRegistry('PROVIDER_ERROR');
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.stopReason).toBe('PROVIDER_ERROR');
+      expect(result.usageRecord!.pricingStatus).toBe('PRICED');
+    }
+  });
+
+  // AUTH maps to PROVIDER_AUTH_ERROR
+  it('AUTH error maps to PROVIDER_AUTH_ERROR', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'iserr-auth', '测试', 'custom').runId;
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat' as const,
+      async execute(_req) {
+        return {
+          callId: _req.callId, providerId: _req.providerId, requestedModelId: _req.requestedModelId,
+          reportedModel: null, content: '', usage: { inputTokens: null, outputTokens: null, cacheCreationInputTokens: null, cacheReadInputTokens: null },
+          durationMs: null, numTurns: 0, subtype: 'auth_error', isError: true,
+          error: { kind: 'AUTH', httpStatus: 401, code: null, type: null, message: 'Unauthorized' },
+        };
+      },
+    });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.stopReason).toBe('PROVIDER_AUTH_ERROR');
+    }
+  });
+});
+
+describe('executeProviderCall — unsupported_tool_calls', () => {
+  beforeEach(setupFixture);
+  afterEach(cleanupFixture);
+
+  function makeToolCallsAdapter(overrides?: Record<string, unknown>) {
+    const adapter = {
+      transport: 'openai-chat' as const,
+      async execute(req: typeof testRequest) {
+        return {
+          callId: req.callId, providerId: req.providerId, requestedModelId: req.requestedModelId,
+          reportedModel: (overrides?.reportedModel as string) ?? req.requestedModelId,
+          content: '', usage: {
+            inputTokens: 1500, outputTokens: 300, cacheCreationInputTokens: 0, cacheReadInputTokens: 200,
+          },
+          durationMs: 500, numTurns: 1, subtype: 'unsupported_tool_calls', isError: true,
+          error: { kind: 'UNSUPPORTED' as const, httpStatus: 200, code: null, type: null, message: 'unsupported' },
+          ...overrides,
+        };
+      },
+    };
+    const registry = new AdapterRegistry();
+    registry.register(adapter);
+    return registry;
+  }
+
+  const testRequest = {
+    callId: '', providerId: '', requestedModelId: '', role: 'builder' as const,
+    systemPrompt: '', userPrompt: '', maxOutputTokens: 0, timeoutMs: 0,
+  };
+
+  // 12. unsupported_tool_calls 保留 reportedModel
+  it('retains reportedModel from tool_calls response', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'utc-12', '测试', 'custom').runId;
+    const registry = makeToolCallsAdapter({ reportedModel: 'deepseek-chat' });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.usageRecord!.reportedModel).toBe('deepseek-chat');
+      expect(result.usageRecord!.modelIdentityStatus).toBe('VERIFIED');
+    }
+  });
+
+  // 13. unsupported_tool_calls 保留并记录完整 usage
+  it('records full usage from tool_calls response', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'utc-13', '测试', 'custom').runId;
+    const registry = makeToolCallsAdapter({ reportedModel: 'deepseek-chat' });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.usageRecord!.inputTokens).toBe(1500);
+      expect(result.usageRecord!.outputTokens).toBe(300);
+      expect(result.usageRecord!.cacheReadInputTokens).toBe(200);
+    }
+  });
+
+  // 14. unsupported_tool_calls 在可定价时计算费用
+  it('computes cost when pricing is available', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'utc-14', '测试', 'custom').runId;
+    const registry = makeToolCallsAdapter({ reportedModel: 'deepseek-chat' });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // usage is complete + VERIFIED + priced → cost should be computed
+      expect(result.usageRecord!.usageStatus).toBe('AVAILABLE');
+      expect(result.usageRecord!.costStatus).toBe('AVAILABLE');
+      expect(result.usageRecord!.costRmbCustom).toBeGreaterThan(0);
+    }
+  });
+
+  // 15. unsupported_tool_calls 不进入正常下游（返回 PROVIDER_ERROR, content 不返回）
+  it('does not pass content to downstream', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'utc-15', '测试', 'custom').runId;
+    const registry = makeToolCallsAdapter();
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.stopReason).toBe('PROVIDER_ERROR');
+    }
+  });
+
+  // 16. unsupported_tool_calls 模型 MISMATCH 时身份门禁优先
+  it('MODEL_IDENTITY_MISMATCH takes priority over unsupported_tool_calls', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'utc-16', '测试', 'custom').runId;
+    const registry = makeToolCallsAdapter({ reportedModel: 'unknown-model' });
+    const result = await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.stopReason).toBe('MODEL_IDENTITY_MISMATCH');
+      expect(result.usageRecord!.modelIdentityStatus).toBe('MISMATCH');
+    }
+  });
+
+  // 17. HTTP 已知错误清除 pendingCall
+  it('unsupported_tool_calls clears pendingCall (known terminal)', async () => {
+    const runId = createRunState(FIXTURE_CWD, 'utc-17', '测试', 'custom').runId;
+    const registry = makeToolCallsAdapter();
+    await executeProviderCall({
+      profile: testProfile, logicalModelName: 'deepseek', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: parentEnv(), cwd: FIXTURE_CWD, runId,
+    });
+    const state = loadRunState(FIXTURE_CWD, runId);
+    expect(state.pendingCall).toBeUndefined();
+    expect(state.calls.length).toBe(1);
   });
 });

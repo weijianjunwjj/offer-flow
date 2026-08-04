@@ -21,10 +21,12 @@ import type {
   ProviderCallRequest,
   ProviderCallResponse,
   ProviderExecutionResult,
+  ProviderExecutionStopReason,
   UsageRecord,
   IdentityConfirmationContext,
 } from './types';
 import type { AdapterRegistry } from './adapter';
+import { TimeoutError } from './providerErrors';
 import { buildChildEnv } from './buildChildEnv';
 import { checkModelIdentity } from './modelIdentity';
 import { buildUsageRecord } from './usage';
@@ -128,6 +130,21 @@ export async function executeProviderCall(
     };
   }
 
+  // --- 4a. Adapter Profile 预校验（在创建 PendingCall 之前）---
+  if (adapter.validateProfile) {
+    const validation = adapter.validateProfile(profile);
+    if (!validation.ok) {
+      return {
+        ok: false,
+        stopReason: 'PROVIDER_ERROR',
+        requiresHumanConfirmation: false,
+        usageRecord: null,
+        identityConfirmationContext: null,
+        message: `Profile "${profile.id}" 预校验失败：${validation.message}`,
+      };
+    }
+  }
+
   // --- 5. 构建标准化请求 ---
   const callId = newCallId();
   const request: ProviderCallRequest = {
@@ -165,11 +182,10 @@ export async function executeProviderCall(
 
   let response: ProviderCallResponse;
   try {
-    response = await adapter.execute(request, { childEnv, timeoutMs: opts.timeoutMs });
+    response = await adapter.execute(request, { childEnv, timeoutMs: opts.timeoutMs, profile });
   } catch (err) {
-    // Provider 抛错或 timeout：无法确认是否实际执行 → UNKNOWN_AFTER_CRASH
-    // 不追加 calls[]（无明确 Provider 调用结果），仅保留 pendingCall 标记
-    const isTimeout = (err as Error).name === 'TimeoutError' || (err as Error).message?.includes('timeout');
+    // 通过 instanceof 稳定判断错误类别（不使用字符串 message 匹配）
+    const isTimeout = err instanceof TimeoutError;
 
     const marked = markPendingCallUnknown(cwd, opts.runId, callId);
     // 若 mark 失败（pendingCall 不存在或 callId 不匹配）→ 说明内部状态已不一致
@@ -186,18 +202,25 @@ export async function executeProviderCall(
     };
   }
 
-  // --- 8. 如果是 Error 响应，记录后直接返回 PROVIDER_ERROR ---
+  // --- 8. 如果是 Error 响应，记录后根据 error.kind 分类返回 ---
   // Adapter 明确返回 isError=true → Provider 已知失败，是终态，应清除 pendingCall（不是 UNKNOWN_AFTER_CRASH）
   if (response.isError) {
+    // unsupported_tool_calls：Provider 已返回模型和用量——做正常身份/Usage/费用计算
+    if (response.subtype === 'unsupported_tool_calls') {
+      return handleUnsupportedToolCalls(response, profile, requestedModelId, role, opts);
+    }
+
+    // 普通 HTTP 错误：requestedModelId 已通过调用前定价检查
+    const errorKind = response.error?.kind;
     const errorRecord = buildUsageRecord({
       model: role,
       requestedModelId,
       reportedModel: response.reportedModel,
       providerId: profile.id,
-      modelIdentityStatus: 'UNVERIFIED',
+      modelIdentityStatus: 'UNVERIFIED',  // 无可靠 reportedModel
       rawUsage: response.usage,
-      pricingStatus: 'UNPRICED',
-      costRmbCustom: null,
+      pricingStatus: 'PRICED',  // 调用前已确认 requestedModelId 在定价表中
+      costRmbCustom: null,       // usage 全部 null，无法计算
       costRmbOfficial: null,
       durationMs: response.durationMs,
       numTurns: response.numTurns,
@@ -205,15 +228,18 @@ export async function executeProviderCall(
       isError: true,
     });
 
+    const stopReason: ProviderExecutionStopReason =
+      errorKind === 'AUTH' ? 'PROVIDER_AUTH_ERROR' : 'PROVIDER_ERROR';
+
     completeKnownCall(cwd, opts.runId, errorRecord);
 
     return {
       ok: false,
-      stopReason: 'PROVIDER_ERROR',
+      stopReason,
       requiresHumanConfirmation: false,
       usageRecord: errorRecord,
       identityConfirmationContext: null,
-      message: `Provider "${profile.id}" 返回错误响应：subtype=${response.subtype}`,
+      message: `Provider "${profile.id}" 返回错误响应：${response.error?.message ?? response.subtype}`,
     };
   }
 
@@ -338,6 +364,81 @@ export async function executeProviderCall(
 }
 
 // ======= PendingCall / Store 操作封装（切片 1B 最小实现） =======
+
+/**
+ * 处理 unsupported_tool_calls 错误：Provider 已返回明确响应（含 reportedModel 和 usage）。
+ * 执行正常模型身份判定、Usage 标准化和费用计算。
+ * 身份 MISMATCH 优先；不把 content 交给正常下游；最终返回 PROVIDER_ERROR。
+ */
+function handleUnsupportedToolCalls(
+  response: ProviderCallResponse,
+  profile: ProviderProfile,
+  requestedModelId: string,
+  role: 'builder' | 'arbiter',
+  opts: ExecuteProviderCallOptions,
+): ProviderExecutionResult {
+  // 正常模型身份判定
+  const identityResult = checkModelIdentity(profile, requestedModelId, response.reportedModel);
+
+  // 正常费用计算
+  const pricingModelId = response.reportedModel ?? requestedModelId;
+  let pricingStatus: 'PRICED' | 'UNPRICED' = 'PRICED';
+  let costRmbCustom: number | null = null;
+
+  if (identityResult.status === 'VERIFIED') {
+    const pricing = profile.pricing[pricingModelId];
+    if (pricing) {
+      costRmbCustom = computeCostRmbFromPricingIfUsageComplete(response.usage, pricing);
+    } else {
+      pricingStatus = 'UNPRICED';
+      costRmbCustom = null;
+    }
+  } else if (identityResult.status === 'UNVERIFIED') {
+    pricingStatus = 'PRICED';
+    costRmbCustom = null;
+  }
+  // MISMATCH: costRmbCustom 保持 null
+
+  const usageRecord = buildUsageRecord({
+    model: role,
+    requestedModelId,
+    reportedModel: response.reportedModel,
+    providerId: profile.id,
+    modelIdentityStatus: identityResult.status,
+    rawUsage: response.usage,
+    pricingStatus,
+    costRmbCustom,
+    costRmbOfficial: null,
+    durationMs: response.durationMs,
+    numTurns: response.numTurns,
+    subtype: response.subtype,
+    isError: true,
+  });
+
+  // 身份 MISMATCH 优先（安全门禁）
+  if (identityResult.status === 'MISMATCH') {
+    completeKnownCall(opts.cwd, opts.runId, usageRecord);
+    return {
+      ok: false,
+      stopReason: 'MODEL_IDENTITY_MISMATCH',
+      requiresHumanConfirmation: false,
+      usageRecord,
+      identityConfirmationContext: null,
+      message: `unsupported_tool_calls 且模型身份不匹配：${identityResult.detail}`,
+    };
+  }
+
+  // 其他情况：已知错误终态，清除 pendingCall，不进入 HUMAN_GATE
+  completeKnownCall(opts.cwd, opts.runId, usageRecord);
+  return {
+    ok: false,
+    stopReason: 'PROVIDER_ERROR',
+    requiresHumanConfirmation: false,
+    usageRecord,
+    identityConfirmationContext: null,
+    message: `Provider "${profile.id}" 返回 unsupported_tool_calls（当前切片不支持工具调用）`,
+  };
+}
 
 /**
  * 已知终态：一次 loadRunState + 一次 saveRunState 完成 calls[] 追加 + pendingCall 清除。

@@ -12,8 +12,11 @@ import type {
   ProviderCallRequest,
   ProviderCallResponse,
   ProviderExecutionContext,
+  ProviderProfile,
   MockProviderScenario,
+  AdapterProfileValidationResult,
 } from './types';
+import { TimeoutError } from './providerErrors';
 
 /** Mock 场景对应的标准化响应生成器 */
 const SCENARIO_RESPONSES: Record<
@@ -36,6 +39,7 @@ const SCENARIO_RESPONSES: Record<
     numTurns: 3,
     subtype: 'success',
     isError: false,
+    error: null,
   }),
 
   MISMATCH_MODEL: (req) => ({
@@ -54,6 +58,7 @@ const SCENARIO_RESPONSES: Record<
     numTurns: 2,
     subtype: 'success',
     isError: false,
+    error: null,
   }),
 
   UNVERIFIED_MODEL: (req) => ({
@@ -72,6 +77,7 @@ const SCENARIO_RESPONSES: Record<
     numTurns: 3,
     subtype: 'success',
     isError: false,
+    error: null,
   }),
 
   USAGE_MISSING: (req) => ({
@@ -90,6 +96,7 @@ const SCENARIO_RESPONSES: Record<
     numTurns: 2,
     subtype: 'success',
     isError: false,
+    error: null,
   }),
 
   USAGE_PARTIAL: (req) => ({
@@ -108,6 +115,7 @@ const SCENARIO_RESPONSES: Record<
     numTurns: 4,
     subtype: 'success',
     isError: false,
+    error: null,
   }),
 
   UNPRICED_REPORTED_MODEL: (req) => ({
@@ -126,6 +134,7 @@ const SCENARIO_RESPONSES: Record<
     numTurns: 5,
     subtype: 'success',
     isError: false,
+    error: null,
   }),
 
   PROVIDER_ERROR: (req) => ({
@@ -144,6 +153,13 @@ const SCENARIO_RESPONSES: Record<
     numTurns: 0,
     subtype: 'error',
     isError: true,
+    error: {
+      kind: 'HTTP',
+      httpStatus: 500,
+      code: null,
+      type: null,
+      message: '[mock] Provider 返回 500 错误',
+    },
   }),
 
   TIMEOUT: (_req) => {
@@ -152,12 +168,7 @@ const SCENARIO_RESPONSES: Record<
   },
 };
 
-export class TimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TimeoutError';
-  }
-}
+export { TimeoutError } from './providerErrors';
 
 /**
  * MockProviderAdapter — 完全离线，不发起任何网络请求。
@@ -183,6 +194,11 @@ export class MockProviderAdapter implements ProviderAdapter {
   /** 获取当前场景 */
   get scenario(): MockProviderScenario {
     return this._scenario;
+  }
+
+  /** Mock 预校验直接通过 */
+  validateProfile(_profile: ProviderProfile): AdapterProfileValidationResult {
+    return { ok: true };
   }
 
   async execute(

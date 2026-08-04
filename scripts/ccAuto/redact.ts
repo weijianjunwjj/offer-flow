@@ -20,3 +20,27 @@ export function redactSecretLiterals(text: string): string {
 export function redactForDisk(text: string): string {
   return redactSecretLiterals(redactEnvLikeText(text));
 }
+
+/**
+ * 按实际凭证值精确脱敏——将文本中每一个 secret 的全部出现替换为 `<redacted-secret>`。
+ *
+ * 规则：
+ * - 忽略 undefined 和空字符串
+ * - 正确处理正则特殊字符（通过转义）
+ * - 不改变原 secret
+ * - 不把 secret 写入日志
+ * - 可叠加现有 redactSecretLiterals / redactEnvLikeText
+ */
+export function redactSecretValues(
+  text: string,
+  secrets: Array<string | undefined>,
+): string {
+  let result = text;
+  for (const secret of secrets) {
+    if (secret === undefined || secret === '') continue;
+    // 转义正则特殊字符
+    const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(escaped, 'g'), '<redacted-secret>');
+  }
+  return result;
+}

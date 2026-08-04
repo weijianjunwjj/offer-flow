@@ -3,14 +3,41 @@ import { describe, it, expect } from 'vitest';
 import {
   MockProviderAdapter,
   AdapterRegistry,
-  TimeoutError,
   createMockAdapterRegistry,
 } from './adapter';
-import type { ProviderCallRequest, ProviderExecutionContext } from './types';
+import { TimeoutError } from './providerErrors';
+import { OpenAIChatAdapter } from './openaiChatAdapter';
+import { createProductionAdapterRegistry } from './productionAdapterRegistry';
+import type { ProviderCallRequest, ProviderExecutionContext, ProviderProfile } from './types';
+
+const mockProfile: ProviderProfile = {
+  id: 'test-provider',
+  displayName: 'Test Provider',
+  vendor: 'deepseek',
+  transport: 'openai-chat',
+  apiBaseUrl: 'https://api.example.com/v1',
+  credentialEnvVars: ['TEST_API_KEY'],
+  runtimeEnvAllowlist: ['PATH'],
+  defaultModelId: 'test-model',
+  models: [{
+    logicalName: 'test-model',
+    requestedModelId: 'test-model',
+    acceptedReportedModelIds: ['test-model'],
+    displayName: 'Test Model',
+  }],
+  pricing: {
+    'test-model': {
+      inputPerMTokens: 1.0, outputPerMTokens: 2.0,
+      cacheCreationPerMTokens: 1.25, cacheReadPerMTokens: 0.1,
+      currency: 'CNY', source: 'test', updatedAt: '2026-08-04',
+    },
+  },
+};
 
 const mockContext: ProviderExecutionContext = {
   childEnv: {},
   timeoutMs: 30_000,
+  profile: mockProfile,
 };
 
 function makeRequest(overrides?: Partial<ProviderCallRequest>): ProviderCallRequest {
@@ -128,8 +155,9 @@ describe('MockProviderAdapter', () => {
   it('does not read environment variables', async () => {
     // Set a fake key in context to verify adapter doesn't use it
     const ctx: ProviderExecutionContext = {
-      childEnv: { DEEPSEEK_API_KEY: 'sk-should-not-be-used' },
+      childEnv: { TEST_API_KEY: 'sk-should-not-be-used' },
       timeoutMs: 30_000,
+      profile: mockProfile,
     };
     const adapter = new MockProviderAdapter('VERIFIED_SUCCESS');
     const res = await adapter.execute(makeRequest(), ctx);
@@ -181,10 +209,53 @@ describe('AdapterRegistry', () => {
   });
 });
 
+describe('MockProviderAdapter validateProfile', () => {
+  it('returns ok=true for any profile (mock always passes)', () => {
+    const adapter = new MockProviderAdapter('VERIFIED_SUCCESS');
+    const result = adapter.validateProfile(mockProfile);
+    expect(result.ok).toBe(true);
+  });
+});
+
 describe('createMockAdapterRegistry', () => {
   it('creates a registry with a registered MockProviderAdapter', () => {
     const { registry, adapter } = createMockAdapterRegistry('VERIFIED_SUCCESS');
     const resolved = registry.resolve('openai-chat');
     expect(resolved).toBe(adapter);
+  });
+});
+
+// ============================================================================
+// Production Registry 测试（切片 1C）
+// ============================================================================
+
+describe('createProductionAdapterRegistry', () => {
+  // 1. 真正导出 createProductionAdapterRegistry 并注册 OpenAIChatAdapter
+  it('resolves openai-chat to an OpenAIChatAdapter using real export', () => {
+    const registry = createProductionAdapterRegistry();
+    const adapter = registry.resolve('openai-chat');
+    expect(adapter).not.toBeNull();
+    expect(adapter!.transport).toBe('openai-chat');
+    expect(adapter!.constructor.name).toBe('OpenAIChatAdapter');
+  });
+
+  // 2. Production Registry 不包含 MockProviderAdapter
+  it('does not contain MockProviderAdapter', () => {
+    const registry = createProductionAdapterRegistry();
+    const adapter = registry.resolve('openai-chat');
+    expect(adapter).not.toBeInstanceOf(MockProviderAdapter);
+  });
+
+  // 3. 未实现 transport 返回 null
+  it('returns null for unimplemented transports', () => {
+    const registry = createProductionAdapterRegistry();
+    expect(registry.resolve('anthropic-messages')).toBeNull();
+    expect(registry.resolve('claude-cli')).toBeNull();
+  });
+
+  // 重复注册拒绝
+  it('throws on duplicate transport registration', () => {
+    const registry = createProductionAdapterRegistry();
+    expect(() => registry.register(new OpenAIChatAdapter())).toThrow();
   });
 });

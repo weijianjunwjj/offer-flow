@@ -8,6 +8,7 @@
  */
 import type { ProviderProfile, ModelIdentity, ModelPricing, ProviderConfigLoadResult } from './types';
 import type { CcAutoConfig } from './config';
+import { checkProfileEnvConflicts, formatEnvConflicts } from './envNamespace';
 
 /** 从 CcAutoConfig.providerProfiles 加载并校验 Provider 配置。不读取额外文件。 */
 export function loadProviderProfiles(config: CcAutoConfig): ProviderConfigLoadResult {
@@ -85,7 +86,27 @@ export function validateProviderProfile(
     return { ok: false, error: 'runtimeEnvAllowlist 必须是字符串数组' };
   }
 
-  // --- staticEnv: 禁止明显凭证字段 ---
+  // --- 环境变量命名空间冲突检查（在所有其他校验之后、构造 profile 之前）---
+  // 必须在 staticEnv 模式检查之前执行——精确命名空间匹配优先于模式猜测。
+  {
+    const creds = (e.credentialEnvVars as string[] | undefined) ?? [];
+    const allowlist = (e.runtimeEnvAllowlist as string[] | undefined) ?? [];
+    // 使用临时 profile 对象——仅提供冲突检查所需字段
+    const tempProfile = {
+      credentialEnvVars: creds,
+      runtimeEnvAllowlist: allowlist,
+      staticEnv: e.staticEnv as Record<string, string> | undefined,
+    } as ProviderProfile;
+    const nsConflicts = checkProfileEnvConflicts(tempProfile);
+    if (nsConflicts.length > 0) {
+      return {
+        ok: false,
+        error: `环境变量命名空间冲突：${formatEnvConflicts(nsConflicts)}`,
+      };
+    }
+  }
+
+  // --- staticEnv: 禁止明显凭证字段（补充保护——检查值层面的模式，而不仅仅是变量名冲突）---
   if (e.staticEnv !== undefined) {
     if (typeof e.staticEnv !== 'object' || e.staticEnv === null || Array.isArray(e.staticEnv)) {
       return { ok: false, error: 'staticEnv 必须是对象或省略' };
@@ -152,6 +173,7 @@ export function validateProviderProfile(
     }
   }
 
+  // --- 环境变量命名空间冲突检查（大小写不敏感）---
   const profile: ProviderProfile = {
     id,
     displayName: e.displayName as string,
@@ -165,6 +187,14 @@ export function validateProviderProfile(
     models,
     pricing,
   };
+
+  const conflicts = checkProfileEnvConflicts(profile);
+  if (conflicts.length > 0) {
+    return {
+      ok: false,
+      error: `环境变量命名空间冲突：${formatEnvConflicts(conflicts)}`,
+    };
+  }
 
   return { ok: true, profile };
 }
