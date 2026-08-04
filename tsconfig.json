@@ -30,5 +30,8 @@
     "scripts/**/*.ts",
     "vite.config.ts",
     "vitest.config.ts"
+  ],
+  "exclude": [
+    "scripts/ccAuto/experiments/desktop-budget-gateway-abandoned/**"
   ]
 }

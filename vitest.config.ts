@@ -8,6 +8,6 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     include: ['src/**/*.spec.ts', 'server/**/*.spec.ts', 'browser-extension/**/*.spec.ts', 'scripts/**/*.spec.ts'],
-    exclude: ['browser-extension/e2e/**'],
+    exclude: ['browser-extension/e2e/**', 'scripts/ccAuto/experiments/desktop-budget-gateway-abandoned/**'],
   },
 });
