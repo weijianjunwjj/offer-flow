@@ -102,7 +102,12 @@ export type StopReason =
   | 'USER_DECLINED_FILE_SCOPE_EXPANSION'
   // v0.2.0 Run Lease
   | 'RUN_LEASE_CONFLICT'
-  | 'STALE_LEASE_REQUIRES_CONFIRM';
+  | 'STALE_LEASE_REQUIRES_CONFIRM'
+  // v0.2.0 Slice 1B: Provider 执行契约
+  | 'MODEL_IDENTITY_MISMATCH'
+  | 'COST_UNAVAILABLE'
+  | 'TRANSPORT_NOT_IMPLEMENTED'
+  | 'PROVIDER_TIMEOUT';
 
 // ============================================================================
 // v0.2.0 Dual Model Relay 新增类型（与 v0.1 共存）
@@ -236,3 +241,157 @@ export interface ProviderConfigLoadResult {
   /** ok=false 时区分错误类别 */
   reason?: 'FILE_NOT_FOUND' | 'PARSE_ERROR' | 'VALIDATION_ERROR' | 'PRICING_NOT_FOUND';
 }
+
+// ============================================================================
+// v0.2.0 Slice 1B: Provider 执行契约类型
+// ============================================================================
+
+/** Adapter 执行上下文——隔离的运行环境，不包含 parentEnv 引用 */
+export interface ProviderExecutionContext {
+  childEnv: NodeJS.ProcessEnv;
+  timeoutMs: number;
+}
+
+/** 标准化调用请求 */
+export interface ProviderCallRequest {
+  callId: string;
+  providerId: string;
+  requestedModelId: string;
+  role: 'builder' | 'arbiter';
+  systemPrompt: string;
+  userPrompt: string;
+  maxOutputTokens: number;
+  timeoutMs: number;
+}
+
+/** Provider 返回的原始用量——所有字段均可为 null */
+export interface RawProviderUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  cacheReadInputTokens: number | null;
+}
+
+/** Provider Adapter 返回的标准化响应 */
+export interface ProviderCallResponse {
+  callId: string;
+  providerId: string;
+  requestedModelId: string;
+  reportedModel: string | null;
+  content: string;
+  usage: RawProviderUsage;
+  durationMs: number | null;
+  numTurns: number;
+  subtype: string;
+  isError: boolean;
+}
+
+/** Provider Adapter 接口——根据 transport 选择实现，不根据 vendor 选择 */
+export interface ProviderAdapter {
+  readonly transport: ProviderProfile['transport'];
+  execute(
+    request: ProviderCallRequest,
+    context: ProviderExecutionContext,
+  ): Promise<ProviderCallResponse>;
+}
+
+/** Mock 场景枚举 */
+export type MockProviderScenario =
+  | 'VERIFIED_SUCCESS'
+  | 'MISMATCH_MODEL'
+  | 'UNVERIFIED_MODEL'
+  | 'USAGE_MISSING'
+  | 'USAGE_PARTIAL'
+  | 'UNPRICED_REPORTED_MODEL'
+  | 'PROVIDER_ERROR'
+  | 'TIMEOUT';
+
+/** 模型身份判定三态 */
+export type ModelIdentityStatus =
+  | 'VERIFIED'
+  | 'MISMATCH'
+  | 'UNVERIFIED';
+
+/** Usage 完整性状态 */
+export type UsageStatus =
+  | 'AVAILABLE'
+  | 'MISSING'
+  | 'PARTIAL';
+
+/** 费用可算性状态 */
+export type CostStatus =
+  | 'AVAILABLE'
+  | 'UNAVAILABLE';
+
+/** PendingCall 状态 */
+export type PendingCallStatus =
+  | 'PREPARED'
+  | 'DISPATCHED'
+  | 'COMPLETED'
+  | 'UNKNOWN_AFTER_CRASH';
+
+/** 待处理的模型调用记录（持久化在 RunState 中，不持久化完整请求/响应 body） */
+export interface PendingCall {
+  callId: string;
+  providerId: string;
+  requestedModelId: string;
+  role: 'builder' | 'arbiter';
+  status: PendingCallStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 标准化的 UsageRecord */
+export interface UsageRecord {
+  model: 'builder' | 'arbiter';
+  requestedModelId: string;
+  reportedModel: string | null;
+  providerId: string;
+
+  modelIdentityStatus: ModelIdentityStatus;
+  pricingStatus: 'PRICED' | 'UNPRICED';
+  usageStatus: UsageStatus;
+  costStatus: CostStatus;
+
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  cacheReadInputTokens: number | null;
+
+  costRmbCustom: number | null;
+  costRmbOfficial: number | null;
+
+  durationMs: number | null;
+  numTurns: number;
+  subtype: string;
+  isError: boolean;
+
+  toolUseCounts: Record<string, number> | null;
+  toolErrorCounts: Record<string, number> | null;
+  permissionDenialsCount: number;
+}
+
+/** Provider 执行失败原因（非 stopReason 的领域枚举） */
+export type ProviderExecutionStopReason =
+  | 'PRICING_NOT_FOUND'
+  | 'MODEL_IDENTITY_MISMATCH'
+  | 'COST_UNAVAILABLE'
+  | 'PROVIDER_ERROR'
+  | 'PROVIDER_TIMEOUT'
+  | 'TRANSPORT_NOT_IMPLEMENTED';
+
+/** Provider 执行结果——可辨识联合 */
+export type ProviderExecutionResult =
+  | {
+      ok: true;
+      usageRecord: UsageRecord;
+      content: string;
+    }
+  | {
+      ok: false;
+      stopReason: ProviderExecutionStopReason | null;
+      requiresHumanConfirmation: boolean;
+      usageRecord: UsageRecord | null;
+      identityConfirmationContext: IdentityConfirmationContext | null;
+      message: string;
+    };

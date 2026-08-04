@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rename
 import path from 'node:path';
 import type { Phase, CallUsage, FailureRecord, StopReason, Classification } from './types';
 import type { LaunchStrategy, FileScope, HumanGatePurpose, IdentityConfirmationContext, VerificationOutcome } from './types';
+import type { PendingCall } from './types';
 import type { PricingMode } from './config';
 import { redactForDisk } from './redact';
 
@@ -53,6 +54,8 @@ export interface RunState {
   resumed?: boolean;
   /** 当前 v0.2.0 阶段（v0.2.0，区别于 v0.1 currentPhase，两套状态机共存期间兼容） */
   currentRunPhase?: string;
+  /** v0.2.0 Slice 1B：当前挂起的模型调用（持久化用于崩溃恢复探测；非挂起状态时不存在） */
+  pendingCall?: PendingCall;
 }
 
 export interface DirectEditDetail {
