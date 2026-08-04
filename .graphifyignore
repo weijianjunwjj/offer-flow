@@ -1,0 +1,54 @@
+# Graphify 扫描排除规则（gitignore 语义；只能排除，不能重新包含 .gitignore 已排除的文件）
+# 项目级 .graphifyignore —— 防止知识图谱扫描到真实数据库、备份、密钥与构建产物。
+
+# 真实数据库、备份和运行数据
+data/
+backups/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+tmp/g3-sandbox/
+tmp/g4-sandbox/
+tmp/g5-sandbox/
+tmp/g6-rehearsal/
+artifacts/
+sync/*.snapshot.json
+sync/*.manifest.json
+sync/.offerflow-publish-*/
+
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# 构建及依赖产物
+node_modules/
+dist/
+dist-ssr/
+coverage/
+playwright-report/
+test-results/
+.vite/
+.step0-candidate/
+.analysis-debug/
+.cc-auto/
+.codegraph/
+browser-extension/src/popup/popup.bundle.js
+browser-extension/src/content/injectedCapture.js
+browser-extension/src/content/batchCapture.js
+browser-extension/src/background/background.js
+
+# Graphify 自身输出，避免递归扫描
+graphify-out/
+
+# 其他本地临时文件
+tmp/
+temp/
+*.log
+*.local
+*.tmp

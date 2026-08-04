@@ -101,3 +101,6 @@ browser-extension/src/content/injectedCapture.js
 browser-extension/src/content/batchCapture.js
 browser-extension/src/background/background.js
 browser-extension/e2e/.profiles/
+
+# Graphify generated artifacts
+graphify-out/
