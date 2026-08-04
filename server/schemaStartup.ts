@@ -52,7 +52,7 @@ export function schemaRefusalMessage(
         + 'npm run db:upgrade-real -- --confirm（会先备份、升级并在升级后校验，不发布 Snapshot）。';
     case 'too_new':
       return `真实数据库 schema 版本为 ${currentVersion}，高于本应用支持的最新版本 ${latestVersion}；`
-        + '请先升级应用代码再启动，避免旧代码读取更新的数据库。';
+        + '请先升级应用代码再启动，避免旧代码按照旧表结构读取或写入更新后的数据库。';
     default:
       return '真实数据库 schema 状态异常，拒绝启动。';
   }

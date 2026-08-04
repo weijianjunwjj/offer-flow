@@ -72,7 +72,10 @@
     "eval:offerflow-json": "tsx scripts/offerFlowJson.eval.ts",
     "cc:auto": "tsx scripts/ccAuto/cli.ts run",
     "cc:auto:resume": "tsx scripts/ccAuto/cli.ts resume",
-    "cc:auto:report": "tsx scripts/ccAuto/cli.ts report"
+    "cc:auto:report": "tsx scripts/ccAuto/cli.ts report",
+    "arch:server": "depcruise server --include-only \"^server\" --output-type html > docs/architecture/server-dependencies.html",
+    "arch:server:mermaid": "depcruise server --include-only \"^server\" --output-type mermaid > docs/architecture/server-dependencies.mmd",
+    "arch:check": "depcruise server"
   },
   "dependencies": {
     "fastify": "^5.9.0",
@@ -92,6 +95,7 @@
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.11",
     "concurrently": "^10.0.3",
+    "dependency-cruiser": "^18.1.1",
     "happy-dom": "^20.10.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
