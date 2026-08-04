@@ -1,7 +1,8 @@
 /** 落盘存储：.cc-auto/runs/<run-id>/ 下的 state.json、phases/*.json、report.md。 */
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import type { Phase, CallUsage, FailureRecord, StopReason, Classification } from './types';
+import type { LaunchStrategy, FileScope, HumanGatePurpose, IdentityConfirmationContext, VerificationOutcome } from './types';
 import type { PricingMode } from './config';
 import { redactForDisk } from './redact';
 
@@ -31,6 +32,27 @@ export interface RunState {
   directEdit?: boolean;
   /** Direct Edit 真实执行的机器侧记录，供报告展示目标文件、edit 数量与应用结果。仅在 directEdit=true 时存在。 */
   directEditDetail?: DirectEditDetail;
+
+  // ======== v0.2.0 新增字段 ========
+  /** 启动策略（v0.2.0） */
+  strategy?: LaunchStrategy;
+  /** 文件范围（v0.2.0） */
+  fileScope?: FileScope;
+  /** HUMAN_GATE 目的——进入前持久化，离开后清理（v0.2.0） */
+  humanGatePurpose?: HumanGatePurpose | null;
+  /** 模型身份确认上下文——进入 HUMAN_GATE 前持久化，离开后清理（v0.2.0） */
+  identityConfirmationContext?: IdentityConfirmationContext | null;
+  /** 最后一次失败指纹——持久化，用于重复失败检测（v0.2.0） */
+  lastFailureFingerprint?: string | null;
+  /** 验证状态——持久化，用于恢复时判断验证进度（v0.2.0） */
+  verificationStatus?: {
+    target: VerificationOutcome;
+    full: VerificationOutcome;
+  };
+  /** 是否恢复执行（v0.2.0） */
+  resumed?: boolean;
+  /** 当前 v0.2.0 阶段（v0.2.0，区别于 v0.1 currentPhase，两套状态机共存期间兼容） */
+  currentRunPhase?: string;
 }
 
 export interface DirectEditDetail {
@@ -97,7 +119,10 @@ export function createRunState(cwd: string, runId: string, taskDescription: stri
 export function saveRunState(cwd: string, state: RunState): void {
   state.updatedAt = new Date().toISOString();
   const file = path.join(runDir(cwd, state.runId), 'state.json');
-  writeFileSync(file, redactForDisk(JSON.stringify(state, null, 2)), 'utf8');
+  // 原子写：临时文件 + rename，避免半写状态
+  const tmp = file + '.tmp';
+  writeFileSync(tmp, redactForDisk(JSON.stringify(state, null, 2)), 'utf8');
+  renameSync(tmp, file);
 }
 
 export function loadRunState(cwd: string, runId: string): RunState {

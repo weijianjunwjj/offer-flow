@@ -1,4 +1,6 @@
 /** cc-auto v0.1 默认配置（预算、模型规则、限额）。可被 .cc-auto/config.json 覆盖。 */
+// v0.2.0: 新增 providerProfiles，ProviderProfile 配置统一在 .cc-auto/config.json 中，
+// 不创建第二个配置真相来源。
 
 export interface BudgetConfig {
   simpleTaskRmb: number;
@@ -49,6 +51,11 @@ export interface CcAutoConfig {
   pricingMode: PricingMode;
   /** 按具体模型 ID（如 claude-sonnet-5）查单价；找不到对应模型时立即停止（PRICING_NOT_FOUND），不猜测默认价格。 */
   customPricing: Record<string, ModelPricingRmb>;
+  /**
+   * v0.2.0: Provider 配置（按 Profile ID 索引）。
+   * 与 v0.1 字段共存于同一 .cc-auto/config.json，不创建第二个配置真相来源。
+   */
+  providerProfiles?: Record<string, unknown>;
 }
 
 export const DEFAULT_CONFIG: CcAutoConfig = {

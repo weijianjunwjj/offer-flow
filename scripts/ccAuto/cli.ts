@@ -10,6 +10,7 @@ import { runClaude, verifyClaudeBinary, type ClaudeCallOptions } from './runner'
 import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded } from './store';
 import { renderReport } from './report';
 import { resolveLocalPackageBin } from './localBin';
+import { runPreflight } from './preflight';
 
 const CWD = process.cwd();
 const HOOK_SCRIPT_PATH = path.join('scripts', 'ccAuto', 'hookScript.cjs');
@@ -291,8 +292,44 @@ async function main(): Promise<void> {
     }
     const state = loadRunState(CWD, runId);
     console.log(renderReport(state));
+  } else if (command === 'preflight') {
+    const { positional } = parseFlags(process.argv.slice(3));
+    const taskDescription = positional.join(' ').trim();
+    if (!taskDescription) {
+      console.error('用法：pnpm cc:auto preflight "<任务描述>"');
+      process.exit(1);
+    }
+
+    const preflightProfileId = process.env.CC_AUTO_DEEPSEEK_PROFILE ?? 'deepseek-v4-pro';
+    const result = await runPreflight({
+      cwd: CWD,
+      taskDescription,
+      strategy: 'deepseek-first',
+      deepseekProfileId: preflightProfileId,
+      config,
+      log: (line: string) => console.log(`[cc-auto] ${line}`),
+    });
+
+    if (result.ok) {
+      console.log('');
+      console.log('═══════════════════════════════════════════');
+      console.log('  预检通过');
+      console.log('═══════════════════════════════════════════');
+      console.log(`  runId:              ${result.runId}`);
+      console.log(`  strategy:           deepseek-first`);
+      console.log(`  phase:              ${result.phase}`);
+      console.log(`  worktreeFingerprintShort: ${result.worktreeFingerprint.slice(0, 12)}...`);
+      console.log(`  runStatePath:       ${result.runStatePath}`);
+      console.log(`  Run Lease:          已释放`);
+      console.log('═══════════════════════════════════════════');
+    } else {
+      console.error('');
+      console.error(`预检失败：${result.stopReason}`);
+      console.error(`  ${result.message}`);
+      process.exit(1);
+    }
   } else if (command === '--help' || command === '-h') {
-    console.log('用法：pnpm cc:auto <run|resume|report> ...');
+    console.log('用法：pnpm cc:auto <run|resume|report|preflight> ...');
     console.log('');
     console.log('  run "<任务>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit]');
     console.log('    启动新任务');
@@ -302,8 +339,11 @@ async function main(): Promise<void> {
     console.log('');
     console.log('  report [run-id]');
     console.log(`    ${REPORT_HELP_TEXT}`);
+    console.log('');
+    console.log('  preflight "<任务>"');
+    console.log('    预检骨架：不调用模型，校验配置/Run Lease/WorktreeFingerprint/状态持久化闭环');
   } else {
-    console.error('用法：pnpm cc:auto <run|resume|report> ...');
+    console.error('用法：pnpm cc:auto <run|resume|report|preflight> ...');
     process.exit(1);
   }
 }

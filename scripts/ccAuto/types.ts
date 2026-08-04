@@ -1,4 +1,5 @@
 /** cc-auto v0.1 共享类型定义。 */
+// === v0.2.0 扩展：本文件同时为 v0.1 和 v0.2.0 提供共享类型。v0.2.0 新增字段不会破坏 v0.1 调用方。 ===
 
 export type Phase =
   | 'INTAKE'
@@ -94,4 +95,144 @@ export type StopReason =
   | 'PRICING_NOT_FOUND'
   | 'CLAUDE_BINARY_NOT_FOUND'
   | 'DIRECT_EDIT_PREPARE_FAILED'
-  | 'DIRECT_EDIT_APPLY_FAILED';
+  | 'DIRECT_EDIT_APPLY_FAILED'
+  // v0.2.0 / v1.2 补全
+  | 'REPAIR_CYCLES_EXHAUSTED'
+  | 'USER_REJECTED_UNVERIFIED_MODEL'
+  | 'USER_DECLINED_FILE_SCOPE_EXPANSION'
+  // v0.2.0 Run Lease
+  | 'RUN_LEASE_CONFLICT'
+  | 'STALE_LEASE_REQUIRES_CONFIRM';
+
+// ============================================================================
+// v0.2.0 Dual Model Relay 新增类型（与 v0.1 共存）
+// ============================================================================
+
+/** v0.2.0 状态机阶段（区别于 v0.1 Phase） */
+export type RunPhase =
+  | 'INTAKE'
+  | 'STRATEGY_GATE'
+  | 'DS_WORK'
+  | 'VERIFY'
+  | 'HUMAN_GATE'
+  | 'OPUS_REVIEW'
+  | 'DS_APPLY'
+  | 'FINAL_VERIFY'
+  | 'DONE'
+  | 'STOPPED';
+
+export type LaunchStrategy = 'deepseek-first' | 'opus-plan-first';
+
+export type WriterRole = 'none' | 'deepseek';
+
+// === Provider 与模型身份 ===
+
+export interface ModelIdentity {
+  logicalName: string;
+  requestedModelId: string;
+  acceptedReportedModelIds: string[];
+  displayName: string;
+}
+
+export interface ModelPricing {
+  inputPerMTokens: number;
+  outputPerMTokens: number;
+  cacheCreationPerMTokens: number;
+  cacheReadPerMTokens: number;
+  currency: 'CNY';
+  source: string;
+  updatedAt: string;
+}
+
+export interface ProviderProfile {
+  id: string;
+  displayName: string;
+  vendor: 'deepseek' | 'anthropic' | 'third-party';
+  transport: 'openai-chat' | 'anthropic-messages' | 'claude-cli';
+  apiBaseUrl?: string;
+  credentialEnvVars: string[];
+  runtimeEnvAllowlist: string[];
+  staticEnv?: Record<string, string>;
+  defaultModelId: string;
+  models: ModelIdentity[];
+  pricing: Record<string, ModelPricing>;
+}
+
+// === 命令白名单 ===
+
+export interface VerificationCommand {
+  id: string;
+  executable: string;
+  args: string[];
+  cwd: string;
+}
+
+export interface VerificationPlan {
+  commandIds: string[];
+  source: 'task-contract' | 'opus-verdict' | 'machine-default';
+}
+
+// === 文件范围 ===
+
+export interface FileScope {
+  allowedRoots: string[];
+  protectedPaths: string[];
+  proposedFiles: string[];
+  approvedFiles: string[];
+  maxChangedFiles: number;
+}
+
+// === Run Lease ===
+
+export interface RunLease {
+  runId: string;
+  pid: number;
+  repositoryRoot: string;
+  acquiredAt: string;
+  heartbeatAt: string;
+  worktreeFingerprintAtStart: string;
+  writer: WriterRole;
+}
+
+// === HUMAN_GATE ===
+
+export type HumanGatePurpose =
+  | 'PRE_IMPLEMENTATION_PLAN'
+  | 'FAILURE_ARBITRATION'
+  | 'MODEL_IDENTITY_CONFIRMATION';
+
+export interface IdentityConfirmationContext {
+  sourcePhase: 'DS_WORK' | 'OPUS_REVIEW';
+  resumePhase: 'VERIFY' | 'DS_WORK' | 'DS_APPLY';
+  pendingResultId: string;
+}
+
+export type VerificationOutcome = 'NOT_RUN' | 'PASSED' | 'FAILED' | 'FLAKY';
+
+// === 预检 ===
+
+export interface PreflightOk {
+  ok: true;
+  runId: string;
+  phase: 'STRATEGY_GATE';
+  runStatePath: string;
+  worktreeFingerprint: string;
+}
+
+export interface PreflightFail {
+  ok: false;
+  stopReason: StopReason;
+  message: string;
+}
+
+export type PreflightResult = PreflightOk | PreflightFail;
+
+// === 配置加载结果 ===
+
+export interface ProviderConfigLoadResult {
+  ok: boolean;
+  profiles?: Record<string, ProviderProfile>;
+  error?: string;
+  /** ok=false 时区分错误类别 */
+  reason?: 'FILE_NOT_FOUND' | 'PARSE_ERROR' | 'VALIDATION_ERROR' | 'PRICING_NOT_FOUND';
+}
