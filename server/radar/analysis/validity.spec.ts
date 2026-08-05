@@ -87,14 +87,33 @@ describe('deriveAnalysisValidity', () => {
     expect(result).toEqual({ state: 'current', reasons: [] });
   });
 
+  it('compares NovaWing revision only when enabled and treats legacy null as stale', () => {
+    expect(deriveAnalysisValidity(record(), current(), { novaWingCoreRevision: 7 }))
+      .toEqual({ state: 'current', reasons: [] });
+    expect(deriveAnalysisValidity(
+      record(), current({ novaWingCoreRevision: 7 }), { novaWingCoreRevision: 7 },
+    )).toEqual({ state: 'current', reasons: [] });
+    expect(deriveAnalysisValidity(
+      record(), current({ novaWingCoreRevision: 8 }), { novaWingCoreRevision: 7 },
+    ).reasons).toEqual(['nova_wing_context_changed']);
+    expect(deriveAnalysisValidity(
+      record(), current({ novaWingCoreRevision: 8 }), { novaWingCoreRevision: null },
+    ).reasons).toEqual(['nova_wing_context_changed']);
+  });
+
   it('accumulates multiple reasons in the fixed §11.2 order', () => {
     const result = deriveAnalysisValidity(
       record(),
-      current({ activeResumeVersionId: 'rv-9', ruleVersion: 'rule:v9', promptVersion: 'prompt:v9', modelPolicyInvalidated: true }),
+      current({
+        activeResumeVersionId: 'rv-9', ruleVersion: 'rule:v9', promptVersion: 'prompt:v9',
+        modelPolicyInvalidated: true, novaWingCoreRevision: 9,
+      }),
+      { novaWingCoreRevision: 8 },
     );
     expect(result.state).toBe('stale');
     expect(result.reasons).toEqual([
       'resume_version_changed', 'rule_version_changed', 'prompt_version_changed', 'model_policy_invalidated',
+      'nova_wing_context_changed',
     ]);
   });
 });

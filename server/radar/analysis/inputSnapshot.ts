@@ -2,8 +2,8 @@
  * V8-4 单岗位分析 · 服务端输入快照组装（从真实正式数据读取，本波次不调用模型）。
  *
  * 读取：目标候选版本（radar）、当前正式简历版本、正式求职画像版本，
- * 以及可选的能力基线 / 市场位置 / 求职策略正式版本；组装为 JobMatchAnalysisInputSnapshotV1，
- * 计算确定性 inputHash 与 taskId。规则投影按 schema v7/v8 兼容读取 evidence_json，
+ * 以及可选的能力基线 / 市场位置 / 求职策略正式版本；关闭 NovaWing Context 时继续组装 V1，
+ * 开启时显式组装 V2，并计算确定性 inputHash 与 taskId。规则投影按 schema v7/v8 兼容读取 evidence_json，
  * 覆盖态复用 ruleOverrideProjection 权威算法；缺失能力/市场/策略仅在 readiness 记录局限。
  */
 import { sha256RequestHash } from '../../job-memory/requestHash';
@@ -19,11 +19,15 @@ import { parseRuleEvidenceJson } from '../ruleEvidenceContract';
 import { currentOverrideState, overrideStateToProjection } from '../ruleOverrideProjection';
 import { normalizeJobMatchCity } from '../../job-match-profile/inputSnapshot';
 import {
+  ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V1,
+  ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V2,
   parseJobMatchAnalysisInputSnapshot,
+  type JobMatchAnalysisInputSnapshot,
   type JobMatchAnalysisInputSnapshotV1,
 } from './contracts';
 import { buildJobMatchAnalysisInputHash, buildJobMatchAnalysisTaskId } from './inputHash';
 import { AnalysisInputError } from './inputErrors';
+import type { FrozenNovaWingAnalysisContext } from './novaWingContext';
 
 /** 组装选项：本波次不调用 Provider，版本/Provider 元数据由调用方注入（执行波次消费）。 */
 export interface BuildAnalysisInputSnapshotOptions {
@@ -31,11 +35,13 @@ export interface BuildAnalysisInputSnapshotOptions {
   analysisPolicyVersion: string;
   providerPolicyVersion: string;
   provider: { providerName: string; modelName: string; modelVersion: string | null };
+  /** Omitted when the feature is disabled, preserving the original V1 snapshot byte semantics. */
+  novaWingContext?: FrozenNovaWingAnalysisContext;
   now?: () => number;
 }
 
 export interface BuildAnalysisInputSnapshotResult {
-  snapshot: JobMatchAnalysisInputSnapshotV1;
+  snapshot: JobMatchAnalysisInputSnapshot;
   inputHash: string;
   taskId: string;
 }
@@ -195,7 +201,7 @@ interface AssembleInput {
   options: BuildAnalysisInputSnapshotOptions;
 }
 
-function assembleSnapshot(db: SqliteDatabase, input: AssembleInput): JobMatchAnalysisInputSnapshotV1 {
+function assembleSnapshot(db: SqliteDatabase, input: AssembleInput): JobMatchAnalysisInputSnapshot {
   const { version, resume, profileVersion, options } = input;
   const now = options.now ?? Date.now;
   const n = version!.normalized;
@@ -253,8 +259,7 @@ function assembleSnapshot(db: SqliteDatabase, input: AssembleInput): JobMatchAna
   const marketSafe = marketVersion === null ? null : projectMarket(marketVersion);
   const strategySafe = strategyVersion === null ? null : projectStrategy(strategyVersion);
 
-  return {
-    contractVersion: 1,
+  const common: Omit<JobMatchAnalysisInputSnapshotV1, 'contractVersion'> = {
     candidate: {
       candidateId: version!.candidateId, candidateVersionId: version!.id, contentHash: version!.contentHash,
       normalizedFacts: {
@@ -279,6 +284,18 @@ function assembleSnapshot(db: SqliteDatabase, input: AssembleInput): JobMatchAna
     promptVersion: options.promptVersion, analysisPolicyVersion: options.analysisPolicyVersion,
     providerPolicyVersion: options.providerPolicyVersion, provider: options.provider,
     createdAt: now(),
+  };
+  if (options.novaWingContext === undefined) {
+    return { contractVersion: ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V1, ...common };
+  }
+  return {
+    contractVersion: ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V2,
+    ...common,
+    novaWingContext: {
+      coreRevision: options.novaWingContext.coreRevision,
+      scopes: [...options.novaWingContext.scopes] as ['global', 'career'],
+      entries: options.novaWingContext.entries.map((entry) => ({ ...entry })),
+    },
   };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */

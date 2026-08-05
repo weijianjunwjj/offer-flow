@@ -8,7 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '../../job-memory/requestHash';
-import type { JobMatchAnalysisInputSnapshotV1 } from './contracts';
+import type { JobMatchAnalysisInputSnapshot } from './contracts';
 
 export const ANALYSIS_INPUT_HASH_PREFIX = 'job-match-analysis-input:v1';
 export const ANALYSIS_TASK_ID_PREFIX = 'analysis-task:v1';
@@ -21,7 +21,7 @@ export const ANALYSIS_TASK_ID_PATTERN = /^analysis-task:v1:[0-9a-f]{64}$/;
  * 计算输入快照的确定性 inputHash。
  * createdAt 被显式剔除后再 canonical 序列化，因此仅创建时间不同的两份语义相同快照 hash 相同。
  */
-export function buildJobMatchAnalysisInputHash(snapshot: JobMatchAnalysisInputSnapshotV1): string {
+export function buildJobMatchAnalysisInputHash(snapshot: JobMatchAnalysisInputSnapshot): string {
   const { createdAt: _ignored, ...semantic } = snapshot;
   const canonical = canonicalJson(semantic);
   return createHash('sha256').update(`${ANALYSIS_INPUT_HASH_PREFIX}\n${canonical}`).digest('hex');

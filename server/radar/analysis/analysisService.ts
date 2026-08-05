@@ -45,6 +45,8 @@ import {
   readCurrentAnalysisVersions,
   type AnalysisStaleReason,
 } from './validity';
+import type { NovaWingHostAdapter } from './novaWingHostAdapter';
+import { readFrozenNovaWingContext } from './novaWingContext';
 
 /** createTask 结果：created 区分「本次新建」与「命中已有（含 cancelled）」。 */
 export interface CreateAnalysisTaskResult {
@@ -56,6 +58,12 @@ export interface CreateAnalysisTaskResult {
 export interface CandidateAnalysisView {
   record: JobMatchAnalysisRecord;
   validity: { status: 'current' | 'stale'; staleReasons: AnalysisStaleReason[] };
+  /** Present only when the feature is enabled; null identifies a legacy record without a frozen revision. */
+  novaWingCoreRevision?: number | null;
+}
+
+export interface AnalysisValidityRequestContext {
+  novaWingCoreRevision?: number;
 }
 
 /** 构造依赖：db 必填；provider/now/id 生成器可注入（测试注入 fake provider，绝不读真实环境变量）。 */
@@ -65,6 +73,8 @@ export interface AnalysisServiceDeps {
   now?: () => number;
   createTaskId?: (inputHash: string) => string;
   createRecordId?: () => string;
+  novaWingAnalysisContextEnabled?: boolean;
+  novaWingHostAdapter?: NovaWingHostAdapter;
 }
 
 
@@ -76,6 +86,8 @@ export class AnalysisService {
   private readonly now: () => number;
   private readonly createTaskId: (inputHash: string) => string;
   private readonly createRecordId: () => string;
+  private readonly novaWingAnalysisContextEnabled: boolean;
+  private readonly novaWingHostAdapter: NovaWingHostAdapter | undefined;
   private readonly tasks: AnalysisTaskRepository;
   private readonly records: AnalysisRecordRepository;
   /** 单一执行器实例：cancel 依赖的进程内 inflight AbortController 与 runTask 共享同一实例。 */
@@ -87,6 +99,8 @@ export class AnalysisService {
     this.now = deps.now ?? Date.now;
     this.createTaskId = deps.createTaskId ?? buildJobMatchAnalysisTaskId;
     this.createRecordId = deps.createRecordId ?? randomUUID;
+    this.novaWingAnalysisContextEnabled = deps.novaWingAnalysisContextEnabled ?? false;
+    this.novaWingHostAdapter = deps.novaWingHostAdapter;
     this.tasks = new AnalysisTaskRepository(this.db);
     this.records = new AnalysisRecordRepository(this.db);
     this.executor = new AnalysisExecutor({
@@ -171,6 +185,9 @@ export class AnalysisService {
    * 相同固定输入命中确定性主键 → 复用已有任务；已 cancelled 任务在输入未变时**原样返回**，不自动重跑。
    */
   createTask(candidateVersionId: string): CreateAnalysisTaskResult {
+    const novaWingContext = this.novaWingAnalysisContextEnabled
+      ? readFrozenNovaWingContext(this.novaWingHostAdapter)
+      : undefined;
     const built = buildJobMatchAnalysisInputSnapshot(this.db, candidateVersionId, {
       promptVersion: JOB_MATCH_ANALYSIS_PROMPT_VERSION,
       analysisPolicyVersion: JOB_MATCH_ANALYSIS_POLICY_VERSION,
@@ -180,6 +197,7 @@ export class AnalysisService {
         modelName: this.provider.modelName(),
         modelVersion: null,
       },
+      novaWingContext,
       now: this.now,
     });
     const taskId = this.createTaskId(built.inputHash);
@@ -283,20 +301,50 @@ export class AnalysisService {
   }
 
   /**
+   * Request-scoped validity context. Feature-off performs no adapter access; feature-on reads and
+   * validates the latest mainline exactly once so callers can reuse the revision across a list.
+   */
+  createValidityRequestContext(): AnalysisValidityRequestContext {
+    if (!this.novaWingAnalysisContextEnabled) return {};
+    return { novaWingCoreRevision: readFrozenNovaWingContext(this.novaWingHostAdapter).coreRevision };
+  }
+
+  /** Resolve the revision frozen alongside a record through its unique inputHash → task snapshot link. */
+  private frozenNovaWingCoreRevision(record: JobMatchAnalysisRecord): number | null | undefined {
+    if (!this.novaWingAnalysisContextEnabled) return undefined;
+    const task = this.tasks.findByInputHash(record.inputHash);
+    if (task === null) return null;
+    const snapshot = parseJobMatchAnalysisInputSnapshot(task.inputSnapshot);
+    return snapshot.contractVersion === 2 ? snapshot.novaWingContext.coreRevision : null;
+  }
+
+  /**
    * 列出候选全部分析记录（新→旧），每条附查询期派生的有效性投影。
    * 有效性由记录冻结版本与当前 active 版本 + policy 常量比较派生，不新增字段；
    * model_name 变化默认不 stale（仅显式 Model Policy 判定才产生 model_policy_invalidated）。
    */
-  listCandidateAnalyses(candidateId: string): CandidateAnalysisView[] {
+  listCandidateAnalyses(
+    candidateId: string,
+    requestContext?: AnalysisValidityRequestContext,
+  ): CandidateAnalysisView[] {
+    const validityContext = this.novaWingAnalysisContextEnabled
+      ? (requestContext?.novaWingCoreRevision === undefined ? this.createValidityRequestContext() : requestContext)
+      : {};
     const candidate = new RadarCandidateRepository(this.db).getCandidate(candidateId);
     const current = readCurrentAnalysisVersions(this.db, candidateId, {
       ruleVersion: this.currentRuleVersion(candidate?.activeVersionId ?? null),
       promptVersion: JOB_MATCH_ANALYSIS_PROMPT_VERSION,
       analysisPolicyVersion: JOB_MATCH_ANALYSIS_POLICY_VERSION,
+      novaWingCoreRevision: validityContext.novaWingCoreRevision,
     });
     return this.records.listByCandidate(candidateId).map((record) => {
-      const validity = deriveAnalysisValidity(record, current);
-      return { record, validity: { status: validity.state, staleReasons: validity.reasons } };
+      const novaWingCoreRevision = this.frozenNovaWingCoreRevision(record);
+      const validity = deriveAnalysisValidity(record, current, { novaWingCoreRevision });
+      return {
+        record,
+        validity: { status: validity.state, staleReasons: validity.reasons },
+        ...(novaWingCoreRevision === undefined ? {} : { novaWingCoreRevision }),
+      };
     });
   }
 

@@ -201,9 +201,11 @@ npm.cmd run selftest
 | 岗位雷达采集桥 | `VITE_OFFERFLOW_RADAR` | `OFFERFLOW_RADAR` | 关闭 |
 | 单岗位分析 | `VITE_OFFERFLOW_RADAR_ANALYSIS` | `OFFERFLOW_RADAR_ANALYSIS` | 关闭 |
 | 推荐批次面板 | `VITE_OFFERFLOW_RADAR_RECOMMENDATIONS` | —（随雷达网关自动接线） | 关闭 |
+| NovaWing 分析上下文预接入 | —（无 UI） | `OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT` | 关闭 |
 
 - 后端启用 `OFFERFLOW_RADAR=true` 时，真实库 schema 必须 ≥ v8，否则服务**拒绝启动**并提示先经授权升级。
 - `OFFERFLOW_RADAR_ANALYSIS` 依赖 `OFFERFLOW_RADAR`；单独开启分析而未开雷达时，分析路由不注册。
+- NovaWing 上下文开关只控制分析快照与 stale 语义；OfferFlow 不动态加载真实 adapter，未注入时创建任务返回稳定错误。
 - 推荐 / 动作 / 晋升 / 追踪不新增开关，沿用雷达路由内既有 schema / analysis 门禁自动接线。
 
 ## 浏览器扩展

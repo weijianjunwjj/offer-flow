@@ -18,6 +18,7 @@ import { AnalysisTaskDomainError, type AnalysisTaskDomainErrorCode, taskNotFound
 import { AnalysisProviderError, type AnalysisProviderErrorCode } from './provider';
 import { AnalysisContractError } from './contractErrors';
 import { toAnalysisTaskView, toAnalysisRecordView } from './analysisDtoSchemas';
+import { NovaWingContextError } from './novaWingContext';
 
 /** 可注入依赖：测试必须注入 fake provider（禁止读真实 key / 访问外网）。db 由父作用域装饰提供。 */
 export type AnalysisRouteDeps = Omit<AnalysisServiceDeps, 'db'>;
@@ -91,6 +92,12 @@ function handleAnalysisError(
   if (error instanceof AnalysisContractError) {
     return reply.code(422).send({ code: error.code, message: error.message });
   }
+  if (error instanceof NovaWingContextError) {
+    const status = error.code === 'NOVA_WING_CONTEXT_INVALID' || error.code === 'NOVA_WING_CONTEXT_TOO_LARGE'
+      ? 422
+      : 503;
+    return reply.code(status).send({ code: error.code, message: error.message });
+  }
   if (error.code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
     return reply.code(400).send({ code: 'INVALID_JSON', message: '请求体不是合法 JSON' });
   }
@@ -120,7 +127,7 @@ export function registerRadarAnalysisRoutes(app: FastifyInstance, options: Radar
       if (record === null) throw new AnalysisInputError('CANDIDATE_NOT_FOUND', '分析记录不存在');
       const view = service.listCandidateAnalyses(record.candidateId).find((v) => v.record.id === analysisId);
       const validity = view?.validity ?? { status: 'stale' as const, staleReasons: [] };
-      return toAnalysisRecordView(record, validity);
+      return toAnalysisRecordView(record, validity, view?.novaWingCoreRevision);
     };
 
     // 创建/复用 queued 任务：只组装固定输入，绝不调用模型、绝不自动运行；相同输入幂等返回同一 task。
@@ -160,7 +167,8 @@ export function registerRadarAnalysisRoutes(app: FastifyInstance, options: Radar
       if (new RadarCandidateRepository(scoped.db).getCandidate(id) === null) {
         throw new AnalysisInputError('CANDIDATE_NOT_FOUND', '候选不存在');
       }
-      return service.listCandidateAnalyses(id).map((v) => toAnalysisRecordView(v.record, v.validity));
+      return service.listCandidateAnalyses(id)
+        .map((v) => toAnalysisRecordView(v.record, v.validity, v.novaWingCoreRevision));
     });
 
     scoped.get('/radar/analyses/:id', async (request) => analysisView(parseId(request)));

@@ -16,6 +16,8 @@ import {
   malformedThenRepairFailureProvider,
   type CountingProvider,
 } from './analysisProviderFakes';
+import type { NovaWingHostAdapter } from './novaWingHostAdapter';
+import { FakeNovaWingHostAdapter } from './fakeNovaWingHostAdapter.specHelper';
 
 const CAPTURE_CLIENT_HEADER = 'x-offerflow-capture-client';
 const cleanups: Array<() => void> = [];
@@ -58,7 +60,12 @@ interface Harness {
 /** v7 沙箱 + 注入 fake provider + 单调时钟 + 确定性 record id（禁止读真实 key / 访问外网）。 */
 function setup(
   provider: CountingProvider,
-  opts: { analysisEnabled?: boolean; seedResumeProfile?: boolean } = {},
+  opts: {
+    analysisEnabled?: boolean;
+    seedResumeProfile?: boolean;
+    novaWingAnalysisContextEnabled?: boolean;
+    novaWingHostAdapter?: NovaWingHostAdapter;
+  } = {},
 ): Harness {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-analysis-routes-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
@@ -72,6 +79,8 @@ function setup(
     radar: {
       enabled: true,
       analysisEnabled: opts.analysisEnabled ?? true,
+      novaWingAnalysisContextEnabled: opts.novaWingAnalysisContextEnabled ?? false,
+      novaWingHostAdapter: opts.novaWingHostAdapter,
       serviceDeps: captureDeps(),
       analysisDeps: { provider, now: () => (clock += 1), createRecordId: () => `rec-${(recSeq += 1)}` },
     },
@@ -131,6 +140,72 @@ describe('创建任务 — 幂等 / 不调用 Provider / 安全出参', () => {
     const again = await createTask(h);
     expect(again.id).toBe(created.id);
     expect(again.status).toBe('cancelled');
+  });
+});
+
+describe('NovaWing context DI / errors', () => {
+  const context = () => ({
+    coreRevision: 4,
+    entries: [
+      { scope: 'global' as const, key: 'global.summary', value: 'safe' },
+      { scope: 'career' as const, key: 'career.target', value: 'backend' },
+    ],
+  });
+
+  it('buildServer default stays compatible without an adapter', async () => {
+    const h = setup(deterministicSuccessProvider());
+    expect((await post(h.app, `/radar/candidate-versions/${h.versionId}/analysis-tasks`)).statusCode).toBe(200);
+  });
+
+  it('enabled + fake reads global/career once; unrelated capture flow does not read it', async () => {
+    const fake = new FakeNovaWingHostAdapter(context());
+    const h = setup(deterministicSuccessProvider(), {
+      novaWingAnalysisContextEnabled: true,
+      novaWingHostAdapter: fake,
+    });
+    const sessionId = (h.db.prepare('SELECT id FROM radar_capture_sessions ORDER BY created_at LIMIT 1').get() as { id: string }).id;
+    const capture = await h.app.inject({
+      method: 'GET', url: `/radar/capture-sessions/${sessionId}`, headers: headers(),
+    });
+    expect(capture.statusCode).toBe(200);
+    expect(fake.callCount).toBe(0);
+
+    const created = await post(h.app, `/radar/candidate-versions/${h.versionId}/analysis-tasks`);
+    expect(created.statusCode).toBe(200);
+    expect(fake.calls).toEqual([{ scopes: ['global', 'career'] }]);
+  });
+
+  it('enabled without adapter fails with a stable application error', async () => {
+    const h = setup(deterministicSuccessProvider(), { novaWingAnalysisContextEnabled: true });
+    const response = await post(h.app, `/radar/candidate-versions/${h.versionId}/analysis-tasks`);
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ code: 'NOVA_WING_ADAPTER_REQUIRED' });
+  });
+
+  it('redacts unavailable adapter errors and maps invalid/oversized contexts', async () => {
+    const fake = new FakeNovaWingHostAdapter(context());
+    const h = setup(deterministicSuccessProvider(), {
+      novaWingAnalysisContextEnabled: true,
+      novaWingHostAdapter: fake,
+    });
+    fake.setUnavailable(new Error('SQLITE_BUSY C:\\private\\business.sqlite token=secret'));
+    const unavailable = await post(h.app, `/radar/candidate-versions/${h.versionId}/analysis-tasks`);
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toEqual({
+      code: 'NOVA_WING_CONTEXT_UNAVAILABLE', message: 'NovaWing 分析上下文暂不可用',
+    });
+    expect(unavailable.body).not.toContain('SQLITE');
+    expect(unavailable.body).not.toContain('private');
+
+    fake.setRawContext({ coreRevision: -1, entries: [] });
+    const invalid = await post(h.app, `/radar/candidate-versions/${h.versionId}/analysis-tasks`);
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json()).toMatchObject({ code: 'NOVA_WING_CONTEXT_INVALID' });
+
+    fake.setOversizedContext();
+    const tooLarge = await post(h.app, `/radar/candidate-versions/${h.versionId}/analysis-tasks`);
+    expect(tooLarge.statusCode).toBe(422);
+    expect(tooLarge.json()).toMatchObject({ code: 'NOVA_WING_CONTEXT_TOO_LARGE' });
   });
 });
 

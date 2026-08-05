@@ -31,6 +31,7 @@ export const ANALYSIS_STALE_REASONS = [
   'prompt_version_changed',
   'analysis_policy_changed',
   'model_policy_invalidated',
+  'nova_wing_context_changed',
 ] as const;
 export type AnalysisStaleReason = (typeof ANALYSIS_STALE_REASONS)[number];
 
@@ -56,6 +57,13 @@ export interface CurrentAnalysisVersions {
   analysisPolicyVersion: string;
   /** 显式 Model Policy 判定旧模型结果不可用于推荐（§11.3）；默认 false。 */
   modelPolicyInvalidated?: boolean;
+  /** Defined only when NovaWing analysis context is enabled for this request. */
+  novaWingCoreRevision?: number;
+}
+
+export interface FrozenAnalysisContextVersions {
+  /** null means a legacy/uncorrelated record; undefined means the feature is disabled. */
+  novaWingCoreRevision?: number | null;
 }
 
 /**
@@ -66,6 +74,7 @@ export interface CurrentAnalysisVersions {
 export function deriveAnalysisValidity(
   record: JobMatchAnalysisRecord,
   current: CurrentAnalysisVersions,
+  frozen: FrozenAnalysisContextVersions = {},
 ): AnalysisValidity {
   const reasons: AnalysisStaleReason[] = [];
   const differs = (frozen: string | null, active: string | null): boolean => frozen !== active;
@@ -94,6 +103,12 @@ export function deriveAnalysisValidity(
     reasons.push('analysis_policy_changed');
   }
   if (current.modelPolicyInvalidated === true) reasons.push('model_policy_invalidated');
+  if (
+    current.novaWingCoreRevision !== undefined
+    && frozen.novaWingCoreRevision !== current.novaWingCoreRevision
+  ) {
+    reasons.push('nova_wing_context_changed');
+  }
 
   return { state: reasons.length === 0 ? 'current' : 'stale', reasons };
 }
@@ -104,6 +119,7 @@ export interface CurrentPolicyVersions {
   promptVersion: string;
   analysisPolicyVersion: string;
   modelPolicyInvalidated?: boolean;
+  novaWingCoreRevision?: number;
 }
 
 /**
@@ -129,5 +145,6 @@ export function readCurrentAnalysisVersions(
     promptVersion: policy.promptVersion,
     analysisPolicyVersion: policy.analysisPolicyVersion,
     modelPolicyInvalidated: policy.modelPolicyInvalidated ?? false,
+    novaWingCoreRevision: policy.novaWingCoreRevision,
   };
 }

@@ -19,6 +19,7 @@ import {
 import { RadarActionCoordinator } from './action/actionCoordinator';
 import { ActionApplyRequestSchema, ActionRevertRequestSchema } from './action/actionDtoSchemas';
 import type { ZodType } from 'zod';
+import type { NovaWingHostAdapter } from './analysis/novaWingHostAdapter';
 
 export type { RadarCaptureServiceDeps };
 
@@ -27,6 +28,9 @@ export interface RadarCaptureRouteOptions {
   /** V8-4 单岗位分析 API 门禁：默认关闭；需 radar 已启用 + schema ≥ v7 才注册。 */
   analysisEnabled?: boolean;
   analysisDeps?: AnalysisRouteDeps;
+  /** OfferFlow-owned NovaWing context pre-integration. Default false; adapter is required only when true. */
+  novaWingAnalysisContextEnabled?: boolean;
+  novaWingHostAdapter?: NovaWingHostAdapter;
   /** V8-5 推荐批次 API：随分析门禁同开（同依赖 v7 领域表）。 */
   recommendationDeps?: RecommendationRouteDeps;
   /** V8-6 正式晋升 API：需 schema ≥ v8（与评审工作台同门禁）。 */
@@ -139,7 +143,13 @@ export function registerRadarCaptureRoutes(
     // ---- V8-4 单岗位分析 API（独立门禁）：需 analysisEnabled 且 schema ≥ v7（分析领域表随 v7 落地）。 ----
     // 分析只依赖 v7 雷达领域表，早于 v8 评审门禁注册，确保 v7 库亦可接出；生产入口默认不开启。
     if (options.analysisEnabled === true && getDatabaseSchemaVersion(scopedApp.db) >= RADAR_DOMAIN_SCHEMA_VERSION) {
-      registerRadarAnalysisRoutes(scopedApp, { analysisDeps: options.analysisDeps });
+      registerRadarAnalysisRoutes(scopedApp, {
+        analysisDeps: {
+          ...options.analysisDeps,
+          novaWingAnalysisContextEnabled: options.novaWingAnalysisContextEnabled ?? false,
+          novaWingHostAdapter: options.novaWingHostAdapter,
+        },
+      });
     }
 
     // V8-5 推荐批次：需 analysisEnabled + schema ≥ v8。推荐必须读规则评估（category/result/evidence）
@@ -149,7 +159,13 @@ export function registerRadarCaptureRoutes(
       options.analysisEnabled === true
       && getDatabaseSchemaVersion(scopedApp.db) >= RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION
     ) {
-      registerRadarRecommendationRoutes(scopedApp, { recommendationDeps: options.recommendationDeps });
+      registerRadarRecommendationRoutes(scopedApp, {
+        recommendationDeps: {
+          ...options.recommendationDeps,
+          novaWingAnalysisContextEnabled: options.novaWingAnalysisContextEnabled ?? false,
+          novaWingHostAdapter: options.novaWingHostAdapter,
+        },
+      });
     }
 
     // ---- V8-3 人工评审工作台（只读详情 + 关系裁决 + 规则证据/覆盖），共用同一安全网关 ----

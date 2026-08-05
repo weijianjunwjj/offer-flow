@@ -1,20 +1,22 @@
 /**
- * V8-4 服务端持久化输入快照契约 `JobMatchAnalysisInputSnapshotV1`。
+ * V8-4 服务端持久化输入快照契约：原始 V1 与 NovaWing Context 预接入 V2。
  *
  * 这是**服务端 Envelope 层**快照（写入 analysis_tasks.input_snapshot_json），
  * 允许持有内部数据库 ID（candidateId/versionId 等）用于审计与幂等，
  * 但必须严格、有限、可序列化：全部 strictObject、无 z.unknown()、数组/字符串有上限、
  * 总序列化 ≤ 128KB、canonical JSON 序列化、超限抛明确契约错误。
  *
- * 本波次不从数据库组装快照——只固定契约与 parse/serialize。safeSnapshot 是**有限投影**，
- * 不允许把 Resume/Profile 等完整领域对象直接塞入。
+ * safeSnapshot 与 novaWingContext 都是**有限投影**，不允许把完整领域对象直接塞入。
  */
 import { z } from 'zod';
 import { canonicalJson } from '../../job-memory/requestHash';
 import { AnalysisContractError } from './contractErrors';
 import { scanForbiddenContent } from './safetyScan';
+import type { NovaWingSafeValue } from './novaWingContext';
 
-export const ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION = 1;
+export const ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V1 = 1;
+export const ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V2 = 2;
+export const ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION = ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V2;
 export const SNAPSHOT_MAX_BYTES = 128 * 1024;
 
 const SHORT_TEXT = 200;
@@ -134,8 +136,7 @@ export const AnalysisReadinessSchema = z.strictObject({
   limitations: z.array(bounded(MEDIUM_TEXT)).max(LIST_MAX),
 });
 
-export const JobMatchAnalysisInputSnapshotV1Schema = z.strictObject({
-  contractVersion: z.literal(ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION),
+const JobMatchAnalysisInputSnapshotCommonShape = {
   candidate: z.strictObject({
     candidateId: ID,
     candidateVersionId: ID,
@@ -183,9 +184,46 @@ export const JobMatchAnalysisInputSnapshotV1Schema = z.strictObject({
     })
     .optional(),
   createdAt: z.number().finite().nonnegative(),
+};
+
+export const JobMatchAnalysisInputSnapshotV1Schema = z.strictObject({
+  contractVersion: z.literal(ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V1),
+  ...JobMatchAnalysisInputSnapshotCommonShape,
 });
 
+const NovaWingSafeValueSchema: z.ZodType<NovaWingSafeValue> = z.lazy(() => z.union([
+  z.null(),
+  z.boolean(),
+  z.number().finite(),
+  z.string().max(8_000),
+  z.array(NovaWingSafeValueSchema).max(500),
+  z.record(z.string().min(1).max(160), NovaWingSafeValueSchema),
+]));
+
+export const NovaWingAnalysisContextSnapshotSchema = z.strictObject({
+  coreRevision: z.number().int().nonnegative().safe(),
+  scopes: z.tuple([z.literal('global'), z.literal('career')]),
+  entries: z.array(z.strictObject({
+    scope: z.enum(['global', 'career']),
+    key: z.string().trim().min(1).max(160),
+    value: NovaWingSafeValueSchema,
+  })).max(500),
+});
+
+export const JobMatchAnalysisInputSnapshotV2Schema = z.strictObject({
+  contractVersion: z.literal(ANALYSIS_INPUT_SNAPSHOT_CONTRACT_VERSION_V2),
+  ...JobMatchAnalysisInputSnapshotCommonShape,
+  novaWingContext: NovaWingAnalysisContextSnapshotSchema,
+});
+
+export const JobMatchAnalysisInputSnapshotSchema = z.discriminatedUnion('contractVersion', [
+  JobMatchAnalysisInputSnapshotV1Schema,
+  JobMatchAnalysisInputSnapshotV2Schema,
+]);
+
 export type JobMatchAnalysisInputSnapshotV1 = z.infer<typeof JobMatchAnalysisInputSnapshotV1Schema>;
+export type JobMatchAnalysisInputSnapshotV2 = z.infer<typeof JobMatchAnalysisInputSnapshotV2Schema>;
+export type JobMatchAnalysisInputSnapshot = z.infer<typeof JobMatchAnalysisInputSnapshotSchema>;
 
 /** 去重并限量 sourceSnapshotIds（稳定顺序）。 */
 export function dedupeSourceSnapshotIds(ids: readonly string[]): string[] {
@@ -196,8 +234,8 @@ export function dedupeSourceSnapshotIds(ids: readonly string[]): string[] {
  * 严格解析快照对象：Zod strict → 敏感内容扫描 → 字节上限。
  * 快照允许内部 ID，故不扫内部 ID 泄漏；但仍禁止 Cookie/Token/HTML/绝对路径。
  */
-export function parseJobMatchAnalysisInputSnapshot(value: unknown): JobMatchAnalysisInputSnapshotV1 {
-  const result = JobMatchAnalysisInputSnapshotV1Schema.safeParse(value);
+export function parseJobMatchAnalysisInputSnapshot(value: unknown): JobMatchAnalysisInputSnapshot {
+  const result = JobMatchAnalysisInputSnapshotSchema.safeParse(value);
   if (!result.success) {
     throw new AnalysisContractError('SNAPSHOT_INVALID', '输入快照未通过契约校验', result.error.issues[0]?.path.join('.'));
   }

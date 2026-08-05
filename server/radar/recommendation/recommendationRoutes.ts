@@ -17,6 +17,7 @@ import {
   CreateBatchRequestSchema,
   toRecommendationBatchView,
 } from './recommendationDtoSchemas';
+import { NovaWingContextError } from '../analysis/novaWingContext';
 
 /** 可注入依赖（测试注入单调时钟/确定性 id）；db 由父作用域装饰提供。 */
 export type RecommendationRouteDeps = Omit<RecommendationBatchServiceDeps, 'db'>;
@@ -55,6 +56,12 @@ function handleRecommendationError(
   }
   if (error instanceof RadarStorageCorruptionError) {
     return reply.code(500).send({ code: 'STORAGE_CORRUPTION', message: '存储记录损坏' });
+  }
+  if (error instanceof NovaWingContextError) {
+    const status = error.code === 'NOVA_WING_CONTEXT_INVALID' || error.code === 'NOVA_WING_CONTEXT_TOO_LARGE'
+      ? 422
+      : 503;
+    return reply.code(status).send({ code: error.code, message: error.message });
   }
   if (error.code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
     return reply.code(400).send({ code: 'INVALID_JSON', message: '请求体不是合法 JSON' });

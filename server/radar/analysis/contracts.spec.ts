@@ -99,3 +99,30 @@ describe('JobMatchAnalysisInputSnapshotV1', () => {
     expect(a).toBe(b);
   });
 });
+
+describe('JobMatchAnalysisInputSnapshotV2', () => {
+  const v2 = () => ({
+    ...validSnapshot(),
+    contractVersion: 2 as const,
+    novaWingContext: {
+      coreRevision: 3,
+      scopes: ['global', 'career'] as ['global', 'career'],
+      entries: [{ scope: 'global' as const, key: 'global.summary', value: { safe: true } }],
+    },
+  });
+
+  it('accepts the explicit V2 context while continuing to parse old V1 snapshots', () => {
+    const parsed = parseJobMatchAnalysisInputSnapshot(v2());
+    expect(parsed.contractVersion).toBe(2);
+    if (parsed.contractVersion === 2) expect(parsed.novaWingContext.coreRevision).toBe(3);
+    expect(parseJobMatchAnalysisInputSnapshot(validSnapshot()).contractVersion).toBe(1);
+  });
+
+  it('does not silently change V1 or accept a V2 snapshot without context', () => {
+    expectCode(() => parseJobMatchAnalysisInputSnapshot({
+      ...validSnapshot(), novaWingContext: v2().novaWingContext,
+    }), 'SNAPSHOT_INVALID');
+    const { novaWingContext: _removed, ...missing } = v2();
+    expectCode(() => parseJobMatchAnalysisInputSnapshot(missing), 'SNAPSHOT_INVALID');
+  });
+});

@@ -101,6 +101,16 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 - **已知遗留（不阻断本波，交后续处理）：** `App.vue` 品牌行仍显示 `v0.7.0`（方案 §4.5 建议改为当前版本，本波未改，避免在文档收口中改动展示文案）；导航「岗位雷达」入口在生产 `radarEnabled=false` 时仍隐藏（符合门禁语义）。
 - **边界：** 未改动 RC-01～RC-12 的功能结论或验收状态；V8-UX 是表达层收口，不计入任何 RC 的「通过/不通过」判定，也不改变 v0.8 发布闭环的 Partial/Blocked 状态。
 
+### 1.6 NovaWing 宿主契约与 Radar 分析上下文预接入（2026-08-05）
+
+- **状态：** `IMPLEMENTED / DEFAULT OFF`。OfferFlow 新增自有只读 `NovaWingHostAdapter` 最小边界，仅请求 `global` / `career`，未安装 NovaWing 包、未实现真实 adapter、未动态加载模块、未连接真实数据库。
+- **快照与 hash：** 开关关闭时继续生成原 `JobMatchAnalysisInputSnapshotV1`，不调用 adapter，原 hash 算法与语义不变；开启时显式生成 V2，在 `novaWingContext` 中冻结非负安全整数 `coreRevision`、固定 scopes 与确定性排序的安全 entries，Context 纳入 canonical input hash，独立上限 32 KiB，拒绝重复键、非法 scope/revision、非 JSON 值、敏感内容与超限，不静默截断或降级为空。
+- **持久化裁决：** 不新增 migration。完整安全投影保存在既有 `analysis_tasks.input_snapshot_json`，`job_match_analysis_records.input_hash` 唯一关联对应任务快照；查询模型由该关联回读 `novaWingCoreRevision`。旧 V1/无任务关联记录的 revision 视为 null：开关关闭保持旧行为，开启时不得判为 current。
+- **stale 与推荐：** `nova_wing_context_changed` 追加在既有稳定 reason 顺序末尾；列表查询每次读取一次当前 revision。RecommendationBatch 在同一批次 request scope 复用一次 revision，避免 adapter N+1；revision 变化或旧记录均按 stale 进入既有 `stale_analysis` 过滤，不复制 entries 到推荐层。
+- **DI 与错误：** `BuildServerOptions.radar → Radar route options → AnalysisService / RecommendationBatchService` 显式传递默认关闭开关与 adapter；无全局变量、service locator、noop adapter 或生命周期 close。稳定错误为 `NOVA_WING_ADAPTER_REQUIRED`、`NOVA_WING_CONTEXT_UNAVAILABLE`、`NOVA_WING_CONTEXT_INVALID`、`NOVA_WING_CONTEXT_TOO_LARGE`，HTTP 文案不回显路径、SQLite、堆栈或 Context 正文。
+- **验证：** NovaWing/DI/stale/Recommendation 最终定向回归 47/47；排除既有 cc-auto Windows 原子 rename 问题后的最终项目业务全量 1534/1534；`migration:selftest` 通过；`vue-tsc --noEmit` 与 production build 通过。此前同轮项目完整 Vitest 为 2221 passed / 7 skipped / 1 failed，唯一失败是未修改的 `scripts/ccAuto/executor.spec.ts` 在 Windows 覆盖 `state.json` 时 `EPERM`；隔离 cc-auto 为 689 passed / 7 skipped / 1 同类 `EPERM`，不在本切片越权修复。
+- **边界：** 未修改 UI、Prompt 正文、旧 `/api/llm/analyze-job`、cc-auto 源码、package 依赖或 schema；未创建 `nw_*`；未执行真实 Provider 网络、真实数据库 migration、commit、push、merge、rebase、tag、release 或 publish。
+
 ---
 
 ## 2. 红队问题追踪

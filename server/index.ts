@@ -43,6 +43,7 @@ import { registerImportRoutes } from './routes/import';
 import { registerSyncRoutes } from './routes/sync';
 import { registerLlmRoutes } from './routes/llm';
 import { createShutdownSnapshotExporter, runStartupSync } from './sync/bootstrap';
+import type { NovaWingHostAdapter } from './radar/analysis/novaWingHostAdapter';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -85,6 +86,9 @@ export interface RadarCapability {
   /** V8-4 单岗位分析 API 门禁：默认关闭，仅显式开启时才注册分析路由（需 radar 已启用 + schema ≥ v7）。 */
   analysisEnabled?: boolean;
   analysisDeps?: RadarAnalysisRouteDeps;
+  /** Default-off host context flag; no adapter is constructed or dynamically loaded by OfferFlow. */
+  novaWingAnalysisContextEnabled?: boolean;
+  novaWingHostAdapter?: NovaWingHostAdapter;
   /** V8-5 推荐批次 API 注入依赖（随 analysisEnabled 同门禁开启）。 */
   recommendationDeps?: RadarRecommendationRouteDeps;
   /** V8-6 正式晋升 API 注入依赖（门禁为 schema ≥ v8，与 analysisEnabled 无关）。 */
@@ -236,6 +240,8 @@ export function buildServer(
         serviceDeps: options.radar?.serviceDeps,
         analysisEnabled: options.radar?.analysisEnabled ?? false,
         analysisDeps: options.radar?.analysisDeps,
+        novaWingAnalysisContextEnabled: options.radar?.novaWingAnalysisContextEnabled ?? false,
+        novaWingHostAdapter: options.radar?.novaWingHostAdapter,
         recommendationDeps: options.radar?.recommendationDeps,
         promotionDeps: options.radar?.promotionDeps,
       });
@@ -283,6 +289,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // 推荐/动作/晋升/追踪不新增开关：沿用 radar 路由内既有 schema/analysis 门禁自动接线。
   const radarEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR);
   const radarAnalysisEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR_ANALYSIS);
+  const novaWingAnalysisContextEnabled = readBackendFlag(process.env.OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT);
   const realDbPath = getDbPath();
   const realSchemaVersion = probeSchemaVersion(realDbPath);
   // schema < v8 时禁止启用雷达：评审/晋升/动作/推荐均依赖 v8 候选关系表，
@@ -298,16 +305,24 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (radarAnalysisEnabled && !radarEnabled) {
     console.warn('[radar] OFFERFLOW_RADAR_ANALYSIS=true 但 OFFERFLOW_RADAR 未启用；分析路由挂在雷达网关下，不会注册。');
   }
+  if (novaWingAnalysisContextEnabled && !radarAnalysisEnabled) {
+    console.warn('[radar] OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT=true 但 Radar Analysis 未启用；上下文不会被读取。');
+  }
   console.log(
     `[startup] db=${desensitizeDbPath(realDbPath)} schema=v${realSchemaVersion} `
-    + `radar=${radarEnabled ? 'ENABLED' : 'DISABLED'} analysis=${radarAnalysisEnabled ? 'ENABLED' : 'DISABLED'}`,
+    + `radar=${radarEnabled ? 'ENABLED' : 'DISABLED'} analysis=${radarAnalysisEnabled ? 'ENABLED' : 'DISABLED'} `
+    + `novaWingContext=${novaWingAnalysisContextEnabled ? 'ENABLED' : 'DISABLED'}`,
   );
   const app = buildServer({
     capabilityBaseline: { enabled: true },
     historyImport: { enabled: true },
     marketPosition: { enabled: true },
     strategyWindow: { enabled: true },
-    radar: radarEnabled ? { enabled: true, analysisEnabled: radarAnalysisEnabled } : undefined,
+    radar: radarEnabled ? {
+      enabled: true,
+      analysisEnabled: radarAnalysisEnabled,
+      novaWingAnalysisContextEnabled,
+    } : undefined,
   });
   let isClosing = false;
   const closeAndExit = (signal: NodeJS.Signals): void => {

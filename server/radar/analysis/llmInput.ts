@@ -7,7 +7,7 @@
  *
  * 本波次不调用模型；此处仅做确定性映射，供后续执行波次消费。
  */
-import type { JobMatchAnalysisInputSnapshotV1 } from './contracts';
+import type { JobMatchAnalysisInputSnapshot } from './contracts';
 import {
   parseJobMatchAnalysisLlmInput,
   type JobMatchAnalysisLlmInputV1,
@@ -42,7 +42,7 @@ const item = (
  * 从快照派生稳定证据目录。业务顺序字段用 buildOrderedKeys（内容指纹，重排不漂移未重复项），
  * 集合字段用 buildSetKeys（排序后序号）。绝不放入内部 ID、JD 全文块或凭证。
  */
-function buildCatalog(snapshot: JobMatchAnalysisInputSnapshotV1): EvidenceCatalogV1 {
+function buildCatalog(snapshot: JobMatchAnalysisInputSnapshot): EvidenceCatalogV1 {
   const items: Item[] = [];
   const facts = snapshot.candidate.normalizedFacts;
 
@@ -76,7 +76,7 @@ function buildCatalog(snapshot: JobMatchAnalysisInputSnapshotV1): EvidenceCatalo
 }
 
 /** 薪资区间投影为脱敏文本（不带内部字段名）：如 20-35K/月。 */
-function salaryText(facts: JobMatchAnalysisInputSnapshotV1['candidate']['normalizedFacts']): string | null {
+function salaryText(facts: JobMatchAnalysisInputSnapshot['candidate']['normalizedFacts']): string | null {
   const { salaryMinK, salaryMaxK, salaryPeriod } = facts;
   if (salaryMinK === null && salaryMaxK === null) return null;
   const range = salaryMinK !== null && salaryMaxK !== null ? `${salaryMinK}-${salaryMaxK}K`
@@ -90,7 +90,7 @@ function salaryText(facts: JobMatchAnalysisInputSnapshotV1['candidate']['normali
  * 任一命中即抛契约错误，绝不把带内部 ID 或敏感内容的输入交给模型。
  */
 export function buildJobMatchAnalysisLlmInput(
-  snapshot: JobMatchAnalysisInputSnapshotV1,
+  snapshot: JobMatchAnalysisInputSnapshot,
 ): BuildLlmInputResult {
   const facts = snapshot.candidate.normalizedFacts;
   const profile = snapshot.jobMatchProfile.safeSnapshot;

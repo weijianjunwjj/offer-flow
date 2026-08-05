@@ -55,12 +55,18 @@ export function toAnalysisTaskView(task: AnalysisTask): AnalysisTaskView {
  */
 export interface AnalysisRecordView extends JobMatchAnalysisRecord {
   validity: { status: 'current' | 'stale'; staleReasons: AnalysisStaleReason[] };
+  novaWingCoreRevision?: number | null;
 }
 
 /** 附加有效性投影；不新增/修改任何记录字段。 */
 export function toAnalysisRecordView(
   record: JobMatchAnalysisRecord,
   validity: { status: 'current' | 'stale'; staleReasons: AnalysisStaleReason[] },
+  novaWingCoreRevision?: number | null,
 ): AnalysisRecordView {
-  return { ...record, validity };
+  return {
+    ...record,
+    validity,
+    ...(novaWingCoreRevision === undefined ? {} : { novaWingCoreRevision }),
+  };
 }

@@ -6,10 +6,12 @@ import { openDb, type SqliteDatabase } from '../../db';
 import { initSchema } from '../../schema';
 import { RadarCaptureService } from '../service';
 import { AnalysisRecordRepository } from '../analysisRecordRepository';
+import { AnalysisTaskRepository } from '../analysisTaskRepository';
 import { RadarRuleAssessmentRepository } from '../ruleAssessmentRepository';
 import { RadarActionRepository } from '../actionRepository';
 import { seedActiveResumeAndProfile } from '../analysis/analysisInputFixture';
-import { validPayload } from '../analysis/contractFixtures';
+import { validPayload, validSnapshot } from '../analysis/contractFixtures';
+import { FakeNovaWingHostAdapter } from '../analysis/fakeNovaWingHostAdapter.specHelper';
 import {
   JOB_MATCH_ANALYSIS_POLICY_VERSION,
   JOB_MATCH_ANALYSIS_PROMPT_VERSION,
@@ -79,6 +81,41 @@ function insertCurrentRecord(
   };
   new AnalysisRecordRepository(db).insert(record);
   return record;
+}
+
+function linkFrozenNovaWingRevision(
+  db: SqliteDatabase,
+  record: JobMatchAnalysisRecord,
+  coreRevision: number,
+): void {
+  const snapshot = validSnapshot();
+  new AnalysisTaskRepository(db).insert({
+    id: `task-${record.id}`,
+    taskType: 'job_match_analysis',
+    entityType: 'radar_candidate_version',
+    entityId: record.candidateVersionId,
+    status: 'succeeded',
+    inputHash: record.inputHash,
+    inputSnapshot: {
+      ...snapshot,
+      contractVersion: 2,
+      novaWingContext: {
+        coreRevision,
+        scopes: ['global', 'career'],
+        entries: [{ scope: 'global', key: 'global.summary', value: 'safe' }],
+      },
+    },
+    attemptCount: 1,
+    maxAttempts: 3,
+    startedAt: 1_700_000_450,
+    finishedAt: 1_700_000_500,
+    cancelledAt: null,
+    errorCode: null,
+    errorMessage: null,
+    resultRecordId: record.id,
+    createdAt: 1_700_000_400,
+    updatedAt: 1_700_000_500,
+  });
 }
 
 function insertHardConstraintHit(db: SqliteDatabase, c: { candidateId: string; versionId: string }, tag: string): void {
@@ -198,6 +235,43 @@ describe('RecommendationBatchService.createBatch', () => {
     const { batch } = service.createBatch([c.versionId]);
     expect(batch.selectedCandidateVersionIds).toEqual([]);
     expect(batch.emptyReason).toBe('all_candidates_excluded');
+  });
+
+  it('reads the current NovaWing revision once per batch (no N+1) and excludes changed contexts', () => {
+    const { db } = setup();
+    const fake = new FakeNovaWingHostAdapter({ coreRevision: 10, entries: [] });
+    let batchSeq = 0;
+    const service = new RecommendationBatchService({
+      db,
+      now: () => 1_900_000_000 + batchSeq,
+      createBatchId: () => `nw-batch-${(batchSeq += 1)}`,
+      novaWingAnalysisContextEnabled: true,
+      novaWingHostAdapter: fake,
+    });
+    const candidates = Array.from({ length: 3 }, (_, index) => seedCandidate(db, `nw-${index}`));
+    for (const [index, candidate] of candidates.entries()) {
+      const record = insertCurrentRecord(db, candidate, {
+        recommendation: 'apply_now', confidence: 'high', tag: `nw-${index}`,
+      });
+      linkFrozenNovaWingRevision(db, record, 10);
+    }
+
+    fake.resetCalls();
+    const current = service.createBatch(candidates.map((candidate) => candidate.versionId));
+    expect(fake.callCount).toBe(1);
+    expect(current.batch.selectedCandidateVersionIds).toHaveLength(3);
+
+    fake.setRevision(11);
+    fake.resetCalls();
+    const stale = service.createBatch(candidates.map((candidate) => candidate.versionId));
+    expect(fake.callCount).toBe(1);
+    expect(stale.batch.selectedCandidateVersionIds).toEqual([]);
+    const recommendationSet = (stale.batch.scope as {
+      recommendationSet: { blocked: Array<{ reason: string }> };
+    }).recommendationSet;
+    expect(recommendationSet.blocked.map((item) => item.reason)).toEqual([
+      'stale_analysis', 'stale_analysis', 'stale_analysis',
+    ]);
   });
 
   it('rejects empty scope', () => {

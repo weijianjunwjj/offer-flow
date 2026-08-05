@@ -22,7 +22,11 @@ import { RadarCandidateRepository } from '../candidateRepository';
 import { RadarRuleAssessmentRepository } from '../ruleAssessmentRepository';
 import { RadarActionRepository } from '../actionRepository';
 import { RadarRecommendationBatchRepository } from '../recommendationBatchRepository';
-import { AnalysisService } from '../analysis/analysisService';
+import {
+  AnalysisService,
+  type AnalysisValidityRequestContext,
+} from '../analysis/analysisService';
+import type { NovaWingHostAdapter } from '../analysis/novaWingHostAdapter';
 import { JOB_MATCH_ANALYSIS_POLICY_VERSION } from '../analysis/analysisPrompt';
 import { ProfileRepository } from '../../repositories/profileRepository';
 import { ResumeVersionRepository } from '../../job-memory/resumeVersionRepository';
@@ -45,6 +49,8 @@ export interface RecommendationBatchServiceDeps {
   db: SqliteDatabase;
   now?: () => number;
   createBatchId?: () => string;
+  novaWingAnalysisContextEnabled?: boolean;
+  novaWingHostAdapter?: NovaWingHostAdapter;
 }
 
 /** createBatch 结果：created 区分本次新建与命中已有批次（幂等复用）。 */
@@ -81,7 +87,11 @@ export class RecommendationBatchService {
     this.actions = new RadarActionRepository(this.db);
     this.batches = new RadarRecommendationBatchRepository(this.db);
     // 复用分析服务的有效性投影（current/stale），避免重复实现 ruleVersion/stale 派生。
-    this.analysis = new AnalysisService({ db: this.db });
+    this.analysis = new AnalysisService({
+      db: this.db,
+      novaWingAnalysisContextEnabled: deps.novaWingAnalysisContextEnabled,
+      novaWingHostAdapter: deps.novaWingHostAdapter,
+    });
   }
 
   /**
@@ -93,7 +103,9 @@ export class RecommendationBatchService {
     if (scope.length === 0) throw emptyScope();
     if (scope.length > MAX_SCOPE_ITEMS) throw tooManyScopeItems(MAX_SCOPE_ITEMS);
 
-    const resolved = scope.map((versionId) => this.resolveCandidate(versionId));
+    // One request-scoped read at most. The revision is reused for every candidate to prevent N+1.
+    const validityContext = this.analysis.createValidityRequestContext();
+    const resolved = scope.map((versionId) => this.resolveCandidate(versionId, validityContext));
     const set = buildRecommendationSet(resolved.map((r) => r.input));
     const batchKey = this.computeBatchKey(resolved, set);
 
@@ -124,12 +136,15 @@ export class RecommendationBatchService {
    * 解析单个候选版本为推荐输入：定位候选 → 取其 current 成功分析（stale 排除）→
    * 读规则评估/行为流 → 投影。缺失/stale 走 no-payload 投影（将以对应阻断原因排除）。
    */
-  private resolveCandidate(candidateVersionId: string): ResolvedCandidate {
+  private resolveCandidate(
+    candidateVersionId: string,
+    validityContext: AnalysisValidityRequestContext,
+  ): ResolvedCandidate {
     const version = this.candidates.getVersion(candidateVersionId);
     if (version === null) throw candidateNotFound();
     const candidateId = version.candidateId;
 
-    const views = this.analysis.listCandidateAnalyses(candidateId);
+    const views = this.analysis.listCandidateAnalyses(candidateId, validityContext);
     // 只认绑定该版本、且 current 的分析（listByCandidate 已按 createdAt DESC，取最新 current）。
     const currentView = views.find(
       (v) => v.record.candidateVersionId === candidateVersionId && v.validity.status === 'current',

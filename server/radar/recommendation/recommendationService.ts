@@ -57,10 +57,10 @@ const CONFIDENCE_RANK: Record<RecommendationConfidence, number> = { high: 0, med
  * 优先级固定（先分析可用性，再门禁抑制），保证同输入得同一原因。
  */
 function blockReasonFor(input: RecommendationCandidateInput): RecommendationBlockReason | null {
+  if (input.validity === 'stale') return 'stale_analysis';
   if (input.analysisRecordId === null || input.analysisRecommendation === null || input.validity === 'none') {
     return 'no_current_analysis';
   }
-  if (input.validity === 'stale') return 'stale_analysis';
   if (input.analysisRecommendation === 'skip') return 'skip_recommended';
   if (input.hardConstraintHit) return 'hard_constraint_hit';
   if (input.ignoredUnchanged) return 'ignored_unchanged';
