@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -6,7 +7,7 @@ import { verifyRegisteredComponentsAfterRestore } from '@weijianjunwjj/nova-wing
 import { openDb } from '../../db';
 import { initSchema } from '../../schema';
 import { quoteIdent } from '../../sync/tables';
-import { atomicWriteJson } from '../../sync/hash';
+import { toStableJson } from '../../sync/hash';
 import { createNovaWingRuntime } from '../../novawing/infrastructure';
 import { NOVA_WING_ANALYSIS_SCOPES } from '../../radar/analysis/novaWingHostAdapter';
 import {
@@ -27,6 +28,10 @@ import {
   readAndVerifyHostSnapshotV3,
 } from './hostSnapshot';
 import { OFFERFLOW_COMPONENT_NAME, type RestoreCandidateReport, type SnapshotComponentData } from './types';
+import {
+  RestoreArtifactController,
+  type RestoreArtifactIo,
+} from './restoreArtifacts';
 
 export const HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION =
   'RESTORE_HOST_SNAPSHOT_V3_TO_NEW_CANDIDATE' as const;
@@ -44,6 +49,10 @@ export interface RestoreHostSnapshotV3CandidateOptions {
     failAfterNovaWingRestore?: boolean;
     failBeforeVerification?: boolean;
     mutateCandidateBeforeVerification?: (candidateDatabasePath: string) => void;
+    /** Deterministic filesystem fault injection for tests only. */
+    artifactIo?: RestoreArtifactIo;
+    /** Deterministic high-entropy replacement for tests only. */
+    runId?: string;
   };
 }
 
@@ -195,28 +204,31 @@ function verifyCandidate(
   }
 }
 
-function removeCandidateArtifacts(paths: ResolvedRestorePaths): void {
-  for (const candidate of [
-    paths.reportPath,
-    `${paths.candidateDatabasePath}-journal`,
-    `${paths.candidateDatabasePath}-shm`,
-    `${paths.candidateDatabasePath}-wal`,
-    paths.candidateDatabasePath,
-  ]) {
-    if (fs.existsSync(candidate)) fs.rmSync(candidate, { force: true });
-  }
+function stablePrimaryError(error: unknown): HostSnapshotV3Error {
+  if (error instanceof HostSnapshotV3Error) return error;
+  return hostSnapshotError('HOST_SNAPSHOT_V3_RESTORE_FAILED', 'Host Snapshot V3 候选库恢复失败');
 }
 
-function proveClosedAndRenameable(candidateDatabasePath: string): void {
-  const probePath = `${candidateDatabasePath}.rename-probe`;
-  if (fs.existsSync(probePath)) fs.rmSync(probePath, { force: true });
-  fs.renameSync(candidateDatabasePath, probePath);
-  try {
-    fs.renameSync(probePath, candidateDatabasePath);
-  } catch (error) {
-    try { if (fs.existsSync(probePath)) fs.renameSync(probePath, candidateDatabasePath); } catch { /* cleanup below */ }
-    throw error;
-  }
+function cleanupFailure(
+  primary: HostSnapshotV3Error,
+  failureCount: number,
+  resultState: 'none' | 'candidate-and-report-retained',
+): HostSnapshotV3Error {
+  const primaryCode = primary.code === 'HOST_SNAPSHOT_V3_CLEANUP_FAILED'
+    ? primary.primaryCode
+    : primary.code;
+  return hostSnapshotError(
+    'HOST_SNAPSHOT_V3_CLEANUP_FAILED',
+    resultState === 'candidate-and-report-retained'
+      ? '候选库与报告已保留，但恢复结果无法安全确认为完全成功'
+      : '候选库恢复失败，且本次运行的 owned 产物未能完全清理',
+    {
+      primaryCode,
+      cleanupStatus: 'failed',
+      resultState,
+      cleanupFailureCount: Math.max(1, failureCount),
+    },
+  );
 }
 
 export function restoreHostSnapshotV3ToCandidate(
@@ -226,6 +238,13 @@ export function restoreHostSnapshotV3ToCandidate(
     throw hostSnapshotError('HOST_SNAPSHOT_V3_CONFIRMATION_REQUIRED', '候选库恢复缺少显式确认');
   }
   const paths = resolveRestorePaths(options);
+  const artifacts = new RestoreArtifactController({
+    candidatePath: paths.candidateDatabasePath,
+    reportPath: paths.reportPath,
+    runId: options.hooks?.runId ?? crypto.randomBytes(16).toString('hex'),
+    io: options.hooks?.artifactIo,
+  });
+  artifacts.preflight();
   const verified = readAndVerifyHostSnapshotV3(paths.snapshotDirectory);
   const baseReport = {
     snapshotVersion: 3 as const,
@@ -243,44 +262,84 @@ export function restoreHostSnapshotV3ToCandidate(
   }
 
   try {
-    const candidate = openDb(paths.candidateDatabasePath);
+    artifacts.reserveCandidate();
     try {
-      initSchema(candidate, { targetVersion: verified.manifest.host.schemaVersion });
+      const candidate = openDb(paths.candidateDatabasePath);
+      try {
+        initSchema(candidate, { targetVersion: verified.manifest.host.schemaVersion });
+      } finally {
+        candidate.close();
+      }
     } finally {
-      candidate.close();
+      artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('offerflow-schema-bootstrap');
     }
-    bootstrapNovaWingOffline({
-      databasePath: paths.candidateDatabasePath,
-      confirmation: NOVAWING_OFFLINE_BOOTSTRAP_CONFIRMATION,
-    });
+    try {
+      bootstrapNovaWingOffline({
+        databasePath: paths.candidateDatabasePath,
+        confirmation: NOVAWING_OFFLINE_BOOTSTRAP_CONFIRMATION,
+      });
+    } finally {
+      artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('novawing-schema-bootstrap');
+    }
     if (options.hooks?.failAfterSchemaBootstrap) throw new Error('TEST_FAIL_AFTER_SCHEMA_BOOTSTRAP');
 
-    restoreOfferFlowData(
-      paths.candidateDatabasePath,
-      componentDataByName(verified.data.components, OFFERFLOW_COMPONENT_NAME),
-    );
+    try {
+      restoreOfferFlowData(
+        paths.candidateDatabasePath,
+        componentDataByName(verified.data.components, OFFERFLOW_COMPONENT_NAME),
+      );
+    } finally {
+      artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('offerflow-data-restore');
+    }
     if (options.hooks?.failAfterOfferFlowRestore) throw new Error('TEST_FAIL_AFTER_OFFERFLOW_RESTORE');
-    restoreNovaWingData(
-      paths.candidateDatabasePath,
-      componentDataByName(verified.data.components, 'novawing'),
-    );
+    try {
+      restoreNovaWingData(
+        paths.candidateDatabasePath,
+        componentDataByName(verified.data.components, 'novawing'),
+      );
+    } finally {
+      artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('novawing-data-restore');
+    }
     if (options.hooks?.failAfterNovaWingRestore) throw new Error('TEST_FAIL_AFTER_NOVAWING_RESTORE');
     options.hooks?.mutateCandidateBeforeVerification?.(paths.candidateDatabasePath);
     if (options.hooks?.failBeforeVerification) throw new Error('TEST_FAIL_BEFORE_VERIFICATION');
 
-    const checks = verifyCandidate(paths.candidateDatabasePath, verified.manifest);
-    proveClosedAndRenameable(paths.candidateDatabasePath);
+    let checks: ReturnType<typeof verifyCandidate>;
+    try {
+      checks = verifyCandidate(paths.candidateDatabasePath, verified.manifest);
+    } finally {
+      artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('candidate-verification');
+    }
+    artifacts.proveCandidateRenameable();
     const report: RestoreCandidateReport = {
       ...baseReport,
       ...checks,
       status: 'candidate-ready',
       renameProbe: 'passed',
     };
-    atomicWriteJson(paths.reportPath, report);
+    artifacts.publishReport(toStableJson(report));
+    artifacts.retainCandidate();
+    const successCleanup = artifacts.cleanupOwnedArtifacts();
+    if (successCleanup.failures.length > 0) {
+      throw cleanupFailure(
+        hostSnapshotError('HOST_SNAPSHOT_V3_CLEANUP_FAILED', '恢复成功后的临时产物清理失败'),
+        successCleanup.failures.length,
+        'candidate-and-report-retained',
+      );
+    }
     return report;
   } catch (error) {
-    removeCandidateArtifacts(paths);
-    if (error instanceof HostSnapshotV3Error) throw error;
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_RESTORE_FAILED', 'Host Snapshot V3 候选库恢复失败');
+    const primary = stablePrimaryError(error);
+    if (artifacts.isReportPublished()) artifacts.retainCandidate();
+    artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('failure-cleanup');
+    const cleanup = artifacts.cleanupOwnedArtifacts();
+    if (primary.code === 'HOST_SNAPSHOT_V3_CLEANUP_FAILED' || cleanup.failures.length > 0) {
+      throw cleanupFailure(
+        primary,
+        Math.max(cleanup.failures.length, primary.cleanupFailureCount ?? 0),
+        artifacts.isReportPublished() ? 'candidate-and-report-retained' : 'none',
+      );
+    }
+    throw primary;
   }
 }

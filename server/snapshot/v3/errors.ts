@@ -18,21 +18,45 @@ export const HOST_SNAPSHOT_V3_ERROR_CODES = [
   'HOST_SNAPSHOT_V3_EXPORT_FAILED',
   'HOST_SNAPSHOT_V3_BOOTSTRAP_FAILED',
   'HOST_SNAPSHOT_V3_RESTORE_FAILED',
+  'HOST_SNAPSHOT_V3_ARTIFACT_COLLISION',
+  'HOST_SNAPSHOT_V3_REPORT_PUBLISH_FAILED',
+  'HOST_SNAPSHOT_V3_CLEANUP_FAILED',
 ] as const;
 
 export type HostSnapshotV3ErrorCode = (typeof HOST_SNAPSHOT_V3_ERROR_CODES)[number];
 
+export interface HostSnapshotV3ErrorContext {
+  primaryCode?: HostSnapshotV3ErrorCode;
+  cleanupStatus?: 'failed';
+  resultState?: 'none' | 'candidate-and-report-retained';
+  cleanupFailureCount?: number;
+}
+
 /** Stable offline lifecycle error that never retains SQLite text, absolute paths, or row content. */
 export class HostSnapshotV3Error extends Error {
-  constructor(readonly code: HostSnapshotV3ErrorCode, message: string) {
+  readonly primaryCode?: HostSnapshotV3ErrorCode;
+  readonly cleanupStatus?: 'failed';
+  readonly resultState?: 'none' | 'candidate-and-report-retained';
+  readonly cleanupFailureCount?: number;
+
+  constructor(
+    readonly code: HostSnapshotV3ErrorCode,
+    message: string,
+    context: HostSnapshotV3ErrorContext = {},
+  ) {
     super(message);
     this.name = 'HostSnapshotV3Error';
+    this.primaryCode = context.primaryCode;
+    this.cleanupStatus = context.cleanupStatus;
+    this.resultState = context.resultState;
+    this.cleanupFailureCount = context.cleanupFailureCount;
   }
 }
 
 export function hostSnapshotError(
   code: HostSnapshotV3ErrorCode,
   message: string,
+  context: HostSnapshotV3ErrorContext = {},
 ): HostSnapshotV3Error {
-  return new HostSnapshotV3Error(code, message);
+  return new HostSnapshotV3Error(code, message, context);
 }

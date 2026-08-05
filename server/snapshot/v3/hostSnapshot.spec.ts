@@ -41,6 +41,7 @@ import {
   HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION,
   restoreHostSnapshotV3ToCandidate,
 } from './restoreCandidate';
+import { DEFAULT_RESTORE_ARTIFACT_IO, type RestoreArtifactIo } from './restoreArtifacts';
 import {
   HOST_SNAPSHOT_V3_DATA_FILE,
   HOST_SNAPSHOT_V3_MANIFEST_FILE,
@@ -529,6 +530,155 @@ describe('离线 NovaWing bootstrap', () => {
 });
 
 describe('Host Snapshot V3 restore candidate', () => {
+  it.each(['-journal', '-wal', '-shm'] as const)(
+    'dry-run 对调用方预置 %s fail-closed、零修改且不创建 candidate/report',
+    (suffix) => {
+      const fixture = createFixture(`restore-sidecar-collision-${suffix.slice(1)}`);
+      exportFixture(fixture);
+      const candidatePath = path.join(fixture.tempDirectory, 'collision.sqlite3');
+      const sidecarPath = `${candidatePath}${suffix}`;
+      fs.writeFileSync(sidecarPath, `caller-owned-${suffix}`, { flag: 'wx' });
+      const before = sha256File(sidecarPath);
+
+      expect(() => restoreHostSnapshotV3ToCandidate({
+        snapshotDirectory: fixture.snapshotDirectory,
+        candidateDatabasePath: candidatePath,
+        workingDirectory: fixture.tempDirectory,
+        workspaceDirectory: process.cwd(),
+        confirmation: HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION,
+        dryRun: true,
+      })).toThrowError(expect.objectContaining({ code: 'HOST_SNAPSHOT_V3_ARTIFACT_COLLISION' }));
+      expect(sha256File(sidecarPath)).toBe(before);
+      expect(fs.existsSync(candidatePath)).toBe(false);
+      expect(fs.existsSync(`${candidatePath}.host-snapshot-v3-report.json`)).toBe(false);
+    },
+  );
+
+  it('成功恢复不删除或覆盖调用方旧固定 rename-probe', () => {
+    const fixture = createFixture('restore-legacy-probe-preserved');
+    exportFixture(fixture);
+    const candidatePath = path.join(fixture.tempDirectory, 'legacy-probe.sqlite3');
+    const legacyProbePath = `${candidatePath}.rename-probe`;
+    fs.writeFileSync(legacyProbePath, 'caller-owned-legacy-probe', { flag: 'wx' });
+    const before = sha256File(legacyProbePath);
+
+    const report = restoreHostSnapshotV3ToCandidate({
+      snapshotDirectory: fixture.snapshotDirectory,
+      candidateDatabasePath: candidatePath,
+      workingDirectory: fixture.tempDirectory,
+      workspaceDirectory: process.cwd(),
+      confirmation: HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION,
+    });
+
+    expect(report.status).toBe('candidate-ready');
+    expect(sha256File(legacyProbePath)).toBe(before);
+  });
+
+  it('主恢复失败且 cleanup 失败时同时保留原始错误类别与脱敏清理状态', () => {
+    const fixture = createFixture('restore-primary-and-cleanup-failure');
+    exportFixture(fixture);
+    const candidatePath = path.join(fixture.tempDirectory, 'cleanup-failure.sqlite3');
+    const io: RestoreArtifactIo = {
+      ...DEFAULT_RESTORE_ARTIFACT_IO,
+      unlink() {
+        const error = new Error(`${candidatePath} SQLITE_BUSY raw`) as NodeJS.ErrnoException;
+        error.code = 'EBUSY';
+        throw error;
+      },
+      wait() { /* deterministic test: no wall-clock sleep */ },
+    };
+
+    try {
+      restoreHostSnapshotV3ToCandidate({
+        snapshotDirectory: fixture.snapshotDirectory,
+        candidateDatabasePath: candidatePath,
+        workingDirectory: fixture.tempDirectory,
+        workspaceDirectory: process.cwd(),
+        confirmation: HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION,
+        hooks: { failAfterSchemaBootstrap: true, artifactIo: io },
+      });
+      throw new Error('expected restore failure');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'HOST_SNAPSHOT_V3_CLEANUP_FAILED',
+        primaryCode: 'HOST_SNAPSHOT_V3_RESTORE_FAILED',
+        cleanupStatus: 'failed',
+        resultState: 'none',
+      });
+      expect(JSON.stringify(error)).not.toContain(candidatePath);
+      expect(JSON.stringify(error)).not.toContain('SQLITE_BUSY');
+    }
+  });
+
+  it('恢复中途失败时 SQLite 连接已关闭，随后才清理 owned candidate', () => {
+    const fixture = createFixture('restore-close-before-cleanup');
+    exportFixture(fixture);
+    const candidatePath = path.join(fixture.tempDirectory, 'closed-before-cleanup.sqlite3');
+    let closeProved = false;
+    const io: RestoreArtifactIo = {
+      ...DEFAULT_RESTORE_ARTIFACT_IO,
+      unlink(filePath) {
+        if (path.basename(filePath) === path.basename(candidatePath)) {
+          const moved = `${filePath}.close-proof`;
+          fs.renameSync(filePath, moved);
+          fs.renameSync(moved, filePath);
+          closeProved = true;
+        }
+        DEFAULT_RESTORE_ARTIFACT_IO.unlink(filePath);
+      },
+    };
+
+    expect(() => restoreHostSnapshotV3ToCandidate({
+      snapshotDirectory: fixture.snapshotDirectory,
+      candidateDatabasePath: candidatePath,
+      workingDirectory: fixture.tempDirectory,
+      workspaceDirectory: process.cwd(),
+      confirmation: HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION,
+      hooks: { failAfterOfferFlowRestore: true, artifactIo: io },
+    })).toThrowError(expect.objectContaining({ code: 'HOST_SNAPSHOT_V3_RESTORE_FAILED' }));
+    expect(closeProved).toBe(true);
+    expect(fs.existsSync(candidatePath)).toBe(false);
+  });
+
+  it('恢复与报告发布成功但 report 临时清理失败时保留 candidate/report 并拒绝完全成功', () => {
+    const fixture = createFixture('restore-success-cleanup-failure');
+    exportFixture(fixture);
+    const candidatePath = path.join(fixture.tempDirectory, 'retained.sqlite3');
+    const reportPath = `${candidatePath}.host-snapshot-v3-report.json`;
+    const runId = 'abcdefabcdefabcdefabcdefabcdefab';
+    const reportTemporaryName = `.offerflow-host-v3-${runId}.report.tmp`;
+    const io: RestoreArtifactIo = {
+      ...DEFAULT_RESTORE_ARTIFACT_IO,
+      unlink(filePath) {
+        if (path.basename(filePath) === reportTemporaryName) {
+          const error = new Error('temporary report busy') as NodeJS.ErrnoException;
+          error.code = 'EBUSY';
+          throw error;
+        }
+        DEFAULT_RESTORE_ARTIFACT_IO.unlink(filePath);
+      },
+      wait() { /* deterministic test: no wall-clock sleep */ },
+    };
+
+    expect(() => restoreHostSnapshotV3ToCandidate({
+      snapshotDirectory: fixture.snapshotDirectory,
+      candidateDatabasePath: candidatePath,
+      workingDirectory: fixture.tempDirectory,
+      workspaceDirectory: process.cwd(),
+      confirmation: HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION,
+      hooks: { artifactIo: io, runId },
+    })).toThrowError(expect.objectContaining({
+      code: 'HOST_SNAPSHOT_V3_CLEANUP_FAILED',
+      cleanupStatus: 'failed',
+      resultState: 'candidate-and-report-retained',
+    }));
+    expect(fs.existsSync(candidatePath)).toBe(true);
+    expect(fs.existsSync(reportPath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(reportPath, 'utf8'))).toMatchObject({
+      status: 'candidate-ready', integrity: 'ok', renameProbe: 'passed',
+    });
+  });
+
   it('双组件恢复后可继续 Radar 分析和批准 proposal，revision 不倒退且原库不变', () => {
     const fixture = createFixture('restore-success', true);
     const sourceHash = sha256File(fixture.databasePath);
@@ -550,6 +700,9 @@ describe('Host Snapshot V3 restore candidate', () => {
     const reportText = fs.readFileSync(`${candidatePath}.host-snapshot-v3-report.json`, 'utf8');
     expect(reportText).not.toContain(fixture.tempDirectory);
     expect(reportText).not.toMatch(/\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE TABLE)\b/u);
+    for (const suffix of ['-journal', '-wal', '-shm']) {
+      expect(fs.existsSync(`${candidatePath}${suffix}`)).toBe(false);
+    }
 
     const candidateDb = openDb(candidatePath);
     expect(candidateDb.prepare('SELECT data_json FROM import_logs WHERE id = ?').get('import-log-v3'))

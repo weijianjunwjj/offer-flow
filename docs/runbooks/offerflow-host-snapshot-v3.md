@@ -62,7 +62,13 @@ npm run novawing:bootstrap -- --database <sqlite-file> --confirm BOOTSTRAP_NOVAW
 npm run snapshot:v3:restore-candidate -- --snapshot <snapshot-dir> --candidate <new-sqlite-file> --work-dir <working-dir> --workspace <offerflow-repo> --confirm RESTORE_HOST_SNAPSHOT_V3_TO_NEW_CANDIDATE
 ```
 
-目标文件和同名报告必须原先不存在。成功产生候选库和 `<candidate>.host-snapshot-v3-report.json`；报告只含版本、数量、digest、revision、integrity/FK 和 rename 探针状态，不含路径或正文。
+目标文件、`-journal` / `-wal` / `-shm` sidecar 和同名报告必须原先不存在；`--dry-run` 也执行相同预检且零写入。候选库直接父目录必须已经存在，命令不会创建调用方目录。
+
+每次运行生成 128-bit 随机运行 ID，并维护仅存在于进程内的 ownership ledger。候选库先用 `wx` 独占预占为零长度普通文件，通过已打开 descriptor 的 identity 登记 ownership，再交给 SQLite schema/bootstrap/restore；`better-sqlite3` 与 `node:sqlite` 已由临时磁盘库测试证明可在该预占文件上初始化。清理只处理 ledger 中由本次运行成功创建且 identity 未变化的精确路径，不扫描目录或通配符，也不根据“文件现在存在”接管调用方文件。
+
+rename probe 使用与候选库同目录的 `.offerflow-host-v3-<random-run-id>.rename-probe`。probe 通过 `wx` 独占预留并登记，旧的 `<candidate>.rename-probe` 不再读取、删除或复用。候选库 rename 前后 ownership 随路径转移，完成后不遗留 probe。
+
+报告先在最终报告同目录通过 `wx` 独占创建 `.offerflow-host-v3-<random-run-id>.report.tmp`，完整写入、`fsync`、关闭并复核 owned 普通文件 identity。发布使用同目录 hard-link 创建最终名称：目录项创建是原子的，目标已存在时失败且不覆盖；随后删除临时 link。该协议依赖最终报告所在文件系统支持同卷 hard link，不支持时稳定返回 `HOST_SNAPSHOT_V3_REPORT_PUBLISH_FAILED`，不会降级为覆盖 rename。成功产生候选库和 `<candidate>.host-snapshot-v3-report.json`；报告只含版本、数量、digest、revision、integrity/FK 和 rename 探针状态，不含路径或正文。
 
 候选成功不等于正式替换授权。本切片没有、也不得执行正式文件 rename/delete。未来切换至少还需独立授权、原文件备份路径、候选路径、校验摘要、所有连接关闭证明和可回滚替换计划。
 
@@ -70,5 +76,14 @@ npm run snapshot:v3:restore-candidate -- --snapshot <snapshot-dir> --candidate <
 
 - 导出失败：staging 目录被清理，不发布输出目录。
 - bootstrap 失败：不执行自制 SQL 降级或部分修补；检查离线状态和 schema 后重新计划。
-- 恢复失败：候选库、journal/WAL sidecar 和候选报告被清理；原数据库不参与恢复写入。
+- 恢复失败：先关闭本次打开的 SQLite 连接，再按 sidecar → probe → 未发布报告临时文件 → candidate → 未保留正式报告的顺序清理 owned 路径。调用方已有文件永不登记、永不清理。
+- `EPERM` / `EBUSY` 删除最多尝试 3 次，固定短等待为 10ms、25ms；不无限重试或用长 sleep 掩盖句柄泄漏。owned 文件已经不存在视为幂等成功；identity 变化时停止删除。
+- 主操作失败且清理成功时返回原始稳定错误。主操作与清理同时失败时返回 `HOST_SNAPSHOT_V3_CLEANUP_FAILED`，并以脱敏字段保留原始 `primaryCode`、清理状态和失败数量。
+- 候选验证与正式报告发布已成功、但临时产物清理失败时，不报告完全成功；候选库和正式报告保留，错误的 `resultState=candidate-and-report-retained` 明确表示结果无法安全确认为完全成功。
 - 所有错误均使用稳定错误码；不要通过打印原始 SQLite 错误、行正文、token 或绝对路径排障。
+
+## 当前原子性边界
+
+- 本切片只保证单次正常进程内的 ownership、no-replace 创建/发布与失败清理；未实现进程在任意指令处崩溃后的完整恢复矩阵，也未实现正式数据库替换。
+- Node 文件 API 仍不是基于已打开父目录句柄的 handle-relative 操作。随机 probe 在独占预留文件删除后执行 candidate rename，依靠 128-bit 随机名称和紧邻检查缩小目标名被抢占窗口；本实现不宣称消除恶意并发进程在该极小窗口内制造的 TOCTOU。
+- 动态 SQLite sidecar 的 ownership 证据由“运行前和 candidate 独占预占后均不存在 + candidate 本次 owned + 受控 SQLite 阶段后只检查该 candidate 的三个精确 sidecar”组成。没有目录扫描，也不会把同目录其他数据库的 sidecar 视为本次产物；操作系统级 creator attribution 留待需要原生句柄能力的后续切片。
