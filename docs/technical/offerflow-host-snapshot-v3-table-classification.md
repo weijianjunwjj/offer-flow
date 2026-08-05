@@ -4,11 +4,14 @@
 
 ## 1. 审计结论
 
-schema v8 共有 38 张 OfferFlow 表。Host Snapshot V3 的 `offerflow` 组件纳入 35 张，排除 3 张：
+schema v8 共有 38 张 OfferFlow 表。红队复审后，Host Snapshot V3 的 `offerflow` 组件纳入 37 张，仅排除 1 张：
 
 - `schema_migrations`：由受信任的当前 migration bootstrap 确定性重建，不能让数据快照覆盖 migration 事实；
-- `import_logs`：历史导入执行摘要，不是当前业务事实；正式结果已进入业务表。Snapshot V2 仍按既有契约保留它；
-- `radar_rule_assessments`：由冻结 CandidateVersion、规则版本和规则投影确定性重算；分析任务已冻结实际使用的投影。
+
+红队复审纠正了两个原排除项：
+
+- `import_logs`：保存不可复现的导入摘要、警告与升级审计，且被 Job Memory 校验、恢复审计和哈希链实际读取；当前没有确定性重建入口；
+- `radar_rule_assessments`：保存不可变规则结果与证据，是人工覆盖、Analysis stale 与 Recommendation 硬约束的事实源；当前只有结果写入接口，没有真实规则重算入口。
 
 没有“待定”表。运行时任务、短期会话、回执和派生批次没有按类别一刀切排除；当它们承载未完成用户工作、幂等安全、不可重现输入或审计链时仍纳入。
 
@@ -31,7 +34,7 @@ schema v8 共有 38 张 OfferFlow 表。Host Snapshot V3 的 `offerflow` 组件�
 | `historical_event_drafts` | `004_v0_7_history_funnel_schema` | 临时/审计 | history import | baseline draft、`feedback_events` | 是 | 人工补录事件与确认结果追踪。 |
 | `historical_import_receipts` | `004_v0_7_history_funnel_schema` | 临时/审计 | history receipt repository | import session | 是 | 历史补录幂等回执。 |
 | `historical_import_sessions` | `004_v0_7_history_funnel_schema` | 临时/审计 | history import | 无 | 是 | 未完成人工补录会话及草稿 FK 根。 |
-| `import_logs` | `001_v0_6_baseline` | 临时/审计 | local import、upgrade、sync | 无 | 否 | 仅执行摘要，不是当前事实；V2 契约保持原样。 |
+| `import_logs` | `001_v0_6_baseline` | 临时/审计 | local import、upgrade、sync | 无 | 是 | 不可复现的导入摘要/警告与升级审计；Job Memory 校验、恢复审计和哈希链会读取，且无确定性重建入口。 |
 | `job_match_analysis_records` | `007_v0_8_radar_domain_schema` | 权威业务 | radar analysis | candidate/version、resume、自身 | 是 | 不可复现的模型结果和 Envelope 历史。 |
 | `jobs` | `001_v0_6_baseline` | 权威业务 | job repository、Job Memory、promotion | 无 | 是 | 正式岗位记忆。 |
 | `market_position_meta` | `005_v0_7_market_position_schema` | 权威业务 | market position | 无 | 是 | active version 权威指针。 |
@@ -48,7 +51,7 @@ schema v8 共有 38 张 OfferFlow 表。Host Snapshot V3 的 `offerflow` 组件�
 | `radar_capture_snapshots` | `007_v0_8_radar_domain_schema` | 权威业务 | capture repository、commit | capture session | 是 | 不可变原始来源事实。 |
 | `radar_promotions` | `007_v0_8_radar_domain_schema` | 权威业务 | radar promotion | candidate/version、job/application/event/action | 是 | Radar 到正式记忆的权威晋升追踪。 |
 | `radar_recommendation_batches` | `007_v0_8_radar_domain_schema` | 可重算派生 | recommendation repository/service | 无 | 是 | 算法可再跑，但历史诊断与晋升追踪不能逐字段保证重现。 |
-| `radar_rule_assessments` | `007_v0_8_radar_domain_schema` | 可重算派生 | rule repository、review、analysis input | candidate/version | 否 | 冻结版本和规则确定性重算；任务保留实际投影。 |
+| `radar_rule_assessments` | `007_v0_8_radar_domain_schema` | 权威业务 | rule repository、review、analysis input、recommendation | candidate/version | 是 | 不可变规则结果/证据；人工覆盖引用其 ID，且 Analysis stale、Recommendation 实时读取；没有真实重算入口。 |
 | `radar_source_records` | `007_v0_8_radar_domain_schema` | 权威业务 | source repository、commit | capture snapshots | 是 | 来源身份和最后不可变快照指针。 |
 | `resume_versions` | `002_v0_7_job_memory_schema` | 权威业务 | resume repository | 无 | 是 | 正式不可变简历版本。 |
 | `schema_migrations` | migration runner metadata | migration/meta | `migrations` | 无 | 否 | 由当前受信 migration bootstrap 重建，禁止快照覆盖。 |
@@ -62,14 +65,14 @@ schema v8 当前没有独立缓存表。上述结论同时固化在 `OFFERFLOW_S
 ## 3. 双组件与 manifest
 
 - Host format/version：`host.snapshot.v3` / `3`；Host identity 为 `offerflow`、应用版本、数据库 schema v8、创建时间。
-- OfferFlow component：稳定名 `offerflow`，format `offerflow.snapshot.v3`，35 张显式权威表；每表记录列、主键、行数和内容 digest，组件有完整 digest。
+- OfferFlow component：稳定名 `offerflow`，format `offerflow.snapshot.v3`，37 张显式保留表；每表记录列、主键、行数和内容 digest，组件有完整 digest。
 - NovaWing component：直接注册正式包 `createNovaWingSnapshotComponent()`；只接受其公开的 `nw_meta`、`nw_proposals`、`nw_mainline_entries`。
 - 组合 manifest 使用正式包的注册、创建、验证和恢复后验证 API；未知/缺失组件、版本、owner 越权、重复表/组件、schema/行数/digest 篡改均硬拒绝。
 - Host component manifest 按表名字典序规范化；转回 NovaWing component manifest 时显式按 NovaWing 公开 registry 顺序排列，避免依赖隐式顺序。
 
 ## 4. 一致性、恢复与安全边界
 
-- 导出要求服务离线且所有业务连接关闭；专用 OfferFlow 连接用 `BEGIN IMMEDIATE` 建立一致性边界并阻止外部写入，专用 NovaWing `node:sqlite` 连接在同一文件上只读，二者捕获同一 point-in-time。
+- 导出要求服务离线且所有业务连接关闭；专用 OfferFlow 连接先用 `BEGIN IMMEDIATE` 建立一致性边界并阻止外部写入，随后才创建专用 NovaWing `node:sqlite` 只读连接；正式包的 snapshot 校验在该锁内自行建立读事务。二者捕获同一 point-in-time。锁前已提交写入同时可见，锁后写入因 RESERVED lock 不能提交；组件读取顺序不影响结果。
 - V3 数据与 manifest 写入同一 staging 目录，完整回读验证后以目录 rename 发布；失败删除 staging，不留下半份文件，也不覆盖 V2 文件名。
 - 恢复只写调用方指定、工作区外、原先不存在的新候选文件：先 OfferFlow v8 migrations，再公开 NovaWing migration apply，再恢复两组件，执行 integrity/FK、两个组件和 Host 组合校验，最后用正常 validate-only Runtime 双驱动读取并做关闭/rename 探针。
 - 任一步失败删除候选库、sidecar 和报告。实现不包含正式文件替换逻辑，也不自动启用 feature flag。

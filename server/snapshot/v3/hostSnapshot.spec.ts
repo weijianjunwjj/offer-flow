@@ -139,6 +139,19 @@ function createFixture(tag: string, includeRadar = false): Fixture {
     db.prepare('INSERT INTO profiles (id, data_json, updated_at) VALUES (?, ?, ?)')
       .run('profile-v3', JSON.stringify({ displayName: 'Snapshot Fixture' }), 1_700_000_000);
   }
+  db.prepare(`INSERT INTO import_logs (
+    id, source, profile_count, job_count, ignored_key_count, warning_count, created_at, data_json
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(
+      'import-log-v3',
+      'localstorage-json',
+      1,
+      2,
+      3,
+      1,
+      1_700_000_001,
+      JSON.stringify({ warnings: [{ key: 'legacy-job', reason: '字段无法解析' }] }),
+    );
   db.close();
   bootstrapNovaWingOffline({
     databasePath,
@@ -191,8 +204,20 @@ function sha256File(filePath: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
+function snapshotRows(
+  fixture: Fixture,
+  componentName: 'offerflow' | 'novawing',
+  tableName: string,
+): Array<Record<string, unknown>> {
+  const verified = readAndVerifyHostSnapshotV3(fixture.snapshotDirectory);
+  const component = verified.data.components.find((candidate) => candidate.component === componentName);
+  const table = component?.tables.find((candidate) => candidate.name === tableName);
+  if (table === undefined) throw new Error(`snapshot table missing: ${componentName}/${tableName}`);
+  return table.rows;
+}
+
 describe('Host Snapshot V3 registry 与 manifest', () => {
-  it('审计 schema v8 全部 38 张表并明确选择 35 张 V3 表', () => {
+  it('审计 schema v8 全部 38 张表并明确选择 37 张 V3 表', () => {
     const fixture = createFixture('registry-audit');
     const db = new Database(fixture.databasePath, { readonly: true });
     const actual = (db.prepare(
@@ -202,7 +227,9 @@ describe('Host Snapshot V3 registry 与 manifest', () => {
     expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY).toHaveLength(38);
     expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.map((entry) => entry.name)).toEqual(actual);
     expect(new Set(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.map((entry) => entry.name)).size).toBe(38);
-    expect(OFFERFLOW_HOST_SNAPSHOT_V3_TABLES).toHaveLength(35);
+    expect(OFFERFLOW_HOST_SNAPSHOT_V3_TABLES).toHaveLength(37);
+    expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.filter((entry) => !entry.includedInHostSnapshotV3).map((entry) => entry.name))
+      .toEqual(['schema_migrations']);
     expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.every((entry) => entry.reason.trim() !== '')).toBe(true);
   });
 
@@ -228,7 +255,7 @@ describe('Host Snapshot V3 registry 与 manifest', () => {
     const fixture = createFixture('manifest');
     const report = exportFixture(fixture);
     const verified = readAndVerifyHostSnapshotV3(fixture.snapshotDirectory);
-    expect(report).toMatchObject({ status: 'exported', snapshotVersion: 3, componentCount: 2, tableCount: 38 });
+    expect(report).toMatchObject({ status: 'exported', snapshotVersion: 3, componentCount: 2, tableCount: 40 });
     expect(verified.manifest).toMatchObject({
       format: 'host.snapshot.v3',
       snapshotVersion: 3,
@@ -311,6 +338,116 @@ describe('Host Snapshot V3 导出与 V2 隔离', () => {
       writer.close();
     }
     expect(fs.existsSync(fixture.snapshotDirectory)).toBe(false);
+  });
+
+  describe('红队 point-in-time 同步点', () => {
+    it('BEGIN IMMEDIATE 获锁前提交的跨组件写入被两组件同时捕获', () => {
+      const fixture = createFixture('pit-before-lock');
+      const writer = new Database(fixture.databasePath);
+      writer.transaction(() => {
+        writer.prepare('UPDATE profiles SET data_json = ? WHERE id = ?')
+          .run(JSON.stringify({ displayName: 'Before Lock' }), 'profile-v3');
+        writer.prepare('UPDATE nw_proposals SET rationale = ? WHERE id = ?')
+          .run('before-lock', fixture.pendingProposalId);
+      })();
+      writer.close();
+
+      exportFixture(fixture);
+      expect(snapshotRows(fixture, 'offerflow', 'profiles')).toContainEqual(expect.objectContaining({
+        id: 'profile-v3', data_json: JSON.stringify({ displayName: 'Before Lock' }),
+      }));
+      expect(snapshotRows(fixture, 'novawing', 'nw_proposals')).toContainEqual(expect.objectContaining({
+        id: fixture.pendingProposalId, rationale: 'before-lock',
+      }));
+    });
+
+    it.each([
+      ['OfferFlow→NovaWing', ['offerflow', 'novawing'] as const],
+      ['NovaWing→OfferFlow', ['novawing', 'offerflow'] as const],
+    ])('获锁后其它写连接 busy，且 %s 读取顺序得到同一旧状态', (_label, readOrder) => {
+      const fixture = createFixture(`pit-order-${readOrder[0]}`);
+      let blocked = false;
+      exportHostSnapshotV3({
+        databasePath: fixture.databasePath,
+        outputDirectory: fixture.snapshotDirectory,
+        workingDirectory: fixture.tempDirectory,
+        workspaceDirectory: process.cwd(),
+        confirmation: HOST_SNAPSHOT_V3_EXPORT_CONFIRMATION,
+        hooks: {
+          componentDataReadOrder: readOrder,
+          afterConsistencyLock() {
+            const contender = new Database(fixture.databasePath, { timeout: 25 });
+            try {
+              contender.pragma('busy_timeout = 25');
+              expect(() => contender.exec('BEGIN IMMEDIATE')).toThrow();
+              blocked = true;
+            } finally {
+              contender.close();
+            }
+          },
+        },
+      });
+      expect(blocked).toBe(true);
+
+      const writer = new Database(fixture.databasePath);
+      writer.transaction(() => {
+        writer.prepare('UPDATE profiles SET data_json = ? WHERE id = ?')
+          .run(JSON.stringify({ displayName: 'After Lock' }), 'profile-v3');
+        writer.prepare('UPDATE nw_proposals SET rationale = ? WHERE id = ?')
+          .run('after-lock', fixture.pendingProposalId);
+      })();
+      writer.close();
+
+      expect(snapshotRows(fixture, 'offerflow', 'profiles')).toContainEqual(expect.objectContaining({
+        id: 'profile-v3', data_json: JSON.stringify({ displayName: 'Snapshot Fixture' }),
+      }));
+      expect(snapshotRows(fixture, 'novawing', 'nw_proposals')).toContainEqual(expect.objectContaining({
+        id: fixture.pendingProposalId, rationale: 'Prove revision continuity',
+      }));
+      const inspect = new Database(fixture.databasePath, { readonly: true });
+      expect(String(inspect.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('delete');
+      expect(inspect.prepare('SELECT data_json FROM profiles WHERE id = ?').get('profile-v3'))
+        .toEqual({ data_json: JSON.stringify({ displayName: 'After Lock' }) });
+      expect(inspect.prepare('SELECT rationale FROM nw_proposals WHERE id = ?').get(fixture.pendingProposalId))
+        .toEqual({ rationale: 'after-lock' });
+      inspect.close();
+    });
+
+    it('锁前已建立的 NovaWing 长读事务与锁后专用读事务可并存且状态稳定', () => {
+      const fixture = createFixture('pit-long-reader');
+      const longReader = new DatabaseSync(fixture.databasePath, { timeout: 25 });
+      longReader.exec('PRAGMA query_only = ON');
+      longReader.exec('BEGIN');
+      expect(longReader.prepare('SELECT rationale FROM nw_proposals WHERE id = ?').get(fixture.pendingProposalId))
+        .toEqual({ rationale: 'Prove revision continuity' });
+      try {
+        exportFixture(fixture);
+      } finally {
+        longReader.exec('ROLLBACK');
+        longReader.close();
+      }
+      expect(snapshotRows(fixture, 'offerflow', 'profiles')).toHaveLength(1);
+      expect(snapshotRows(fixture, 'novawing', 'nw_proposals')).toHaveLength(2);
+    });
+
+    it('组件读取中途异常释放双连接和锁、不发布输出并保持 DELETE journal', () => {
+      const fixture = createFixture('pit-mid-read-failure');
+      expect(() => exportHostSnapshotV3({
+        databasePath: fixture.databasePath,
+        outputDirectory: fixture.snapshotDirectory,
+        workingDirectory: fixture.tempDirectory,
+        workspaceDirectory: process.cwd(),
+        confirmation: HOST_SNAPSHOT_V3_EXPORT_CONFIRMATION,
+        hooks: { failAfterFirstComponentRead: true },
+      })).toThrowError(expect.objectContaining({ code: 'HOST_SNAPSHOT_V3_EXPORT_FAILED' }));
+      expect(fs.existsSync(fixture.snapshotDirectory)).toBe(false);
+
+      const writer = new Database(fixture.databasePath, { timeout: 25 });
+      expect(() => writer.prepare('UPDATE profiles SET updated_at = updated_at + 1 WHERE id = ?').run('profile-v3'))
+        .not.toThrow();
+      expect(String(writer.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('delete');
+      writer.close();
+    });
   });
 
   it('凭证、环境变量和绝对路径命中安全门后停止导出', () => {
@@ -415,6 +552,10 @@ describe('Host Snapshot V3 restore candidate', () => {
     expect(reportText).not.toMatch(/\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE TABLE)\b/u);
 
     const candidateDb = openDb(candidatePath);
+    expect(candidateDb.prepare('SELECT data_json FROM import_logs WHERE id = ?').get('import-log-v3'))
+      .toEqual({ data_json: JSON.stringify({ warnings: [{ key: 'legacy-job', reason: '字段无法解析' }] }) });
+    expect(candidateDb.prepare('SELECT COUNT(*) AS count FROM radar_rule_assessments').get())
+      .toEqual({ count: 6 });
     const runtime = createNovaWingRuntime({ databasePath: candidatePath });
     const analysis = new AnalysisService({
       db: candidateDb,
@@ -427,6 +568,9 @@ describe('Host Snapshot V3 restore candidate', () => {
     expect(task.task.inputSnapshot).toMatchObject({
       contractVersion: 2,
       novaWingContext: { coreRevision: 1 },
+      ruleProjection: { assessments: expect.arrayContaining([
+        expect.objectContaining({ ruleKey: 'salary_floor' }),
+      ]) },
     });
     runtime.close();
     candidateDb.close();

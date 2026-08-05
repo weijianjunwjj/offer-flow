@@ -59,6 +59,12 @@ export interface HostSnapshotV3ExportOptions {
   hooks?: {
     failAfterDataWrite?: boolean;
     failBeforePublish?: boolean;
+    /** Red-team synchronization point: invoked while BEGIN IMMEDIATE is held, before NovaWing opens. */
+    afterConsistencyLock?: () => void;
+    /** Red-team only: prove the lock makes component data read order irrelevant. */
+    componentDataReadOrder?: readonly ['offerflow' | 'novawing', 'offerflow' | 'novawing'];
+    /** Red-team only: force an exception inside the consistency boundary after one component read. */
+    failAfterFirstComponentRead?: boolean;
   };
 }
 
@@ -163,6 +169,7 @@ function componentByName(
 function buildSnapshotInConsistencyBoundary(
   databasePath: string,
   createdAt: string,
+  hooks: HostSnapshotV3ExportOptions['hooks'],
 ): { data: HostSnapshotV3Data; manifest: HostSnapshotV3Manifest } {
   const offerFlow = new Database(databasePath, { fileMustExist: true, timeout: 100 });
   let locked = false;
@@ -185,6 +192,8 @@ function buildSnapshotInConsistencyBoundary(
         'Host Snapshot V3 需要服务离线且无活动写操作',
       );
     }
+    stage = 'consistency-hook';
+    hooks?.afterConsistencyLock?.();
     stage = 'novawing-open';
     novaWing = new DatabaseSync(databasePath, {
       enableForeignKeyConstraints: true,
@@ -205,9 +214,25 @@ function buildSnapshotInConsistencyBoundary(
     stage = 'component-manifest';
     const manifest = createRegisteredHostSnapshotManifest({ registry, contexts, createdAt, host });
     stage = 'component-data';
+    const readOrder = hooks?.componentDataReadOrder ?? ['offerflow', 'novawing'];
+    if (new Set(readOrder).size !== 2) {
+      throw hostSnapshotError('HOST_SNAPSHOT_V3_INVALID', 'Host Snapshot V3 component 读取顺序无效');
+    }
+    const componentData = new Map<string, SnapshotComponentData>();
+    for (const [index, component] of readOrder.entries()) {
+      componentData.set(
+        component,
+        component === OFFERFLOW_COMPONENT_NAME
+          ? readOfferFlowComponentData(offerFlow)
+          : readNovaWingComponentData(novaWing),
+      );
+      if (index === 0 && hooks?.failAfterFirstComponentRead) {
+        throw new Error('TEST_FAIL_AFTER_FIRST_COMPONENT_READ');
+      }
+    }
     const components = [
-      readOfferFlowComponentData(offerFlow),
-      readNovaWingComponentData(novaWing),
+      componentData.get(OFFERFLOW_COMPONENT_NAME)!,
+      componentData.get('novawing')!,
     ];
     stage = 'component-safety';
     assertSnapshotDataSafety(components);
@@ -364,6 +389,7 @@ export function exportHostSnapshotV3(options: HostSnapshotV3ExportOptions): Host
     const snapshot = buildSnapshotInConsistencyBoundary(
       paths.databasePath,
       (options.now ?? (() => new Date().toISOString()))(),
+      options.hooks,
     );
     const report: HostSnapshotV3ExportReport = {
       status: options.dryRun ? 'planned' : 'exported',

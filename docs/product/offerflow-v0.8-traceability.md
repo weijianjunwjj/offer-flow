@@ -113,12 +113,12 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 
 ### 1.7 Host Snapshot V3 与离线 NovaWing bootstrap/恢复候选库（2026-08-05）
 
-- **状态：** `IMPLEMENTED / OFFLINE ONLY / CANDIDATE ONLY`。新增稳定 `offerflow` + 正式包 `novawing` 双组件 Host Snapshot V3；schema v8 的 38 张 OfferFlow 表均完成分类，35 张纳入、`schema_migrations` / `import_logs` / `radar_rule_assessments` 按明确理由排除。完整审计见 `docs/technical/offerflow-host-snapshot-v3-table-classification.md`。
-- **一致性与原子性：** 导出要求服务和业务连接离线；专用双驱动连接在同一 SQLite 文件上，以 OfferFlow `BEGIN IMMEDIATE` 阻止外部写入并形成 point-in-time 边界。数据/manifest 在 staging 目录写入并完整回读验证后才以目录 rename 发布；失败不留半份输出，V3 使用独立文件名，不覆盖 V2。
+- **状态：** `IMPLEMENTED / OFFLINE ONLY / CANDIDATE ONLY`。新增稳定 `offerflow` + 正式包 `novawing` 双组件 Host Snapshot V3；schema v8 的 38 张 OfferFlow 表均完成红队复审，37 张纳入，仅 `schema_migrations` 由受信 migration bootstrap 确定性重建而排除。原排除的 `import_logs` / `radar_rule_assessments` 因无真实重建入口且会影响 Job Memory、规则覆盖、Analysis stale 与 Recommendation 行为，已纠正为纳入。完整审计见 `docs/technical/offerflow-host-snapshot-v3-table-classification.md`。
+- **一致性与原子性：** 导出要求服务和业务连接离线；专用双驱动连接在同一 SQLite 文件上，以 OfferFlow `BEGIN IMMEDIATE` 阻止外部写入并形成 point-in-time 边界，再创建 NovaWing 只读连接；正式包的 snapshot 校验在该锁内自行建立读事务。红队同步点覆盖锁前提交、锁后写入 busy、锁前长读、双组件读取顺序互换、中途异常与 DELETE journal 保持。数据/manifest 在 staging 目录写入并完整回读验证后才以目录 rename 发布；失败不留半份输出，V3 使用独立文件名，不覆盖 V2。
 - **V2 兼容：** V2 七表行为和 loader 保持；新输出显式标记 `offerflow-core-v2`、`novaWingIncluded=false`、`completeHostBackup=false`。feature 开启或存在 NovaWing 数据时明确警告 V2 不是完整 Host 备份；V3 不接受 V2，也不制造空 NovaWing component。
 - **bootstrap / restore：** `novawing:bootstrap` 只接受显式路径、离线确认、schema v8 和 DELETE journal，只调用正式包公共 migration apply，正常 Runtime 仍 validate-only。恢复只创建全新候选库，顺序为两套 schema bootstrap → 两组件数据 → integrity/FK → 组件/Host 校验 → 正常 Runtime 双连接读取 → 关闭/rename 探针；失败删除候选和报告。
 - **安全与边界：** 快照命中凭证、provider key、环境变量或绝对路径时停止，不静默删改权威数据；CLI/报告/稳定错误不输出路径、SQL、SQLite 原文或正文。未实现或执行正式数据库替换，未接触真实数据库，未修改 feature 默认值、UI、Prompt、Provider、审批或 cc-auto。
-- **验证：** Host Snapshot V3 定向 25/25；V2 + NovaWing 双驱动 + Radar/Recommendation + cc-auto 定向 989 passed / 7 skipped；项目全量单 worker 2265 passed / 7 skipped；`migration:selftest`、TypeScript typecheck、production build、architecture check（0 error）与 `git diff --check` 通过。并发全量曾两次在未修改的 cc-auto 测试目录触发 Windows 临时文件 rename `EPERM`，对应 spec 隔离 39/39、全量单 worker 均通过。
+- **验证：** Host Snapshot V3 定向 30/30（含红队 point-in-time 同步点与两项误分类恢复行为）；V2 + NovaWing 双驱动 + Radar/Recommendation + cc-auto 定向 989 passed / 7 skipped；项目全量单 worker 2265 passed / 7 skipped；`migration:selftest`、TypeScript typecheck、production build、architecture check（0 error）与 `git diff --check` 通过。并发全量曾两次在未修改的 cc-auto 测试目录触发 Windows 临时文件 rename `EPERM`，对应 spec 隔离 39/39、全量单 worker 均通过。
 
 ---
 
