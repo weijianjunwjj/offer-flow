@@ -255,7 +255,7 @@ export interface ProviderExecutionContext {
   profile: ProviderProfile;
 }
 
-/** 标准化调用请求 */
+/** 标准化调用请求——向后兼容扩展 */
 export interface ProviderCallRequest {
   callId: string;
   providerId: string;
@@ -265,6 +265,12 @@ export interface ProviderCallRequest {
   userPrompt: string;
   maxOutputTokens: number;
   timeoutMs: number;
+  /** v0.2.0 Slice 1E：多轮对话历史。存在时优先使用，systemPrompt/userPrompt 必须为空 */
+  messages?: ProviderChatMessage[];
+  /** v0.2.0 Slice 1E：工具定义 */
+  tools?: ProviderToolDefinition[];
+  /** v0.2.0 Slice 1E：工具模式。默认 'disabled'（向后兼容） */
+  toolMode?: ProviderToolMode;
 }
 
 /** Provider 返回的原始用量——所有字段均可为 null */
@@ -290,7 +296,7 @@ export interface ProviderCallResponse {
   providerId: string;
   requestedModelId: string;
   reportedModel: string | null;
-  content: string;
+  content: string | null;
   usage: RawProviderUsage;
   durationMs: number | null;
   numTurns: number;
@@ -298,6 +304,8 @@ export interface ProviderCallResponse {
   isError: boolean;
   /** 结构化错误信息，isError=true 时填充；成功时为 null */
   error: ProviderResponseError | null;
+  /** v0.2.0 Slice 1E：Adapter 解析的 tool_calls（tool_mode=enabled 时） */
+  toolCalls?: ModelToolCall[];
 }
 
 /** Adapter Profile 预校验结果 */
@@ -416,7 +424,9 @@ export type ProviderExecutionResult =
   | {
       ok: true;
       usageRecord: UsageRecord;
-      content: string;
+      content: string | null;
+      /** v0.2.0 Slice 1E：assistant 返回的 tool_calls（由 Adapter 解析） */
+      toolCalls?: ModelToolCall[];
     }
   | {
       ok: false;
@@ -426,3 +436,239 @@ export type ProviderExecutionResult =
       identityConfirmationContext: IdentityConfirmationContext | null;
       message: string;
     };
+
+// ============================================================================
+// v0.2.0 Slice 1E: 工具协议与受控 Tool Loop 类型
+// ============================================================================
+
+/** Slice 1E 仅开放显式只读白名单；写入仍由既有 1D 执行点管理，不进入 Tool Loop。 */
+export type DeepSeekToolName = 'read_file' | 'grep' | 'glob';
+
+/** 模型返回的原始工具调用结构 */
+export interface ModelToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/** read_file 参数 */
+export interface ReadFileArguments {
+  path: string;
+  startLine?: number;
+  endLine?: number;
+}
+
+/** grep 参数 */
+export interface GrepArguments {
+  query: string;
+  roots?: string[];
+  caseSensitive?: boolean;
+  maxResults?: number;
+}
+
+/** glob 参数 */
+export interface GlobArguments {
+  pattern: string;
+  roots?: string[];
+  maxResults?: number;
+}
+
+/** 解析后的工具调用——可辨识联合 */
+export type ParsedToolCall =
+  | {
+      id: string;
+      name: 'read_file';
+      arguments: ReadFileArguments;
+    }
+  | {
+      id: string;
+      name: 'grep';
+      arguments: GrepArguments;
+    }
+  | {
+      id: string;
+      name: 'glob';
+      arguments: GlobArguments;
+    };
+
+/** 工具协议解析错误原因 */
+export type ToolProtocolErrorReason =
+  | 'INVALID_TOOL_CALL'
+  | 'TOOL_CALL_ID_MISSING'
+  | 'DUPLICATE_TOOL_CALL_ID'
+  | 'UNKNOWN_TOOL'
+  | 'ARGUMENTS_TOO_LARGE'
+  | 'ARGUMENTS_INVALID_JSON'
+  | 'ARGUMENTS_NOT_OBJECT'
+  | 'ARGUMENT_FIELD_UNKNOWN'
+  | 'ARGUMENT_FIELD_MISSING'
+  | 'ARGUMENT_TYPE_INVALID'
+  | 'ARGUMENT_VALUE_INVALID';
+
+/** 工具执行错误原因 */
+export type ToolExecutionErrorReason =
+  | ToolProtocolErrorReason
+  | 'BINARY_FILE'
+  | 'DISPATCH_REENTRY'
+  | 'FILE_NOT_FOUND'
+  | 'FILE_TOO_LARGE'
+  | 'FILE_NOT_UTF8'
+  | 'FILE_NOT_REGULAR_FILE'
+  | 'DIRECTORY_NOT_ALLOWED'
+  | 'SYMLINK_DETECTED'
+  | 'JUNCTION_DETECTED'
+  | 'PATH_OUTSIDE_ROOTS'
+  | 'SYSTEM_PROTECTED_PATH'
+  | 'PROTECTED_PATH'
+  | 'READ_PERMISSION_DENIED'
+  | 'READ_BUDGET_EXCEEDED'
+  | 'MAX_OUTPUT_EXCEEDED'
+  | 'SCAN_LIMIT_EXCEEDED'
+  | 'INTERNAL_ERROR'
+  | 'IO_ERROR'
+  | 'UNKNOWN_TOOL';
+
+export type ToolExecutionResult =
+  | { kind: 'read_file'; content: string; lineCount: number; byteCount: number; startLine: number; endLine: number }
+  | { kind: 'grep'; matches: GrepMatch[]; scannedFiles: number; bytesRead: number }
+  | { kind: 'glob'; paths: string[]; scannedEntries: number };
+
+/** 工具执行信封——失败绝不能携带 result，成功绝不能携带 error。 */
+export type ToolExecutionEnvelope =
+  | {
+      ok: true;
+      toolCallId: string;
+      toolName: DeepSeekToolName;
+      result: ToolExecutionResult;
+      error: null;
+      truncated: boolean;
+    }
+  | {
+      ok: false;
+      toolCallId: string;
+      toolName: DeepSeekToolName | 'unknown';
+      result: null;
+      error: { reason: ToolExecutionErrorReason; message: string };
+      truncated: false;
+    };
+
+/** Provider 工具定义（OpenAI tools 数组项） */
+export interface ProviderToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      additionalProperties: false;
+      required?: string[];
+      properties: Record<string, unknown>;
+    };
+  };
+}
+
+/** Provider 工具模式 */
+export type ProviderToolMode = 'disabled' | 'enabled';
+
+/** Provider assistant 轮次——Adapter 解析后的结构化结果 */
+/** Provider 聊天消息——角色专属字段由判别联合约束。 */
+export type ProviderChatMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; toolCalls?: ModelToolCall[] }
+  | { role: 'tool'; content: string; toolCallId: string };
+
+/** Grep 单条匹配结果 */
+export type DeepSeekToolLoopStopReason =
+  | 'MAX_TURNS_EXCEEDED'
+  | 'MAX_TOOL_CALLS_PER_TURN_EXCEEDED'
+  | 'MAX_TOTAL_TOOL_CALLS_EXCEEDED'
+  | 'DUPLICATE_TOOL_CALL_ID'
+  | 'REPEATED_TOOL_CALL'
+  | 'TOOL_PROTOCOL_ERROR'
+  | 'TOOL_EXECUTION_FAILED'
+  | 'PROVIDER_ERROR'
+  | 'MODEL_IDENTITY_MISMATCH'
+  | 'CONTEXT_LIMIT_EXCEEDED'
+  | 'LIMIT_CONFIGURATION_INVALID'
+  | 'EMPTY_FINAL_RESPONSE';
+
+/** Tool Loop 执行选项 */
+export interface DeepSeekToolLoopOptions {
+  repositoryRoot: string;
+  cwd: string;
+  runId: string;
+  fileScope: FileScope;
+  /** Executor 上下文：profile + adapterRegistry + parentEnv + callIdFactory */
+  executorContext: DeepSeekToolLoopExecutorContext;
+  systemPrompt: string;
+  userPrompt: string;
+  maxTurns?: number;
+  maxToolCallsPerTurn?: number;
+  maxTotalToolCalls?: number;
+  maxHistoryChars?: number;
+  maxToolResultChars?: number;
+  maxTotalReadBytes?: number;
+}
+
+export interface ProviderAdapterResolver {
+  resolve(transport: string): ProviderAdapter | null;
+}
+
+/** Tool Loop 所需的 Executor 上下文——传递给 executeProviderCall */
+export interface DeepSeekToolLoopExecutorContext {
+  profile: ProviderProfile;
+  logicalModelName: string;
+  role: 'builder' | 'arbiter';
+  maxOutputTokens: number;
+  timeoutMs: number;
+  adapterRegistry: ProviderAdapterResolver;
+  parentEnv: NodeJS.ProcessEnv;
+  callIdFactory?: () => string;
+}
+
+export type ToolLoopAuditStatus =
+  | 'EXECUTED'
+  | 'REJECTED_LIMIT'
+  | 'REJECTED_PROTOCOL'
+  | 'REJECTED_REPEAT'
+  | 'SKIPPED_AFTER_FAILURE';
+
+export interface ToolLoopAuditRecord {
+  turn: number;
+  toolCallId: string;
+  toolName: string;
+  status: ToolLoopAuditStatus;
+  resultOk: boolean | null;
+  errorReason: ToolExecutionErrorReason | ToolProtocolErrorReason | null;
+}
+
+/** Tool Loop 执行结果 */
+export interface DeepSeekToolLoopResult {
+  status: 'COMPLETED' | 'STOPPED';
+  finalText: string | null;
+  turns: number;
+  totalToolCalls: number;
+  executedTools: ToolExecutionEnvelope[];
+  stopReason: DeepSeekToolLoopStopReason | null;
+  /** 本轮收集的所有调用 ID（由 Executor 生成，不自己构造） */
+  callIds: string[];
+  auditTrail: ToolLoopAuditRecord[];
+}
+
+/** Grep 单条匹配结果 */
+export interface GrepMatch {
+  path: string;
+  line: number;
+  column: number;
+  text: string;
+}
+
+/** Glob 操作结果 */
+export interface GlobResult {
+  paths: string[];
+  truncated: boolean;
+  scannedEntries: number;
+}

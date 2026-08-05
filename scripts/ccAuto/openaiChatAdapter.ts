@@ -25,6 +25,8 @@ import type {
   RawProviderUsage,
   AdapterProfileValidationResult,
   ProviderResponseError,
+  ProviderChatMessage,
+  ModelToolCall,
 } from './types';
 
 // ============================================================================
@@ -78,21 +80,121 @@ export function buildChatCompletionsUrl(apiBaseUrl: string): URL {
 
 export interface OpenAIChatRequestBody {
   model: string;
-  messages: Array<{ role: 'system' | 'user'; content: string }>;
+  messages: Array<{
+    role: 'system' | 'user' | 'assistant' | 'tool';
+    content: string | null;
+    tool_calls?: Array<{
+      id: string;
+      type: 'function';
+      function: { name: string; arguments: string };
+    }>;
+    tool_call_id?: string;
+  }>;
   max_tokens: number;
   stream: false;
+  tools?: Array<{
+    type: 'function';
+    function: {
+      name: string;
+      description: string;
+      parameters: { type: 'object'; additionalProperties: false; required?: string[]; properties: Record<string, unknown> };
+    };
+  }>;
+  tool_choice?: 'auto';
 }
 
+/**
+ * 构建 OpenAI Chat 请求体。
+ *
+ * 兼容两种模式：
+ * - 旧 prompt 模式：systemPrompt + userPrompt → [{role:'system'}, {role:'user'}]
+ * - 新 messages 模式：request.messages → 序列化后发送
+ * - 冲突时（messages 存在且 systemPrompt/userPrompt 非空）返回本地协议错误
+ *
+ * tool mode disabled（默认）：不发送 tools / tool_choice
+ * tool mode enabled：发送 tools + tool_choice='auto'
+ */
 export function buildOpenAIChatRequestBody(request: ProviderCallRequest): OpenAIChatRequestBody {
-  return {
-    model: request.requestedModelId,
-    messages: [
+  const toolMode = request.toolMode ?? 'disabled';
+  const hasMessages = request.messages && request.messages.length > 0;
+  const hasPrompt = request.systemPrompt.length > 0 || request.userPrompt.length > 0;
+
+  // prompt/messages 冲突检测
+  if (hasMessages && hasPrompt) {
+    throw new TransportError(
+      'buildOpenAIChatRequestBody: messages 和 systemPrompt/userPrompt 不能同时有效——prompt/messages 冲突',
+    );
+  }
+
+  let messages: OpenAIChatRequestBody['messages'];
+
+  if (hasMessages) {
+    // messages 模式——序列化
+    messages = serializeMessages(request.messages!);
+  } else {
+    // 旧 prompt 模式（向后兼容）
+    messages = [
       { role: 'system', content: request.systemPrompt },
       { role: 'user', content: request.userPrompt },
-    ],
+    ];
+  }
+
+  const body: OpenAIChatRequestBody = {
+    model: request.requestedModelId,
+    messages,
     max_tokens: request.maxOutputTokens,
     stream: false,
   };
+
+  // tool mode enabled：发送 tools + tool_choice
+  if (toolMode === 'enabled') {
+    if (!request.tools || request.tools.length === 0) {
+      throw new TransportError(
+        'buildOpenAIChatRequestBody: toolMode=enabled 但 tools 缺失或为空',
+      );
+    }
+    body.tools = request.tools;
+    body.tool_choice = 'auto';
+  }
+
+  return body;
+}
+
+/**
+ * 将 ProviderChatMessage[] 序列化为 OpenAI 消息格式。
+ * - assistant + toolCalls → tool_calls 数组 + content（可为 null）
+ * - tool → content（工具结果 JSON）+ tool_call_id
+ */
+function serializeMessages(
+  msgs: ProviderChatMessage[],
+): OpenAIChatRequestBody['messages'] {
+  return msgs.map((m) => {
+    if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+      return {
+        role: 'assistant' as const,
+        content: m.content,
+        tool_calls: m.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          },
+        })),
+      };
+    }
+    if (m.role === 'tool') {
+      return {
+        role: 'tool' as const,
+        content: m.content,
+        tool_call_id: m.toolCallId,
+      };
+    }
+    return {
+      role: m.role as 'system' | 'user' | 'assistant',
+      content: m.content,
+    };
+  });
 }
 
 // ============================================================================
@@ -597,10 +699,9 @@ export class OpenAIChatAdapter implements ProviderAdapter {
       : null;
 
     const firstChoice = data.choices?.[0];
-    const content = typeof firstChoice?.message?.content === 'string'
-      ? firstChoice.message.content
-      : '';
-
+    const rawContent = firstChoice?.message?.content;
+    const effectiveContent: string | null =
+      rawContent === null ? null : (typeof rawContent === 'string' ? rawContent : '');
     const finishReason = firstChoice?.finish_reason;
     const subtype = typeof finishReason === 'string'
       ? finishReason
@@ -616,9 +717,40 @@ export class OpenAIChatAdapter implements ProviderAdapter {
       );
     }
 
+    // 工具模式判定
+    const toolMode = request.toolMode ?? 'disabled';
+    const rawToolCalls = firstChoice?.message?.tool_calls;
+
+    // === tool mode enabled：解析 tool_calls ===
+    if (toolMode === 'enabled') {
+      const parsed = parseToolCallsFromResponse(rawToolCalls, effectiveContent);
+      if (!parsed.ok) {
+        throw new ProviderProtocolError(parsed.message);
+      }
+      if (finishReason === 'tool_calls' && parsed.toolCalls.length === 0) {
+        throw new ProviderProtocolError('finish_reason=tool_calls 但响应没有结构化 tool_calls');
+      }
+
+      return {
+        callId: request.callId,
+        providerId: request.providerId,
+        requestedModelId: request.requestedModelId,
+        reportedModel,
+        content: effectiveContent ?? '',
+        usage: usageResult.rawUsage,
+        durationMs: null,
+        numTurns: 1,
+        subtype: parsed.toolCalls.length > 0 ? 'tool_calls' : subtype,
+        isError: false,
+        error: null,
+        toolCalls: parsed.toolCalls,
+      };
+    }
+
+    // === tool mode disabled（默认）：拒绝 tool_calls ===
     // 检查 tool_calls——本切片不支持，但保留 reportedModel、usage 和费用信息
-    if (firstChoice?.message?.tool_calls !== undefined && firstChoice?.message?.tool_calls !== null) {
-      const toolCallsArr = firstChoice.message.tool_calls;
+    if (rawToolCalls !== undefined && rawToolCalls !== null) {
+      const toolCallsArr = rawToolCalls;
       if (Array.isArray(toolCallsArr) && toolCallsArr.length > 0) {
         return {
           callId: request.callId,
@@ -642,7 +774,7 @@ export class OpenAIChatAdapter implements ProviderAdapter {
       }
     }
 
-    // 检查 finish_reason=tool_calls
+    // 检查 finish_reason=tool_calls（disabled 模式兜底）
     if (finishReason === 'tool_calls') {
       return {
         callId: request.callId,
@@ -670,7 +802,7 @@ export class OpenAIChatAdapter implements ProviderAdapter {
       providerId: request.providerId,
       requestedModelId: request.requestedModelId,
       reportedModel,
-      content,
+      content: effectiveContent ?? '',
       usage: usageResult.rawUsage,
       durationMs: null, // fetch 自身不提供精确耗时，由 executor 计算
       numTurns: 1,
@@ -684,6 +816,91 @@ export class OpenAIChatAdapter implements ProviderAdapter {
 // ============================================================================
 // 工具函数
 // ============================================================================
+
+/**
+ * 解析 OpenAI 响应中的 tool_calls。
+ *
+ * 严格验证：
+ * - 每项 id 必须是非空字符串
+ * - id 不重复
+ * - type 必须为 'function'
+ * - function.name 非空字符串
+ * - function.arguments 为字符串
+ * - 无 content 且无 tool_calls → protocol error
+ * - 不依赖 finish_reason 判断工具存在性
+ */
+function parseToolCallsFromResponse(
+  raw: unknown,
+  content: string | null,
+): { ok: true; toolCalls: ModelToolCall[] } | { ok: false; message: string } {
+  // 无 tool_calls
+  if (raw === undefined || raw === null) {
+    if (content === null) {
+      return { ok: false, message: '无 content 且无 tool_calls——协议错误' };
+    }
+    return { ok: true, toolCalls: [] };
+  }
+
+  if (!Array.isArray(raw)) {
+    return { ok: false, message: 'tool_calls 必须是数组' };
+  }
+
+  if (raw.length === 0) {
+    if (content === null) {
+      return { ok: false, message: 'content 为 null 且 tool_calls 为空——协议错误' };
+    }
+    return { ok: true, toolCalls: [] };
+  }
+
+  const seen = new Set<string>();
+  const result: ModelToolCall[] = [];
+
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i];
+    if (!item || typeof item !== 'object') {
+      return { ok: false, message: `tool_calls[${i}] 必须是非 null 对象` };
+    }
+    const tc = item as Record<string, unknown>;
+
+    // id 校验
+    if (typeof tc.id !== 'string' || tc.id.length === 0) {
+      return { ok: false, message: `tool_calls[${i}] id 缺失或非字符串` };
+    }
+    if (seen.has(tc.id)) {
+      return { ok: false, message: `tool_calls[${i}] id "${tc.id.slice(0, 32)}" 重复` };
+    }
+    seen.add(tc.id);
+
+    // type 校验
+    if (tc.type !== 'function') {
+      return { ok: false, message: `tool_calls[${i}] type 必须为 'function'，收到 ${JSON.stringify(tc.type)}` };
+    }
+
+    // function 校验
+    if (!tc.function || typeof tc.function !== 'object') {
+      return { ok: false, message: `tool_calls[${i}] function 缺失` };
+    }
+    const fn = tc.function as Record<string, unknown>;
+
+    if (typeof fn.name !== 'string' || fn.name.length === 0) {
+      return { ok: false, message: `tool_calls[${i}] function.name 缺失` };
+    }
+    if (typeof fn.arguments !== 'string') {
+      return { ok: false, message: `tool_calls[${i}] function.arguments 必须是字符串` };
+    }
+
+    result.push({
+      id: tc.id as string,
+      type: 'function',
+      function: {
+        name: fn.name as string,
+        arguments: fn.arguments as string,
+      },
+    });
+  }
+
+  return { ok: true, toolCalls: result };
+}
 
 /** HTTP 状态码到错误类型的分类 */
 function classifyHttpError(status: number): ProviderResponseError['kind'] {

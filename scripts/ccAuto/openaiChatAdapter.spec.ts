@@ -654,6 +654,59 @@ describe('OpenAIChatAdapter execute — success response', () => {
     expect(result.content).toBe('');
   });
 
+  it('returns structured tool_calls when tool mode is explicitly enabled', async () => {
+    const { fetch, calls } = createFakeFetch(() => successJson({
+      model: 'gpt-4o',
+      choices: [{
+        finish_reason: 'tool_calls',
+        message: {
+          content: null,
+          tool_calls: [{ id: 'read-1', type: 'function', function: { name: 'read_file', arguments: '{"path":"src/a.ts"}' } }],
+        },
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    }));
+    const adapter = new OpenAIChatAdapter(fetch);
+    const result = await adapter.execute(makeRequest({
+      systemPrompt: '',
+      userPrompt: '',
+      messages: [{ role: 'user', content: 'inspect' }],
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'read_file', description: 'read',
+          parameters: { type: 'object', additionalProperties: false, required: ['path'], properties: { path: { type: 'string' } } },
+        },
+      }],
+      toolMode: 'enabled',
+    }), makeContext());
+    expect(result.isError).toBe(false);
+    expect(result.content).toBe('');
+    expect(result.toolCalls?.[0]?.function.name).toBe('read_file');
+    const body = JSON.parse(calls[0].body) as { tools?: unknown[]; tool_choice?: string };
+    expect(body.tools).toHaveLength(1);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('rejects finish_reason=tool_calls without a structured call in enabled mode', async () => {
+    const { fetch } = createFakeFetch(() => successJson({
+      model: 'gpt-4o',
+      choices: [{ finish_reason: 'tool_calls', message: { content: 'not a call' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    }));
+    const adapter = new OpenAIChatAdapter(fetch);
+    await expect(adapter.execute(makeRequest({
+      toolMode: 'enabled',
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'read_file', description: 'read',
+          parameters: { type: 'object', additionalProperties: false, properties: {} },
+        },
+      }],
+    }), makeContext())).rejects.toBeInstanceOf(ProviderProtocolError);
+  });
+
   // 39. empty string content is preserved
   it('returns empty content when message content is empty string', async () => {
     const { fetch } = createFakeFetch(() => makeSuccessResponse({

@@ -24,8 +24,8 @@ import type {
   ProviderExecutionStopReason,
   UsageRecord,
   IdentityConfirmationContext,
+  ProviderAdapterResolver,
 } from './types';
-import type { AdapterRegistry } from './adapter';
 import { TimeoutError } from './providerErrors';
 import { buildChildEnv } from './buildChildEnv';
 import { checkModelIdentity } from './modelIdentity';
@@ -58,12 +58,20 @@ export interface ExecuteProviderCallOptions {
   userPrompt: string;
   maxOutputTokens: number;
   timeoutMs: number;
-  adapterRegistry: AdapterRegistry;
+  adapterRegistry: ProviderAdapterResolver;
   parentEnv: NodeJS.ProcessEnv;
   /** 存储操作的目标目录 */
   cwd: string;
   /** 当前 RunState 的 runId（如果有） */
   runId?: string;
+  /** v0.2.0 Slice 1E：多轮对话历史（优先于 systemPrompt/userPrompt） */
+  messages?: import('./types').ProviderChatMessage[];
+  /** v0.2.0 Slice 1E：工具定义 */
+  tools?: import('./types').ProviderToolDefinition[];
+  /** v0.2.0 Slice 1E：工具模式，默认 'disabled' */
+  toolMode?: import('./types').ProviderToolMode;
+  /** 由受信任调用方预生成的调用 ID；不得来自模型输出。 */
+  callId?: string;
 }
 
 /**
@@ -146,7 +154,17 @@ export async function executeProviderCall(
   }
 
   // --- 5. 构建标准化请求 ---
-  const callId = newCallId();
+  const callId = opts.callId ?? newCallId();
+  if (!/^[A-Za-z0-9._:-]{1,256}$/.test(callId)) {
+    return {
+      ok: false,
+      stopReason: 'PROVIDER_ERROR',
+      requiresHumanConfirmation: false,
+      usageRecord: null,
+      identityConfirmationContext: null,
+      message: '调用 ID 格式无效',
+    };
+  }
   const request: ProviderCallRequest = {
     callId,
     providerId: profile.id,
@@ -156,6 +174,9 @@ export async function executeProviderCall(
     userPrompt: opts.userPrompt,
     maxOutputTokens: opts.maxOutputTokens,
     timeoutMs: opts.timeoutMs,
+    messages: opts.messages,
+    tools: opts.tools,
+    toolMode: opts.toolMode,
   };
 
   // --- 6. 写入 PendingCall=PREPARED ---
@@ -359,7 +380,8 @@ export async function executeProviderCall(
   return {
     ok: true,
     usageRecord,
-    content: response.content,
+    content: response.content ?? '',
+    toolCalls: response.toolCalls,
   };
 }
 
