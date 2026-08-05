@@ -101,15 +101,15 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 - **已知遗留（不阻断本波，交后续处理）：** `App.vue` 品牌行仍显示 `v0.7.0`（方案 §4.5 建议改为当前版本，本波未改，避免在文档收口中改动展示文案）；导航「岗位雷达」入口在生产 `radarEnabled=false` 时仍隐藏（符合门禁语义）。
 - **边界：** 未改动 RC-01～RC-12 的功能结论或验收状态；V8-UX 是表达层收口，不计入任何 RC 的「通过/不通过」判定，也不改变 v0.8 发布闭环的 Partial/Blocked 状态。
 
-### 1.6 NovaWing 宿主契约与 Radar 分析上下文预接入（2026-08-05）
+### 1.6 NovaWing 宿主契约与真实只读 Runtime Adapter（2026-08-05）
 
-- **状态：** `IMPLEMENTED / DEFAULT OFF`。OfferFlow 新增自有只读 `NovaWingHostAdapter` 最小边界，仅请求 `global` / `career`，未安装 NovaWing 包、未实现真实 adapter、未动态加载模块、未连接真实数据库。
-- **快照与 hash：** 开关关闭时继续生成原 `JobMatchAnalysisInputSnapshotV1`，不调用 adapter，原 hash 算法与语义不变；开启时显式生成 V2，在 `novaWingContext` 中冻结非负安全整数 `coreRevision`、固定 scopes 与确定性排序的安全 entries，Context 纳入 canonical input hash，独立上限 32 KiB，拒绝重复键、非法 scope/revision、非 JSON 值、敏感内容与超限，不静默截断或降级为空。
-- **持久化裁决：** 不新增 migration。完整安全投影保存在既有 `analysis_tasks.input_snapshot_json`，`job_match_analysis_records.input_hash` 唯一关联对应任务快照；查询模型由该关联回读 `novaWingCoreRevision`。旧 V1/无任务关联记录的 revision 视为 null：开关关闭保持旧行为，开启时不得判为 current。
-- **stale 与推荐：** `nova_wing_context_changed` 追加在既有稳定 reason 顺序末尾；列表查询每次读取一次当前 revision。RecommendationBatch 在同一批次 request scope 复用一次 revision，避免 adapter N+1；revision 变化或旧记录均按 stale 进入既有 `stale_analysis` 过滤，不复制 entries 到推荐层。
-- **DI 与错误：** `BuildServerOptions.radar → Radar route options → AnalysisService / RecommendationBatchService` 显式传递默认关闭开关与 adapter；无全局变量、service locator、noop adapter 或生命周期 close。稳定错误为 `NOVA_WING_ADAPTER_REQUIRED`、`NOVA_WING_CONTEXT_UNAVAILABLE`、`NOVA_WING_CONTEXT_INVALID`、`NOVA_WING_CONTEXT_TOO_LARGE`，HTTP 文案不回显路径、SQLite、堆栈或 Context 正文。
-- **验证：** NovaWing/DI/stale/Recommendation 最终定向回归 47/47；排除既有 cc-auto Windows 原子 rename 问题后的最终项目业务全量 1534/1534；`migration:selftest` 通过；`vue-tsc --noEmit` 与 production build 通过。此前同轮项目完整 Vitest 为 2221 passed / 7 skipped / 1 failed，唯一失败是未修改的 `scripts/ccAuto/executor.spec.ts` 在 Windows 覆盖 `state.json` 时 `EPERM`；隔离 cc-auto 为 689 passed / 7 skipped / 1 同类 `EPERM`，不在本切片越权修复。
-- **边界：** 未修改 UI、Prompt 正文、旧 `/api/llm/analyze-job`、cc-auto 源码、package 依赖或 schema；未创建 `nw_*`；未执行真实 Provider 网络、真实数据库 migration、commit、push、merge、rebase、tag、release 或 publish。
+- **状态：** `IMPLEMENTED / DEFAULT OFF / REAL RUNTIME`。OfferFlow 以正式 GitHub Packages 来源精确安装 `@weijianjunwjj/nova-wing@0.1.0`；项目 `.npmrc` 仅保存 scope registry 映射，lockfile 固定官方 `resolved` 与 `integrity`。生产代码只使用 `core` / `sqlite` 公共出口，不导入 `testing` 或内部 `dist` 路径；`host-snapshot` 公共出口仅做可导入性验收，本切片不实现 Snapshot V3。
+- **唯一运行架构：** `AnalysisService → OfferFlow NovaWingHostAdapter → NovaWing Runtime Adapter → NovaWingFacade → SqliteNovaWingStore → nw_*`。OfferFlow 与 NovaWing 指向同一 SQLite 文件，但分别拥有 `better-sqlite3` 与 `node:sqlite DatabaseSync` 独立连接；连接、Store、Facade 不暴露到业务层，OfferFlow 生产代码不执行 `nw_*` SQL，也不在 OfferFlow transaction 回调内调用 NovaWing。
+- **Feature / migration / locking：** `OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT` 关闭时在动态加载基础设施前返回，不创建连接、不检查 `nw_*` schema，V1/hash/stale/Recommendation 语义不变；开启时 production runtime 固定 `migrationMode: 'validate'`，schema 缺失或初始化失败稳定拒绝启动。`apply` 仅开放给非 production 且携带显式确认常量的测试/开发初始化，不进入 OfferFlow migration 或 schema version。两连接保持 `journal_mode=DELETE`；NovaWing 使用 5000ms busy timeout、有限 Store/host 重试，超时统一脱敏为宿主错误。
+- **快照、hash、stale 与推荐：** 开启时从真实 Facade 读取 `global` / `career`，仅投影 `scope/key/assertionType/category/rationale/statement` 与 `coreRevision`，冻结为 V2 并纳入 canonical hash；Context 仍受确定性排序、32 KiB、重复键、scope/revision、JSON 与敏感内容校验。revision 改变后旧分析确定性得到 `nova_wing_context_changed`，RecommendationBatch 按既有 `stale_analysis` 排除且不复制 entries。
+- **DI、错误与生命周期：** 显式 Fake Adapter 始终优先，既不加载真实 infrastructure，也不由 OfferFlow 关闭。真实 runtime 初始化中途失败会关闭已创建资源；Fastify 排空请求后在同一 `onClose` 链中先关闭 NovaWing runtime，再关闭 OfferFlow owned DB；close 可重复调用。稳定错误保留 `NOVA_WING_ADAPTER_REQUIRED`、`NOVA_WING_CONTEXT_UNAVAILABLE`、`NOVA_WING_CONTEXT_INVALID`、`NOVA_WING_CONTEXT_TOO_LARGE`，新增 `NOVA_WING_RUNTIME_INITIALIZATION_FAILED` / `NOVA_WING_RUNTIME_APPLY_NOT_CONFIRMED`，均不回显 SQLite 原文、路径、`nw_*` 表名、堆栈或 Context 正文。
+- **验证：** 新增 package/runtime/双驱动/锁/生命周期边界 16/16；既有 NovaWing Context、Radar contracts/inputSnapshot/service/validity 与 Recommendation 定向回归 118/118；cc-auto 隔离回归 690 passed / 7 skipped；项目全量 2240 passed / 7 skipped；`migration:selftest`、`vue-tsc --noEmit` 与 production build 通过。临时磁盘库证明显式 apply → production validate、真实 V2/hash、revision stale、推荐排除、缺 schema 拒绝、busy 释放/超时和双连接关闭后文件可重命名；静态检查证明精确版本/官方 lock、公共出口、深导入拒绝及无生产 `nw_*` SQL。
+- **边界：** 未修改 UI、审批流程、Prompt 正文、旧 `/api/llm/analyze-job`、cc-auto、OfferFlow schema/migration、NovaWing 仓库或 Snapshot V2；未连接真实业务数据库、未执行真实 Provider 网络或 production migration，未 commit、push、merge、rebase、tag、release 或 publish。
 
 ---
 

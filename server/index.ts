@@ -44,6 +44,11 @@ import { registerSyncRoutes } from './routes/sync';
 import { registerLlmRoutes } from './routes/llm';
 import { createShutdownSnapshotExporter, runStartupSync } from './sync/bootstrap';
 import type { NovaWingHostAdapter } from './radar/analysis/novaWingHostAdapter';
+import {
+  loadNovaWingRuntime,
+  type LoadedNovaWingRuntime,
+  type NovaWingRuntimeHandle,
+} from './novawing/runtimeLoader';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -86,9 +91,11 @@ export interface RadarCapability {
   /** V8-4 单岗位分析 API 门禁：默认关闭，仅显式开启时才注册分析路由（需 radar 已启用 + schema ≥ v7）。 */
   analysisEnabled?: boolean;
   analysisDeps?: RadarAnalysisRouteDeps;
-  /** Default-off host context flag; no adapter is constructed or dynamically loaded by OfferFlow. */
+  /** Default-off host context flag; the real runtime is loaded only by the production entrypoint. */
   novaWingAnalysisContextEnabled?: boolean;
   novaWingHostAdapter?: NovaWingHostAdapter;
+  /** Internally owned real runtime. Explicit adapter injection always wins and is never closed. */
+  novaWingRuntime?: NovaWingRuntimeHandle;
   /** V8-5 推荐批次 API 注入依赖（随 analysisEnabled 同门禁开启）。 */
   recommendationDeps?: RadarRecommendationRouteDeps;
   /** V8-6 正式晋升 API 注入依赖（门禁为 schema ≥ v8，与 analysisEnabled 无关）。 */
@@ -138,6 +145,12 @@ export function buildServer(
   // 明确不启用（前后端 flag 默认 false），仅在显式注入 v7 库的开发/测试场景中开启，
   // 届时才把库升级到 v7；真实库升级与真实入口启用均需用户另行明确授权。
   const radarEnabled = options.radar?.enabled ?? false;
+  const novaWingAnalysisContextEnabled = options.radar?.novaWingAnalysisContextEnabled ?? false;
+  const injectedNovaWingAdapter = options.radar?.novaWingHostAdapter;
+  const ownedNovaWingRuntime = novaWingAnalysisContextEnabled && injectedNovaWingAdapter === undefined
+    ? options.radar?.novaWingRuntime
+    : undefined;
+  const novaWingHostAdapter = injectedNovaWingAdapter ?? ownedNovaWingRuntime?.adapter;
   const shouldRunLifecycleSync = options.db === undefined && dbPath === getDbPath();
   if (shouldRunLifecycleSync) {
     const bootstrap = runStartupSync(dbPath);
@@ -179,7 +192,11 @@ export function buildServer(
       initSchema(db, { targetVersion: plan.targetVersion });
       schemaVersion = getDatabaseSchemaVersion(db);
     } else if (plan.kind === 'refuse') {
-      if (ownsDb) db.close();
+      try {
+        ownedNovaWingRuntime?.close();
+      } finally {
+        if (ownsDb) db.close();
+      }
       throw new Error(schemaRefusalMessage(plan.reason, schemaVersion, requiredVersion, LATEST_SCHEMA_VERSION));
     }
   } else {
@@ -200,13 +217,18 @@ export function buildServer(
   });
 
   app.addHook('onClose', async () => {
-    if (shouldRunLifecycleSync) {
-      exportOnClose();
+    try {
+      if (shouldRunLifecycleSync) {
+        exportOnClose();
+      }
+    } finally {
+      try {
+        // Fastify drains in-flight requests before onClose. Close NovaWing first, then OfferFlow DB.
+        ownedNovaWingRuntime?.close();
+      } finally {
+        if (ownsDb) db.close();
+      }
     }
-  });
-
-  app.addHook('onClose', async () => {
-    if (ownsDb) db.close();
   });
 
   app.get('/health', async () => ({ ok: true }));
@@ -240,8 +262,8 @@ export function buildServer(
         serviceDeps: options.radar?.serviceDeps,
         analysisEnabled: options.radar?.analysisEnabled ?? false,
         analysisDeps: options.radar?.analysisDeps,
-        novaWingAnalysisContextEnabled: options.radar?.novaWingAnalysisContextEnabled ?? false,
-        novaWingHostAdapter: options.radar?.novaWingHostAdapter,
+        novaWingAnalysisContextEnabled,
+        novaWingHostAdapter,
         recommendationDeps: options.radar?.recommendationDeps,
         promotionDeps: options.radar?.promotionDeps,
       });
@@ -313,17 +335,38 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     + `radar=${radarEnabled ? 'ENABLED' : 'DISABLED'} analysis=${radarAnalysisEnabled ? 'ENABLED' : 'DISABLED'} `
     + `novaWingContext=${novaWingAnalysisContextEnabled ? 'ENABLED' : 'DISABLED'}`,
   );
-  const app = buildServer({
-    capabilityBaseline: { enabled: true },
-    historyImport: { enabled: true },
-    marketPosition: { enabled: true },
-    strategyWindow: { enabled: true },
-    radar: radarEnabled ? {
-      enabled: true,
-      analysisEnabled: radarAnalysisEnabled,
-      novaWingAnalysisContextEnabled,
-    } : undefined,
-  });
+  let loadedNovaWing: LoadedNovaWingRuntime | undefined;
+  let app: ReturnType<typeof Fastify>;
+  try {
+    loadedNovaWing = await loadNovaWingRuntime({
+      enabled: radarEnabled && radarAnalysisEnabled && novaWingAnalysisContextEnabled,
+      databasePath: realDbPath,
+    });
+    app = buildServer({
+      capabilityBaseline: { enabled: true },
+      historyImport: { enabled: true },
+      marketPosition: { enabled: true },
+      strategyWindow: { enabled: true },
+      radar: radarEnabled ? {
+        enabled: true,
+        analysisEnabled: radarAnalysisEnabled,
+        novaWingAnalysisContextEnabled,
+        // A real handle is owned by Fastify; only externally injected adapters use this slot.
+        novaWingHostAdapter: loadedNovaWing.ownedRuntime === undefined
+          ? loadedNovaWing.adapter
+          : undefined,
+        novaWingRuntime: loadedNovaWing.ownedRuntime,
+      } : undefined,
+    });
+  } catch (error) {
+    loadedNovaWing?.ownedRuntime?.close();
+    if (error instanceof Error && error.name === 'NovaWingRuntimeError') {
+      console.error(`[novawing] ${error.message}`);
+    } else {
+      console.error(error);
+    }
+    process.exit(1);
+  }
   let isClosing = false;
   const closeAndExit = (signal: NodeJS.Signals): void => {
     if (isClosing) {
