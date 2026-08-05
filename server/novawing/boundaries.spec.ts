@@ -45,17 +45,23 @@ describe('NovaWing package and SQL boundaries', () => {
     expect(hostSnapshot.createHostSnapshotV3Manifest).toBeTypeOf('function');
   });
 
-  it('keeps production code on public exports with no testing import or nw_* SQL', () => {
+  it('keeps normal runtime free of nw_* SQL and confines lifecycle SQL to Snapshot V3 infrastructure', () => {
     const productionFiles = walk(path.join(root, 'server'))
       .filter((file) => file.endsWith('.ts'))
       .filter((file) => !file.endsWith('.spec.ts') && !file.endsWith('.specHelper.ts'));
     const source = productionFiles.map((file) => ({ file, text: fs.readFileSync(file, 'utf8') }));
     expect(source.filter(({ text }) => /@weijianjunwjj\/nova-wing\/(?:dist|testing)/.test(text))).toEqual([]);
-    expect(source.filter(({ text }) => /\bnw_[a-z0-9_]*\b/i.test(text))).toEqual([]);
+    const snapshotV3Root = path.join(root, 'server', 'snapshot', 'v3') + path.sep;
+    const normalRuntime = source.filter(({ file }) => !file.startsWith(snapshotV3Root));
+    expect(normalRuntime.filter(({ text }) => /\bnw_[a-z0-9_]*\b/i.test(text))).toEqual([]);
     expect(
-      source.filter(({ text }) => text.includes("from 'node:sqlite'"))
+      normalRuntime.filter(({ text }) => text.includes("from 'node:sqlite'"))
         .map(({ file }) => path.relative(root, file).split('\\').join('/')),
     ).toEqual(['server/novawing/infrastructure.ts']);
+    expect(
+      source.filter(({ file, text }) => file.startsWith(snapshotV3Root) && /\bnw_[a-z0-9_]*\b/i.test(text))
+        .map(({ file }) => path.relative(root, file).split('\\').join('/')),
+    ).toEqual(['server/snapshot/v3/bootstrap.ts']);
   });
 
   it('rejects a deep package import at Node resolution time', () => {

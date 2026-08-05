@@ -103,13 +103,22 @@ RC-04 作为整体用户结果标记 **Done**：V8-1/V8-2 的实现、自动测�
 
 ### 1.6 NovaWing 宿主契约与真实只读 Runtime Adapter（2026-08-05）
 
-- **状态：** `IMPLEMENTED / DEFAULT OFF / REAL RUNTIME`。OfferFlow 以正式 GitHub Packages 来源精确安装 `@weijianjunwjj/nova-wing@0.1.0`；项目 `.npmrc` 仅保存 scope registry 映射，lockfile 固定官方 `resolved` 与 `integrity`。生产代码只使用 `core` / `sqlite` 公共出口，不导入 `testing` 或内部 `dist` 路径；`host-snapshot` 公共出口仅做可导入性验收，本切片不实现 Snapshot V3。
+- **状态：** `IMPLEMENTED / DEFAULT OFF / REAL RUNTIME`。OfferFlow 以正式 GitHub Packages 来源精确安装 `@weijianjunwjj/nova-wing@0.1.0`；项目 `.npmrc` 仅保存 scope registry 映射，lockfile 固定官方 `resolved` 与 `integrity`。生产代码只使用 `core` / `sqlite` / `host-snapshot` 公共出口，不导入 `testing` 或内部 `dist` 路径；Host Snapshot V3 离线生命周期见 §1.7。
 - **唯一运行架构：** `AnalysisService → OfferFlow NovaWingHostAdapter → NovaWing Runtime Adapter → NovaWingFacade → SqliteNovaWingStore → nw_*`。OfferFlow 与 NovaWing 指向同一 SQLite 文件，但分别拥有 `better-sqlite3` 与 `node:sqlite DatabaseSync` 独立连接；连接、Store、Facade 不暴露到业务层，OfferFlow 生产代码不执行 `nw_*` SQL，也不在 OfferFlow transaction 回调内调用 NovaWing。
 - **Feature / migration / locking：** `OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT` 关闭时在动态加载基础设施前返回，不创建连接、不检查 `nw_*` schema，V1/hash/stale/Recommendation 语义不变；开启时 production runtime 固定 `migrationMode: 'validate'`，schema 缺失或初始化失败稳定拒绝启动。`apply` 仅开放给非 production 且携带显式确认常量的测试/开发初始化，不进入 OfferFlow migration 或 schema version。两连接保持 `journal_mode=DELETE`；NovaWing 使用 5000ms busy timeout、有限 Store/host 重试，超时统一脱敏为宿主错误。
 - **快照、hash、stale 与推荐：** 开启时从真实 Facade 读取 `global` / `career`，仅投影 `scope/key/assertionType/category/rationale/statement` 与 `coreRevision`，冻结为 V2 并纳入 canonical hash；Context 仍受确定性排序、32 KiB、重复键、scope/revision、JSON 与敏感内容校验。revision 改变后旧分析确定性得到 `nova_wing_context_changed`，RecommendationBatch 按既有 `stale_analysis` 排除且不复制 entries。
 - **DI、错误与生命周期：** 显式 Fake Adapter 始终优先，既不加载真实 infrastructure，也不由 OfferFlow 关闭。真实 runtime 初始化中途失败会关闭已创建资源；Fastify 排空请求后在同一 `onClose` 链中先关闭 NovaWing runtime，再关闭 OfferFlow owned DB；close 可重复调用。稳定错误保留 `NOVA_WING_ADAPTER_REQUIRED`、`NOVA_WING_CONTEXT_UNAVAILABLE`、`NOVA_WING_CONTEXT_INVALID`、`NOVA_WING_CONTEXT_TOO_LARGE`，新增 `NOVA_WING_RUNTIME_INITIALIZATION_FAILED` / `NOVA_WING_RUNTIME_APPLY_NOT_CONFIRMED`，均不回显 SQLite 原文、路径、`nw_*` 表名、堆栈或 Context 正文。
 - **验证：** 新增 package/runtime/双驱动/锁/生命周期边界 16/16；既有 NovaWing Context、Radar contracts/inputSnapshot/service/validity 与 Recommendation 定向回归 118/118；cc-auto 隔离回归 690 passed / 7 skipped；项目全量 2240 passed / 7 skipped；`migration:selftest`、`vue-tsc --noEmit` 与 production build 通过。临时磁盘库证明显式 apply → production validate、真实 V2/hash、revision stale、推荐排除、缺 schema 拒绝、busy 释放/超时和双连接关闭后文件可重命名；静态检查证明精确版本/官方 lock、公共出口、深导入拒绝及无生产 `nw_*` SQL。
 - **边界：** 未修改 UI、审批流程、Prompt 正文、旧 `/api/llm/analyze-job`、cc-auto、OfferFlow schema/migration、NovaWing 仓库或 Snapshot V2；未连接真实业务数据库、未执行真实 Provider 网络或 production migration，未 commit、push、merge、rebase、tag、release 或 publish。
+
+### 1.7 Host Snapshot V3 与离线 NovaWing bootstrap/恢复候选库（2026-08-05）
+
+- **状态：** `IMPLEMENTED / OFFLINE ONLY / CANDIDATE ONLY`。新增稳定 `offerflow` + 正式包 `novawing` 双组件 Host Snapshot V3；schema v8 的 38 张 OfferFlow 表均完成分类，35 张纳入、`schema_migrations` / `import_logs` / `radar_rule_assessments` 按明确理由排除。完整审计见 `docs/technical/offerflow-host-snapshot-v3-table-classification.md`。
+- **一致性与原子性：** 导出要求服务和业务连接离线；专用双驱动连接在同一 SQLite 文件上，以 OfferFlow `BEGIN IMMEDIATE` 阻止外部写入并形成 point-in-time 边界。数据/manifest 在 staging 目录写入并完整回读验证后才以目录 rename 发布；失败不留半份输出，V3 使用独立文件名，不覆盖 V2。
+- **V2 兼容：** V2 七表行为和 loader 保持；新输出显式标记 `offerflow-core-v2`、`novaWingIncluded=false`、`completeHostBackup=false`。feature 开启或存在 NovaWing 数据时明确警告 V2 不是完整 Host 备份；V3 不接受 V2，也不制造空 NovaWing component。
+- **bootstrap / restore：** `novawing:bootstrap` 只接受显式路径、离线确认、schema v8 和 DELETE journal，只调用正式包公共 migration apply，正常 Runtime 仍 validate-only。恢复只创建全新候选库，顺序为两套 schema bootstrap → 两组件数据 → integrity/FK → 组件/Host 校验 → 正常 Runtime 双连接读取 → 关闭/rename 探针；失败删除候选和报告。
+- **安全与边界：** 快照命中凭证、provider key、环境变量或绝对路径时停止，不静默删改权威数据；CLI/报告/稳定错误不输出路径、SQL、SQLite 原文或正文。未实现或执行正式数据库替换，未接触真实数据库，未修改 feature 默认值、UI、Prompt、Provider、审批或 cc-auto。
+- **验证：** Host Snapshot V3 定向 25/25；V2 + NovaWing 双驱动 + Radar/Recommendation + cc-auto 定向 989 passed / 7 skipped；项目全量单 worker 2265 passed / 7 skipped；`migration:selftest`、TypeScript typecheck、production build、architecture check（0 error）与 `git diff --check` 通过。并发全量曾两次在未修改的 cc-auto 测试目录触发 Windows 临时文件 rename `EPERM`，对应 spec 隔离 39/39、全量单 worker 均通过。
 
 ---
 

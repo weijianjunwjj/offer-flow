@@ -19,6 +19,7 @@ import type {
   SnapshotTable,
   SyncTableName,
 } from '../sync/types';
+import { SNAPSHOT_V2_COVERAGE, type SnapshotV2Coverage } from '../sync/types';
 import { runLegacyBackfill, type LegacyBackfillSummary } from '../job-memory/upgrade/legacyBackfill';
 import { assertNoSymbolicLinks, isPathInside } from '../job-memory/upgrade/pathSafety';
 
@@ -41,6 +42,7 @@ export interface OfferFlowSnapshotV2 {
   exportedAt: string;
   deviceId: string;
   appVersion: string;
+  coverage?: SnapshotV2Coverage;
   tables: Record<SnapshotV2TableName, SnapshotTable>;
 }
 
@@ -50,6 +52,7 @@ export interface SnapshotManifestV2 {
   exportedAt: string;
   deviceId: string;
   appVersion: string;
+  coverage?: SnapshotV2Coverage;
   snapshotHash: string;
   tableCounts: Record<SnapshotV2TableName, number>;
 }
@@ -183,6 +186,7 @@ export function exportSnapshotV2(contextInput: ExplicitSnapshotV2Context): Snaps
       exportedAt,
       deviceId,
       appVersion,
+      coverage: SNAPSHOT_V2_COVERAGE,
       tables,
     };
     const snapshotHash = sha256Hex(toStableJson(snapshot));
@@ -195,6 +199,7 @@ export function exportSnapshotV2(contextInput: ExplicitSnapshotV2Context): Snaps
       exportedAt,
       deviceId,
       appVersion,
+      coverage: SNAPSHOT_V2_COVERAGE,
       snapshotHash,
       tableCounts,
     } satisfies SnapshotManifestV2);

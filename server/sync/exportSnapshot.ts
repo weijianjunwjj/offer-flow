@@ -15,6 +15,7 @@ import { ensureSyncDirs, getSyncPaths } from './paths';
 import { listExistingSyncTables, readSnapshotTable } from './tables';
 import {
   SNAPSHOT_SCHEMA_VERSION,
+  SNAPSHOT_V2_COVERAGE,
   type ExportSnapshotResult,
   type OfferFlowSnapshot,
   type SnapshotManifest,
@@ -132,6 +133,7 @@ export function exportSnapshotToDirectory(
       exportedAt,
       deviceId,
       appVersion,
+      coverage: SNAPSHOT_V2_COVERAGE,
       tables,
     };
     const snapshotJson = toStableJson(snapshot);
@@ -146,6 +148,7 @@ export function exportSnapshotToDirectory(
       exportedAt,
       deviceId,
       appVersion,
+      coverage: SNAPSHOT_V2_COVERAGE,
       snapshotHash,
       tableCounts,
     };

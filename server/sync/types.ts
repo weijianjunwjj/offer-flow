@@ -38,6 +38,7 @@ export interface OfferFlowSnapshot {
   exportedAt: string;
   deviceId: string;
   appVersion: string;
+  coverage?: SnapshotV2Coverage;
   tables: Partial<Record<SyncTableName, SnapshotTable>>;
 }
 
@@ -47,8 +48,35 @@ export interface SnapshotManifest {
   exportedAt: string;
   deviceId: string;
   appVersion: string;
+  coverage?: SnapshotV2Coverage;
   snapshotHash: string;
   tableCounts: Partial<Record<SyncTableName, number>>;
+}
+
+/** V2 is intentionally a seven-table sync projection, never a complete host backup. */
+export interface SnapshotV2Coverage {
+  scope: 'offerflow-core-v2';
+  novaWingIncluded: false;
+  completeHostBackup: false;
+}
+
+export const SNAPSHOT_V2_COVERAGE: SnapshotV2Coverage = Object.freeze({
+  scope: 'offerflow-core-v2',
+  novaWingIncluded: false,
+  completeHostBackup: false,
+});
+
+export function describeSnapshotV2Coverage(input: {
+  novaWingFeatureEnabled: boolean;
+  novaWingDataPresent: boolean;
+}): SnapshotV2Coverage & { warning: string | null } {
+  const incompleteForNovaWing = input.novaWingFeatureEnabled || input.novaWingDataPresent;
+  return {
+    ...SNAPSHOT_V2_COVERAGE,
+    warning: incompleteForNovaWing
+      ? 'Snapshot V2 不包含 NovaWing 数据，不能作为完整 Host 备份或 NovaWing 恢复来源'
+      : null,
+  };
 }
 
 export interface LegacyOfferFlowSnapshotV1 {
