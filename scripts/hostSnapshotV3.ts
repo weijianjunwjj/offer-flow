@@ -16,6 +16,31 @@ import { HostSnapshotV3Error } from '../server/snapshot/v3/errors';
 
 type Command = 'export' | 'verify' | 'restore-candidate' | 'bootstrap' | 'help';
 
+export const HOST_SNAPSHOT_V3_CLI_LIMITS = Object.freeze({
+  maxArgumentCount: 32,
+  maxArgumentLength: 4_096,
+  maxTotalLength: 16_384,
+});
+
+const COMMAND_OPTIONS = Object.freeze({
+  export: {
+    values: ['--database', '--output', '--work-dir', '--workspace', '--confirm'],
+    dryRun: true,
+  },
+  verify: { values: ['--snapshot'], dryRun: false },
+  'restore-candidate': {
+    values: ['--snapshot', '--candidate', '--work-dir', '--workspace', '--confirm'],
+    dryRun: true,
+  },
+  bootstrap: { values: ['--database', '--confirm'], dryRun: true },
+} as const);
+
+export interface ParsedHostSnapshotV3Arguments {
+  command: Command;
+  values: ReadonlyMap<string, string>;
+  dryRun: boolean;
+}
+
 function usage(): string {
   return [
     'Host Snapshot V3（仅离线、显式路径）',
@@ -23,66 +48,90 @@ function usage(): string {
     '  verify --snapshot <dir>',
     '  restore-candidate --snapshot <dir> --candidate <new-file> --work-dir <dir> --workspace <repo> --confirm RESTORE_HOST_SNAPSHOT_V3_TO_NEW_CANDIDATE [--dry-run]',
     '  bootstrap --database <file> --confirm BOOTSTRAP_NOVAWING_SCHEMA_OFFLINE [--dry-run]',
+    '',
+    '所有路径必须是调用方提供的 Windows 本地绝对路径；不读取环境变量或 cwd 默认值。',
+    '输出的直接父目录必须已存在，命令不会自动创建调用方指定的父目录。',
   ].join('\n');
 }
 
-function parseArguments(argv: readonly string[]): {
-  command: Command;
-  values: ReadonlyMap<string, string>;
-  dryRun: boolean;
-} {
+function cliError(code: 'HOST_SNAPSHOT_V3_CLI_ARGUMENT_INVALID' | 'HOST_SNAPSHOT_V3_CLI_ARGUMENT_LIMIT_EXCEEDED', message: string): never {
+  throw new HostSnapshotV3Error(code, message);
+}
+
+function assertArgumentLimits(argv: readonly string[]): void {
+  if (argv.length > HOST_SNAPSHOT_V3_CLI_LIMITS.maxArgumentCount) {
+    cliError('HOST_SNAPSHOT_V3_CLI_ARGUMENT_LIMIT_EXCEEDED', 'CLI 参数数量超过安全上限');
+  }
+  let totalLength = 0;
+  for (const argument of argv) {
+    if (argument.length > HOST_SNAPSHOT_V3_CLI_LIMITS.maxArgumentLength) {
+      cliError('HOST_SNAPSHOT_V3_CLI_ARGUMENT_LIMIT_EXCEEDED', 'CLI 单参数长度超过安全上限');
+    }
+    if (/[\u0000-\u001f\u007f]/u.test(argument)) {
+      cliError('HOST_SNAPSHOT_V3_CLI_ARGUMENT_INVALID', 'CLI 参数包含危险控制字符');
+    }
+    totalLength += argument.length;
+  }
+  if (totalLength > HOST_SNAPSHOT_V3_CLI_LIMITS.maxTotalLength) {
+    cliError('HOST_SNAPSHOT_V3_CLI_ARGUMENT_LIMIT_EXCEEDED', 'CLI 参数总长度超过安全上限');
+  }
+}
+
+function invalidPosition(position: number): never {
+  cliError('HOST_SNAPSHOT_V3_CLI_ARGUMENT_INVALID', `CLI 参数格式非法（位置 ${position}）`);
+}
+
+export function parseHostSnapshotV3Arguments(argv: readonly string[]): ParsedHostSnapshotV3Arguments {
+  assertArgumentLimits(argv);
+  if (argv.length === 0) return { command: 'help', values: new Map(), dryRun: false };
   const command = argv[0];
   if (command === '--help' || command === '-h' || command === 'help') {
-    if (argv.length !== 1) throw new Error('help 不接受其它参数');
+    if (argv.length !== 1) invalidPosition(1);
     return { command: 'help', values: new Map(), dryRun: false };
   }
+  if (!(command in COMMAND_OPTIONS)) invalidPosition(0);
+  const knownCommand = command as keyof typeof COMMAND_OPTIONS;
   if (argv.length === 2 && (argv[1] === '--help' || argv[1] === '-h')) {
     return { command: 'help', values: new Map(), dryRun: false };
   }
-  if (command !== 'export' && command !== 'verify' && command !== 'restore-candidate' && command !== 'bootstrap') {
-    throw new Error(usage());
-  }
+  const definition = COMMAND_OPTIONS[knownCommand];
+  const allowed = new Set<string>(definition.values);
   const values = new Map<string, string>();
   let dryRun = false;
   for (let index = 1; index < argv.length; index += 1) {
     const token = argv[index]!;
     if (token === '--dry-run') {
-      if (dryRun) throw new Error('参数 --dry-run 不得重复');
+      if (!definition.dryRun || dryRun) invalidPosition(index);
       dryRun = true;
       continue;
     }
-    if (!token.startsWith('--')) throw new Error('只接受具名参数');
+    if (token.startsWith('--dry-run=')) invalidPosition(index);
+    if (!allowed.has(token) || values.has(token)) invalidPosition(index);
     const value = argv[index + 1];
-    if (value === undefined || value.startsWith('--') || values.has(token)) {
-      throw new Error(`参数无值或重复：${token}`);
+    if (value === undefined || allowed.has(value) || value === '--dry-run' || value === '--help' || value === '-h') {
+      invalidPosition(index);
     }
     values.set(token, value);
     index += 1;
   }
-  return { command: command as Command, values, dryRun };
+  if (values.size !== definition.values.length) invalidPosition(argv.length);
+  return { command: knownCommand, values, dryRun };
 }
 
 function required(values: ReadonlyMap<string, string>, key: string): string {
   const value = values.get(key);
-  if (value === undefined || value.trim() === '') throw new Error(`缺少参数：${key}`);
+  if (value === undefined || value.trim() === '') {
+    throw new HostSnapshotV3Error('HOST_SNAPSHOT_V3_CLI_ARGUMENT_INVALID', 'CLI 缺少必需参数值');
+  }
   return value;
 }
 
-function assertExactKeys(values: ReadonlyMap<string, string>, expected: readonly string[]): void {
-  const allowed = new Set(expected);
-  const unknown = [...values.keys()].filter((key) => !allowed.has(key));
-  if (unknown.length > 0) throw new Error(`未知参数：${unknown.join(', ')}`);
-  for (const key of expected) required(values, key);
-}
-
 export function runHostSnapshotV3Cli(argv: readonly string[]): unknown {
-  const parsed = parseArguments(argv);
+  const parsed = parseHostSnapshotV3Arguments(argv);
   switch (parsed.command) {
     case 'help':
       return { usage: usage() };
     case 'export': {
-      const keys = ['--database', '--output', '--work-dir', '--workspace', '--confirm'] as const;
-      assertExactKeys(parsed.values, keys);
       return exportHostSnapshotV3({
         databasePath: required(parsed.values, '--database'),
         outputDirectory: required(parsed.values, '--output'),
@@ -93,13 +142,9 @@ export function runHostSnapshotV3Cli(argv: readonly string[]): unknown {
       });
     }
     case 'verify': {
-      assertExactKeys(parsed.values, ['--snapshot']);
-      if (parsed.dryRun) throw new Error('verify 不接受 --dry-run');
       return verifyHostSnapshotV3Directory(required(parsed.values, '--snapshot'));
     }
     case 'restore-candidate': {
-      const keys = ['--snapshot', '--candidate', '--work-dir', '--workspace', '--confirm'] as const;
-      assertExactKeys(parsed.values, keys);
       return restoreHostSnapshotV3ToCandidate({
         snapshotDirectory: required(parsed.values, '--snapshot'),
         candidateDatabasePath: required(parsed.values, '--candidate'),
@@ -110,7 +155,6 @@ export function runHostSnapshotV3Cli(argv: readonly string[]): unknown {
       });
     }
     case 'bootstrap': {
-      assertExactKeys(parsed.values, ['--database', '--confirm']);
       return bootstrapNovaWingOffline({
         databasePath: required(parsed.values, '--database'),
         confirmation: required(parsed.values, '--confirm') as typeof NOVAWING_OFFLINE_BOOTSTRAP_CONFIRMATION,
@@ -126,7 +170,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } catch (error) {
     const safe = error instanceof HostSnapshotV3Error
       ? { code: error.code, message: error.message }
-      : { code: 'HOST_SNAPSHOT_V3_CLI_INVALID', message: error instanceof Error ? error.message : '命令失败' };
+      : { code: 'HOST_SNAPSHOT_V3_CLI_ARGUMENT_INVALID', message: '命令失败' };
     console.error(JSON.stringify(safe, null, 2));
     process.exitCode = 1;
   }

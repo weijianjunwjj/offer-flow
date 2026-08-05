@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import Database from 'better-sqlite3';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -8,9 +6,9 @@ import {
   createInjectedSqliteNovaWingStore,
   inspectNovaWingMigration,
 } from '@weijianjunwjj/nova-wing/sqlite';
-import { assertNoSymbolicLinks } from '../../job-memory/upgrade/pathSafety';
 import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION } from '../../migrations';
 import { HostSnapshotV3Error, hostSnapshotError } from './errors';
+import { validateExistingInputFile } from './pathSafety';
 
 export const NOVAWING_OFFLINE_BOOTSTRAP_CONFIRMATION =
   'BOOTSTRAP_NOVAWING_SCHEMA_OFFLINE' as const;
@@ -30,15 +28,7 @@ export interface OfflineNovaWingBootstrapReport {
 }
 
 function resolveDatabasePath(raw: string): string {
-  if (typeof raw !== 'string' || raw.trim() === '') {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'NovaWing bootstrap 需要显式数据库路径');
-  }
-  const databasePath = path.resolve(raw);
-  assertNoSymbolicLinks(databasePath);
-  if (!fs.existsSync(databasePath) || !fs.statSync(databasePath).isFile()) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'NovaWing bootstrap 目标必须是已存在的普通文件');
-  }
-  return databasePath;
+  return validateExistingInputFile(raw).path;
 }
 
 function assertOfferFlowSchema(databasePath: string): void {

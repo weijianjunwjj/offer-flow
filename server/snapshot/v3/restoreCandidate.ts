@@ -3,7 +3,6 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { DatabaseSync } from 'node:sqlite';
 import { verifyRegisteredComponentsAfterRestore } from '@weijianjunwjj/nova-wing/host-snapshot';
-import { assertNoSymbolicLinks, isPathInside } from '../../job-memory/upgrade/pathSafety';
 import { openDb } from '../../db';
 import { initSchema } from '../../schema';
 import { quoteIdent } from '../../sync/tables';
@@ -16,6 +15,12 @@ import {
 } from './bootstrap';
 import { restoreNovaWingComponentData } from './data';
 import { HostSnapshotV3Error, hostSnapshotError } from './errors';
+import {
+  assertNoPathConflict,
+  isPathStrictlyInside,
+  validateExistingInputDirectory,
+  validateNewOutputFile,
+} from './pathSafety';
 import {
   componentDataByName,
   hostSnapshotRegistry,
@@ -51,48 +56,26 @@ interface ResolvedRestorePaths {
 }
 
 function resolveRestorePaths(options: RestoreHostSnapshotV3CandidateOptions): ResolvedRestorePaths {
-  for (const value of [
-    options.snapshotDirectory,
-    options.candidateDatabasePath,
-    options.workingDirectory,
-    options.workspaceDirectory,
-  ]) {
-    if (typeof value !== 'string' || value.trim() === '') {
-      throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', '候选库恢复需要全部显式路径参数');
-    }
+  const snapshot = validateExistingInputDirectory(options.snapshotDirectory);
+  const candidate = validateNewOutputFile(options.candidateDatabasePath);
+  const report = validateNewOutputFile(`${candidate.path}.host-snapshot-v3-report.json`);
+  const working = validateExistingInputDirectory(options.workingDirectory);
+  const workspace = validateExistingInputDirectory(options.workspaceDirectory);
+  if (!fs.existsSync(path.join(workspace.path, '.git'))) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_TYPE_MISMATCH', 'workspace 必须是 Git 工作区');
   }
-  const resolved = {
-    snapshotDirectory: path.resolve(options.snapshotDirectory),
-    candidateDatabasePath: path.resolve(options.candidateDatabasePath),
-    reportPath: `${path.resolve(options.candidateDatabasePath)}.host-snapshot-v3-report.json`,
-    workingDirectory: path.resolve(options.workingDirectory),
-    workspaceDirectory: path.resolve(options.workspaceDirectory),
+  assertNoPathConflict(workspace, working, { rejectOverlap: true });
+  if (!isPathStrictlyInside(working, candidate)) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_CONFLICT', '候选库必须严格位于显式 working directory 内');
+  }
+  assertNoPathConflict(snapshot, candidate, { rejectOverlap: true });
+  return {
+    snapshotDirectory: snapshot.path,
+    candidateDatabasePath: candidate.path,
+    reportPath: report.path,
+    workingDirectory: working.path,
+    workspaceDirectory: workspace.path,
   };
-  if (!fs.existsSync(resolved.workingDirectory) || !fs.statSync(resolved.workingDirectory).isDirectory()) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', '候选库 working directory 必须已经存在');
-  }
-  if (!fs.existsSync(path.join(resolved.workspaceDirectory, '.git'))) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'workspaceDirectory 必须是 OfferFlow Git 工作区');
-  }
-  if (
-    isPathInside(resolved.workspaceDirectory, resolved.workingDirectory)
-    || resolved.workspaceDirectory === resolved.workingDirectory
-  ) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', '候选库 working directory 必须位于源码工作区之外');
-  }
-  if (
-    !isPathInside(resolved.workingDirectory, resolved.candidateDatabasePath)
-    || resolved.workingDirectory === resolved.candidateDatabasePath
-  ) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', '候选库必须位于显式 working directory 内');
-  }
-  if (fs.existsSync(resolved.candidateDatabasePath) || fs.existsSync(resolved.reportPath)) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', '候选库恢复不覆盖已有文件或报告');
-  }
-  assertNoSymbolicLinks(resolved.snapshotDirectory);
-  assertNoSymbolicLinks(resolved.workingDirectory);
-  assertNoSymbolicLinks(resolved.candidateDatabasePath);
-  return resolved;
 }
 
 function sqliteValue(value: unknown): string | number | bigint | Buffer | null {
@@ -260,7 +243,6 @@ export function restoreHostSnapshotV3ToCandidate(
   }
 
   try {
-    fs.mkdirSync(path.dirname(paths.candidateDatabasePath), { recursive: true });
     const candidate = openDb(paths.candidateDatabasePath);
     try {
       initSchema(candidate, { targetVersion: verified.manifest.host.schemaVersion });

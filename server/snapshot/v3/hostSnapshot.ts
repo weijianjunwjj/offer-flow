@@ -16,11 +16,19 @@ import {
   validateNovaWingSnapshotManifest,
   verifyNovaWingBeforeSnapshotExport,
 } from '@weijianjunwjj/nova-wing/sqlite';
-import { assertNoSymbolicLinks, isPathInside } from '../../job-memory/upgrade/pathSafety';
 import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION } from '../../migrations';
 import { readAppVersion } from '../../sync/appVersion';
 import { atomicWriteJson } from '../../sync/hash';
 import { HostSnapshotV3Error, hostSnapshotError } from './errors';
+import {
+  assertNoPathConflict,
+  assertSnapshotMemberRegularFile,
+  isPathStrictlyInside,
+  readSnapshotMemberUtf8,
+  validateExistingInputDirectory,
+  validateExistingInputFile,
+  validateNewOutputDirectory,
+} from './pathSafety';
 import {
   assertComponentData,
   assertSnapshotDataSafety,
@@ -83,45 +91,24 @@ function createRegistry(): HostSnapshotRegistry {
 }
 
 function resolveExportPaths(options: HostSnapshotV3ExportOptions): ResolvedExportPaths {
-  for (const value of [options.databasePath, options.outputDirectory, options.workingDirectory, options.workspaceDirectory]) {
-    if (typeof value !== 'string' || value.trim() === '') {
-      throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 需要全部显式路径参数');
-    }
+  const database = validateExistingInputFile(options.databasePath);
+  const output = validateNewOutputDirectory(options.outputDirectory);
+  const working = validateExistingInputDirectory(options.workingDirectory);
+  const workspace = validateExistingInputDirectory(options.workspaceDirectory);
+  if (!fs.existsSync(path.join(workspace.path, '.git'))) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_TYPE_MISMATCH', 'workspace 必须是 Git 工作区');
   }
-  const resolved: ResolvedExportPaths = {
-    databasePath: path.resolve(options.databasePath),
-    outputDirectory: path.resolve(options.outputDirectory),
-    workingDirectory: path.resolve(options.workingDirectory),
-    workspaceDirectory: path.resolve(options.workspaceDirectory),
+  assertNoPathConflict(workspace, working, { rejectOverlap: true });
+  if (!isPathStrictlyInside(working, output)) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_CONFLICT', '输出必须严格位于显式 working directory 内');
+  }
+  assertNoPathConflict(database, output, { rejectOverlap: true });
+  return {
+    databasePath: database.path,
+    outputDirectory: output.path,
+    workingDirectory: working.path,
+    workspaceDirectory: workspace.path,
   };
-  if (!fs.existsSync(resolved.databasePath) || !fs.statSync(resolved.databasePath).isFile()) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 源必须是已存在的普通数据库文件');
-  }
-  if (!fs.existsSync(resolved.workingDirectory) || !fs.statSync(resolved.workingDirectory).isDirectory()) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 working directory 必须已存在');
-  }
-  if (!fs.existsSync(path.join(resolved.workspaceDirectory, '.git'))) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'workspaceDirectory 必须是 OfferFlow Git 工作区');
-  }
-  if (
-    isPathInside(resolved.workspaceDirectory, resolved.workingDirectory)
-    || resolved.workspaceDirectory === resolved.workingDirectory
-  ) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 工作目录必须位于源码工作区之外');
-  }
-  if (
-    !isPathInside(resolved.workingDirectory, resolved.outputDirectory)
-    || resolved.workingDirectory === resolved.outputDirectory
-  ) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 输出必须位于显式工作目录内');
-  }
-  if (fs.existsSync(resolved.outputDirectory)) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 不覆盖已有输出目录');
-  }
-  assertNoSymbolicLinks(resolved.databasePath);
-  assertNoSymbolicLinks(resolved.workingDirectory);
-  assertNoSymbolicLinks(resolved.outputDirectory);
-  return resolved;
 }
 
 function assertDeleteJournalBetter(db: Database.Database): void {
@@ -316,32 +303,27 @@ function parseHostData(value: unknown): HostSnapshotV3Data {
   };
 }
 
-function readJson(filePath: string): unknown {
+function parseJson(content: string): unknown {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+    return JSON.parse(content) as unknown;
   } catch {
     throw hostSnapshotError('HOST_SNAPSHOT_V3_INVALID', 'Host Snapshot V3 文件无法解析');
   }
 }
 
 export function readAndVerifyHostSnapshotV3(snapshotDirectoryRaw: string): VerifiedHostSnapshotV3 {
-  if (typeof snapshotDirectoryRaw !== 'string' || snapshotDirectoryRaw.trim() === '') {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 需要显式目录');
-  }
-  const snapshotDirectory = path.resolve(snapshotDirectoryRaw);
-  assertNoSymbolicLinks(snapshotDirectory);
-  if (!fs.existsSync(snapshotDirectory) || !fs.statSync(snapshotDirectory).isDirectory()) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_PATH_INVALID', 'Host Snapshot V3 目录不存在');
-  }
-  const dataPath = path.join(snapshotDirectory, HOST_SNAPSHOT_V3_DATA_FILE);
-  const manifestPath = path.join(snapshotDirectory, HOST_SNAPSHOT_V3_MANIFEST_FILE);
-  if (!fs.existsSync(dataPath) || !fs.existsSync(manifestPath)) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_INVALID', 'Host Snapshot V3 data/manifest 必须同时存在');
-  }
+  const snapshotDirectory = validateExistingInputDirectory(snapshotDirectoryRaw);
+  // Validate both physical members before either is parsed. Each read then opens a
+  // descriptor and rechecks identity before and after reading to narrow replacement races.
+  assertSnapshotMemberRegularFile(snapshotDirectory, HOST_SNAPSHOT_V3_DATA_FILE);
+  assertSnapshotMemberRegularFile(snapshotDirectory, HOST_SNAPSHOT_V3_MANIFEST_FILE);
   try {
-    const data = parseHostData(readJson(dataPath));
+    const data = parseHostData(parseJson(readSnapshotMemberUtf8(snapshotDirectory, HOST_SNAPSHOT_V3_DATA_FILE)));
     const registry = createRegistry();
-    const manifest = validateRegisteredHostSnapshotManifest(readJson(manifestPath), registry);
+    const manifest = validateRegisteredHostSnapshotManifest(
+      parseJson(readSnapshotMemberUtf8(snapshotDirectory, HOST_SNAPSHOT_V3_MANIFEST_FILE)),
+      registry,
+    );
     if (
       data.hostManifestDigest !== manifest.manifestDigest
       || data.createdAt !== manifest.createdAt
@@ -405,7 +387,6 @@ export function exportHostSnapshotV3(options: HostSnapshotV3ExportOptions): Host
     if (options.dryRun) return report;
 
     const outputParent = path.dirname(paths.outputDirectory);
-    fs.mkdirSync(outputParent, { recursive: true });
     const stagingDirectory = fs.mkdtempSync(path.join(outputParent, '.host-snapshot-v3-stage-'));
     try {
       atomicWriteJson(path.join(stagingDirectory, HOST_SNAPSHOT_V3_DATA_FILE), snapshot.data);

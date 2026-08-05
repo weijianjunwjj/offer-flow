@@ -506,7 +506,7 @@ describe('离线 NovaWing bootstrap', () => {
     })).toThrowError(expect.objectContaining({ code: 'HOST_SNAPSHOT_V3_CONFIRMATION_REQUIRED' }));
     expect(() => bootstrapNovaWingOffline({
       databasePath: '', confirmation: NOVAWING_OFFLINE_BOOTSTRAP_CONFIRMATION,
-    })).toThrowError(expect.objectContaining({ code: 'HOST_SNAPSHOT_V3_PATH_INVALID' }));
+    })).toThrowError(expect.objectContaining({ code: 'HOST_SNAPSHOT_V3_PATH_ABSOLUTE_REQUIRED' }));
     expect(() => bootstrapNovaWingOffline({
       databasePath, confirmation: NOVAWING_OFFLINE_BOOTSTRAP_CONFIRMATION,
     })).toThrowError(expect.objectContaining({ code: 'HOST_SNAPSHOT_V3_SCHEMA_MISMATCH' }));
@@ -604,7 +604,12 @@ describe('Host Snapshot V3 restore candidate', () => {
     expect(fs.existsSync(candidatePath)).toBe(false);
     expect(runHostSnapshotV3Cli(['--help'])).toEqual(expect.objectContaining({ usage: expect.stringContaining('restore-candidate') }));
     expect(runHostSnapshotV3Cli(['verify', '--help'])).toEqual(expect.objectContaining({ usage: expect.stringContaining('verify') }));
-    expect(() => runHostSnapshotV3Cli(['verify', '--snapshot', fixture.snapshotDirectory, '--unknown', 'x'])).toThrow('未知参数');
+    expect(() => runHostSnapshotV3Cli([
+      'verify', '--snapshot', fixture.snapshotDirectory, '--unknown', 'x',
+    ])).toThrowError(expect.objectContaining({
+      code: 'HOST_SNAPSHOT_V3_CLI_ARGUMENT_INVALID',
+      message: 'CLI 参数格式非法（位置 3）',
+    }));
   });
 
   it.each([

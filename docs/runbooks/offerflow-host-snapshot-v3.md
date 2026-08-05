@@ -9,6 +9,19 @@
 3. 所有路径必须手工提供；命令没有 production 默认路径。
 4. 数据库必须为 schema v8、`journal_mode=DELETE`；不得切换 WAL。
 
+## CLI 参数与 Windows 路径安全门
+
+- 无命令、`help`、`--help`、`-h`，以及合法命令后的单独 `--help` / `-h` 才成功显示帮助；未知命令即使携带 `--help` 也拒绝。
+- CLI 最多接受 32 个参数；单参数最多 4096 个 UTF-16 code unit；全部参数合计最多 16384 个。NUL、换行、其它 C0 控制字符和 DEL 均拒绝。
+- 重复参数、缺失值、多余位置参数、未知参数、`--dry-run=<value>` 等非法布尔形式均稳定拒绝。错误只报告安全的位置，不回显未知参数、路径或其后续值。
+- 所有路径必须由调用方提供为带盘符的 Windows 本地绝对路径。命令不读取 `OFFERFLOW_DB_PATH`，不从 cwd、仓库或默认配置推导数据库路径。
+- 相对路径、`.` / `..` 节点、纯空白、UNC/network path、`\\?\` / `\\.\` device namespace、盘符根目录、控制字符、尾随点/空格、Windows 保留设备名、alternate data stream 语法，以及 `-journal` / `-wal` / `-shm` SQLite sidecar 均拒绝。
+- 已存在输入逐节点使用 `lstat` 检查可识别的 symlink/junction，再使用 `realpath` 形成 canonical 路径并核对文件/目录类型。Windows 路径比较不区分大小写。
+- 新输出必须不存在，直接父目录必须已存在且通过相同节点/`realpath` 检查；候选 canonical 路径由真实父目录加最终 basename 构造。CLI 不执行 `mkdir -p`，`--dry-run` 也执行完整路径校验但不创建文件。
+- source/target canonical 相同、仅大小写不同、规范化后相同或发生危险父子重叠时拒绝。snapshot 输出不得与数据库输入重叠；候选库不得位于 snapshot 内。
+
+稳定错误码区分参数格式、参数上限、必须绝对、类型不匹配、危险 Windows 路径、链接/junction、路径冲突、输出已存在、父目录不存在和 snapshot 成员非普通文件。错误不包含绝对路径、未知参数原文、SQLite 原始错误、环境变量或文件正文。
+
 先用 `--dry-run` 验证参数和契约：
 
 ```text
@@ -28,6 +41,10 @@ npm run snapshot:v3:verify -- --snapshot <snapshot-dir>
 
 - `offerflow-host.snapshot.v3.json`
 - `offerflow-host.manifest.v3.json`
+
+当前 V3 的 `offerflow` 与 `novawing` 组件数据内嵌于 data 文件，没有独立组件文件。data 与 manifest 都必须是 snapshot 目录内的实际普通文件；目录冒充文件、symlink、junction 和检查后被明显替换均拒绝。读取时使用文件描述符，并在读取前后比较路径对象与句柄对象的 identity/size/time 元数据，以缩短检查与读取窗口。
+
+剩余限制：Node 当前 API 将 symlink 和 Windows junction 暴露为 symbolic link，但不能可靠区分或识别所有其他 reparse tag；本实现不声称完整覆盖所有 reparse point。文件描述符复核缩短了成员 TOCTOU 窗口，但目录父链与尚不存在输出的最终发布仍不是句柄相对操作。下一阶段若要进一步收紧，应使用 Windows handle-relative open、禁止 reparse 的原生打开选项和基于已打开目录句柄的发布/rename 方案。
 
 不得把 V2 的 `offerflow.snapshot.json` / `offerflow.manifest.json` 当作 V3；V3 loader 不接受 V2，也不会生成虚假空 NovaWing component。
 
