@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { HostSnapshotV3Error, hostSnapshotError } from './errors';
+import type { RestoreCandidatePhaseObserver } from './restorePhases';
 
 export const RESTORE_ARTIFACT_CLEANUP_POLICY = Object.freeze({
   maxAttempts: 3,
@@ -285,6 +286,8 @@ export interface RestoreArtifactControllerOptions {
   reportPath: string;
   runId: string;
   io?: RestoreArtifactIo;
+  /** Test-only phase observer; the formal CLI never supplies this. */
+  onPhase?: RestoreCandidatePhaseObserver;
 }
 
 function assertSafeRunId(runId: string): void {
@@ -321,6 +324,10 @@ export class RestoreArtifactController {
       path.dirname(options.reportPath),
       `.offerflow-host-v3-${options.runId}.report.tmp`,
     );
+  }
+
+  private reached(phase: Parameters<RestoreCandidatePhaseObserver>[0]): void {
+    this.options.onPhase?.(phase);
   }
 
   probePathForTesting(): string {
@@ -433,6 +440,7 @@ export class RestoreArtifactController {
     this.ledger.assertOwnedRegularFile(this.options.candidatePath);
     const descriptor = this.createExclusiveOwned(this.probePath, 'rename-probe', 'rename-probe-reservation');
     this.closeOwnedDescriptor(this.probePath, descriptor);
+    this.reached('RENAME_PROBE_RESERVED');
     const reservationCleanup = this.ledger.removeOne(this.probePath);
     if (reservationCleanup) {
       throw hostSnapshotError('HOST_SNAPSHOT_V3_CLEANUP_FAILED', 'rename probe 预留文件清理失败');
@@ -443,8 +451,10 @@ export class RestoreArtifactController {
     try {
       this.io.rename(this.options.candidatePath, this.probePath);
       this.ledger.moveOwned(this.options.candidatePath, this.probePath, 'rename-probe-outbound');
+      this.reached('RENAME_PROBE_CANDIDATE_MOVED');
       this.io.rename(this.probePath, this.options.candidatePath);
       this.ledger.moveOwned(this.probePath, this.options.candidatePath, 'rename-probe-return');
+      this.reached('RENAME_PROBE_COMPLETED');
     } catch (error) {
       if (error instanceof HostSnapshotV3Error) throw error;
       throw hostSnapshotError('HOST_SNAPSHOT_V3_RESTORE_FAILED', '候选库 rename probe 失败');
@@ -457,10 +467,13 @@ export class RestoreArtifactController {
       'report-temporary',
       'report-temporary-create',
     );
+    this.reached('REPORT_TEMP_CREATED');
     let writeFailed = false;
     try {
       this.io.writeAll(descriptor, content);
+      this.reached('REPORT_TEMP_WRITTEN');
       this.io.flush(descriptor);
+      this.reached('REPORT_TEMP_FSYNCED');
     } catch {
       writeFailed = true;
     }
@@ -488,10 +501,12 @@ export class RestoreArtifactController {
     );
     this.ledger.retain(this.options.reportPath);
     this.reportPublished = true;
+    this.reached('REPORT_FINAL_PUBLISHED');
     const temporaryCleanup = this.ledger.removeOne(this.reportTemporaryPath);
     if (temporaryCleanup) {
       throw hostSnapshotError('HOST_SNAPSHOT_V3_CLEANUP_FAILED', '报告已发布但临时产物清理失败');
     }
+    this.reached('REPORT_TEMP_REMOVED');
   }
 
   retainCandidate(): void {

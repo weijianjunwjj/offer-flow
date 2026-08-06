@@ -20,6 +20,8 @@ import {
   assertNoPathConflict,
   isPathStrictlyInside,
   validateExistingInputDirectory,
+  validateExistingInputFile,
+  validateExplicitLocalAbsolutePath,
   validateNewOutputFile,
 } from './pathSafety';
 import {
@@ -32,6 +34,7 @@ import {
   RestoreArtifactController,
   type RestoreArtifactIo,
 } from './restoreArtifacts';
+import type { RestoreCandidatePhaseObserver } from './restorePhases';
 
 export const HOST_SNAPSHOT_V3_RESTORE_CONFIRMATION =
   'RESTORE_HOST_SNAPSHOT_V3_TO_NEW_CANDIDATE' as const;
@@ -53,6 +56,8 @@ export interface RestoreHostSnapshotV3CandidateOptions {
     artifactIo?: RestoreArtifactIo;
     /** Deterministic high-entropy replacement for tests only. */
     runId?: string;
+    /** Deterministic lifecycle observer for process-interruption tests only. */
+    onPhase?: RestoreCandidatePhaseObserver;
   };
 }
 
@@ -64,7 +69,30 @@ interface ResolvedRestorePaths {
   workspaceDirectory: string;
 }
 
+const RESTORE_RUN_RESIDUE_NAME = /^\.offerflow-host-v3-[a-f0-9]{32,128}\.(?:rename-probe|report\.tmp)$/u;
+
+function assertNoUnownedRunResidue(candidateDatabasePath: string): void {
+  const normalized = validateExplicitLocalAbsolutePath(candidateDatabasePath);
+  const parent = validateExistingInputDirectory(path.dirname(normalized));
+  let names: string[];
+  try {
+    names = fs.readdirSync(parent.path);
+  } catch {
+    throw hostSnapshotError(
+      'HOST_SNAPSHOT_V3_RESIDUE_OWNERSHIP_UNPROVEN',
+      '无法只读判定恢复目标目录中的残留状态',
+    );
+  }
+  if (names.some((name) => RESTORE_RUN_RESIDUE_NAME.test(name))) {
+    throw hostSnapshotError(
+      'HOST_SNAPSHOT_V3_INTERRUPTED_RESIDUE_COLLISION',
+      '检测到身份无法证明的中断残留；恢复已拒绝且未自动清理',
+    );
+  }
+}
+
 function resolveRestorePaths(options: RestoreHostSnapshotV3CandidateOptions): ResolvedRestorePaths {
+  assertNoUnownedRunResidue(options.candidateDatabasePath);
   const snapshot = validateExistingInputDirectory(options.snapshotDirectory);
   const candidate = validateNewOutputFile(options.candidateDatabasePath);
   const report = validateNewOutputFile(`${candidate.path}.host-snapshot-v3-report.json`);
@@ -163,6 +191,7 @@ function restoreNovaWingData(databasePath: string, data: SnapshotComponentData):
 function verifyCandidate(
   databasePath: string,
   manifest: ReturnType<typeof readAndVerifyHostSnapshotV3>['manifest'],
+  onPhase?: RestoreCandidatePhaseObserver,
 ): { integrity: 'ok'; foreignKeyViolationCount: 0; novaWingCoreRevision: number } {
   const offerFlow = new Database(databasePath, { readonly: true, fileMustExist: true });
   const novaWing = new DatabaseSync(databasePath, {
@@ -179,6 +208,8 @@ function verifyCandidate(
     if ((offerFlow.pragma('foreign_key_check') as unknown[]).length !== 0) {
       throw hostSnapshotError('HOST_SNAPSHOT_V3_RESTORE_FAILED', '候选库 foreign_key_check 未通过');
     }
+    onPhase?.('INTEGRITY_FK_VALIDATED');
+    onPhase?.('HOST_VERIFICATION_PENDING');
     verifyRegisteredComponentsAfterRestore({
       manifest,
       registry: hostSnapshotRegistry(),
@@ -187,6 +218,8 @@ function verifyCandidate(
         ['novawing', novaWing],
       ]),
     });
+    onPhase?.('COMPONENTS_VALIDATED');
+    onPhase?.('HOST_VALIDATED');
   } finally {
     try { novaWing.close(); } finally { offerFlow.close(); }
   }
@@ -194,6 +227,7 @@ function verifyCandidate(
   const runtime = createNovaWingRuntime({ databasePath });
   try {
     const context = runtime.adapter.readLatestMainline({ scopes: NOVA_WING_ANALYSIS_SCOPES });
+    onPhase?.('RUNTIME_VALIDATED');
     return {
       integrity: 'ok',
       foreignKeyViolationCount: 0,
@@ -202,6 +236,166 @@ function verifyCandidate(
   } finally {
     runtime.close();
   }
+}
+
+const RESTORE_REPORT_KEYS = [
+  'componentCount',
+  'databaseSchemaVersion',
+  'foreignKeyViolationCount',
+  'hostManifestDigest',
+  'integrity',
+  'novaWingCoreRevision',
+  'renameProbe',
+  'snapshotVersion',
+  'status',
+  'tableCount',
+] as const;
+
+function parseRestoreReport(value: unknown): RestoreCandidateReport {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_REPORT_INCOMPLETE', '候选库报告格式不完整');
+  }
+  const report = value as Record<string, unknown>;
+  if (JSON.stringify(Object.keys(report).sort()) !== JSON.stringify([...RESTORE_REPORT_KEYS].sort())) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_REPORT_INCOMPLETE', '候选库报告字段不完整');
+  }
+  if (
+    report.status !== 'candidate-ready'
+    || report.snapshotVersion !== 3
+    || report.integrity !== 'ok'
+    || report.foreignKeyViolationCount !== 0
+    || report.renameProbe !== 'passed'
+    || !Number.isSafeInteger(report.databaseSchemaVersion)
+    || !Number.isSafeInteger(report.componentCount)
+    || !Number.isSafeInteger(report.tableCount)
+    || !Number.isSafeInteger(report.novaWingCoreRevision)
+    || typeof report.hostManifestDigest !== 'string'
+  ) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_REPORT_INCOMPLETE', '候选库报告状态不完整');
+  }
+  return report as unknown as RestoreCandidateReport;
+}
+
+function readStableRestoreReport(reportPath: string): RestoreCandidateReport {
+  let validated: ReturnType<typeof validateExistingInputFile>;
+  try {
+    validated = validateExistingInputFile(reportPath);
+  } catch {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_REPORT_INCOMPLETE', '候选库正式报告缺失或不是普通文件');
+  }
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(validated.path, 'r');
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile() || before.dev !== validated.device || before.ino !== validated.inode) {
+      throw new Error('report identity mismatch');
+    }
+    const value = JSON.parse(fs.readFileSync(descriptor, 'utf8')) as unknown;
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    const pathAfter = fs.lstatSync(validated.path, { bigint: true });
+    if (
+      !after.isFile()
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeNs !== after.mtimeNs
+      || after.dev !== pathAfter.dev
+      || after.ino !== pathAfter.ino
+    ) {
+      throw new Error('report changed while reading');
+    }
+    return parseRestoreReport(value);
+  } catch (error) {
+    if (error instanceof HostSnapshotV3Error) throw error;
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_REPORT_INCOMPLETE', '候选库正式报告无法稳定读取');
+  } finally {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch {
+        throw hostSnapshotError('HOST_SNAPSHOT_V3_REPORT_INCOMPLETE', '候选库正式报告句柄关闭状态不明确');
+      }
+    }
+  }
+}
+
+function assertNoUnexplainedSuccessResidue(candidateDatabasePath: string): void {
+  const sidecars = ['-journal', '-wal', '-shm'].map((suffix) => `${candidateDatabasePath}${suffix}`);
+  if (sidecars.some((candidate) => fs.existsSync(candidate))) {
+    throw hostSnapshotError(
+      'HOST_SNAPSHOT_V3_SQLITE_SIDECAR_AMBIGUOUS',
+      '候选库存在身份无法证明的 SQLite sidecar',
+    );
+  }
+  let names: string[];
+  try {
+    names = fs.readdirSync(path.dirname(candidateDatabasePath));
+  } catch {
+    throw hostSnapshotError(
+      'HOST_SNAPSHOT_V3_RESIDUE_OWNERSHIP_UNPROVEN',
+      '无法只读判定候选库目录残留',
+    );
+  }
+  if (names.some((name) => /\.report\.tmp$/u.test(name) && RESTORE_RUN_RESIDUE_NAME.test(name))) {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_REPORT_INCOMPLETE', '候选库存在未解释的报告临时文件');
+  }
+  if (names.some((name) => /\.rename-probe$/u.test(name) && RESTORE_RUN_RESIDUE_NAME.test(name))) {
+    throw hostSnapshotError(
+      'HOST_SNAPSHOT_V3_RESIDUE_OWNERSHIP_UNPROVEN',
+      '候选库存在身份无法证明的 rename probe',
+    );
+  }
+}
+
+export interface RevalidateRestoreCandidateSuccessOptions {
+  snapshotDirectory: string;
+  candidateDatabasePath: string;
+}
+
+/**
+ * Re-validates a candidate/report pair from disk. This is read-only and does
+ * not infer ownership from a filename, timestamp, or missing report.
+ */
+export function revalidateRestoreCandidateSuccess(
+  options: RevalidateRestoreCandidateSuccessOptions,
+): RestoreCandidateReport {
+  const snapshotDirectory = validateExistingInputDirectory(options.snapshotDirectory).path;
+  const candidateDatabasePath = validateExplicitLocalAbsolutePath(options.candidateDatabasePath);
+  try {
+    validateExistingInputFile(candidateDatabasePath);
+  } catch {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_CANDIDATE_INCOMPLETE', '候选库缺失或不是普通文件');
+  }
+  const reportPath = `${candidateDatabasePath}.host-snapshot-v3-report.json`;
+  assertNoUnexplainedSuccessResidue(candidateDatabasePath);
+  const verified = readAndVerifyHostSnapshotV3(snapshotDirectory);
+  const report = readStableRestoreReport(reportPath);
+  let checks: ReturnType<typeof verifyCandidate>;
+  try {
+    checks = verifyCandidate(candidateDatabasePath, verified.manifest);
+  } catch {
+    throw hostSnapshotError('HOST_SNAPSHOT_V3_CANDIDATE_INCOMPLETE', '候选库未通过完整只读重验证');
+  }
+  assertNoUnexplainedSuccessResidue(candidateDatabasePath);
+  const expected: RestoreCandidateReport = {
+    status: 'candidate-ready',
+    snapshotVersion: 3,
+    databaseSchemaVersion: verified.manifest.host.schemaVersion,
+    componentCount: verified.manifest.components.length,
+    tableCount: verified.manifest.components.reduce((sum, component) => sum + component.tables.length, 0),
+    hostManifestDigest: verified.manifest.manifestDigest,
+    novaWingCoreRevision: checks.novaWingCoreRevision,
+    integrity: 'ok',
+    foreignKeyViolationCount: 0,
+    renameProbe: 'passed',
+  };
+  if (RESTORE_REPORT_KEYS.some((key) => report[key] !== expected[key])) {
+    throw hostSnapshotError(
+      'HOST_SNAPSHOT_V3_CANDIDATE_REPORT_BINDING_MISMATCH',
+      '候选库与正式报告的 Host digest 或验证字段不匹配',
+    );
+  }
+  return report;
 }
 
 function stablePrimaryError(error: unknown): HostSnapshotV3Error {
@@ -238,14 +432,18 @@ export function restoreHostSnapshotV3ToCandidate(
     throw hostSnapshotError('HOST_SNAPSHOT_V3_CONFIRMATION_REQUIRED', '候选库恢复缺少显式确认');
   }
   const paths = resolveRestorePaths(options);
+  const onPhase = options.hooks?.onPhase;
   const artifacts = new RestoreArtifactController({
     candidatePath: paths.candidateDatabasePath,
     reportPath: paths.reportPath,
     runId: options.hooks?.runId ?? crypto.randomBytes(16).toString('hex'),
     io: options.hooks?.artifactIo,
+    onPhase,
   });
   artifacts.preflight();
+  onPhase?.('PATHS_VALIDATED');
   const verified = readAndVerifyHostSnapshotV3(paths.snapshotDirectory);
+  onPhase?.('SNAPSHOT_VERIFIED');
   const baseReport = {
     snapshotVersion: 3 as const,
     databaseSchemaVersion: verified.manifest.host.schemaVersion,
@@ -263,6 +461,7 @@ export function restoreHostSnapshotV3ToCandidate(
 
   try {
     artifacts.reserveCandidate();
+    onPhase?.('CANDIDATE_RESERVED');
     try {
       const candidate = openDb(paths.candidateDatabasePath);
       try {
@@ -273,6 +472,7 @@ export function restoreHostSnapshotV3ToCandidate(
     } finally {
       artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('offerflow-schema-bootstrap');
     }
+    onPhase?.('OFFERFLOW_SCHEMA_BOOTSTRAPPED');
     try {
       bootstrapNovaWingOffline({
         databasePath: paths.candidateDatabasePath,
@@ -281,6 +481,7 @@ export function restoreHostSnapshotV3ToCandidate(
     } finally {
       artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('novawing-schema-bootstrap');
     }
+    onPhase?.('NOVAWING_SCHEMA_BOOTSTRAPPED');
     if (options.hooks?.failAfterSchemaBootstrap) throw new Error('TEST_FAIL_AFTER_SCHEMA_BOOTSTRAP');
 
     try {
@@ -291,6 +492,7 @@ export function restoreHostSnapshotV3ToCandidate(
     } finally {
       artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('offerflow-data-restore');
     }
+    onPhase?.('OFFERFLOW_DATA_RESTORED');
     if (options.hooks?.failAfterOfferFlowRestore) throw new Error('TEST_FAIL_AFTER_OFFERFLOW_RESTORE');
     try {
       restoreNovaWingData(
@@ -300,13 +502,14 @@ export function restoreHostSnapshotV3ToCandidate(
     } finally {
       artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('novawing-data-restore');
     }
+    onPhase?.('NOVAWING_DATA_RESTORED');
     if (options.hooks?.failAfterNovaWingRestore) throw new Error('TEST_FAIL_AFTER_NOVAWING_RESTORE');
     options.hooks?.mutateCandidateBeforeVerification?.(paths.candidateDatabasePath);
     if (options.hooks?.failBeforeVerification) throw new Error('TEST_FAIL_BEFORE_VERIFICATION');
 
     let checks: ReturnType<typeof verifyCandidate>;
     try {
-      checks = verifyCandidate(paths.candidateDatabasePath, verified.manifest);
+      checks = verifyCandidate(paths.candidateDatabasePath, verified.manifest, onPhase);
     } finally {
       artifacts.recordSidecarsCreatedDuringOwnedCandidateOperation('candidate-verification');
     }
@@ -318,6 +521,11 @@ export function restoreHostSnapshotV3ToCandidate(
       renameProbe: 'passed',
     };
     artifacts.publishReport(toStableJson(report));
+    revalidateRestoreCandidateSuccess({
+      snapshotDirectory: paths.snapshotDirectory,
+      candidateDatabasePath: paths.candidateDatabasePath,
+    });
+    onPhase?.('RESULT_REVALIDATED');
     artifacts.retainCandidate();
     const successCleanup = artifacts.cleanupOwnedArtifacts();
     if (successCleanup.failures.length > 0) {
@@ -327,6 +535,8 @@ export function restoreHostSnapshotV3ToCandidate(
         'candidate-and-report-retained',
       );
     }
+    onPhase?.('OWNERSHIP_RELEASED');
+    onPhase?.('OPERATION_COMPLETED');
     return report;
   } catch (error) {
     const primary = stablePrimaryError(error);
