@@ -1,6 +1,7 @@
 /** cc-auto v0.1 默认配置（预算、模型规则、限额）。可被 .cc-auto/config.json 覆盖。 */
 // v0.2.0: 新增 providerProfiles，ProviderProfile 配置统一在 .cc-auto/config.json 中，
 // 不创建第二个配置真相来源。
+// v0.2.0 Slice 1F: 新增 modelRouting、budgetPolicy、contextBudget 配置字段。
 
 export interface BudgetConfig {
   simpleTaskRmb: number;
@@ -56,6 +57,23 @@ export interface CcAutoConfig {
    * 与 v0.1 字段共存于同一 .cc-auto/config.json，不创建第二个配置真相来源。
    */
   providerProfiles?: Record<string, unknown>;
+  /**
+   * v0.2.0 Slice R0: 三级模型路由配置。
+   * enabled=false 时 100% 保持旧行为。
+   */
+  modelRouting?: import('./types').ModelRoutingConfig;
+  /**
+   * v0.2.0 Slice 1F: 任务预算策略。
+   */
+  budgetPolicy?: import('./types').TaskBudgetPolicy;
+  /**
+   * v0.2.0 Slice 1F: 模型上下文预算。
+   */
+  contextBudget?: {
+    flash?: import('./types').ModelContextBudget;
+    strong?: import('./types').ModelContextBudget;
+    arbiter?: import('./types').ModelContextBudget;
+  };
 }
 
 export const DEFAULT_CONFIG: CcAutoConfig = {
@@ -92,6 +110,38 @@ export const DEFAULT_CONFIG: CcAutoConfig = {
     'claude-sonnet-5': { inputPerMTokens: 1.40, outputPerMTokens: 7.00, cacheCreationPerMTokens: 1.75, cacheReadPerMTokens: 0.14 },
     'claude-sonnet-4-6': { inputPerMTokens: 2.10, outputPerMTokens: 10.50, cacheCreationPerMTokens: 2.63, cacheReadPerMTokens: 0.21 },
     'claude-haiku-4-5': { inputPerMTokens: 0.70, outputPerMTokens: 3.50, cacheCreationPerMTokens: 0.88, cacheReadPerMTokens: 0.07 },
+  },
+  /**
+   * v0.2.0 Slice R0: 默认三级模型路由配置。
+   * modelRouting.enabled=false 确保不引入任何新行为差异。
+   * Flash/Pro profileId 只是引用，不代表 ProviderProfile 已配置。
+   * 生产配置加载（从 .cc-auto/config.json 读取）将在后续切片完成。
+   */
+  modelRouting: {
+    enabled: false,
+    fastModel: { provider: 'deepseek', profileId: 'deepseek-v4-flash', modelLogicalName: 'deepseek-flash' },
+    strongModel: { provider: 'deepseek', profileId: 'deepseek-v4-pro', modelLogicalName: 'deepseek-pro' },
+    arbiterModel: { provider: 'anthropic', profileId: 'opus-5', modelLogicalName: 'opus-5' },
+    allowStrongEscalation: true,
+    allowArbiterEscalation: true,
+  },
+  /**
+   * v0.2.0 Slice R0: 任务预算策略——BALANCED 模式，无硬限制，不阻断旧行为。
+   */
+  budgetPolicy: {
+    mode: 'BALANCED',
+    softLimitRmb: 10,
+    hardLimitRmb: 50,
+    requireConfirmationAboveSoftLimit: false,
+    stopBeforeHardLimit: false,
+  },
+  /**
+   * v0.2.0 Slice R0: 默认上下文预算。
+   */
+  contextBudget: {
+    flash: { maxInputCharacters: 40_000, maxHistoryMessages: 12, maxEvidenceCharacters: 12_000 },
+    strong: { maxInputCharacters: 120_000, maxHistoryMessages: 30, maxEvidenceCharacters: 40_000 },
+    arbiter: { maxInputCharacters: 24_000, maxHistoryMessages: 0, maxEvidenceCharacters: 20_000 },
   },
 };
 

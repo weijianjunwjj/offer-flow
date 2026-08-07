@@ -4,6 +4,12 @@ import path from 'node:path';
 import type { Phase, CallUsage, FailureRecord, StopReason, Classification } from './types';
 import type { LaunchStrategy, FileScope, HumanGatePurpose, IdentityConfirmationContext, VerificationOutcome } from './types';
 import type { PendingCall } from './types';
+import type {
+  TaskBudgetEstimate,
+  RoutingDecisionRecord,
+  TaskCostSummary,
+  ArbitrationCapsule,
+} from './types';
 import type { PricingMode } from './config';
 import { redactForDisk } from './redact';
 
@@ -56,6 +62,16 @@ export interface RunState {
   currentRunPhase?: string;
   /** v0.2.0 Slice 1B：当前挂起的模型调用（持久化用于崩溃恢复探测；非挂起状态时不存在） */
   pendingCall?: PendingCall;
+
+  // ======== v0.2.0 Slice 1F：路由、预算、成本、仲裁持久化 ========
+  /** 任务前预算估算——在第一条 PendingCall 之前写入 */
+  budgetEstimate?: TaskBudgetEstimate;
+  /** 路由决策记录——每次模型选择追加一条 */
+  routingDecisions?: RoutingDecisionRecord[];
+  /** 任务成本总结——任务结束后写入 */
+  costSummary?: TaskCostSummary;
+  /** 裁决 Capsule——需要 Opus 外部仲裁时写入 */
+  arbitrationCapsule?: ArbitrationCapsule;
 }
 
 export interface DirectEditDetail {
@@ -169,4 +185,92 @@ export function writeReport(cwd: string, runId: string, markdown: string): strin
   const file = path.join(runDir(cwd, runId), 'report.md');
   writeFileSync(file, redactForDisk(markdown), 'utf8');
   return file;
+}
+
+// ============================================================================
+// v0.2.0 Slice 1F：路由与预算持久化
+// ============================================================================
+
+/**
+ * 原子保存 TaskBudgetEstimate。
+ * 在第一条 PendingCall 之前调用。
+ */
+export function saveBudgetEstimate(cwd: string, runId: string, estimate: TaskBudgetEstimate): void {
+  if (!runStateExists(cwd, runId)) return;
+  const state = loadRunState(cwd, runId);
+  state.budgetEstimate = estimate;
+  state.updatedAt = new Date().toISOString();
+  saveRunState(cwd, state);
+}
+
+/**
+ * 追加一条 RoutingDecisionRecord。
+ * 每次模型选择后调用。
+ */
+export function saveRoutingDecision(cwd: string, runId: string, decision: RoutingDecisionRecord): void {
+  if (!runStateExists(cwd, runId)) return;
+  const state = loadRunState(cwd, runId);
+  if (!state.routingDecisions) state.routingDecisions = [];
+  // 防重复：同 decisionId 不再追加
+  if (state.routingDecisions.some((d) => d.decisionId === decision.decisionId)) return;
+  state.routingDecisions.push(decision);
+  state.updatedAt = new Date().toISOString();
+  saveRunState(cwd, state);
+}
+
+/**
+ * 保存 TaskCostSummary。
+ * 任务结束后调用。多次调用可覆盖（最后一次生效）。
+ */
+export function saveCostSummary(cwd: string, runId: string, summary: TaskCostSummary): void {
+  if (!runStateExists(cwd, runId)) return;
+  const state = loadRunState(cwd, runId);
+  state.costSummary = summary;
+  state.updatedAt = new Date().toISOString();
+  saveRunState(cwd, state);
+}
+
+/**
+ * 保存仲裁 Capsule。
+ * 需要 Opus 外部仲裁时调用。
+ */
+export function saveArbitrationCapsule(cwd: string, runId: string, capsule: ArbitrationCapsule): void {
+  if (!runStateExists(cwd, runId)) return;
+  const state = loadRunState(cwd, runId);
+  state.arbitrationCapsule = capsule;
+  state.updatedAt = new Date().toISOString();
+  saveRunState(cwd, state);
+}
+
+/**
+ * 从 RunState 读取持久化的预算估算。
+ * 用于进程重启后恢复。
+ */
+export function loadBudgetEstimate(cwd: string, runId: string): TaskBudgetEstimate | undefined {
+  if (!runStateExists(cwd, runId)) return undefined;
+  return loadRunState(cwd, runId).budgetEstimate;
+}
+
+/**
+ * 从 RunState 读取已持久化的路由决策。
+ */
+export function loadRoutingDecisions(cwd: string, runId: string): RoutingDecisionRecord[] {
+  if (!runStateExists(cwd, runId)) return [];
+  return loadRunState(cwd, runId).routingDecisions ?? [];
+}
+
+/**
+ * 从 RunState 读取已持久化的成本总结。
+ */
+export function loadCostSummary(cwd: string, runId: string): TaskCostSummary | undefined {
+  if (!runStateExists(cwd, runId)) return undefined;
+  return loadRunState(cwd, runId).costSummary;
+}
+
+/**
+ * 从 RunState 读取已持久化的仲裁 Capsule。
+ */
+export function loadArbitrationCapsule(cwd: string, runId: string): ArbitrationCapsule | undefined {
+  if (!runStateExists(cwd, runId)) return undefined;
+  return loadRunState(cwd, runId).arbitrationCapsule;
 }

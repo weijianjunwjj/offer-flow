@@ -672,3 +672,323 @@ export interface GlobResult {
   truncated: boolean;
   scannedEntries: number;
 }
+
+// ============================================================================
+// v0.2.0 Slice 1F: 三级模型路由、预算估算与成本复盘类型
+// ============================================================================
+
+/** 执行模型角色——固定映射，不随配置改变语义 */
+export type ExecutionModelRole =
+  | 'FAST_EXECUTOR'
+  | 'STRONG_EXECUTOR'
+  | 'ARBITER';
+
+/** 路由任务类型——确定性分类，不调用 LLM */
+export type RoutingTaskType =
+  | 'REPOSITORY_READ'
+  | 'CODE_IMPLEMENTATION'
+  | 'BUG_FIX'
+  | 'TEST_REPAIR'
+  | 'REFACTOR'
+  | 'ARCHITECTURE'
+  | 'FINAL_REVIEW'
+  | 'DOCUMENTATION';
+
+/** 模型路由上下文——调用方显式提供结构化风险字段 */
+export interface ModelRoutingContext {
+  taskType: RoutingTaskType;
+  affectedFileCount: number;
+  specificationClear: boolean;
+  touchesArchitecture: boolean;
+  touchesSecurityBoundary: boolean;
+  touchesProviderLifecycle: boolean;
+  touchesPendingCallOrUsage: boolean;
+  touchesDatabaseSchema: boolean;
+  touchesTransactionOrConcurrency: boolean;
+  touchesStateMachine: boolean;
+  previousAttemptCount: number;
+  previousModelRole?: ExecutionModelRole;
+  previousFailure?: ModelAttemptFailure;
+  requestedRole?: ExecutionModelRole;
+  allowEscalation: boolean;
+}
+
+/** 单次模型尝试的失败信息 */
+export interface ModelAttemptFailure {
+  category: ModelAttemptFailureCategory;
+  summary: string;
+  contributedToFinalResult: boolean;
+}
+
+/** 模型尝试失败类别 */
+export type ModelAttemptFailureCategory =
+  | 'MODEL_QUALITY_FAILURE'
+  | 'MODEL_PROTOCOL_FAILURE'
+  | 'MODEL_IDENTITY_FAILURE'
+  | 'TRANSPORT_FAILURE'
+  | 'CREDENTIAL_FAILURE'
+  | 'BALANCE_FAILURE'
+  | 'CONTEXT_LIMIT'
+  | 'LOCAL_TOOL_FAILURE'
+  | 'FILE_SCOPE_FAILURE'
+  | 'VERIFIER_FAILURE'
+  | 'USER_CANCELLED'
+  | 'UNKNOWN';
+
+/** 模型选择来源 */
+export type ModelSelectionSource = 'POLICY' | 'USER_OVERRIDE' | 'ESCALATION';
+
+/** 模型路由原因码 */
+export type ModelRoutingReasonCode =
+  | 'DEFAULT_FLASH'
+  | 'MULTI_FILE_CHANGE'
+  | 'AMBIGUOUS_SPEC'
+  | 'ARCHITECTURE_TASK'
+  | 'SECURITY_BOUNDARY'
+  | 'PROVIDER_LIFECYCLE'
+  | 'PENDING_CALL_OR_USAGE'
+  | 'DATABASE_SCHEMA'
+  | 'TRANSACTION_OR_CONCURRENCY'
+  | 'STATE_MACHINE'
+  | 'FINAL_REVIEW'
+  | 'USER_OVERRIDE'
+  | 'FLASH_QUALITY_FAILURE'
+  | 'PRO_QUALITY_FAILURE'
+  | 'OPUS_ARBITRATION'
+  | 'ESCALATION_DISABLED'
+  | 'USER_FAST_OVERRIDE_REJECTED';
+
+/** 模型选择结果——每次调用前生成 */
+export interface ModelSelection {
+  role: ExecutionModelRole;
+  provider: string;
+  profileId: string;
+  modelLogicalName: string;
+  source: ModelSelectionSource;
+  reasonCodes: ModelRoutingReasonCode[];
+  policyVersion: 'cc-auto-model-routing-v1';
+  escalatedFromCallId?: string;
+}
+
+/** 上下文预算——限制输入 Token，不依赖模型价格 */
+export interface ModelContextBudget {
+  maxInputCharacters: number;
+  maxHistoryMessages: number;
+  maxEvidenceCharacters: number;
+}
+
+/** 模型路由配置 */
+export interface ModelRoutingConfig {
+  enabled: boolean;
+  fastModel: {
+    provider: string;
+    profileId: string;
+    modelLogicalName: string;
+  };
+  strongModel: {
+    provider: string;
+    profileId: string;
+    modelLogicalName: string;
+  };
+  arbiterModel?: {
+    provider: string;
+    profileId: string;
+    modelLogicalName: string;
+  };
+  allowStrongEscalation: boolean;
+  allowArbiterEscalation: boolean;
+}
+
+/** 路由决策记录——独立于 UsageRecord */
+export interface RoutingDecisionRecord {
+  decisionId: string;
+  runId: string;
+  taskId: string;
+  attemptId: string;
+  role: ExecutionModelRole;
+  provider: string;
+  profileId: string;
+  modelLogicalName: string;
+  source: ModelSelectionSource;
+  reasonCodes: ModelRoutingReasonCode[];
+  policyVersion: string;
+  escalatedFromCallId?: string;
+  createdAt: string;
+}
+
+/** 裁决决策——Opus 输出的纠偏计划 */
+export interface ArbitrationDecision {
+  diagnosis: string;
+  selectedPlan: string;
+  rejectedPlans: string[];
+  constraints: string[];
+  acceptanceCriteria: string[];
+  nextExecutorRole: 'FAST_EXECUTOR' | 'STRONG_EXECUTOR' | 'HUMAN_REQUIRED';
+  reasonCodes: ModelRoutingReasonCode[];
+}
+
+/** 裁决胶囊——Opus 的压缩输入，不含完整历史 */
+export interface ArbitrationCapsule {
+  taskGoal: string;
+  hardConstraints: string[];
+  attemptedModels: Array<{
+    role: ExecutionModelRole;
+    modelLogicalName: string;
+    outcome: string;
+    failureCategory: ModelAttemptFailureCategory;
+  }>;
+  changedFiles: string[];
+  verifierFailures: string[];
+  relevantDiff: string;
+  unresolvedQuestions: string[];
+}
+
+/** 路由执行状态 */
+export type RoutedExecutionStatus =
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'OPUS_ARBITRATION_REQUIRED'
+  | 'HUMAN_REQUIRED'
+  | 'BUDGET_CONFIRMATION_REQUIRED'
+  | 'BUDGET_LIMIT_EXCEEDED';
+
+/** 路由执行结果——最终状态汇总 */
+export interface RoutedExecutionResult {
+  status: RoutedExecutionStatus;
+  finalRole: ExecutionModelRole;
+  selections: ModelSelection[];
+  callIds: string[];
+  arbitrationCapsule?: ArbitrationCapsule;
+  arbitrationDecision?: ArbitrationDecision;
+  failureCategory?: ModelAttemptFailureCategory;
+  /** 仅当 cost summary reporter 失败时设置；Provider 调用不重复 */
+  reporterError?: 'REPORTER_OUTPUT_FAILED_BEFORE_EXECUTION' | 'REPORTER_OUTPUT_FAILED_AFTER_EXECUTION';
+}
+
+// === 预算与成本类型 ===
+
+/** 预算模式 */
+export type BudgetMode = 'ECONOMY' | 'BALANCED' | 'QUALITY';
+
+/** 任务预算上限策略 */
+export interface TaskBudgetPolicy {
+  mode: BudgetMode;
+  softLimitRmb?: number;
+  hardLimitRmb?: number;
+  requireConfirmationAboveSoftLimit: boolean;
+  stopBeforeHardLimit: boolean;
+}
+
+/** 单模型预估调用 */
+export interface EstimatedCall {
+  role: ExecutionModelRole;
+  provider: string;
+  modelLogicalName: string;
+  minCalls: number;
+  expectedCalls: number;
+  maxCalls: number;
+  estimatedInputTokens: { min: number; expected: number; max: number };
+  estimatedOutputTokens: { min: number; expected: number; max: number };
+  estimatedCostRmb: { min: number | null; expected: number | null; max: number | null };
+}
+
+/** 任务预算估算——执行前生成 */
+export interface TaskBudgetEstimate {
+  estimateId: string;
+  runId: string;
+  taskId: string;
+  routingPolicyVersion: string;
+  initialSelection: ModelSelection;
+  currency: 'CNY';
+  estimatedCalls: EstimatedCall[];
+  totalEstimatedCostRmb: { min: number | null; expected: number | null; max: number | null };
+  assumptions: string[];
+  createdAt: string;
+}
+
+/** 运行中成本快照——每次调用后累计 */
+export interface RunningCostSnapshot {
+  runId: string;
+  taskId: string;
+  completedCallCount: number;
+  actualInputTokens: number | null;
+  actualOutputTokens: number | null;
+  actualCachedTokens: number | null;
+  actualCostRmb: number | null;
+  expectedBudgetUsedRatio: number | null;
+  maximumBudgetUsedRatio: number | null;
+  costByRole: Partial<Record<ExecutionModelRole, {
+    calls: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cachedTokens: number | null;
+    costRmb: number | null;
+  }>>;
+  updatedAt: string;
+}
+
+/** 按模型角色的成本明细 */
+export interface CostByRoleEntry {
+  role: ExecutionModelRole;
+  provider: string;
+  modelLogicalName: string;
+  calls: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedTokens: number | null;
+  totalTokens: number | null;
+  costRmb: number | null;
+  tokenShare: number | null;
+  costShare: number | null;
+}
+
+/** 预算与实际对比 */
+export interface EstimateComparison {
+  actualVsExpectedRatio: number | null;
+  actualVsMaximumRatio: number | null;
+  absoluteVarianceRmb: number | null;
+  variancePercent: number | null;
+}
+
+/** 路由节省效果 */
+export interface RoutingEffect {
+  flashCallShare: number | null;
+  proCallShare: number | null;
+  opusCallShare: number | null;
+  flashCostShare: number | null;
+  proCostShare: number | null;
+  opusCostShare: number | null;
+  escalationCount: number;
+  escalationCostRmb: number | null;
+  hypotheticalAllProCostRmb: number | null;
+  savedVsAllProRmb: number | null;
+  savedVsAllProPercent: number | null;
+}
+
+/** 任务成本总结——执行后生成 */
+export interface TaskCostSummary {
+  runId: string;
+  taskId: string;
+  currency: 'CNY';
+  estimate: TaskBudgetEstimate;
+  actual: {
+    totalCalls: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cachedTokens: number | null;
+    totalTokens: number | null;
+    costRmb: number | null;
+  };
+  byRole: CostByRoleEntry[];
+  estimateComparison: EstimateComparison;
+  routingEffect: RoutingEffect;
+  completed: boolean;
+  generatedAt: string;
+}
+
+/** 路由执行报告器——供 CLI/测试注入，控制预算和成本复盘可见性 */
+export interface RoutedExecutionReporter {
+  onBudgetEstimate(estimate: TaskBudgetEstimate, formatted: string): Promise<void> | void;
+  onRunningCost?(snapshot: RunningCostSnapshot, formatted: string): Promise<void> | void;
+  onCostSummary(summary: TaskCostSummary, formatted: string): Promise<void> | void;
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** cc-auto CLI 入口：run | resume | report。真实拉起全局 claude CLI，不引入新依赖。 */
+/** cc-auto CLI 入口：run | resume | report | preflight。真实拉起全局 claude CLI，不引入新依赖。 */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
@@ -11,6 +11,7 @@ import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded } from './store'
 import { renderReport } from './report';
 import { resolveLocalPackageBin } from './localBin';
 import { runPreflight } from './preflight';
+import type { ModelRoutingContext, RoutingTaskType } from './types';
 
 const CWD = process.cwd();
 const HOOK_SCRIPT_PATH = path.join('scripts', 'ccAuto', 'hookScript.cjs');
@@ -225,6 +226,7 @@ export interface ParsedRunArgv {
   maxRepairs?: number;
   estimatedFiles?: number;
   noCommit: boolean;
+  fast: boolean;
   strippedDuplicateRun: boolean;
 }
 
@@ -246,7 +248,59 @@ export function parseRunArgv(argv: string[]): ParsedRunArgv {
     maxRepairs: flags.has('max-fix-rounds') ? Number(flags.get('max-fix-rounds')) : undefined,
     estimatedFiles: flags.has('estimated-files') ? Number(flags.get('estimated-files')) : undefined,
     noCommit: flags.get('no-commit') === 'true',
+    fast: flags.get('fast') === 'true',
     strippedDuplicateRun: stripped,
+  };
+}
+
+/**
+ * 从任务描述中提取路由任务类型——纯关键词匹配，不调用 LLM。
+ * 确保确定性分类且不受 Prompt 注入。
+ */
+export function classifyRoutingTaskType(taskDescription: string): RoutingTaskType {
+  const lower = taskDescription.toLowerCase();
+  // 只读操作——优先
+  if (/查看|查找|搜索|理解|分析|解释|定位|只读/.test(lower)) return 'REPOSITORY_READ';
+  // 终审/裁决
+  if (/review|审核|复查|终审|评判|检验/.test(lower)) return 'FINAL_REVIEW';
+  // 测试修复——必须在"修复/bug/fix"之前
+  if (/测试|test|spec|flaky/.test(lower)) return 'TEST_REPAIR';
+  // Bug 修复
+  if (/fix|bug|修复|缺陷|修正|错误/.test(lower)) return 'BUG_FIX';
+  // 架构——必须在一般"实现/修改"之前
+  if (/架构|重构|重写|推翻|设计/.test(lower)) return 'ARCHITECTURE';
+  if (/数据库|schema|migration|migrate|db/.test(lower)) return 'ARCHITECTURE';
+  if (/provider|密钥|api key|执行器|adapter|env/.test(lower)) return 'ARCHITECTURE';
+  // 实现/修改——必须在文档之前
+  if (/实现|添加|新增|开发|创建|编写|修改|调整|优化/.test(lower)) return 'CODE_IMPLEMENTATION';
+  // 文档——最后
+  if (/文档|readme|doc|帮助|help/.test(lower)) return 'DOCUMENTATION';
+  return 'CODE_IMPLEMENTATION';
+}
+
+/**
+ * 从任务描述构建模型路由上下文——纯规则，不调用 LLM。
+ */
+export function buildRoutingContext(
+  taskDescription: string,
+  overrides: Partial<ModelRoutingContext> = {},
+): ModelRoutingContext {
+  const lower = taskDescription.toLowerCase();
+
+  return {
+    taskType: classifyRoutingTaskType(taskDescription),
+    affectedFileCount: overrides.affectedFileCount ?? 1,
+    specificationClear: !(/模糊|不明|歧义|不清楚|可能/.test(lower)),
+    touchesArchitecture: /架构|schema|数据库|migration|provider|重写|重构/.test(lower),
+    touchesSecurityBoundary: /安全|密钥|token|api key|认证/.test(lower),
+    touchesProviderLifecycle: /provider|adapter|执行器|env|api/.test(lower),
+    touchesPendingCallOrUsage: /pendingcall|usage|调用记录|pending/.test(lower),
+    touchesDatabaseSchema: /schema|migration|数据库|db|migrate/.test(lower),
+    touchesTransactionOrConcurrency: /事务|并发|transaction|concurrency|锁/.test(lower),
+    touchesStateMachine: /状态机|state machine|phase|阶段/.test(lower),
+    previousAttemptCount: 0,
+    allowEscalation: true,
+    requestedRole: overrides.requestedRole,
   };
 }
 
@@ -267,6 +321,8 @@ async function main(): Promise<void> {
       console.error('用法：pnpm cc:auto run "<任务描述>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit]');
       process.exit(1);
     }
+
+    // 兼容路径：Claude CLI 执行链
     const estimatedFiles = parsed.estimatedFiles;
     const deps = buildDeps(config);
     const state = await runTask(deps, taskDescription, estimatedFiles);
@@ -332,7 +388,7 @@ async function main(): Promise<void> {
     console.log('用法：pnpm cc:auto <run|resume|report|preflight> ...');
     console.log('');
     console.log('  run "<任务>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit]');
-    console.log('    启动新任务');
+    console.log('    启动新任务，通过 Claude CLI 执行编码闭环');
     console.log('');
     console.log('  resume [run-id]');
     console.log('    恢复未完成的任务，默认恢复最后一个');
