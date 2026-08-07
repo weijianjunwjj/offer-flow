@@ -117,7 +117,7 @@ describe('buildRunningCostSnapshot — 运行中快照', () => {
 // ============================================================================
 
 function makeSummary(
-  usageRecords: Array<{ usage: UsageRecord; role: any; provider: string; modelLogicalName: string }>,
+  usageRecords: Array<{ usage: UsageRecord; role: any; provider: string; modelLogicalName: string; callId?: string }>,
   overrides: Partial<Parameters<typeof buildTaskCostSummary>[0]> = {},
 ) {
   return buildTaskCostSummary({
@@ -383,6 +383,102 @@ describe('升级成本', () => {
       { usage: fakeUsage(), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash' },
     ]);
     expect(summary.routingEffect.escalationCount).toBe(0);
+  });
+
+  it('Flash 同 role 两次调用，第二次失败升级，成本归因到第二次', () => {
+    const summary = makeSummary([
+      { usage: fakeUsage({ costRmbCustom: 0.001 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash', callId: 'call-f1' },
+      { usage: fakeUsage({ costRmbCustom: 0.008 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash', callId: 'call-f2' },
+      { usage: fakeUsage({ costRmbCustom: 0.03 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro', callId: 'call-p1' },
+    ], {
+      selections: [
+        { role: 'FAST_EXECUTOR' as any, provider: 'ds', profileId: 'f', modelLogicalName: 'flash', source: 'POLICY' as any, reasonCodes: ['DEFAULT_FLASH'], policyVersion: PV },
+        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'ESCALATION' as any, reasonCodes: ['FLASH_QUALITY_FAILURE'], policyVersion: PV, escalatedFromCallId: 'call-f2' },
+      ],
+      attempts: [
+        { role: 'FAST_EXECUTOR' as any, failure: { category: 'MODEL_QUALITY_FAILURE' as any, summary: 'fail', contributedToFinalResult: false } },
+        { role: 'STRONG_EXECUTOR' as any },
+      ],
+    });
+    // 升级只在 role 变化时计数：Flash→Pro 为 1 次
+    expect(summary.routingEffect.escalationCount).toBe(1);
+    // 应归因到 call-f2（最后一次 Flash 调用），成本 0.008
+    // escalatedFromCallId='call-f2' 精确匹配 usageRecords 中 callId='call-f2' 的条目
+    expect(summary.routingEffect.escalationCostRmb).toBeCloseTo(0.008);
+  });
+
+  it('Pro 同 role 多次调用不会取第一条 Usage', () => {
+    const summary = makeSummary([
+      { usage: fakeUsage({ costRmbCustom: 0.01 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro', callId: 'call-p1' },
+      { usage: fakeUsage({ costRmbCustom: 0.02 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro', callId: 'call-p2' },
+      { usage: fakeUsage({ costRmbCustom: 0.05 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash', callId: 'call-f1' },
+    ], {
+      selections: [
+        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'POLICY' as any, reasonCodes: ['MULTI_FILE_CHANGE'], policyVersion: PV },
+        { role: 'FAST_EXECUTOR' as any, provider: 'ds', profileId: 'f', modelLogicalName: 'flash', source: 'ESCALATION' as any, reasonCodes: ['PRO_QUALITY_FAILURE'], policyVersion: PV, escalatedFromCallId: 'call-p2' },
+      ],
+      attempts: [
+        { role: 'STRONG_EXECUTOR' as any, failure: { category: 'MODEL_QUALITY_FAILURE' as any, summary: 'fail', contributedToFinalResult: false } },
+        { role: 'FAST_EXECUTOR' as any },
+      ],
+    });
+    // Pro→Flash 升级 1 次
+    expect(summary.routingEffect.escalationCount).toBe(1);
+    // escalatedFromCallId='call-p2' 精确归因到第二次 Pro（0.02），而非第一条 Usage（0.01）
+    expect(summary.routingEffect.escalationCostRmb).toBeCloseTo(0.02);
+  });
+
+  it('无 callId 时 escalation cost 为 null 不猜测', () => {
+    const summary = makeSummary([
+      { usage: fakeUsage({ costRmbCustom: null }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash' },
+    ], {
+      selections: [
+        { role: 'FAST_EXECUTOR' as any, provider: 'ds', profileId: 'f', modelLogicalName: 'flash', source: 'POLICY' as any, reasonCodes: ['DEFAULT_FLASH'], policyVersion: PV },
+        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'ESCALATION' as any, reasonCodes: ['FLASH_QUALITY_FAILURE'], policyVersion: PV },
+      ],
+      attempts: [
+        { role: 'FAST_EXECUTOR' as any, failure: { category: 'MODEL_QUALITY_FAILURE' as any, summary: 'fail', contributedToFinalResult: false } },
+        { role: 'STRONG_EXECUTOR' as any },
+      ],
+    });
+    expect(summary.routingEffect.escalationCount).toBe(1);
+    expect(summary.routingEffect.escalationCostRmb).toBeNull();
+  });
+
+  it('escalatedFromCallId 是真实 callId', () => {
+    const summary = makeSummary([
+      { usage: fakeUsage({ costRmbCustom: 0.005 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash', callId: 'call-real-f1' },
+      { usage: fakeUsage({ costRmbCustom: 0.05 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro', callId: 'call-real-p1' },
+    ], {
+      selections: [
+        { role: 'FAST_EXECUTOR' as any, provider: 'ds', profileId: 'f', modelLogicalName: 'flash', source: 'POLICY' as any, reasonCodes: ['DEFAULT_FLASH'], policyVersion: PV },
+        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'ESCALATION' as any, reasonCodes: ['FLASH_QUALITY_FAILURE'], policyVersion: PV, escalatedFromCallId: 'call-real-f1' },
+      ],
+      attempts: [
+        { role: 'FAST_EXECUTOR' as any, failure: { category: 'MODEL_QUALITY_FAILURE' as any, summary: 'fail', contributedToFinalResult: false } },
+        { role: 'STRONG_EXECUTOR' as any },
+      ],
+    });
+    expect(summary.routingEffect.escalationCount).toBe(1);
+    // 通过 escalatedFromCallId='call-real-f1' 精确归因到 0.005
+    expect(summary.routingEffect.escalationCostRmb).toBeCloseTo(0.005);
+  });
+
+  it('ARBITER Capsule 无真实调用时不产生假 callId', () => {
+    const summary = makeSummary([
+      { usage: fakeUsage({ costRmbCustom: 0.01 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro', callId: 'call-p-only' },
+    ], {
+      selections: [
+        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'POLICY' as any, reasonCodes: ['MULTI_FILE_CHANGE'], policyVersion: PV },
+        { role: 'ARBITER' as any, provider: 'anthropic', profileId: 'opus', modelLogicalName: 'opus-model', source: 'ESCALATION' as any, reasonCodes: ['OPUS_ARBITRATION'], policyVersion: PV },
+      ],
+      attempts: [
+        { role: 'STRONG_EXECUTOR' as any },
+        { role: 'ARBITER' as any },
+      ],
+    });
+    // ARBITER 未真正调用（useRecords 只有 1 条 Pro），escalationCostRmb 为 null
+    expect(summary.routingEffect.escalationCostRmb).toBeNull();
   });
 });
 

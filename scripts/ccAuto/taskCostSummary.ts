@@ -35,6 +35,8 @@ export interface SnapshotInput {
     role: ExecutionModelRole;
     provider: string;
     modelLogicalName: string;
+    /** 真实 callId，用于升级成本精确归因；缺失时降级为 role 匹配 */
+    callId?: string;
   }>;
   estimate: TaskBudgetEstimate;
 }
@@ -131,6 +133,8 @@ export interface SummaryInput {
     role: ExecutionModelRole;
     provider: string;
     modelLogicalName: string;
+    /** 真实 callId，用于升级成本精确归因；缺失时降级为 role 匹配 */
+    callId?: string;
   }>;
   selections: ModelSelection[];
   attempts: Array<{
@@ -290,7 +294,7 @@ export function buildTaskCostSummary(input: SummaryInput): TaskCostSummary {
   const proCostShare = safeRatio(proCostRmb ?? null, allCostsKnown ? totalCostRmb : null);
   const opusCostShare = safeRatio(opusCostRmb ?? null, allCostsKnown ? totalCostRmb : null);
 
-  // escalation count + 升级浪费成本：按顺序遍历 selections → attempts → usageRecords
+  // escalation count + 升级浪费成本：按 selections → attempts 遍历，通过 escalatedFromCallId 精确查询 UsageRecord
   let escalationCount = 0;
   let escalationCostRmb = 0;
   let allEscalationCostsKnown = true;
@@ -302,8 +306,15 @@ export function buildTaskCostSummary(input: SummaryInput): TaskCostSummary {
       // 升级发生：前一次尝试的失败成本计入升级浪费
       const prevAttempt = attempts[i - 1];
       if (prevAttempt?.failure && !prevAttempt.failure.contributedToFinalResult) {
-        // 通过同 role 匹配 UsageRecord（单一 role 通常只有一条 UsageRecord）
-        const matchedUsage = usageRecords.find((r) => r.role === lastRole);
+        // 优先通过 escalatedFromCallId 精确查询 UsageRecord
+        let matchedUsage: (typeof usageRecords)[number] | undefined;
+        if (sel.escalatedFromCallId) {
+          matchedUsage = usageRecords.find((r) => r.callId === sel.escalatedFromCallId);
+        }
+        // 降级：无 escalatedFromCallId 时通过 role 匹配（向后兼容旧数据）
+        if (!matchedUsage) {
+          matchedUsage = usageRecords.find((r) => r.role === lastRole);
+        }
         if (matchedUsage) {
           const cost = matchedUsage.usage.costRmbCustom;
           if (cost !== null && cost !== undefined) {

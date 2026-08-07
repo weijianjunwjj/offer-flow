@@ -97,6 +97,8 @@ export async function executeWithModelRouting(
     role: ExecutionModelRole;
     provider: string;
     modelLogicalName: string;
+    /** 真实 callId，用于升级成本精确归因 */
+    callId: string;
   }> = [];
   const attempts: Array<{
     role: ExecutionModelRole;
@@ -142,6 +144,7 @@ export async function executeWithModelRouting(
       allUsageRecords.push({
         usage: execResult.usageRecord,
         role: 'FAST_EXECUTOR', provider: profileId, modelLogicalName,
+        callId,
       });
     }
     return {
@@ -302,6 +305,7 @@ export async function executeWithModelRouting(
               usage: arbiterResult.usageRecord,
               role: 'ARBITER', provider: selection.provider,
               modelLogicalName: selection.modelLogicalName,
+              callId: arbiterCallId,
             });
           }
           return await finalizeResult({
@@ -378,6 +382,7 @@ export async function executeWithModelRouting(
         role: selection.role,
         provider: selection.provider,
         modelLogicalName: selection.modelLogicalName,
+        callId,
       });
     }
 
@@ -430,7 +435,10 @@ export async function executeWithModelRouting(
 
     context = escalateContext(context, selection.role, failureCategory, execResult.message);
     escalationCount++;
+    // 保存本次失败调用的 callId 到下一轮 selection.escalatedFromCallId（用于精确成本归因）
+    const escalationCallId = callId;
     selection = selectExecutionModel(context, opts.routingConfigInput);
+    selection.escalatedFromCallId = escalationCallId;
     selections.push(selection);
 
     if (selection.role === 'ARBITER') {
