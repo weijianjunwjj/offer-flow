@@ -26,7 +26,7 @@ import type {
   IdentityConfirmationContext,
   ProviderAdapterResolver,
 } from './types';
-import { TimeoutError } from './providerErrors';
+import { TimeoutError, TransportError, ProviderProtocolError } from './providerErrors';
 import { buildChildEnv } from './buildChildEnv';
 import { checkModelIdentity } from './modelIdentity';
 import { buildUsageRecord } from './usage';
@@ -207,19 +207,35 @@ export async function executeProviderCall(
   } catch (err) {
     // 通过 instanceof 稳定判断错误类别（不使用字符串 message 匹配）
     const isTimeout = err instanceof TimeoutError;
+    const isDomainError = err instanceof TransportError || err instanceof ProviderProtocolError;
 
     const marked = markPendingCallUnknown(cwd, opts.runId, callId);
     // 若 mark 失败（pendingCall 不存在或 callId 不匹配）→ 说明内部状态已不一致
     // 不能声称 UNKNOWN_AFTER_CRASH 已持久化
 
+    // TransportError / ProviderProtocolError → known error classes → PROVIDER_ERROR
+    // Unless TransportError.transient === true → transientTransportError flag
+    // Unknown errors (generic Error, etc.) → truly unknown → UNKNOWN_AFTER_CRASH
+    const stopReason: ProviderExecutionStopReason = isTimeout
+      ? 'PROVIDER_TIMEOUT'
+      : isDomainError
+        ? 'PROVIDER_ERROR'
+        : 'UNKNOWN_AFTER_CRASH';
+
+    const isTransientTransport =
+      err instanceof TransportError && err.transient === true;
+
     return {
       ok: false,
-      stopReason: isTimeout ? 'PROVIDER_TIMEOUT' : 'PROVIDER_ERROR',
+      stopReason,
       requiresHumanConfirmation: false,
       usageRecord: null,
       identityConfirmationContext: null,
       message: `Provider 调用失败：${(err as Error).message}` +
         (marked ? '' : '（警告：无法更新 PendingCall 状态，内部状态可能不一致）'),
+      errorKind: isTimeout ? 'HTTP' : undefined,
+      httpStatus: null,
+      transientTransportError: isTransientTransport || undefined,
     };
   }
 
@@ -261,6 +277,8 @@ export async function executeProviderCall(
       usageRecord: errorRecord,
       identityConfirmationContext: null,
       message: `Provider "${profile.id}" 返回错误响应：${response.error?.message ?? response.subtype}`,
+      errorKind,
+      httpStatus: response.error?.httpStatus ?? null,
     };
   }
 
@@ -382,6 +400,7 @@ export async function executeProviderCall(
     usageRecord,
     content: response.content ?? '',
     toolCalls: response.toolCalls,
+    reasoningContent: response.reasoningContent,
   };
 }
 

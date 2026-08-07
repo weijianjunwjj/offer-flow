@@ -1,4 +1,4 @@
-/** cc-auto v0.2.0 Slice 1E — 只读工具协议解析与运行时校验。 */
+/** cc-auto v0.2.0 Slice 1E-W — 工具协议解析与运行时校验（含写入工具）。 */
 import type {
   DeepSeekToolName,
   GlobArguments,
@@ -7,16 +7,26 @@ import type {
   ParsedToolCall,
   ProviderToolDefinition,
   ReadFileArguments,
+  WriteFileArguments,
+  EditFileArguments,
   ToolProtocolErrorReason,
 } from './types';
 
 export const DEEPSEEK_READ_TOOL_NAMES = ['read_file', 'grep', 'glob'] as const;
+export const DEEPSEEK_TOOL_NAMES = ['read_file', 'grep', 'glob', 'write_file', 'edit_file'] as const;
 
-const VALID_TOOL_NAMES: ReadonlySet<string> = new Set(DEEPSEEK_READ_TOOL_NAMES);
+const VALID_TOOL_NAMES: ReadonlySet<string> = new Set(DEEPSEEK_TOOL_NAMES);
 const MAX_ARGUMENTS_LENGTH = 64_000;
 const MAX_TOOL_CALL_ID_LENGTH = 256;
 const MAX_TOOL_NAME_LENGTH = 128;
 const MAX_PATH_LENGTH = 4096;
+const DEFAULT_MAX_WRITE_CONTENT_BYTES = 256_000;
+const DEFAULT_MAX_EDIT_TEXT_BYTES = 64_000;
+
+export interface ParseToolCallsOptions {
+  maxWriteContentBytes?: number;
+  maxEditContentBytes?: number;
+}
 
 export type ParseToolCallsOutcome =
   | { ok: true; parsed: ParsedToolCall[] }
@@ -60,7 +70,10 @@ function firstUnknownField(
 /**
  * 只接受 Provider 原生 tool_calls 数组。普通文本、Markdown 或内嵌 JSON 均不会被猜测成调用。
  */
-export function parseToolCalls(raw: unknown): ParseToolCallsOutcome {
+export function parseToolCalls(raw: unknown, options?: ParseToolCallsOptions): ParseToolCallsOutcome {
+  const maxWriteBytes = options?.maxWriteContentBytes ?? DEFAULT_MAX_WRITE_CONTENT_BYTES;
+  const maxEditBytes = options?.maxEditContentBytes ?? DEFAULT_MAX_EDIT_TEXT_BYTES;
+
   if (!Array.isArray(raw) || raw.length === 0) {
     return { ok: false, reason: 'INVALID_TOOL_CALL', message: 'tool_calls 必须是非空数组' };
   }
@@ -68,7 +81,7 @@ export function parseToolCalls(raw: unknown): ParseToolCallsOutcome {
   const seenIds = new Set<string>();
   const parsed: ParsedToolCall[] = [];
   for (let index = 0; index < raw.length; index++) {
-    const outcome = parseSingleToolCall(raw[index], index, seenIds);
+    const outcome = parseSingleToolCall(raw[index], index, seenIds, maxWriteBytes, maxEditBytes);
     if (!outcome.ok) return outcome;
     parsed.push(outcome.parsed);
   }
@@ -79,6 +92,8 @@ function parseSingleToolCall(
   value: unknown,
   index: number,
   seenIds: Set<string>,
+  maxWriteContentBytes: number,
+  maxEditContentBytes: number,
 ): SingleParseOutcome {
   if (!isPlainRecord(value)) {
     return failure('INVALID_TOOL_CALL', `tool_calls[${index}] 必须是普通对象`, index);
@@ -131,7 +146,7 @@ function parseSingleToolCall(
     return failure('ARGUMENTS_NOT_OBJECT', `工具 "${name}" arguments 必须是普通对象`, index);
   }
 
-  const argumentsOutcome = validateArguments(name as DeepSeekToolName, argumentsValue, index);
+  const argumentsOutcome = validateArguments(name as DeepSeekToolName, argumentsValue, index, maxWriteContentBytes, maxEditContentBytes);
   if (!argumentsOutcome.ok) return argumentsOutcome;
   return { ok: true, parsed: addToolCallId(value.id, argumentsOutcome.parsed) };
 }
@@ -139,7 +154,9 @@ function parseSingleToolCall(
 type ParsedToolCallWithoutId =
   | { name: 'read_file'; arguments: ReadFileArguments }
   | { name: 'grep'; arguments: GrepArguments }
-  | { name: 'glob'; arguments: GlobArguments };
+  | { name: 'glob'; arguments: GlobArguments }
+  | { name: 'write_file'; arguments: WriteFileArguments }
+  | { name: 'edit_file'; arguments: EditFileArguments };
 
 type ArgumentsOutcome =
   | { ok: true; parsed: ParsedToolCallWithoutId }
@@ -150,6 +167,8 @@ function addToolCallId(id: string, call: ParsedToolCallWithoutId): ParsedToolCal
     case 'read_file': return { id, name: call.name, arguments: call.arguments };
     case 'grep': return { id, name: call.name, arguments: call.arguments };
     case 'glob': return { id, name: call.name, arguments: call.arguments };
+    case 'write_file': return { id, name: call.name, arguments: call.arguments };
+    case 'edit_file': return { id, name: call.name, arguments: call.arguments };
   }
 }
 
@@ -157,11 +176,15 @@ function validateArguments(
   name: DeepSeekToolName,
   value: Record<string, unknown>,
   index: number,
+  maxWriteContentBytes: number,
+  maxEditContentBytes: number,
 ): ArgumentsOutcome {
   switch (name) {
     case 'read_file': return validateReadArguments(value, index);
     case 'grep': return validateGrepArguments(value, index);
     case 'glob': return validateGlobArguments(value, index);
+    case 'write_file': return validateWriteArguments(value, index, maxWriteContentBytes);
+    case 'edit_file': return validateEditArguments(value, index, maxEditContentBytes);
   }
 }
 
@@ -286,6 +309,59 @@ function validateGlobArguments(value: Record<string, unknown>, index: number): A
   return { ok: true, parsed: { name: 'glob', arguments: args } };
 }
 
+function validateWriteArguments(value: Record<string, unknown>, index: number, maxBytes: number): ArgumentsOutcome {
+  const extra = unknownArgument(value, ['path', 'content'], 'write_file', index);
+  if (extra !== null) return extra;
+  const targetPath = requiredString(value.path, 'write_file.path', index);
+  if (isFailureValue(targetPath)) return targetPath;
+  const content = value.content;
+  if (content === undefined) {
+    return failure('ARGUMENT_FIELD_MISSING', 'write_file.content 缺失', index);
+  }
+  if (typeof content !== 'string') {
+    return failure('ARGUMENT_TYPE_INVALID', 'write_file.content 必须是字符串', index);
+  }
+  if (content.length === 0) {
+    return failure('ARGUMENT_VALUE_INVALID', 'write_file.content 不能为空', index);
+  }
+  const byteLen = new TextEncoder().encode(content).length;
+  if (byteLen > maxBytes) {
+    return failure('CONTENT_TOO_LARGE', `write_file.content UTF-8 编码后超过 ${maxBytes} 字节限制`, index);
+  }
+  return { ok: true, parsed: { name: 'write_file', arguments: { path: targetPath, content } } };
+}
+
+function validateEditArguments(value: Record<string, unknown>, index: number, maxBytes: number): ArgumentsOutcome {
+  const extra = unknownArgument(value, ['path', 'oldText', 'newText'], 'edit_file', index);
+  if (extra !== null) return extra;
+  const targetPath = requiredString(value.path, 'edit_file.path', index);
+  if (isFailureValue(targetPath)) return targetPath;
+  const oldText = value.oldText;
+  if (oldText === undefined) {
+    return failure('ARGUMENT_FIELD_MISSING', 'edit_file.oldText 缺失', index);
+  }
+  if (typeof oldText !== 'string') {
+    return failure('ARGUMENT_TYPE_INVALID', 'edit_file.oldText 必须是字符串', index);
+  }
+  if (oldText.length === 0) {
+    return failure('ARGUMENT_VALUE_INVALID', 'edit_file.oldText 不能为空', index);
+  }
+  if (new TextEncoder().encode(oldText).length > maxBytes) {
+    return failure('OLD_TEXT_TOO_LARGE', `edit_file.oldText UTF-8 编码后超过 ${maxBytes} 字节限制`, index);
+  }
+  const newText = value.newText;
+  if (newText === undefined) {
+    return failure('ARGUMENT_FIELD_MISSING', 'edit_file.newText 缺失', index);
+  }
+  if (typeof newText !== 'string') {
+    return failure('ARGUMENT_TYPE_INVALID', 'edit_file.newText 必须是字符串', index);
+  }
+  if (new TextEncoder().encode(newText).length > maxBytes) {
+    return failure('NEW_TEXT_TOO_LARGE', `edit_file.newText UTF-8 编码后超过 ${maxBytes} 字节限制`, index);
+  }
+  return { ok: true, parsed: { name: 'edit_file', arguments: { path: targetPath, oldText, newText } } };
+}
+
 export const DEEPSEEK_FILE_TOOL_DEFINITIONS: ProviderToolDefinition[] = [
   {
     type: 'function',
@@ -324,6 +400,35 @@ export const DEEPSEEK_FILE_TOOL_DEFINITIONS: ProviderToolDefinition[] = [
         properties: {
           pattern: { type: 'string' }, roots: { type: 'array', items: { type: 'string' } },
           maxResults: { type: 'integer', minimum: 1, maximum: 500 },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: '在 FileScope 内安全写入 UTF-8 文本文件。只能写入已批准的文件路径。',
+      parameters: {
+        type: 'object', additionalProperties: false, required: ['path', 'content'],
+        properties: {
+          path: { type: 'string' },
+          content: { type: 'string' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: '在 FileScope 内安全替换文本。oldText 必须唯一出现且精确匹配。',
+      parameters: {
+        type: 'object', additionalProperties: false, required: ['path', 'oldText', 'newText'],
+        properties: {
+          path: { type: 'string' },
+          oldText: { type: 'string' },
+          newText: { type: 'string' },
         },
       },
     },

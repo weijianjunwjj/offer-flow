@@ -401,11 +401,11 @@ describe('parseToolCalls — glob specifics', () => {
 // Tool definitions
 // ============================================================================
 describe('DEEPSEEK_FILE_TOOL_DEFINITIONS', () => {
-  it('has exactly the three read-only tool definitions', () => {
-    expect(DEEPSEEK_FILE_TOOL_DEFINITIONS).toHaveLength(3);
+  it('has exactly the five tool definitions (read/write)', () => {
+    expect(DEEPSEEK_FILE_TOOL_DEFINITIONS).toHaveLength(5);
   });
 
-  const expectedNames = ['read_file', 'grep', 'glob'];
+  const expectedNames = ['read_file', 'grep', 'glob', 'write_file', 'edit_file'];
   for (const name of expectedNames) {
     it(`includes ${name}`, () => {
       const def = DEEPSEEK_FILE_TOOL_DEFINITIONS.find(d => d.function.name === name);
@@ -418,5 +418,146 @@ describe('DEEPSEEK_FILE_TOOL_DEFINITIONS', () => {
   it('no duplicate names', () => {
     const names = DEEPSEEK_FILE_TOOL_DEFINITIONS.map(d => d.function.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+// ============================================================================
+// write_file validation
+// ============================================================================
+describe('parseToolCalls — write_file validation', () => {
+  it('accepts valid write_file', () => {
+    const tc = makeToolCall({
+      function: { name: 'write_file', arguments: JSON.stringify({ path: 'src/out.ts', content: 'export const x = 1;\n' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(true);
+    if (result.ok && result.parsed[0].name === 'write_file') {
+      expect(result.parsed[0].arguments.path).toBe('src/out.ts');
+      expect(result.parsed[0].arguments.content).toBe('export const x = 1;\n');
+    }
+  });
+
+  it('rejects missing path', () => {
+    const tc = makeToolCall({
+      function: { name: 'write_file', arguments: JSON.stringify({ content: 'x' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_FIELD_MISSING');
+  });
+
+  it('rejects missing content', () => {
+    const tc = makeToolCall({
+      function: { name: 'write_file', arguments: JSON.stringify({ path: 'src/f.ts' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_FIELD_MISSING');
+  });
+
+  it('rejects unknown field', () => {
+    const tc = makeToolCall({
+      function: { name: 'write_file', arguments: JSON.stringify({ path: 'src/f.ts', content: 'x', mode: 'w+' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_FIELD_UNKNOWN');
+  });
+
+  it('rejects path as non-string', () => {
+    const tc = makeToolCall({
+      function: { name: 'write_file', arguments: JSON.stringify({ path: 123, content: 'x' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_TYPE_INVALID');
+  });
+
+  it('rejects content as non-string', () => {
+    const tc = makeToolCall({
+      function: { name: 'write_file', arguments: JSON.stringify({ path: 'f.ts', content: 123 }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_TYPE_INVALID');
+  });
+
+  it('rejects empty content', () => {
+    const tc = makeToolCall({
+      function: { name: 'write_file', arguments: JSON.stringify({ path: 'f.ts', content: '' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_VALUE_INVALID');
+  });
+
+  it('rejects duplicate tool call id', () => {
+    const tc1 = makeToolCall({ id: 'dup_w', function: { name: 'write_file', arguments: JSON.stringify({ path: 'a.ts', content: 'x' }) } });
+    const tc2 = makeToolCall({ id: 'dup_w', function: { name: 'write_file', arguments: JSON.stringify({ path: 'b.ts', content: 'y' }) } });
+    const result = parseToolCalls([tc1, tc2]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('DUPLICATE_TOOL_CALL_ID');
+  });
+});
+
+// ============================================================================
+// edit_file validation
+// ============================================================================
+describe('parseToolCalls — edit_file validation', () => {
+  it('accepts valid edit_file', () => {
+    const tc = makeToolCall({
+      function: { name: 'edit_file', arguments: JSON.stringify({ path: 'src/f.ts', oldText: 'hello', newText: 'world' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(true);
+    if (result.ok && result.parsed[0].name === 'edit_file') {
+      expect(result.parsed[0].arguments.oldText).toBe('hello');
+      expect(result.parsed[0].arguments.newText).toBe('world');
+    }
+  });
+
+  it('rejects missing path', () => {
+    const tc = makeToolCall({
+      function: { name: 'edit_file', arguments: JSON.stringify({ oldText: 'a', newText: 'b' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_FIELD_MISSING');
+  });
+
+  it('rejects missing oldText', () => {
+    const tc = makeToolCall({
+      function: { name: 'edit_file', arguments: JSON.stringify({ path: 'f.ts', newText: 'b' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_FIELD_MISSING');
+  });
+
+  it('rejects missing newText', () => {
+    const tc = makeToolCall({
+      function: { name: 'edit_file', arguments: JSON.stringify({ path: 'f.ts', oldText: 'a' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_FIELD_MISSING');
+  });
+
+  it('rejects unknown field', () => {
+    const tc = makeToolCall({
+      function: { name: 'edit_file', arguments: JSON.stringify({ path: 'f.ts', oldText: 'a', newText: 'b', regex: true }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_FIELD_UNKNOWN');
+  });
+
+  it('rejects non-string oldText', () => {
+    const tc = makeToolCall({
+      function: { name: 'edit_file', arguments: JSON.stringify({ path: 'f.ts', oldText: 42, newText: 'b' }) },
+    });
+    const result = parseToolCalls([tc]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('ARGUMENT_TYPE_INVALID');
   });
 });

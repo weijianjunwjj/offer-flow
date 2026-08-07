@@ -368,7 +368,7 @@ describe('executeProviderCall — PROVIDER_ERROR / TIMEOUT', () => {
     expect(state.calls.length).toBe(0); // 不追加！
   });
 
-  // 普通异常：也不追加 calls[]
+  // 普通异常：也不追加 calls[]，标记 UNKNOWN_AFTER_CRASH
   it('adapter exception: pendingCall=UNKNOWN_AFTER_CRASH, calls[] unchanged, usageRecord=null', async () => {
     const runId = createRunState(FIXTURE_CWD, 'exec-exc-1', '测试', 'custom').runId;
     // 构造一个抛普通异常（非 TimeoutError）的 adapter
@@ -384,7 +384,8 @@ describe('executeProviderCall — PROVIDER_ERROR / TIMEOUT', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.stopReason).toBe('PROVIDER_ERROR');
+      // generic Error → UNKNOWN_AFTER_CRASH (not a domain error class)
+      expect(result.stopReason).toBe('UNKNOWN_AFTER_CRASH');
       expect(result.usageRecord).toBeNull();
     }
     const state = loadRunState(FIXTURE_CWD, runId);

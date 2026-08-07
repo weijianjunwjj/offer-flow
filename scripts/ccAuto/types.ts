@@ -306,6 +306,8 @@ export interface ProviderCallResponse {
   error: ProviderResponseError | null;
   /** v0.2.0 Slice 1E：Adapter 解析的 tool_calls（tool_mode=enabled 时） */
   toolCalls?: ModelToolCall[];
+  /** v0.2.0 Slice 1E-W：DeepSeek reasoning_content（模型思考链） */
+  reasoningContent?: string | null;
 }
 
 /** Adapter Profile 预校验结果 */
@@ -417,7 +419,8 @@ export type ProviderExecutionStopReason =
   | 'PROVIDER_ERROR'
   | 'PROVIDER_AUTH_ERROR'
   | 'PROVIDER_TIMEOUT'
-  | 'TRANSPORT_NOT_IMPLEMENTED';
+  | 'TRANSPORT_NOT_IMPLEMENTED'
+  | 'UNKNOWN_AFTER_CRASH';
 
 /** Provider 执行结果——可辨识联合 */
 export type ProviderExecutionResult =
@@ -427,6 +430,8 @@ export type ProviderExecutionResult =
       content: string | null;
       /** v0.2.0 Slice 1E：assistant 返回的 tool_calls（由 Adapter 解析） */
       toolCalls?: ModelToolCall[];
+      /** v0.2.0 Slice 1E-W：DeepSeek reasoning_content 保真传递 */
+      reasoningContent?: string | null;
     }
   | {
       ok: false;
@@ -435,14 +440,19 @@ export type ProviderExecutionResult =
       usageRecord: UsageRecord | null;
       identityConfirmationContext: IdentityConfirmationContext | null;
       message: string;
+      /** 1E-W：用于 Tool Loop 瞬时重试决策的 Provider 错误分类 */
+      errorKind?: ProviderResponseError['kind'];
+      /** 1E-W：原始 HTTP 状态码，用于判断 429/5xx */
+      httpStatus?: number | null;
+      /** 1E-W：TransportError 标记为瞬时传输失败（ECONNRESET 等） */
+      transientTransportError?: boolean;
     };
 
 // ============================================================================
 // v0.2.0 Slice 1E: 工具协议与受控 Tool Loop 类型
 // ============================================================================
 
-/** Slice 1E 仅开放显式只读白名单；写入仍由既有 1D 执行点管理，不进入 Tool Loop。 */
-export type DeepSeekToolName = 'read_file' | 'grep' | 'glob';
+export type DeepSeekToolName = 'read_file' | 'grep' | 'glob' | 'write_file' | 'edit_file';
 
 /** 模型返回的原始工具调用结构 */
 export interface ModelToolCall {
@@ -476,7 +486,20 @@ export interface GlobArguments {
   maxResults?: number;
 }
 
-/** 解析后的工具调用——可辨识联合 */
+/** write_file 参数——模型可指定 path + content；repositoryRoot/runId/writer/FileScope 由 Dispatcher 注入 */
+export interface WriteFileArguments {
+  path: string;
+  content: string;
+}
+
+/** edit_file 参数——复用 Safe Edit API 的 oldText/newText 语义 */
+export interface EditFileArguments {
+  path: string;
+  oldText: string;
+  newText: string;
+}
+
+/** 解析后的工具调用——可辨识联合（含写入工具） */
 export type ParsedToolCall =
   | {
       id: string;
@@ -492,6 +515,16 @@ export type ParsedToolCall =
       id: string;
       name: 'glob';
       arguments: GlobArguments;
+    }
+  | {
+      id: string;
+      name: 'write_file';
+      arguments: WriteFileArguments;
+    }
+  | {
+      id: string;
+      name: 'edit_file';
+      arguments: EditFileArguments;
     };
 
 /** 工具协议解析错误原因 */
@@ -506,7 +539,10 @@ export type ToolProtocolErrorReason =
   | 'ARGUMENT_FIELD_UNKNOWN'
   | 'ARGUMENT_FIELD_MISSING'
   | 'ARGUMENT_TYPE_INVALID'
-  | 'ARGUMENT_VALUE_INVALID';
+  | 'ARGUMENT_VALUE_INVALID'
+  | 'CONTENT_TOO_LARGE'
+  | 'OLD_TEXT_TOO_LARGE'
+  | 'NEW_TEXT_TOO_LARGE';
 
 /** 工具执行错误原因 */
 export type ToolExecutionErrorReason =
@@ -529,12 +565,27 @@ export type ToolExecutionErrorReason =
   | 'SCAN_LIMIT_EXCEEDED'
   | 'INTERNAL_ERROR'
   | 'IO_ERROR'
-  | 'UNKNOWN_TOOL';
+  | 'UNKNOWN_TOOL'
+  | 'WRITE_PERMISSION_DENIED'
+  | 'FILE_NOT_APPROVED'
+  | 'WRITER_NOT_DEEPSEEK'
+  | 'EDIT_TARGET_NOT_FOUND'
+  | 'EDIT_TARGET_NOT_UNIQUE'
+  | 'OLD_TEXT_EMPTY'
+  | 'MAX_CHANGED_FILES_EXCEEDED'
+  | 'TARGET_RACE_DETECTED'
+  | 'FILE_IDENTITY_UNVERIFIABLE'
+  | 'WRITE_STORAGE_ERROR'
+  | 'WRITE_IO_ERROR'
+  | 'WRITE_FAILED_AFTER_TRUNCATE'
+  | 'SCOPE_CONFIG_ERROR';
 
 export type ToolExecutionResult =
   | { kind: 'read_file'; content: string; lineCount: number; byteCount: number; startLine: number; endLine: number }
   | { kind: 'grep'; matches: GrepMatch[]; scannedFiles: number; bytesRead: number }
-  | { kind: 'glob'; paths: string[]; scannedEntries: number };
+  | { kind: 'glob'; paths: string[]; scannedEntries: number }
+  | { kind: 'write_file'; path: string; action: 'created' | 'updated'; bytesWritten: number }
+  | { kind: 'edit_file'; path: string; replacements: 1; bytesBefore: number; bytesAfter: number };
 
 /** 工具执行信封——失败绝不能携带 result，成功绝不能携带 error。 */
 export type ToolExecutionEnvelope =
@@ -577,10 +628,29 @@ export type ProviderToolMode = 'disabled' | 'enabled';
 /** Provider 聊天消息——角色专属字段由判别联合约束。 */
 export type ProviderChatMessage =
   | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string | null; toolCalls?: ModelToolCall[] }
+  | { role: 'assistant'; content: string | null; toolCalls?: ModelToolCall[]; reasoningContent?: string | null }
   | { role: 'tool'; content: string; toolCallId: string };
 
-/** Grep 单条匹配结果 */
+/** Tool Loop 终止原因——完整枚举（1E-W 冻结版） */
+export type ToolLoopTerminationReason =
+  | 'FINAL_RESPONSE'
+  | 'TOOL_EXECUTION_FAILED'
+  | 'TOOL_PROTOCOL_FAILED'
+  | 'MAX_TURNS_EXCEEDED'
+  | 'MAX_TOOL_CALLS_EXCEEDED'
+  | 'HISTORY_LIMIT_EXCEEDED'
+  | 'TOOL_RESULT_LIMIT_EXCEEDED'
+  | 'TURN_TIMEOUT'
+  | 'TOTAL_TIMEOUT'
+  | 'PROVIDER_ERROR'
+  | 'PROVIDER_RETRY_EXHAUSTED'
+  | 'REPEATED_TOOL_ERROR'
+  | 'MODEL_IDENTITY_MISMATCH'
+  | 'MODEL_IDENTITY_UNVERIFIED'
+  | 'UNKNOWN_AFTER_CRASH'
+  | 'CANCELLED';
+
+/** Tool Loop 停止原因（旧式——在 Tool Loop 内部使用） */
 export type DeepSeekToolLoopStopReason =
   | 'MAX_TURNS_EXCEEDED'
   | 'MAX_TOOL_CALLS_PER_TURN_EXCEEDED'
@@ -591,9 +661,15 @@ export type DeepSeekToolLoopStopReason =
   | 'TOOL_EXECUTION_FAILED'
   | 'PROVIDER_ERROR'
   | 'MODEL_IDENTITY_MISMATCH'
+  | 'MODEL_IDENTITY_UNVERIFIED'
   | 'CONTEXT_LIMIT_EXCEEDED'
   | 'LIMIT_CONFIGURATION_INVALID'
-  | 'EMPTY_FINAL_RESPONSE';
+  | 'EMPTY_FINAL_RESPONSE'
+  | 'TOTAL_TIMEOUT'
+  | 'TURN_TIMEOUT'
+  | 'PROVIDER_RETRY_EXHAUSTED'
+  | 'UNKNOWN_AFTER_CRASH'
+  | 'CANCELLED';
 
 /** Tool Loop 执行选项 */
 export interface DeepSeekToolLoopOptions {
@@ -611,6 +687,14 @@ export interface DeepSeekToolLoopOptions {
   maxHistoryChars?: number;
   maxToolResultChars?: number;
   maxTotalReadBytes?: number;
+  maxWriteContentBytes?: number;
+  maxEditContentBytes?: number;
+  /** 总超时（ms），默认 300000（5 分钟）；超出后返回 TOTAL_TIMEOUT */
+  totalTimeoutMs?: number;
+  /** 1E-W：瞬时 Provider 错误最大重试次数，默认 2（最多 3 次真实 attempt） */
+  maxTransientRetries?: number;
+  /** 1E-W：退避定时器（测试可注入 fake sleeper） */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface ProviderAdapterResolver {
@@ -656,6 +740,43 @@ export interface DeepSeekToolLoopResult {
   /** 本轮收集的所有调用 ID（由 Executor 生成，不自己构造） */
   callIds: string[];
   auditTrail: ToolLoopAuditRecord[];
+  /** v0.2.0 Slice 1E-W：结构化摘要 */
+  summary: DeepSeekToolLoopSummary;
+}
+
+/** Tool Loop 执行摘要——完成或失败后必然产生 */
+export interface DeepSeekToolLoopSummary {
+  turns: number;
+  toolCallCount: number;
+
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+
+  durationMs: number;
+
+  terminationReason: ToolLoopTerminationReason;
+
+  provider: string | null;
+  profileId: string | null;
+
+  requestedModelId: string | null;
+  resolvedModelId: string | null;
+
+  modelIdentity:
+    | 'VERIFIED'
+    | 'UNVERIFIED'
+    | 'MISMATCH'
+    | 'UNKNOWN';
+
+  callIds: string[];
+  changedFiles: string[];
+
+  verifierResult?: {
+    passed: boolean;
+    command?: string;
+    reason?: string;
+  };
 }
 
 /** Grep 单条匹配结果 */

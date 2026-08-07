@@ -14,11 +14,18 @@ export class TimeoutError extends Error {
   }
 }
 
-/** Provider 网络/传输层错误——DNS、TLS、socket、fetch rejection、redirect rejection */
+/** Provider 网络/传输层错误——DNS、TLS、socket、fetch rejection、redirect rejection。
+ *
+ * transient 用于标记已知瞬时网络失败（ECONNRESET、ETIMEDOUT、EAI_AGAIN 等），
+ * 由 Tool Loop 据此决定是否有限重试。默认 false（fail closed）。 */
 export class TransportError extends Error {
-  constructor(message: string) {
+  /** true 表示该传输错误被识别为瞬时失败，可有限重试 */
+  readonly transient?: boolean;
+
+  constructor(message: string, opts?: { transient?: boolean }) {
     super(message);
     this.name = 'TransportError';
+    this.transient = opts?.transient;
   }
 }
 

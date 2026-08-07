@@ -335,7 +335,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     });
 
     expect(result.status).toBe('STOPPED');
-    expect(result.stopReason).toBe('PROVIDER_ERROR');
+    expect(result.stopReason).toBe('TURN_TIMEOUT');
     // First turn had tool call → executed, second turn timed out
     expect(result.executedTools.length).toBe(1);
   });
@@ -531,6 +531,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     });
     const result = await runDeepSeekToolLoop(loopOptions(prepareLoopRun('protocol-error'), registry));
     expect(result.status).toBe('STOPPED');
+    // ProviderProtocolError → known domain error → PROVIDER_ERROR (not UNKNOWN_AFTER_CRASH)
     expect(result.stopReason).toBe('PROVIDER_ERROR');
     expect(result.finalText).toBeNull();
   });

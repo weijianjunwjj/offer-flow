@@ -1,14 +1,4 @@
-/** cc-auto v0.2.0 Slice 1E — 工具 Dispatcher。
- *
- * 职责：
- * - 接收 Provider 原始 tool_call，重新校验后分发到安全读取模块
- * - Read / Grep / Glob → workspaceRead.ts
- * - 未知工具拒绝
- * - 串行执行、不自动 setWriter、不自动修改 FileScope
- * - 异常转为结构化 ToolExecutionEnvelope
- *
- * Slice 1E 只注册只读工具；不提供动态注册或写入入口。
- */
+/** cc-auto v0.2.0 Slice 1E-W — 工具 Dispatcher（含 Safe Write/Edit）。 */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
   ParsedToolCall,
@@ -24,6 +14,11 @@ import {
   safeGlob,
   type WorkspaceReadBudget,
 } from './workspaceRead';
+import {
+  safeWriteWorkspaceFile,
+  safeEditWorkspaceFile,
+  type WorkspaceWriteDenyReason,
+} from './workspaceWrite';
 import { parseToolCalls } from './toolProtocol';
 import { redactForDisk, redactSecretValues } from './redact';
 
@@ -103,6 +98,8 @@ export async function dispatchDeepSeekTool(
         case 'read_file': return dispatchReadFile(options, tc);
         case 'grep': return dispatchGrep(options, tc);
         case 'glob': return dispatchGlob(options, tc);
+        case 'write_file': return dispatchWriteFile(options, tc);
+        case 'edit_file': return dispatchEditFile(options, tc);
       }
     } catch {
       return dispatchFailure(tc.id, tc.name, 'INTERNAL_ERROR', '工具执行发生内部错误');
@@ -256,6 +253,67 @@ function dispatchGlob(
   };
 }
 
+function dispatchWriteFile(
+  options: ToolDispatchOptions,
+  tc: ParsedToolCall & { name: 'write_file' },
+): ToolExecutionEnvelope {
+  const { repositoryRoot, cwd, runId, fileScope } = options;
+  const { path: targetPath, content } = tc.arguments;
+
+  const result = safeWriteWorkspaceFile({
+    repositoryRoot,
+    cwd,
+    runId,
+    targetPath,
+    fileScope,
+    content,
+  });
+
+  if (!result.ok) {
+    return dispatchFailure(tc.id, 'write_file', mapWriteDenyReason(result.reason), result.message);
+  }
+
+  return {
+    ok: true,
+    toolCallId: tc.id,
+    toolName: 'write_file',
+    result: { kind: 'write_file', path: result.normalizedPath, action: result.action, bytesWritten: result.bytesWritten },
+    error: null,
+    truncated: false,
+  };
+}
+
+function dispatchEditFile(
+  options: ToolDispatchOptions,
+  tc: ParsedToolCall & { name: 'edit_file' },
+): ToolExecutionEnvelope {
+  const { repositoryRoot, cwd, runId, fileScope } = options;
+  const { path: targetPath, oldText, newText } = tc.arguments;
+
+  const result = safeEditWorkspaceFile({
+    repositoryRoot,
+    cwd,
+    runId,
+    targetPath,
+    fileScope,
+    oldText,
+    newText,
+  });
+
+  if (!result.ok) {
+    return dispatchFailure(tc.id, 'edit_file', mapEditDenyReason(result.reason), result.message);
+  }
+
+  return {
+    ok: true,
+    toolCallId: tc.id,
+    toolName: 'edit_file',
+    result: { kind: 'edit_file', path: result.normalizedPath, replacements: 1, bytesBefore: result.bytesBefore, bytesAfter: result.bytesAfter },
+    error: null,
+    truncated: false,
+  };
+}
+
 // ============================================================================
 // 错误映射
 // ============================================================================
@@ -290,6 +348,42 @@ function safeToolCallId(toolCall: ModelToolCall): string {
     return typeof toolCall.id === 'string' ? toolCall.id.slice(0, 256) : '';
   } catch {
     return '';
+  }
+}
+
+function mapWriteDenyReason(reason: WorkspaceWriteDenyReason | string): ToolExecutionErrorReason {
+  switch (reason) {
+    case 'INVALID_PATH': return 'PATH_OUTSIDE_ROOTS';
+    case 'PATH_OUTSIDE_REPOSITORY': return 'PATH_OUTSIDE_ROOTS';
+    case 'PROTECTED_PATH': return 'PROTECTED_PATH';
+    case 'SYSTEM_PROTECTED_PATH': return 'SYSTEM_PROTECTED_PATH';
+    case 'FILE_NOT_APPROVED': return 'FILE_NOT_APPROVED';
+    case 'MAX_CHANGED_FILES_EXCEEDED': return 'MAX_CHANGED_FILES_EXCEEDED';
+    case 'RUN_LEASE_MISSING': return 'INTERNAL_ERROR';
+    case 'RUN_LEASE_MISMATCH': return 'INTERNAL_ERROR';
+    case 'REPOSITORY_ROOT_MISMATCH': return 'INTERNAL_ERROR';
+    case 'WRITER_NOT_DEEPSEEK': return 'WRITER_NOT_DEEPSEEK';
+    case 'SYMLINK_ESCAPE': return 'SYMLINK_DETECTED';
+    case 'TARGET_NOT_REGULAR_FILE': return 'FILE_NOT_REGULAR_FILE';
+    case 'FILE_IDENTITY_UNVERIFIABLE': return 'FILE_IDENTITY_UNVERIFIABLE';
+    case 'TARGET_RACE_DETECTED': return 'TARGET_RACE_DETECTED';
+    case 'WRITE_PERMISSION_DENIED': return 'WRITE_PERMISSION_DENIED';
+    case 'WRITE_STORAGE_ERROR': return 'WRITE_STORAGE_ERROR';
+    case 'WRITE_IO_ERROR': return 'WRITE_IO_ERROR';
+    case 'WRITE_FAILED_AFTER_TRUNCATE': return 'WRITE_FAILED_AFTER_TRUNCATE';
+    case 'SCOPE_CONFIG_ERROR': return 'SCOPE_CONFIG_ERROR';
+    default: return 'IO_ERROR';
+  }
+}
+
+function mapEditDenyReason(reason: WorkspaceWriteDenyReason | 'FILE_IDENTITY_UNVERIFIABLE' | 'EDIT_TARGET_NOT_FOUND' | 'EDIT_TARGET_NOT_UNIQUE' | 'OLD_TEXT_EMPTY' | 'FILE_NOT_UTF8' | string): ToolExecutionErrorReason {
+  switch (reason) {
+    case 'OLD_TEXT_EMPTY': return 'OLD_TEXT_EMPTY';
+    case 'EDIT_TARGET_NOT_FOUND': return 'EDIT_TARGET_NOT_FOUND';
+    case 'EDIT_TARGET_NOT_UNIQUE': return 'EDIT_TARGET_NOT_UNIQUE';
+    case 'FILE_NOT_UTF8': return 'FILE_NOT_UTF8';
+    case 'FILE_IDENTITY_UNVERIFIABLE': return 'FILE_IDENTITY_UNVERIFIABLE';
+    default: return mapWriteDenyReason(reason);
   }
 }
 

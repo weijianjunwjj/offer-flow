@@ -89,6 +89,8 @@ export interface OpenAIChatRequestBody {
       function: { name: string; arguments: string };
     }>;
     tool_call_id?: string;
+    /** DeepSeek reasoning_content——模型思考链，assistant 消息可选字段 */
+    reasoning_content?: string | null;
   }>;
   max_tokens: number;
   stream: false;
@@ -181,6 +183,14 @@ function serializeMessages(
             arguments: tc.function.arguments,
           },
         })),
+        reasoning_content: m.reasoningContent ?? undefined,
+      };
+    }
+    if (m.role === 'assistant') {
+      return {
+        role: 'assistant' as const,
+        content: m.content,
+        reasoning_content: m.reasoningContent ?? undefined,
       };
     }
     if (m.role === 'tool') {
@@ -544,8 +554,12 @@ export class OpenAIChatAdapter implements ProviderAdapter {
       }
 
       // 其他网络错误（DNS/TLS/socket/rejection）→ TransportError
+      // 根据 error.cause?.code 分类瞬时 vs 永久
+      const code = getNetworkErrorCode(err);
+      const transient = isTransientNetworkCode(code);
       throw new TransportError(
         redactSecretValues(`OpenAI Chat 网络错误：${(err as Error).message}`, [credential]),
+        { transient },
       );
     } finally {
       clearTimeout(timer);
@@ -744,6 +758,7 @@ export class OpenAIChatAdapter implements ProviderAdapter {
         isError: false,
         error: null,
         toolCalls: parsed.toolCalls,
+        reasoningContent: firstChoice?.message?.reasoning_content ?? null,
       };
     }
 
@@ -930,4 +945,50 @@ function sanitizeErrorMessage(message: string): string {
   return truncated
     .replace(/\bsk-[A-Za-z0-9_-]{10,}\b/g, '<redacted-key>')
     .replace(/\bBearer\s+[A-Za-z0-9._-]{10,}\b/gi, 'Bearer <redacted>');
+}
+
+// ============================================================================
+// 瞬时网络错误分类 — 基于 error.cause.code，不靠 message 模糊匹配
+// ============================================================================
+
+/** 已知瞬时网络错误码集合 */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',     // 连接被对方重置
+  'ETIMEDOUT',      // 连接超时
+  'EAI_AGAIN',      // DNS 临时失败
+  'ECONNREFUSED',   // 连接被拒绝（瞬时）
+  'ENOTFOUND',      // DNS 解析临时失败
+  'EPIPE',          // 管道损坏
+  'ECONNABORTED',   // 连接中止
+  'ENETDOWN',       // 网络不可用
+  'ENETUNREACH',    // 网络不可达
+  'EHOSTDOWN',      // 主机宕机
+  'EHOSTUNREACH',   // 主机不可达
+  'ENETRESET',      // 网络重置
+  'UND_ERR_SOCKET', // undici socket 错误
+]);
+
+function getNetworkErrorCode(err: unknown): string | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as Record<string, unknown>;
+  // 1. error.cause.code
+  if (e.cause && typeof e.cause === 'object') {
+    const cause = e.cause as Record<string, unknown>;
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  // 2. error.code（Node 原生错误）
+  if (typeof e.code === 'string') return e.code;
+  // 3. errno 到 code 的保守映射
+  if (typeof e.errno === 'number') {
+    if (e.errno === -4078 || e.errno === -54) return 'ECONNRESET';
+    if (e.errno === -4039 || e.errno === -60) return 'ETIMEDOUT';
+    if (e.errno === -3008 || e.errno === -3000) return 'EAI_AGAIN';
+    if (e.errno === -4073 || e.errno === -61) return 'ECONNREFUSED';
+  }
+  return null;
+}
+
+function isTransientNetworkCode(code: string | null): boolean {
+  if (!code) return false;
+  return TRANSIENT_NETWORK_CODES.has(code);
 }
