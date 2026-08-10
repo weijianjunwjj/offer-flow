@@ -425,6 +425,46 @@ async function finish(deps: OrchestratorDeps, state: RunState): Promise<RunState
     }
   }
 
+  // P2: Zero-provider cost summary for Direct Edit (no model calls at all).
+  // Print clearly: Provider 调用 0 次, Token 0, Cost ¥0.0000.
+  // No fake UsageRecord — state.calls.length === 0 is the truth.
+  if (state.directEdit && state.calls.length === 0) {
+    deps.log('');
+    deps.log('────────────────────────────────');
+    deps.log('cc-auto 模型成本复盘');
+    deps.log('────────────────────────────────');
+    deps.log('');
+    deps.log('执行方式：Simple Direct Edit');
+    deps.log('LLM Provider 调用：0 次');
+    deps.log('输入 Token：0');
+    deps.log('输出 Token：0');
+    deps.log('实际模型成本：¥0.0000');
+    deps.log('');
+    deps.log('全 Pro 对照：不适用（本次未调用模型）');
+    deps.log('节省：无需模型调用');
+    deps.log('────────────────────────────────');
+    deps.log('');
+  }
+
+  // Legacy zero-provider summary (non-Direct Edit but still 0 calls, e.g. budget blocked).
+  // Don't duplicate if Direct Edit already printed above.
+  if (!state.directEdit && state.calls.length === 0 && state.currentPhase !== 'PREFLIGHT') {
+    deps.log('');
+    deps.log('────────────────────────────────');
+    deps.log('cc-auto 模型成本复盘');
+    deps.log('────────────────────────────────');
+    deps.log('');
+    deps.log('LLM Provider 调用：0 次');
+    deps.log('输入 Token：0');
+    deps.log('输出 Token：0');
+    deps.log('实际模型成本：¥0.0000');
+    deps.log('');
+    deps.log(`停止原因：${state.stopReason ?? '（未知）'}`);
+    deps.log('全 Pro 对照：不适用（本次未调用模型）');
+    deps.log('────────────────────────────────');
+    deps.log('');
+  }
+
   saveRunState(deps.cwd, state);
   const markdown = renderReport(state);
   const reportPath = writeReport(deps.cwd, state.runId, markdown);
@@ -625,7 +665,7 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
       const runOnce = isFinal
         ? () => deps.runFullVerification()
         : () => {
-            const targetFiles = changedFilesSince(deps.cwd);
+            const targetFiles = state.directEdit ? state.changedFiles : changedFilesSince(deps.cwd);
             return deps.runTests(targetFiles.length > 0 ? targetFiles : state.changedFiles);
           };
       const verifyResult = await verifyWithFlakyGuard(runOnce);
@@ -636,6 +676,11 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
       }
       if (verifyResult.passed) {
         if (isFinal) { state.currentPhase = 'DONE'; state.done = true; }
+        // Direct Edit with riskScore=0 and single file: VERIFY is sufficient.
+        // The VERIFY phase already provides tiered coverage (typecheck/syntax for
+        // no-spec cases, targeted specs only when mapped). Full-suite FINAL_VERIFY
+        // is redundant and wasteful for mechanical single-file edits.
+        else if (state.directEdit) { state.currentPhase = 'DONE'; state.done = true; }
         else { state.currentPhase = 'FINAL_VERIFY'; }
         saveRunState(deps.cwd, state);
         continue;

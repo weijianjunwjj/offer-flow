@@ -1009,4 +1009,207 @@ describe('runDirectEdit 端到端：真实执行路径（不调用真实模型�
     // suggestedTests 原样保留在报告数据中（仅作建议展示，不参与执行）。
     expect(state.directEditDetail?.suggestedTests).toContain('x.spec.ts; rm -rf /');
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // P1 Production Chain: Direct Edit FINAL_VERIFY Skip
+  // ─────────────────────────────────────────────────────────────────────
+  it('生产链：机械 demoRun.ts Direct Edit 成功 → VERIFY 通过 → 跳过 FINAL_VERIFY → 直接 DONE（不跑全仓/全 cc-auto suite）', async () => {
+    // 仿 demoRun.ts 内容：一个包含标题文案的 fixture
+    const fixtureContent = 'export const TITLE = "演示标题";\n';
+    const fixtureDir = path.join(cwd, 'scripts', 'ccAuto', '__fixtures__');
+    mkdirSync(fixtureDir, { recursive: true });
+    writeFileSync(path.join(fixtureDir, 'demoRun.ts'), fixtureContent, 'utf8');
+    execFileSync('git', ['add', '-A'], { cwd });
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd });
+
+    let runFullVerificationCalls = 0;
+    let runTestsFiles: string[][] = [];
+    let builderCalled = false;
+
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        if (options.role === 'builder') {
+          builderCalled = true;
+          // Direct Edit Builder: no tools, search/replace on demoRun.ts only
+          expect(options.tools).toEqual([]);
+          expect(options.rule.model).toBe('claude-sonnet-5');
+          return {
+            raw: {}, resultText: '', isError: false, subtype: 'success',
+            structuredOutput: {
+              edits: [{ path: 'scripts/ccAuto/__fixtures__/demoRun.ts', search: '演示标题', replace: '演示标题 [cc-auto smoke test]' }],
+              summary: '在 demoRun.ts 标题末尾加 cc-auto smoke test 后缀',
+              suggestedTests: [],
+            },
+            usage: usage('builder'),
+            permissionDenials: [],
+          };
+        }
+        // Scout 不该被调用（simple → IMPLEMENT 跳过 SCOUT）
+        return fakeResult('scout', { relevantFiles: [] });
+      },
+      runTests: async (files: string[]) => {
+        runTestsFiles.push(files);
+        return { passed: true, output: 'typecheck 通过' };
+      },
+      runFullVerification: async () => {
+        runFullVerificationCalls += 1;
+        return { passed: true, output: 'full ok' };
+      },
+      currentDailyRmb: () => 0,
+      recordDailySpend: () => {},
+      hookSettingsInlineJson: '{}',
+      log: () => {},
+    };
+
+    const state = await runTask(
+      deps,
+      '在 scripts/ccAuto/__fixtures__/demoRun.ts 中，把现有 demo 标题文案末尾加上 \' [cc-auto smoke test]\'，只允许修改这个文件，不改任何逻辑，不新增文件。',
+    );
+
+    // --- 核心断言 ---
+    // 1. Direct Edit 执行成功
+    expect(state.directEdit).toBe(true);
+    expect(state.currentPhase).toBe('DONE');
+    expect(state.done).toBe(true);
+    expect(state.stopReason).toBeUndefined();
+    if (state.stopReason) console.error(`STOP_REASON: ${state.stopReason} — ${state.stopDetail}`);
+
+    // 2. changedFiles 只有 demoRun.ts
+    expect(state.changedFiles.length).toBe(1);
+    expect(state.changedFiles[0]).toMatch(/demoRun\.ts$/);
+
+    // 3. runFullVerification 调用次数 = 0
+    expect(runFullVerificationCalls).toBe(0);
+
+    // 4. runTests 被调用一次（VERIFY 阶段），传入的只有 demoRun.ts，不含任何无关 ccAuto fixture
+    expect(runTestsFiles.length).toBe(1);
+    expect(runTestsFiles[0].length).toBe(1);
+    expect(runTestsFiles[0][0]).toMatch(/demoRun\.ts$/);
+    // 确认没有任何无关 ccAuto fixture 文件被传入 runTests
+    for (const f of runTestsFiles.flat()) {
+      expect(f).not.toMatch(/multi\.ts|note\.ts|safe\.ts|empty\.ts|fail\.ts/);
+    }
+
+    // 5. Builder 被调用（Direct Edit Builder）
+    expect(builderCalled).toBe(true);
+
+    // 6. 落地内容验证
+    const writtenContent = readFileSync(path.join(fixtureDir, 'demoRun.ts'), 'utf8');
+    expect(writtenContent).toContain('[cc-auto smoke test]');
+    expect(writtenContent).toContain('演示标题');
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // P1 Regression: Dirty Worktree Isolation
+  // 回归：VERIFY 不得把预存脏文件当作 Direct Edit 的测试目标
+  // ─────────────────────────────────────────────────────────────────────
+  it('脏工作区回归：预存 dirty files（cli.ts/orchestrator.ts/orchestrator.spec.ts）不被纳入 Direct Edit VERIFY 测试目标', async () => {
+    // 1. 构造预存已提交文件，然后在 Direct Edit 前制造 dirty 改动
+    const fixtureDir = path.join(cwd, 'scripts', 'ccAuto', '__fixtures__');
+    mkdirSync(fixtureDir, { recursive: true });
+    writeFileSync(path.join(fixtureDir, 'demoRun.ts'), 'export const TITLE = "演示标题";\n', 'utf8');
+    writeFileSync(path.join(cwd, 'scripts', 'ccAuto', 'cli.ts'), '// dirty pre-existing\n', 'utf8');
+    writeFileSync(path.join(cwd, 'scripts', 'ccAuto', 'orchestrator.ts'), '// dirty pre-existing\n', 'utf8');
+    writeFileSync(path.join(cwd, 'scripts', 'ccAuto', 'orchestrator.spec.ts'), '// dirty pre-existing\n', 'utf8');
+    execFileSync('git', ['add', '-A'], { cwd });
+    execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd });
+
+    // 2. 修改 3 个文件使其变 dirty（在工作区内「预存未提交改动」）
+    //    但 demoRun.ts 保持 clean —— Direct Edit 会修改它
+    const dirtyFiles = [
+      'scripts/ccAuto/cli.ts',
+      'scripts/ccAuto/orchestrator.ts',
+      'scripts/ccAuto/orchestrator.spec.ts',
+    ];
+    for (const rel of dirtyFiles) {
+      writeFileSync(path.join(cwd, rel), `// dirty pre-existing modification at ${Date.now()}\n`, 'utf8');
+    }
+
+    // 3. 确认 changedFilesSince 确实看到了这 3 个预存 dirty files
+    const dirtyBefore = execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    for (const rel of dirtyFiles) {
+      expect(dirtyBefore).toContain(rel);
+    }
+
+    let runFullVerificationCalls = 0;
+    let runTestsFiles: string[][] = [];
+    let builderCalled = false;
+
+    const deps = {
+      cwd, config: DEFAULT_CONFIG,
+      runClaude: async (options: ClaudeCallOptions): Promise<ClaudeCallResult> => {
+        if (options.role === 'builder') {
+          builderCalled = true;
+          expect(options.tools).toEqual([]);
+          expect(options.rule.model).toBe('claude-sonnet-5');
+          return {
+            raw: {}, resultText: '', isError: false, subtype: 'success',
+            structuredOutput: {
+              edits: [{ path: 'scripts/ccAuto/__fixtures__/demoRun.ts', search: '演示标题', replace: '演示标题 [cc-auto smoke test]' }],
+              summary: '在 demoRun.ts 标题末尾加后缀',
+              suggestedTests: [],
+            },
+            usage: usage('builder'),
+            permissionDenials: [],
+          };
+        }
+        return fakeResult('scout', { relevantFiles: [] });
+      },
+      runTests: async (files: string[]) => {
+        runTestsFiles.push(files);
+        return { passed: true, output: 'typecheck 通过' };
+      },
+      runFullVerification: async () => {
+        runFullVerificationCalls += 1;
+        return { passed: true, output: 'full ok' };
+      },
+      currentDailyRmb: () => 0,
+      recordDailySpend: () => {},
+      hookSettingsInlineJson: '{}',
+      log: () => {},
+    };
+
+    const state = await runTask(
+      deps,
+      '在 scripts/ccAuto/__fixtures__/demoRun.ts 中，把现有 demo 标题文案末尾加上 \' [cc-auto smoke test]\'，只允许修改这个文件，不改任何逻辑，不新增文件。',
+    );
+
+    // --- 精确断言 ---
+
+    // A. Direct Edit 成功
+    expect(state.directEdit).toBe(true);
+    expect(state.currentPhase).toBe('DONE');
+    expect(state.done).toBe(true);
+    expect(state.stopReason).toBeUndefined();
+
+    // B. changedFiles 只有 demoRun.ts（不含预存 dirty files）
+    expect(state.changedFiles.length).toBe(1);
+    expect(state.changedFiles[0]).toEqual('scripts/ccAuto/__fixtures__/demoRun.ts');
+
+    // C. runFullVerification 调用 0 次
+    expect(runFullVerificationCalls).toBe(0);
+
+    // D. runTests 调用 1 次
+    expect(runTestsFiles.length).toBe(1);
+
+    // E. runTests 收到的 files 精确等于 [demoRun.ts]，不含任何预存 dirty file
+    expect(runTestsFiles[0].length).toBe(1);
+    expect(runTestsFiles[0][0]).toEqual('scripts/ccAuto/__fixtures__/demoRun.ts');
+
+    // F. 显式断言不包含 3 个预存 dirty files
+    const allTargets = runTestsFiles.flat();
+    expect(allTargets).not.toContain('scripts/ccAuto/cli.ts');
+    expect(allTargets).not.toContain('scripts/ccAuto/orchestrator.ts');
+    expect(allTargets).not.toContain('scripts/ccAuto/orchestrator.spec.ts');
+
+    // G. 确认预存 dirty files 仍然 dirty（Direct Edit 没有误改它们）
+    const dirtyAfter = execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    for (const rel of dirtyFiles) {
+      expect(dirtyAfter).toContain(rel);
+    }
+
+    // H. Builder 被调用
+    expect(builderCalled).toBe(true);
+  });
 });

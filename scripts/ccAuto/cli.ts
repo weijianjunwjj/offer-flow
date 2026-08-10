@@ -116,8 +116,15 @@ function sameModuleSpecs(files: string[]): string[] {
 }
 
 /**
- * 定向验证：同名 spec -> 同模块 spec -> 全量测试。任何一级找不到测试文件都不允许直接判定通过，
- * 必须继续下沉到下一级，最终至少兜底跑一次全量 vitest，不允许「跳过验证=通过」。
+ * 定向验证：同名 spec -> 同模块 spec -> 语法/类型兜底。
+ *
+ * 验证层级（Tier 1–3，按风险匹配）：
+ * - Tier 1: 没有同名或同模块 spec → 只做 typecheck/语法兜底，不跑全量测试。
+ * - Tier 2: 有相关 spec → 跑定向 spec。
+ * - Tier 3 (high-risk/wide change): 由 FINAL_VERIFY 的全量测试覆盖。
+ *
+ * 关键语义：一个只改了 __fixtures__/demoRun.ts 的任务不成该触发全仓 vitest（含 Radar/Battlefield/routedExecution.spec.ts）。
+ * 不相关的测试根本不要运行。找不到测试文件就是没有相关测试——不允许「跳过验证=通过」，但也不允许「找不到=全仓」。
  */
 async function runRelatedTests(files: string[]): Promise<{ passed: boolean; output: string }> {
   const explicitSpecs = files.filter((f) => f.endsWith('.spec.ts') && existsSync(path.join(CWD, f)));
@@ -127,7 +134,13 @@ async function runRelatedTests(files: string[]): Promise<{ passed: boolean; outp
     targets = sameModuleSpecs(files);
   }
   if (targets.length === 0) {
-    return runVitest([]); // 全量测试，不带文件过滤
+    // 没有相关测试：只做语法/类型兜底，不跑全量 vitest。
+    // 全量验证由 FINAL_VERIFY 统一负责（Tier 3）。
+    const typecheck = runLocalBin('vue-tsc', 'vue-tsc', ['--noEmit']);
+    if (!typecheck.passed) {
+      return { passed: false, output: `[typecheck 失败]\n${typecheck.output}\n\n[无相关 spec 可跑] 没有找到与 ${files.join(', ')} 对应的测试文件，且 typecheck 失败` };
+    }
+    return { passed: true, output: `[typecheck 通过]\n${typecheck.output}\n\n[无相关 spec 可跑] 没有找到与 ${files.join(', ')} 对应的测试文件，只执行 typecheck 兜底` };
   }
   return runVitest(targets);
 }

@@ -24,6 +24,16 @@ export const DIRECT_EDIT_MAX_FILE_BYTES = 64 * 1024;
 const UNSAFE_TOPIC_PATTERN =
   /schema|migration|迁移|数据库|database|依赖|dependency|package\.json|pnpm-lock|配置|config|provider|deepseek|openai|gemini|sse|鉴权|auth|密钥|secret|token/i;
 
+/**
+ * 命中即视为不适合 Direct Edit（需要模型理解代码结构、选择目标或保证语义，不是纯机械变换）。
+ *
+ * 正向资格：只有 transformation 完全确定 + old/new literal 或明确 insertion 可从任务直接得到
+ * + 不需要 AST/语义判断，才允许 Direct Edit。
+ * 关键词作为 fail-closed guard —— 只要任务声称需要理解代码结构，一律拒绝。
+ */
+const REQUIRES_SEMANTIC_UNDERSTANDING =
+  /提取(函数|方法|逻辑|变量|常量|类|模块)|extract\s*(function|method|logic|variable|constant|class|module)|重构|refactor|复用|reuse|整理(代码|逻辑|结构|文件)|clean\s*up|优化(结构|设计|架构)|restructure|reorganize|阅读(现有|当前)(代码|结构|逻辑|文件)|read\s*(existing|current)\s*(code|structure|logic|file)|选择(适合|一段)(的)?|find\s*(suitable|appropriate)|choose\s*(suitable|appropriate)|保持(行为|语义)?(不变|一致)|preserve\s*behavior|preserve\s*semantics|抽象|abstract|封装|encapsulate|理解(代码|现有|当前)?(结构|逻辑|语义|行为)|understand\s*(existing|current)?\s*(code|structure|logic|semantics|behavior)|不改变(现有|当前)(行为|逻辑|语义|接口)/i;
+
 export interface DirectEditEligibility {
   eligible: boolean;
   /** 命中条件时提取到的显式目标文件（相对路径，已去重）。 */
@@ -133,6 +143,7 @@ export function resolveExplicitFileReferences(task: string, repoRoot: string): R
 
 /**
  * Direct Edit 命中条件（纯函数，不触碰磁盘，供路由判定与单测复用）：
+ * - 任务不涉及语义理解（提取/重构/复用/阅读/抽象等），只能做纯机械变换；
  * - complexity === 'simple'；
  * - riskScore === 0；
  * - 任务正文明确包含 1~2 个文件路径；
@@ -161,6 +172,13 @@ export function evaluateDirectEditEligibility(
   } else {
     targetFiles = extractExplicitFiles(task);
   }
+  // Gate 0: 拒绝需要语义理解的任何任务（fail-closed）—— 只能做纯机械变换。
+  // 在 complexity/riskScore 检查前先判断，因为 classify 不会为 "extract function" 之类的语义任务加分。
+  // 正向资格：只有 transformation 完全确定 + old/new literal 可从任务直接得到 + 不需要 AST/语义判断。
+  if (REQUIRES_SEMANTIC_UNDERSTANDING.test(task)) {
+    return { eligible: false, targetFiles, reason: '任务需要语义理解（提取/重构/复用/阅读/抽象等），不符合 Direct Edit 纯机械变换资格' };
+  }
+
   if (classification.complexity !== 'simple') {
     return { eligible: false, targetFiles, reason: '复杂度非 simple' };
   }
