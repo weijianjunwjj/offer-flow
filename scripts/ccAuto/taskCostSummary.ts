@@ -306,15 +306,13 @@ export function buildTaskCostSummary(input: SummaryInput): TaskCostSummary {
       // 升级发生：前一次尝试的失败成本计入升级浪费
       const prevAttempt = attempts[i - 1];
       if (prevAttempt?.failure && !prevAttempt.failure.contributedToFinalResult) {
-        // 优先通过 escalatedFromCallId 精确查询 UsageRecord
+        // 通过 escalatedFromCallId 精确查询 UsageRecord（生产路径必需）
         let matchedUsage: (typeof usageRecords)[number] | undefined;
         if (sel.escalatedFromCallId) {
           matchedUsage = usageRecords.find((r) => r.callId === sel.escalatedFromCallId);
         }
-        // 降级：无 escalatedFromCallId 时通过 role 匹配（向后兼容旧数据）
-        if (!matchedUsage) {
-          matchedUsage = usageRecords.find((r) => r.role === lastRole);
-        }
+        // 1F-RUN fail closed: 缺 escalatedFromCallId → escalationCost = null（不可核验）
+        // 不再通过 role 猜测——旧数据兼容仅适用于明确标记为 legacy 的运行。
         if (matchedUsage) {
           const cost = matchedUsage.usage.costRmbCustom;
           if (cost !== null && cost !== undefined) {
@@ -322,6 +320,9 @@ export function buildTaskCostSummary(input: SummaryInput): TaskCostSummary {
           } else {
             allEscalationCostsKnown = false;
           }
+        } else if (!sel.escalatedFromCallId) {
+          // escalatedFromCallId 缺失 → 无法精确归因 → escalation waste = null
+          allEscalationCostsKnown = false;
         }
       }
     }

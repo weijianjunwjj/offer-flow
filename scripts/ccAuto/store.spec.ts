@@ -55,6 +55,16 @@ describe('isTaskSucceeded：运行是否结束 与 任务是否成功 必须可�
     expect(isTaskSucceeded(state)).toBe(true);
   });
 
+  it('DONE + changedFiles + stopReason=PROVIDER_ERROR → false（H3: terminal error）', () => {
+    const state = baseState({ currentPhase: 'DONE', changedFiles: ['a.ts'], stopReason: 'PROVIDER_ERROR', stopDetail: 'REPORTER_OUTPUT_FAILED_AFTER_EXECUTION' });
+    expect(isTaskSucceeded(state)).toBe(false);
+  });
+
+  it('DONE + changedFiles + other stopReason → false', () => {
+    const state = baseState({ currentPhase: 'DONE', changedFiles: ['a.ts'], stopReason: 'BUDGET_TASK_EXCEEDED' });
+    expect(isTaskSucceeded(state)).toBe(false);
+  });
+
   it('尚未结束（如 IMPLEMENT 中途）时判定为不成功，不得提前判成功', () => {
     const state = baseState({ currentPhase: 'IMPLEMENT', changedFiles: ['a.ts'] });
     expect(isTaskSucceeded(state)).toBe(false);

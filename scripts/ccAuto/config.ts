@@ -2,6 +2,10 @@
 // v0.2.0: 新增 providerProfiles，ProviderProfile 配置统一在 .cc-auto/config.json 中，
 // 不创建第二个配置真相来源。
 // v0.2.0 Slice 1F: 新增 modelRouting、budgetPolicy、contextBudget 配置字段。
+// v0.2.0 Slice 1F-RUN: 新增 loadEffectiveConfig——从 .cc-auto/config.json 合并配置。
+
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 export interface BudgetConfig {
   simpleTaskRmb: number;
@@ -149,4 +153,81 @@ export function budgetForComplexity(config: CcAutoConfig, complexity: 'simple' |
   if (complexity === 'simple') return config.budget.simpleTaskRmb;
   if (complexity === 'normal') return config.budget.normalTaskRmb;
   return config.budget.complexTaskRmb;
+}
+
+// ============================================================================
+// v0.2.0 Slice 1F-RUN: 配置加载
+// ============================================================================
+
+export interface ConfigLoadResult {
+  ok: true;
+  config: CcAutoConfig;
+  loadedFrom: 'default' | 'file';
+  filePath?: string;
+}
+
+export interface ConfigLoadError {
+  ok: false;
+  reason: 'FILE_NOT_FOUND' | 'PARSE_ERROR' | 'VALIDATION_ERROR';
+  message: string;
+}
+
+export type ConfigLoadOutcome = ConfigLoadResult | ConfigLoadError;
+
+/**
+ * 加载有效配置：DEFAULT_CONFIG + .cc-auto/config.json（浅合并）。
+ *
+ * 规则：
+ * - 文件不存在 → 使用默认配置，不创建文件
+ * - JSON 无效 → fail closed（PARSE_ERROR）
+ * - 未知危险字段 → 按当前配置契约处理（仅允许已知字段）
+ * - 本切片只读取，不主动创建 .cc-auto/config.json
+ */
+export function loadEffectiveConfig(cwd: string): ConfigLoadOutcome {
+  const configPath = path.join(cwd, '.cc-auto', 'config.json');
+
+  if (!existsSync(configPath)) {
+    return { ok: true, config: { ...DEFAULT_CONFIG }, loadedFrom: 'default' };
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configPath, 'utf8'));
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'PARSE_ERROR',
+      message: `.cc-auto/config.json 不是有效 JSON：${(err as Error).message}`,
+    };
+  }
+
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return {
+      ok: false,
+      reason: 'VALIDATION_ERROR',
+      message: '.cc-auto/config.json 必须是一个 JSON 对象',
+    };
+  }
+
+  const file = raw as Record<string, unknown>;
+  // 浅合并：文件覆盖默认，但不允许注入未知危险字段。
+  // Nested objects are merged field-by-field to support partial overrides
+  // (e.g. { modelRouting: { enabled: true } } preserves all other modelRouting defaults).
+  return {
+    ok: true,
+    config: {
+      ...DEFAULT_CONFIG,
+      ...(file.budget ? { budget: { ...DEFAULT_CONFIG.budget, ...(file.budget as Partial<BudgetConfig>) } } : {}),
+      ...(file.limits ? { limits: { ...DEFAULT_CONFIG.limits, ...(file.limits as Partial<LimitsConfig>) } } : {}),
+      ...(file.usdToRmbRate !== undefined ? { usdToRmbRate: Number(file.usdToRmbRate) } : {}),
+      ...(file.pricingMode ? { pricingMode: file.pricingMode as PricingMode } : {}),
+      ...(file.customPricing ? { customPricing: file.customPricing as Record<string, ModelPricingRmb> } : {}),
+      ...(file.providerProfiles ? { providerProfiles: file.providerProfiles as Record<string, unknown> } : {}),
+      ...(file.modelRouting ? { modelRouting: { ...DEFAULT_CONFIG.modelRouting, ...(file.modelRouting as Record<string, unknown>) } as CcAutoConfig['modelRouting'] } : {}),
+      ...(file.budgetPolicy ? { budgetPolicy: { ...DEFAULT_CONFIG.budgetPolicy, ...(file.budgetPolicy as Record<string, unknown>) } as CcAutoConfig['budgetPolicy'] } : {}),
+      ...(file.contextBudget ? { contextBudget: { ...DEFAULT_CONFIG.contextBudget, ...(file.contextBudget as Record<string, unknown>) } as CcAutoConfig['contextBudget'] } : {}),
+    } as CcAutoConfig,
+    loadedFrom: 'file',
+    filePath: configPath,
+  };
 }

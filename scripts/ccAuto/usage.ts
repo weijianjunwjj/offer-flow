@@ -73,6 +73,8 @@ export interface BuildUsageRecordInput {
   toolUseCounts?: Record<string, number> | null;
   toolErrorCounts?: Record<string, number> | null;
   permissionDenialsCount?: number;
+  /** v0.2.0 Slice 1F-RUN P2: routed execution role, null for legacy */
+  executionRole?: import('./types').ExecutionModelRole | null;
 }
 
 /**
@@ -119,6 +121,7 @@ export function buildUsageRecord(input: BuildUsageRecordInput): UsageRecord {
     toolUseCounts: input.toolUseCounts ?? null,
     toolErrorCounts: input.toolErrorCounts ?? null,
     permissionDenialsCount: input.permissionDenialsCount ?? 0,
+    executionRole: input.executionRole ?? null,
   };
 }
 

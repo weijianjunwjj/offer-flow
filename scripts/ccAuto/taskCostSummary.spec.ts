@@ -343,12 +343,12 @@ describe('节省效果', () => {
 describe('升级成本', () => {
   it('失败 Flash 成本计入 escalationCostRmb', () => {
     const summary = makeSummary([
-      { usage: fakeUsage({ costRmbCustom: 0.005 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash' },
-      { usage: fakeUsage({ costRmbCustom: 0.02 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro' },
+      { usage: fakeUsage({ costRmbCustom: 0.005 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash', callId: 'call-f1' },
+      { usage: fakeUsage({ costRmbCustom: 0.02 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro', callId: 'call-p1' },
     ], {
       selections: [
         { role: 'FAST_EXECUTOR' as any, provider: 'ds', profileId: 'f', modelLogicalName: 'flash', source: 'POLICY' as any, reasonCodes: ['DEFAULT_FLASH'], policyVersion: PV },
-        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'ESCALATION' as any, reasonCodes: ['FLASH_QUALITY_FAILURE'], policyVersion: PV },
+        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'ESCALATION' as any, reasonCodes: ['FLASH_QUALITY_FAILURE'], policyVersion: PV, escalatedFromCallId: 'call-f1' },
       ],
       attempts: [
         { role: 'FAST_EXECUTOR' as any, failure: { category: 'MODEL_QUALITY_FAILURE' as any, summary: 'fail', contributedToFinalResult: false } },
@@ -361,12 +361,12 @@ describe('升级成本', () => {
 
   it('contributedToFinalResult=true 不计入升级成本', () => {
     const summary = makeSummary([
-      { usage: fakeUsage({ costRmbCustom: 0.005 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash' },
-      { usage: fakeUsage({ costRmbCustom: 0.02 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro' },
+      { usage: fakeUsage({ costRmbCustom: 0.005 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash', callId: 'call-f1' },
+      { usage: fakeUsage({ costRmbCustom: 0.02 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro', callId: 'call-p1' },
     ], {
       selections: [
         { role: 'FAST_EXECUTOR' as any, provider: 'ds', profileId: 'f', modelLogicalName: 'flash', source: 'POLICY' as any, reasonCodes: ['DEFAULT_FLASH'], policyVersion: PV },
-        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'ESCALATION' as any, reasonCodes: ['FLASH_QUALITY_FAILURE'], policyVersion: PV },
+        { role: 'STRONG_EXECUTOR' as any, provider: 'ds', profileId: 'p', modelLogicalName: 'pro', source: 'ESCALATION' as any, reasonCodes: ['FLASH_QUALITY_FAILURE'], policyVersion: PV, escalatedFromCallId: 'call-f1' },
       ],
       attempts: [
         { role: 'FAST_EXECUTOR' as any, failure: { category: 'MODEL_QUALITY_FAILURE' as any, summary: 'fail', contributedToFinalResult: true } },

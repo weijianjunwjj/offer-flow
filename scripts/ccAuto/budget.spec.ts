@@ -5,6 +5,7 @@ import type { CallUsage } from './types';
 
 function call(model: CallUsage['model'], costRmb: number): CallUsage {
   return {
+    callId: 'test-call',
     model, modelId: 'x', inputTokens: 0, outputTokens: 0,
     cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
     costUsd: costRmb / DEFAULT_CONFIG.usdToRmbRate,

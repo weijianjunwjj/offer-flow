@@ -37,7 +37,7 @@ const MODEL_ID_BY_ROLE: Record<CallUsage['model'], string> = {
 };
 
 function usage(model: CallUsage['model'], costRmb = 0.01): CallUsage {
-  return { model, modelId: MODEL_ID_BY_ROLE[model], inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, costUsd: 0.001, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 10, numTurns: 1, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0 };
+  return { callId: 'test-call', model, modelId: MODEL_ID_BY_ROLE[model], inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, costUsd: 0.001, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 10, numTurns: 1, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0 };
 }
 
 function fakeResult(role: CallUsage['model'], structuredOutput: unknown): ClaudeCallResult {
@@ -119,7 +119,7 @@ it('仲裁前预算门禁拦截：Arbiter 子进程未启动 → runClaude 未�
   const cfg: CcAutoConfig = { ...DEFAULT_CONFIG, budget: { ...DEFAULT_CONFIG.budget, simpleTaskRmb: 2, absoluteTaskMaxRmb: 2 } };
   const roles: string[] = [];
   const priced = (model: CallUsage['model'], rmb: number): CallUsage => ({
-    model, modelId: MODEL_ID_BY_ROLE[model], inputTokens: 10, outputTokens: 10,
+    callId: 'test-call', model, modelId: MODEL_ID_BY_ROLE[model], inputTokens: 10, outputTokens: 10,
     cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
     costUsd: 0.01, costRmbOfficial: rmb, costRmbCustom: rmb, costRmb: rmb,
     durationMs: 10, numTurns: 1, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0,
@@ -290,7 +290,7 @@ it('验收 B：自定义渠道价格能正确触发预算停止（官方 CLI 费
   expect(official).toBeLessThan(expensiveConfig.budget.absoluteTaskMaxRmb); // 确认换成 official 口径本不会超预算
 
   const builderUsage: CallUsage = {
-    model: 'builder', modelId: 'claude-sonnet-5', ...tokens,
+    callId: 'test-call', model: 'builder', modelId: 'claude-sonnet-5', ...tokens,
     costUsd, costRmbOfficial: official, costRmbCustom: custom, costRmb: custom,
     durationMs: 10, numTurns: 1, pricingStatus: 'PRICED',
     subtype: 'success', isError: false, permissionDenialsCount: 0,
@@ -321,7 +321,7 @@ it('验收 D：返回的模型 ID 未在价格表中时立即停止（PRICING_NO
   // UNPRICED：调用已经真实发生，无法定价——modelId、四类 Token、官方参考费用、role、耗时都必须保留，
   // 只有渠道人民币费用为 null（绝不写成 0）。
   const unknownUsage: CallUsage = {
-    model: 'builder', modelId: 'claude-unreleased-model',
+    callId: 'test-call', model: 'builder', modelId: 'claude-unreleased-model',
     inputTokens: 10, outputTokens: 10, cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
     costUsd: 0.001, costRmbOfficial: 0.007, costRmbCustom: null, costRmb: null,
     durationMs: 10, numTurns: 1, pricingStatus: 'UNPRICED',
@@ -423,7 +423,7 @@ it('验收 F（报告）：UNPRICED 调用计入调用数/Token/官方费用但�
   const calls: CallUsage[] = [
     usage('builder', 1.23), // PRICED
     {
-      model: 'builder', modelId: 'claude-unreleased-model',
+      callId: 'test-call', model: 'builder', modelId: 'claude-unreleased-model',
       inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 10, cacheReadInputTokens: 5,
       costUsd: 0.002, costRmbOfficial: 0.0144, costRmbCustom: null, costRmb: null,
       durationMs: 20, numTurns: 2, pricingStatus: 'UNPRICED',
@@ -451,7 +451,7 @@ it('验收 F（报告）：UNPRICED 调用计入调用数/Token/官方费用但�
 
 it('验收 G：builder 用尽 max-turns 且未输出结构化 JSON 时分类为 MAX_TURNS_EXCEEDED，不再落入 PROVIDER_ERROR', async () => {
   const maxTurnsUsage: CallUsage = {
-    model: 'builder', modelId: 'claude-sonnet-5', inputTokens: 5000, outputTokens: 100,
+    callId: 'test-call', model: 'builder', modelId: 'claude-sonnet-5', inputTokens: 5000, outputTokens: 100,
     cacheCreationInputTokens: 0, cacheReadInputTokens: 270000,
     costUsd: 0.05, costRmbOfficial: 0.36, costRmbCustom: 0.36, costRmb: 0.36,
     durationMs: 60000, numTurns: 16, pricingStatus: 'PRICED',
@@ -478,7 +478,7 @@ it('验收 G：builder 用尽 max-turns 且未输出结构化 JSON 时分类为 
 
 it('验收 H：builder 正常结束但缺少结构化输出（非 error_max_turns）时分类为 STRUCTURED_OUTPUT_MISSING', async () => {
   const noStructuredUsage: CallUsage = {
-    model: 'builder', modelId: 'claude-sonnet-5', inputTokens: 100, outputTokens: 50,
+    callId: 'test-call', model: 'builder', modelId: 'claude-sonnet-5', inputTokens: 100, outputTokens: 50,
     cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
     costUsd: 0.001, costRmbOfficial: 0.007, costRmbCustom: 0.007, costRmb: 0.007,
     durationMs: 500, numTurns: 3, pricingStatus: 'PRICED',
@@ -533,6 +533,7 @@ describe('renderReport：四类 token 与可观测性明细必须出现在报告
     const state = createRunState(cwd, 'run-report-tokens', '演示任务', 'custom');
     state.calls = [
       {
+        callId: 'test-call',
         model: 'builder', modelId: 'claude-sonnet-5',
         inputTokens: 111, outputTokens: 222, cacheCreationInputTokens: 333, cacheReadInputTokens: 444,
         costUsd: 0.01, costRmbOfficial: 0.07, costRmbCustom: 0.07, costRmb: 0.07,
@@ -751,6 +752,7 @@ describe('directEditPrompt：只包含任务、允许文件与文件内容，不
 describe('renderReport：执行模式与可观测性缺失字段显式「不可用」', () => {
   function baseCall(overrides: Partial<CallUsage>): CallUsage {
     return {
+      callId: 'test-call',
       model: 'builder', modelId: 'claude-sonnet-5',
       inputTokens: 10, outputTokens: 20, cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
       costUsd: 0.01, costRmbOfficial: 0.07, costRmbCustom: 0.07, costRmb: 0.07,

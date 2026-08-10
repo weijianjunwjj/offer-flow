@@ -8,7 +8,7 @@ const demoCwd = process.argv[2];
 if (!demoCwd) throw new Error('用法：tsx demoRun.ts <cwd>');
 
 function usage(model: CallUsage['model'], costRmb: number): CallUsage {
-  return { model, modelId: model === 'scout' ? 'claude-haiku-4-5' : 'claude-sonnet-5', inputTokens: 3000, outputTokens: 800, cacheCreationInputTokens: 500, cacheReadInputTokens: 12000, costUsd: costRmb / DEFAULT_CONFIG.usdToRmbRate, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 8000, numTurns: 3, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0 };
+  return { callId: 'demo', model, modelId: model === 'scout' ? 'claude-haiku-4-5' : 'claude-sonnet-5', inputTokens: 3000, outputTokens: 800, cacheCreationInputTokens: 500, cacheReadInputTokens: 12000, costUsd: costRmb / DEFAULT_CONFIG.usdToRmbRate, costRmbOfficial: costRmb, costRmbCustom: costRmb, costRmb, durationMs: 8000, numTurns: 3, pricingStatus: 'PRICED', subtype: 'success', isError: false, permissionDenialsCount: 0 };
 }
 
 function fakeResult(role: CallUsage['model'], structuredOutput: unknown, costRmb: number): ClaudeCallResult {

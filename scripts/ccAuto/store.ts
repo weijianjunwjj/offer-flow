@@ -60,8 +60,19 @@ export interface RunState {
   resumed?: boolean;
   /** 当前 v0.2.0 阶段（v0.2.0，区别于 v0.1 currentPhase，两套状态机共存期间兼容） */
   currentRunPhase?: string;
+  /** v0.2.0 Slice 1F：append-only phase history for production integration audit. */
+  phaseHistory?: import('./types').Phase[];
+  /** v0.2.0 Slice 1F-RUN Blockers: next model role for REPAIR phases (set by VERIFY failure handler). */
+  nextRoutedRole?: import('./types').ExecutionModelRole;
+  /** v0.2.0 Slice 1F-RUN Blockers: per-run requested role from --fast CLI flag (used once in IMPLEMENT). */
+  perRunRequestedRole?: import('./types').ExecutionModelRole;
+  /** v0.2.0 Slice 1F-RUN Blockers: Flash attempt's last Provider callId for M3 escalation linkage. */
+  flashLastCallId?: string;
   /** v0.2.0 Slice 1B：当前挂起的模型调用（持久化用于崩溃恢复探测；非挂起状态时不存在） */
   pendingCall?: PendingCall;
+  /** v0.2.0 Slice 1F：已完成的调用尝试痕迹（append-only，包括 UNKNOWN_AFTER_CRASH）。
+   *  每个 attempt 独立 callId、不可覆盖，作为不可覆盖的审计证据保留。*/
+  attemptHistory?: PendingCall[];
 
   // ======== v0.2.0 Slice 1F：路由、预算、成本、仲裁持久化 ========
   /** 任务前预算估算——在第一条 PendingCall 之前写入 */
@@ -88,12 +99,14 @@ export interface DirectEditDetail {
 }
 
 /**
- * 任务是否成功：只有「以 DONE 结束 + 有改动文件 + 最终验证通过」才算成功。
- * STOPPED、无改动、未过验证均为否，避免「运行已结束」与「任务已成功」的歧义。
+ * 任务是否成功：只有「以 DONE 结束 + 有改动文件 + 无 terminal error」才算成功。
+ * STOPPED、无改动、存在 stopReason 均为否，避免「运行已结束」与「任务已成功」的歧义。
+ * H3: terminal stop/error（如 REPORTER_OUTPUT_FAILED_AFTER_EXECUTION）→ success = false。
  */
 export function isTaskSucceeded(state: RunState): boolean {
   if (state.currentPhase !== 'DONE') return false;
   if (state.changedFiles.length === 0) return false;
+  if (state.stopReason) return false;
   return true;
 }
 
@@ -137,6 +150,12 @@ export function createRunState(cwd: string, runId: string, taskDescription: stri
 
 export function saveRunState(cwd: string, state: RunState): void {
   state.updatedAt = new Date().toISOString();
+  // phaseHistory: append-only log of phases visited
+  if (!state.phaseHistory) state.phaseHistory = [];
+  const lastPhase = state.phaseHistory[state.phaseHistory.length - 1];
+  if (lastPhase !== state.currentPhase) {
+    state.phaseHistory.push(state.currentPhase);
+  }
   const file = path.join(runDir(cwd, state.runId), 'state.json');
   // 原子写：临时文件 + rename，避免半写状态
   const tmp = file + '.tmp';
@@ -185,6 +204,22 @@ export function writeReport(cwd: string, runId: string, markdown: string): strin
   const file = path.join(runDir(cwd, runId), 'report.md');
   writeFileSync(file, redactForDisk(markdown), 'utf8');
   return file;
+}
+
+/**
+ * 追加一条已完成的 PendingCall 到 attemptHistory（append-only 审计痕迹）。
+ * 在覆盖 pendingCall 之前调用：保留旧 attempt 为不可覆盖证据。
+ * 每个 attempt 保持独立 callId、独立 terminal evidence。
+ */
+export function appendAttemptHistory(cwd: string, runId: string, call: PendingCall): void {
+  if (!runStateExists(cwd, runId)) return;
+  const state = loadRunState(cwd, runId);
+  if (!state.attemptHistory) state.attemptHistory = [];
+  // 防重复：同 callId 不再追加
+  if (state.attemptHistory.some((c) => c.callId === call.callId)) return;
+  state.attemptHistory.push(call);
+  state.updatedAt = new Date().toISOString();
+  saveRunState(cwd, state);
 }
 
 // ============================================================================

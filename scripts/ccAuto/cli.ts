@@ -4,14 +4,13 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { DEFAULT_CONFIG, type CcAutoConfig } from './config';
+import { loadEffectiveConfig, type CcAutoConfig } from './config';
 import { runTask, resumeTask, type OrchestratorDeps } from './orchestrator';
 import { runClaude, verifyClaudeBinary, type ClaudeCallOptions } from './runner';
 import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded } from './store';
 import { renderReport } from './report';
 import { resolveLocalPackageBin } from './localBin';
 import { runPreflight } from './preflight';
-import type { ModelRoutingContext, RoutingTaskType } from './types';
 
 const CWD = process.cwd();
 const HOOK_SCRIPT_PATH = path.join('scripts', 'ccAuto', 'hookScript.cjs');
@@ -29,15 +28,15 @@ function hookSettingsInlineJson(): string {
   });
 }
 
-function dailySpendFile(): string {
-  const dir = path.join(ccAutoRoot(CWD), 'daily');
+function dailySpendFile(cwd: string): string {
+  const dir = path.join(ccAutoRoot(cwd), 'daily');
   mkdirSync(dir, { recursive: true });
   const today = new Date().toISOString().slice(0, 10);
   return path.join(dir, `${today}.json`);
 }
 
-function readDailySpend(): number {
-  const file = dailySpendFile();
+function readDailySpend(cwd: string): number {
+  const file = dailySpendFile(cwd);
   if (!existsSync(file)) return 0;
   try {
     const data = JSON.parse(readFileSync(file, 'utf8')) as { totalRmb?: number };
@@ -47,9 +46,9 @@ function readDailySpend(): number {
   }
 }
 
-function writeDailySpend(deltaRmb: number): void {
-  const file = dailySpendFile();
-  const current = readDailySpend();
+function writeDailySpend(cwd: string, deltaRmb: number): void {
+  const file = dailySpendFile(cwd);
+  const current = readDailySpend(cwd);
   writeFileSync(file, JSON.stringify({ totalRmb: current + deltaRmb }, null, 2), 'utf8');
 }
 
@@ -142,24 +141,25 @@ async function runFullVerification(): Promise<{ passed: boolean; output: string 
   return { passed: tests.passed, output: `[typecheck 通过]\n${typecheck.output}\n\n[全量 vitest]\n${tests.output}` };
 }
 
-function buildDeps(config: CcAutoConfig): OrchestratorDeps {
+function buildDeps(config: CcAutoConfig, cwd: string): OrchestratorDeps {
+  const routingEnabled = config.modelRouting?.enabled === true;
   return {
-    cwd: CWD,
+    cwd,
     config,
     runClaude: (options: ClaudeCallOptions) => runClaude(options, config),
     runTests: runRelatedTests,
     runFullVerification,
-    currentDailyRmb: readDailySpend,
-    recordDailySpend: writeDailySpend,
+    currentDailyRmb: () => readDailySpend(cwd),
+    recordDailySpend: (rmb: number) => writeDailySpend(cwd, rmb),
     hookSettingsInlineJson: hookSettingsInlineJson(),
     log: (line: string) => console.log(`[cc-auto] ${line}`),
     verifyClaudeBinary,
+    routedExecution: routingEnabled,
   };
 }
 
 
-/**
- * 取值型 flag：既支持新格式 `--key=value`，也兼容旧调用方式 `--key value`（空格分隔，下一个 token 是值）。
+/** 取值型 flag：既支持新格式 `--key=value`，也兼容旧调用方式 `--key value`（空格分隔，下一个 token 是值）。
  * 不在此列表中的 `--flag` 视为布尔开关（如 --no-commit），不会消费下一个 token，
  * 从而保证旧式 `--budget 2.00 --max-files 2 ...` 调用不会把数值拼进任务正文。
  *
@@ -253,64 +253,31 @@ export function parseRunArgv(argv: string[]): ParsedRunArgv {
   };
 }
 
-/**
- * 从任务描述中提取路由任务类型——纯关键词匹配，不调用 LLM。
- * 确保确定性分类且不受 Prompt 注入。
- */
-export function classifyRoutingTaskType(taskDescription: string): RoutingTaskType {
-  const lower = taskDescription.toLowerCase();
-  // 只读操作——优先
-  if (/查看|查找|搜索|理解|分析|解释|定位|只读/.test(lower)) return 'REPOSITORY_READ';
-  // 终审/裁决
-  if (/review|审核|复查|终审|评判|检验/.test(lower)) return 'FINAL_REVIEW';
-  // 测试修复——必须在"修复/bug/fix"之前
-  if (/测试|test|spec|flaky/.test(lower)) return 'TEST_REPAIR';
-  // Bug 修复
-  if (/fix|bug|修复|缺陷|修正|错误/.test(lower)) return 'BUG_FIX';
-  // 架构——必须在一般"实现/修改"之前
-  if (/架构|重构|重写|推翻|设计/.test(lower)) return 'ARCHITECTURE';
-  if (/数据库|schema|migration|migrate|db/.test(lower)) return 'ARCHITECTURE';
-  if (/provider|密钥|api key|执行器|adapter|env/.test(lower)) return 'ARCHITECTURE';
-  // 实现/修改——必须在文档之前
-  if (/实现|添加|新增|开发|创建|编写|修改|调整|优化/.test(lower)) return 'CODE_IMPLEMENTATION';
-  // 文档——最后
-  if (/文档|readme|doc|帮助|help/.test(lower)) return 'DOCUMENTATION';
-  return 'CODE_IMPLEMENTATION';
-}
-
-/**
- * 从任务描述构建模型路由上下文——纯规则，不调用 LLM。
- */
-export function buildRoutingContext(
-  taskDescription: string,
-  overrides: Partial<ModelRoutingContext> = {},
-): ModelRoutingContext {
-  const lower = taskDescription.toLowerCase();
-
-  return {
-    taskType: classifyRoutingTaskType(taskDescription),
-    affectedFileCount: overrides.affectedFileCount ?? 1,
-    specificationClear: !(/模糊|不明|歧义|不清楚|可能/.test(lower)),
-    touchesArchitecture: /架构|schema|数据库|migration|provider|重写|重构/.test(lower),
-    touchesSecurityBoundary: /安全|密钥|token|api key|认证/.test(lower),
-    touchesProviderLifecycle: /provider|adapter|执行器|env|api/.test(lower),
-    touchesPendingCallOrUsage: /pendingcall|usage|调用记录|pending/.test(lower),
-    touchesDatabaseSchema: /schema|migration|数据库|db|migrate/.test(lower),
-    touchesTransactionOrConcurrency: /事务|并发|transaction|concurrency|锁/.test(lower),
-    touchesStateMachine: /状态机|state machine|phase|阶段/.test(lower),
-    previousAttemptCount: 0,
-    allowEscalation: true,
-    requestedRole: overrides.requestedRole,
-  };
-}
+// Re-export routing context builders from routingContext.ts (extracted to avoid circular import)
+export { classifyRoutingTaskType, buildRoutingContext } from './routingContext';
 
 /** report 子命令帮助文案：明确说明可查看模型调用、渠道费用与验证结果这三类信息。 */
 export const REPORT_HELP_TEXT = '查看指定运行任务的模型调用、渠道费用和验证结果，默认显示最后一个';
 
-async function main(): Promise<void> {
-  const parsed = parseRunArgv(process.argv);
+/**
+ * runCli — 正式 handler seam，test 与 main() 共用同一实现。
+ *
+ * 返回 { exitCode } 表示 if-no-process-exit semantics。
+ * 生产环境：main() 调用 runCli() 后 process.exit(exitCode)。
+ * 测试：调用 runCli(argv, cwd, depsOverrides) 获取 exitCode 与 RunState。
+ *
+ * @param argv 完整 process.argv 风格数组（含 node 可执行文件、脚本路径）。
+ * @param cwdOverride 可选的工作目录覆盖（测试注入临时目录）。
+ * @param depsOverride 可选的 OrchestratorDeps 部分字段覆盖（测试注入 fake runClaude/verifier）。
+ */
+export async function runCli(
+  argv: string[],
+  cwdOverride?: string,
+  depsOverride?: Partial<OrchestratorDeps>,
+): Promise<{ exitCode: number; state?: import('./store').RunState }> {
+  const cwd = cwdOverride ?? CWD;
+  const parsed = parseRunArgv(argv);
   const command = parsed.command;
-  const config = DEFAULT_CONFIG;
 
   if (command === 'run') {
     if (parsed.strippedDuplicateRun) {
@@ -318,51 +285,79 @@ async function main(): Promise<void> {
     }
     const taskDescription = parsed.taskDescription;
     if (!taskDescription) {
-      console.error('用法：pnpm cc:auto run "<任务描述>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit]');
-      process.exit(1);
+      console.error('用法：pnpm cc:auto run "<任务描述>" [--estimated-files=N] [--budget=N] [--max-files=N] [--max-fix-rounds=N] [--no-commit] [--fast]');
+      return { exitCode: 1 };
+    }
+
+    // 加载有效配置：DEFAULT_CONFIG + .cc-auto/config.json
+    const configResult = loadEffectiveConfig(cwd);
+    if (!configResult.ok) {
+      console.error(`[cc-auto] 配置加载失败：${configResult.message}`);
+      return { exitCode: 1 };
+    }
+    const config = configResult.config;
+    if (configResult.loadedFrom === 'file') {
+      console.log(`[cc-auto] 已加载配置：${configResult.filePath}`);
     }
 
     // 兼容路径：Claude CLI 执行链
     const estimatedFiles = parsed.estimatedFiles;
-    const deps = buildDeps(config);
-    const state = await runTask(deps, taskDescription, estimatedFiles);
+    const baseDeps = buildDeps(config, cwd);
+    const deps: OrchestratorDeps = depsOverride ? { ...baseDeps, ...depsOverride } : baseDeps;
+    // H4: Propagate --fast CLI flag as per-run requestedRole
+    const perRunOpts = parsed.fast ? { requestedRole: 'FAST_EXECUTOR' as const } : undefined;
+    const state = await runTask(deps, taskDescription, estimatedFiles, perRunOpts);
     console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
-    process.exit(isTaskSucceeded(state) ? 0 : 1);
+    return { exitCode: isTaskSucceeded(state) ? 0 : 1, state };
   } else if (command === 'resume') {
-    const { positional } = parseFlags(process.argv.slice(3));
-    const runId = positional[0] ?? latestRunId(CWD);
+    const { positional } = parseFlags(argv.slice(3));
+    const runId = positional[0] ?? latestRunId(cwd);
     if (!runId) {
       console.error('未找到可 resume 的 run，请显式指定 run-id');
-      process.exit(1);
+      return { exitCode: 1 };
     }
-    const deps = buildDeps(config);
+    // Resume 也需加载有效配置
+    const configResult = loadEffectiveConfig(cwd);
+    if (!configResult.ok) {
+      console.error(`[cc-auto] 配置加载失败：${configResult.message}`);
+      return { exitCode: 1 };
+    }
+    const config = configResult.config;
+    const baseDeps = buildDeps(config, cwd);
+    const deps: OrchestratorDeps = depsOverride ? { ...baseDeps, ...depsOverride } : baseDeps;
     const state = await resumeTask(deps, runId);
     console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
-    process.exit(isTaskSucceeded(state) ? 0 : 1);
+    return { exitCode: isTaskSucceeded(state) ? 0 : 1, state };
   } else if (command === 'report') {
-    const { positional } = parseFlags(process.argv.slice(3));
-    const runId = positional[0] ?? latestRunId(CWD);
+    const { positional } = parseFlags(argv.slice(3));
+    const runId = positional[0] ?? latestRunId(cwd);
     if (!runId) {
       console.error('未找到任何 run');
-      process.exit(1);
+      return { exitCode: 1 };
     }
-    const state = loadRunState(CWD, runId);
+    const state = loadRunState(cwd, runId);
     console.log(renderReport(state));
+    return { exitCode: 0, state };
   } else if (command === 'preflight') {
-    const { positional } = parseFlags(process.argv.slice(3));
+    const { positional } = parseFlags(argv.slice(3));
     const taskDescription = positional.join(' ').trim();
     if (!taskDescription) {
       console.error('用法：pnpm cc:auto preflight "<任务描述>"');
-      process.exit(1);
+      return { exitCode: 1 };
     }
 
     const preflightProfileId = process.env.CC_AUTO_DEEPSEEK_PROFILE ?? 'deepseek-v4-pro';
+    const effectiveConfig = loadEffectiveConfig(cwd);
+    if (!effectiveConfig.ok) {
+      console.error(`[cc-auto] 配置加载失败：${effectiveConfig.message}`);
+      return { exitCode: 1 };
+    }
     const result = await runPreflight({
-      cwd: CWD,
+      cwd,
       taskDescription,
       strategy: 'deepseek-first',
       deepseekProfileId: preflightProfileId,
-      config,
+      config: effectiveConfig.config,
       log: (line: string) => console.log(`[cc-auto] ${line}`),
     });
 
@@ -378,11 +373,12 @@ async function main(): Promise<void> {
       console.log(`  runStatePath:       ${result.runStatePath}`);
       console.log(`  Run Lease:          已释放`);
       console.log('═══════════════════════════════════════════');
+      return { exitCode: 0 };
     } else {
       console.error('');
       console.error(`预检失败：${result.stopReason}`);
       console.error(`  ${result.message}`);
-      process.exit(1);
+      return { exitCode: 1 };
     }
   } else if (command === '--help' || command === '-h') {
     console.log('用法：pnpm cc:auto <run|resume|report|preflight> ...');
@@ -398,10 +394,16 @@ async function main(): Promise<void> {
     console.log('');
     console.log('  preflight "<任务>"');
     console.log('    预检骨架：不调用模型，校验配置/Run Lease/WorktreeFingerprint/状态持久化闭环');
+    return { exitCode: 0 };
   } else {
     console.error('用法：pnpm cc:auto <run|resume|report|preflight> ...');
-    process.exit(1);
+    return { exitCode: 1 };
   }
+}
+
+async function main(): Promise<void> {
+  const { exitCode } = await runCli(process.argv, CWD);
+  process.exit(exitCode);
 }
 
 /** 仅作为直接执行入口时才运行；被测试 import 时不触发真实 main()。 */

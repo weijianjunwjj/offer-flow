@@ -767,7 +767,7 @@ describe('normalizeOpenAIChatUsage', () => {
   });
 
   // 43. 只有 prompt/output、缺少缓存字段 → PARTIAL
-  it('returns null cache fields when no cache breakdown available', () => {
+  it('returns zero cache fields when no cache breakdown available', () => {
     const result = normalizeOpenAIChatUsage({
       prompt_tokens: 1000,
       completion_tokens: 500,
@@ -776,9 +776,9 @@ describe('normalizeOpenAIChatUsage', () => {
     expect(result.inconsistent).toBe(false);
     expect(result.rawUsage.inputTokens).toBe(1000);
     expect(result.rawUsage.outputTokens).toBe(500);
-    expect(result.rawUsage.cacheCreationInputTokens).toBeNull();  // not present in response
-    expect(result.rawUsage.cacheReadInputTokens).toBeNull();      // not present in response
-    // usageStatus 最终由 classifyUsage 判定为 PARTIAL
+    expect(result.rawUsage.cacheCreationInputTokens).toBe(0); // default to 0 for usage completeness
+    expect(result.rawUsage.cacheReadInputTokens).toBe(0);     // default to 0 for usage completeness
+    // usageStatus 最终由 classifyUsage 判定为 AVAILABLE
   });
 
   // 44. usage 缺失 → MISSING
@@ -1165,5 +1165,153 @@ describe('OpenAIChatAdapter — AbortSignal and timeout', () => {
     const result = await adapter.execute(makeRequest(), makeContext());
     expect(result.isError).toBe(false);
     // If timer wasn't cleared, it would leak (detectable in long-running tests but not in unit)
+  });
+});
+
+// ============================================================================
+// P0.3: Adapter transient classification —— 真实 OpenAIChatAdapter 分类测试
+// ============================================================================
+
+describe('OpenAIChatAdapter — transient classification (1F-P0.3)', () => {
+  const makeFetchRejection = (code: string | null, options?: { errno?: number }): FetchLike => {
+    return async () => {
+      const err = Object.assign(new Error(`Network error: ${code ?? 'unknown'}`), {
+        code,
+        errno: options?.errno,
+        cause: code ? { code } : undefined,
+      }) as Error & { code?: string; errno?: number; cause?: { code?: string } };
+      throw err;
+    };
+  };
+
+  const makeFetchRejectionWithCause = (causeCode: string | null): FetchLike => {
+    return async () => {
+      const cause = causeCode ? { code: causeCode } : undefined;
+      const err = Object.assign(new Error(`Network error: ${causeCode ?? 'unknown'}`), {
+        cause,
+      }) as Error & { cause?: { code?: string } };
+      throw err;
+    };
+  };
+
+  it('ECONNRESET via error.code → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection('ECONNRESET'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  it('ECONNRESET via error.cause.code → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejectionWithCause('ECONNRESET'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  it('ETIMEDOUT → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection('ETIMEDOUT'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  it('EAI_AGAIN → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection('EAI_AGAIN'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  it('ENOTFOUND → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection('ENOTFOUND'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  it('ECONNREFUSED → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection('ECONNREFUSED'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  it('unknown code (e.g. BOGUS_CODE) → transient=false', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection('BOGUS_CODE_NOT_IN_WHITELIST'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=false');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBeFalsy();
+    }
+  });
+
+  it('no code (null) → transient=false', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection(null));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=false');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBeFalsy();
+    }
+  });
+
+  it('unclassified errno → transient=false', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection(null, { errno: -9999 }));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=false');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBeFalsy();
+    }
+  });
+
+  it('errno=-4078 maps to ECONNRESET → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection(null, { errno: -4078 }));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  it('errno=-4039 maps to ETIMEDOUT → transient=true', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejection(null, { errno: -4039 }));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
   });
 });

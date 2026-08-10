@@ -43,12 +43,16 @@ export type PricingStatus = 'PRICED' | 'UNPRICED';
  * 但不计入已知渠道人民币合计（已知合计因此只是费用下限）。
  */
 export interface CallUsage {
+  /** v0.2.0 Slice 1F-RUN H2: 审计元数据——Provider dispatch 的唯一标识，贯穿 PendingCall→UsageRecord→CallUsage→attemptHistory */
+  callId: string;
   model: ModelRole;
   modelId: string;
-  inputTokens: number;
-  outputTokens: number;
-  cacheCreationInputTokens: number;
-  cacheReadInputTokens: number;
+  /** v0.2.0 Slice 1F-RUN P2: routed execution role（FAST_EXECUTOR | STRONG_EXECUTOR | ARBITER），legacy 调用为 null */
+  executionRole?: ExecutionModelRole | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheCreationInputTokens: number | null;
+  cacheReadInputTokens: number | null;
   costUsd: number;
   costRmbOfficial: number;
   costRmbCustom: number | null;
@@ -409,6 +413,9 @@ export interface UsageRecord {
   toolUseCounts: Record<string, number> | null;
   toolErrorCounts: Record<string, number> | null;
   permissionDenialsCount: number;
+
+  /** v0.2.0 Slice 1F-RUN P2: routed execution role，legacy 调用为 null */
+  executionRole?: ExecutionModelRole | null;
 }
 
 /** Provider 执行失败原因（非 stopReason 的领域枚举） */
@@ -624,6 +631,9 @@ export interface ProviderToolDefinition {
 /** Provider 工具模式 */
 export type ProviderToolMode = 'disabled' | 'enabled';
 
+/** DeepSeek Tool Loop 执行模式：控制暴露给模型的工具集 */
+export type DeepSeekToolMode = 'READ_ONLY' | 'WRITE_CAPABLE';
+
 /** Provider assistant 轮次——Adapter 解析后的结构化结果 */
 /** Provider 聊天消息——角色专属字段由判别联合约束。 */
 export type ProviderChatMessage =
@@ -695,6 +705,8 @@ export interface DeepSeekToolLoopOptions {
   maxTransientRetries?: number;
   /** 1E-W：退避定时器（测试可注入 fake sleeper） */
   sleep?: (ms: number) => Promise<void>;
+  /** 1F-RUN：工具定义数组。默认 DEEPSEEK_FILE_TOOL_DEFINITIONS（全部 5 工具）。传入 DEEPSEEK_READ_ONLY_TOOL_DEFINITIONS 实现协议层只读。 */
+  toolDefinitions?: ProviderToolDefinition[];
 }
 
 export interface ProviderAdapterResolver {
@@ -711,6 +723,8 @@ export interface DeepSeekToolLoopExecutorContext {
   adapterRegistry: ProviderAdapterResolver;
   parentEnv: NodeJS.ProcessEnv;
   callIdFactory?: () => string;
+  /** v0.2.0 Slice 1F-RUN P2: routed execution role for cost attribution (null = legacy) */
+  executionRole?: ExecutionModelRole | null;
 }
 
 export type ToolLoopAuditStatus =

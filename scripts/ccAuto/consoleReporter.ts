@@ -285,8 +285,10 @@ export function createConsoleRoutedExecutionReporter(
       write(`Flash → Pro：${fmtNum(re.escalationCount)} 次`);
       if (re.escalationCostRmb !== null && Number.isFinite(re.escalationCostRmb) && re.escalationCostRmb > 0) {
         write(`无贡献失败调用成本：${fmtRmb(re.escalationCostRmb)}`);
+      } else if (re.escalationCostRmb === null) {
+        write(`无贡献失败调用成本：(不可核验)`);
       } else {
-        write(`无贡献失败调用成本：${safeCost(0)}`);
+        write(`无贡献失败调用成本：¥0.0000`);
       }
       write('');
 

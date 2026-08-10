@@ -186,6 +186,7 @@ function classifyProviderFailure(
 ): DeepSeekToolLoopStopReason {
   const sr = result.stopReason;
   if (sr === 'MODEL_IDENTITY_MISMATCH') return 'MODEL_IDENTITY_MISMATCH';
+  if (sr === 'COST_UNAVAILABLE') return 'PROVIDER_ERROR';
   if (sr === 'PROVIDER_TIMEOUT') return 'TURN_TIMEOUT';
   if (sr === 'UNKNOWN_AFTER_CRASH') return 'UNKNOWN_AFTER_CRASH';
   // default: non-transient PROVIDER_ERROR
@@ -267,6 +268,7 @@ export async function runDeepSeekToolLoop(
 
   const fullSystemPrompt = TOOL_LOOP_SYSTEM_PROMPT_PREFIX + systemPrompt;
   const callIdFactory = executorContext.callIdFactory ?? newCallId;
+  const tools = options.toolDefinitions ?? DEEPSEEK_FILE_TOOL_DEFINITIONS;
 
   const messages: ProviderChatMessage[] = [
     { role: 'system', content: fullSystemPrompt },
@@ -315,7 +317,7 @@ export async function runDeepSeekToolLoop(
     // 1. 通过正式 executeProviderCall 调用 Provider（含瞬时重试）
     const providerResult = await executeProviderCallWithRetry({
       messages,
-      tools: DEEPSEEK_FILE_TOOL_DEFINITIONS,
+      tools,
       toolMode: 'enabled',
       maxTransientRetries,
       sleep,
@@ -440,13 +442,15 @@ export async function runDeepSeekToolLoop(
       executedTools.push(envelope);
       auditTrail.push(auditRecord(turns, tc, 'EXECUTED', envelope.ok, envelope.ok ? null : envelope.error.reason));
 
-      // 追踪文件变更
+      // Track file changes (write_file & edit_file)
       if (envelope.ok) {
         if (envelope.toolName === 'write_file' && envelope.result?.kind === 'write_file') {
           (changedFilesSet as Set<string>).add(envelope.result.path);
         } else if (envelope.toolName === 'edit_file' && envelope.result?.kind === 'edit_file') {
           (changedFilesSet as Set<string>).add(envelope.result.path);
         }
+      } else {
+        // Tool execution failed: tracked in auditTrail above
       }
 
       messages.push(buildToolResultMessage(envelope, {
@@ -588,6 +592,7 @@ async function executeProviderCallWithRetry(
       tools: ctx.tools,
       toolMode: ctx.toolMode,
       callId,
+      executionRole: ctx.executorContext.executionRole ?? null,
     });
 
     // Success

@@ -72,6 +72,8 @@ export interface ExecuteProviderCallOptions {
   toolMode?: import('./types').ProviderToolMode;
   /** 由受信任调用方预生成的调用 ID；不得来自模型输出。 */
   callId?: string;
+  /** v0.2.0 Slice 1F-RUN P2: routed execution role for cost attribution (null = legacy) */
+  executionRole?: import('./types').ExecutionModelRole | null;
 }
 
 /**
@@ -263,6 +265,7 @@ export async function executeProviderCall(
       numTurns: response.numTurns,
       subtype: response.subtype,
       isError: true,
+      executionRole: opts.executionRole ?? null,
     });
 
     const stopReason: ProviderExecutionStopReason =
@@ -327,6 +330,7 @@ export async function executeProviderCall(
     numTurns: response.numTurns,
     subtype: response.subtype,
     isError: response.isError,
+    executionRole: opts.executionRole ?? null,
   });
 
   // --- 12. 根据模型身份返回结果 ---
@@ -454,6 +458,7 @@ function handleUnsupportedToolCalls(
     numTurns: response.numTurns,
     subtype: response.subtype,
     isError: true,
+    executionRole: opts.executionRole ?? null,
   });
 
   // 身份 MISMATCH 优先（安全门禁）
@@ -482,8 +487,23 @@ function handleUnsupportedToolCalls(
 }
 
 /**
- * 已知终态：一次 loadRunState + 一次 saveRunState 完成 calls[] 追加 + pendingCall 清除。
+ * 纯内存 helper：将 terminal PendingCall 追加到 state.attemptHistory。
+ * 不 load、不 save——调用方负责在调用前后管理持久化。
+ * 去重：同 callId 不重复追加。
+ */
+function appendAttemptHistoryToState(
+  state: import('./store').RunState,
+  call: import('./types').PendingCall,
+): void {
+  if (!state.attemptHistory) state.attemptHistory = [];
+  if (state.attemptHistory.some((c) => c.callId === call.callId)) return;
+  state.attemptHistory.push(call);
+}
+
+/**
+ * 已知终态：一次 loadRunState + 一次 saveRunState 完成 calls[] 追加 + pendingCall 清除 + attemptHistory 追加。
  * 不允许先单独 save calls[] 再单独 clear pendingCall —— 那样会留下半完成状态的窗口。
+ * B5 fix: 所有 mutation 在同一 state 对象上完成，单次 save，不再调用 appendAttemptHistory（后者独立 load/save 造成 state 覆盖）。
  */
 function completeKnownCall(
   cwd: string,
@@ -492,13 +512,23 @@ function completeKnownCall(
 ): void {
   if (!runId || !runStateExists(cwd, runId)) return;
   const state = loadRunState(cwd, runId);
+  // P0.1 / B5: Archive terminal COMPLETED attempt to attemptHistory (pure append, no I/O).
+  if (state.pendingCall) {
+    const terminalCall: import('./types').PendingCall = {
+      ...state.pendingCall,
+      status: 'COMPLETED',
+      updatedAt: new Date().toISOString(),
+    };
+    appendAttemptHistoryToState(state, terminalCall);
+  }
   state.calls.push({
+    callId: state.pendingCall?.callId ?? record.requestedModelId,
     model: record.model,
     modelId: record.requestedModelId,
-    inputTokens: record.inputTokens ?? 0,
-    outputTokens: record.outputTokens ?? 0,
-    cacheCreationInputTokens: record.cacheCreationInputTokens ?? 0,
-    cacheReadInputTokens: record.cacheReadInputTokens ?? 0,
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    cacheCreationInputTokens: record.cacheCreationInputTokens,
+    cacheReadInputTokens: record.cacheReadInputTokens,
     costUsd: 0,
     costRmbOfficial: record.costRmbOfficial ?? 0,
     costRmbCustom: record.costRmbCustom,
@@ -509,6 +539,7 @@ function completeKnownCall(
     subtype: record.subtype,
     isError: record.isError,
     permissionDenialsCount: record.permissionDenialsCount,
+    executionRole: record.executionRole ?? null,
   });
   state.pendingCall = undefined;
   state.updatedAt = new Date().toISOString();
@@ -521,6 +552,8 @@ function completeKnownCall(
  * 保留原有所有字段（时间、Provider、模型、角色及其他上下文），仅修改 status + updatedAt。
  * 不根据传入参数重建一条精简 PendingCall。
  * 不追加 calls[]。
+ *
+ * B5 fix: attemptHistory append + pendingCall.status mutation 在同一 load/save 内完成。
  *
  * @returns true 表示已成功修改并持久化；false 表示 pendingCall 不存在或 callId 不匹配。
  */
@@ -537,6 +570,14 @@ function markPendingCallUnknown(
 
   // callId 不匹配 → fail closed，不修改其他 PendingCall
   if (state.pendingCall.callId !== callId) return false;
+
+  // B5: Archive terminal UNKNOWN_AFTER_CRASH in-memory (pure append, no separate I/O)
+  const terminalCall: import('./types').PendingCall = {
+    ...state.pendingCall,
+    status: 'UNKNOWN_AFTER_CRASH',
+    updatedAt: new Date().toISOString(),
+  };
+  appendAttemptHistoryToState(state, terminalCall);
 
   // 仅修改 status，保留所有原有字段
   state.pendingCall.status = 'UNKNOWN_AFTER_CRASH';

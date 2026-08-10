@@ -138,15 +138,23 @@ function toUsage(role: ModelRole, configuredModelId: string, raw: RawClaudeResul
   // 定价以「实际返回的模型 ID」为准；CLI 未回传时退回配置模型。未知模型不猜默认价，记为 UNPRICED。
   const modelId = raw.model ?? configuredModelId;
   const tokens = {
-    inputTokens: raw.usage?.input_tokens ?? 0,
-    outputTokens: raw.usage?.output_tokens ?? 0,
-    cacheCreationInputTokens: raw.usage?.cache_creation_input_tokens ?? 0,
-    cacheReadInputTokens: raw.usage?.cache_read_input_tokens ?? 0,
+    inputTokens: raw.usage?.input_tokens ?? null,
+    outputTokens: raw.usage?.output_tokens ?? null,
+    cacheCreationInputTokens: raw.usage?.cache_creation_input_tokens ?? null,
+    cacheReadInputTokens: raw.usage?.cache_read_input_tokens ?? null,
+  };
+  // customRmbCost 要求 number，unknown → 0 对费用计算是安全的（无使用量=无费用）
+  const costTokens = {
+    inputTokens: tokens.inputTokens ?? 0,
+    outputTokens: tokens.outputTokens ?? 0,
+    cacheCreationInputTokens: tokens.cacheCreationInputTokens ?? 0,
+    cacheReadInputTokens: tokens.cacheReadInputTokens ?? 0,
   };
   const costRmbOfficial = usdToRmb(costUsd, config);
-  const customResult = customRmbCost(modelId, tokens, config);
+  const customResult = customRmbCost(modelId, costTokens, config);
   const observability = extractObservability(raw);
   const usage: CallUsage = {
+    callId: 'legacy',
     model: role,
     modelId,
     ...tokens,

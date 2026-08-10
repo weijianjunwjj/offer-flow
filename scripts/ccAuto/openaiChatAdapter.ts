@@ -398,8 +398,8 @@ export function normalizeOpenAIChatUsage(
     rawUsage: {
       inputTokens: promptTokens,
       outputTokens: completionTokens,
-      cacheCreationInputTokens: null,  // Provider 未返回缓存细分
-      cacheReadInputTokens: null,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
     },
     inconsistent: false,
     inconsistencyReason: '',

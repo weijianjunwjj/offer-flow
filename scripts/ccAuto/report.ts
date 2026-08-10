@@ -72,7 +72,7 @@ export function renderReport(state: RunState): string {
   for (const call of state.calls) {
     // UNPRICED 调用 costRmbCustom 为 null：显示「未定价」，绝不 null.toFixed / 写成 0。
     const customCell = call.costRmbCustom === null ? '未定价' : call.costRmbCustom.toFixed(3);
-    lines.push(`| ${call.model} | ${call.modelId} | ${call.inputTokens} | ${call.outputTokens} | ${call.cacheCreationInputTokens} | ${call.cacheReadInputTokens} | ${call.durationMs} | ${customCell} | ${call.costRmbOfficial.toFixed(3)} | ${call.pricingStatus} | ${call.subtype} |`);
+    lines.push(`| ${call.model} | ${call.modelId} | ${call.inputTokens ?? '(null)'} | ${call.outputTokens ?? '(null)'} | ${call.cacheCreationInputTokens ?? '(null)'} | ${call.cacheReadInputTokens ?? '(null)'} | ${call.durationMs} | ${customCell} | ${call.costRmbOfficial.toFixed(3)} | ${call.pricingStatus} | ${call.subtype} |`);
   }
   lines.push('');
 
@@ -82,8 +82,8 @@ export function renderReport(state: RunState): string {
     lines.push('');
     lines.push('以下调用已真实发生但实际模型 ID 不在渠道价格表中，无法换算渠道人民币费用（不猜测默认价格）：');
     for (const call of unpricedCalls) {
-      const totalTokens = call.inputTokens + call.outputTokens + call.cacheCreationInputTokens + call.cacheReadInputTokens;
-      lines.push(`- [${call.model}] 模型 ${call.modelId}：共 ${totalTokens} tokens（输入 ${call.inputTokens} / 输出 ${call.outputTokens} / 缓存写 ${call.cacheCreationInputTokens} / 缓存读 ${call.cacheReadInputTokens}），官方参考约 ${call.costRmbOfficial.toFixed(3)} 元，耗时 ${call.durationMs}ms，轮次 ${call.numTurns}`);
+      const totalTokens = (call.inputTokens ?? 0) + (call.outputTokens ?? 0) + (call.cacheCreationInputTokens ?? 0) + (call.cacheReadInputTokens ?? 0);
+      lines.push(`- [${call.model}] 模型 ${call.modelId}：共 ${totalTokens} tokens（输入 ${call.inputTokens ?? '(null)'} / 输出 ${call.outputTokens ?? '(null)'} / 缓存写 ${call.cacheCreationInputTokens ?? '(null)'} / 缓存读 ${call.cacheReadInputTokens ?? '(null)'}），官方参考约 ${call.costRmbOfficial.toFixed(3)} 元，耗时 ${call.durationMs}ms，轮次 ${call.numTurns}`);
     }
     lines.push('');
   }

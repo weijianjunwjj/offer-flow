@@ -435,6 +435,15 @@ export const DEEPSEEK_FILE_TOOL_DEFINITIONS: ProviderToolDefinition[] = [
   },
 ];
 
+/**
+ * 只读工具定义（read_file / grep / glob）。
+ * 用于 routed discovery 阶段 — 协议层真正只读，不暴露 write_file / edit_file。
+ */
+export const DEEPSEEK_READ_ONLY_TOOL_DEFINITIONS: ProviderToolDefinition[] =
+  DEEPSEEK_FILE_TOOL_DEFINITIONS.filter(
+    (d) => (d.function.name as string) !== 'write_file' && (d.function.name as string) !== 'edit_file',
+  );
+
 /** 供 Adapter/测试构造原始调用，避免不受控类型断言。 */
 export function modelToolCall(
   id: string,
