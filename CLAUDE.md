@@ -1,8 +1,19 @@
 # OfferFlow / Offer来了 · Claude 协作入口
 
+## Local development environment
+
+The primary local development environment on this machine is native Windows with Git Bash.
+
+* Follow the global Git Bash-only shell policy.
+* Do not use PowerShell or CMD as fallbacks.
+* If a shell command fails, diagnose and fix it using Bash-compatible syntax.
+* Do not switch shells to work around a failed command.
+* Do not introduce WSL/Linux-specific assumptions into OfferFlow tooling.
+* Windows-native development executables such as `node`, `pnpm`, `git`, `python`, and project CLI tools may be invoked normally from Git Bash.
+
 本文件是 Claude / Claude Code 使用 OfferFlow 项目时的入口说明。
 
-完整规则只维护在：
+完整产品、工程和安全规则只维护在：
 
 ```text
 AGENTS.md
@@ -39,19 +50,135 @@ Claude 执行任何任务前，必须按顺序读取：
 
 `docs/decisions/offerflow-v0.8-gemini-review-arbitration.md` 只在需要理解或挑战既有架构裁决时读取，不是日常必读。
 
-如果本文件与 `AGENTS.md` 冲突，以用户最新指令和 `AGENTS.md` 为准。
+如果本文件与 `AGENTS.md` 冲突，以用户最新明确指令和 `AGENTS.md` 为准。
 
 ---
 
-## 2. 代码探索与 CodeGraph
+## 2. 代码探索策略
 
-本仓库已接入 CodeGraph（本地代码索引，`.codegraph/` 不入库）。进行代码探索时遵循：
+本仓库同时提供 CodeGraph 和 Graphify。
 
-* 进行架构理解、跨文件调用链、依赖关系、影响范围分析时，优先直接调用 `codegraph_explore`；
-* 使用 CodeGraph 返回的源码作为已读取上下文，不要再用 Grep、Glob、Read 重复验证；
-* 只有 CodeGraph 提示索引过期、缺少具体编辑上下文或文件类型不受支持时，才直接读取文件；
+二者职责不同，不得对普通代码问题同时无差别调用，也不得让两套工具互相重复验证。
+
+### 2.1 默认代码探索：CodeGraph
+
+本仓库已接入 CodeGraph（本地代码索引，`.codegraph/` 不入库）。
+
+当 `.codegraph/` 存在时，以下任务默认优先使用 CodeGraph：
+
+* 定位具体源码；
+* 查找 symbol、class、function、API、Repository；
+* 理解具体调用链；
+* 分析跨文件依赖；
+* 判断某次修改的直接影响范围；
+* 定位业务逻辑入口；
+* 修改代码前确认实际入口、调用方和被调用方。
+
+优先直接调用：
+
+```text
+codegraph_explore
+```
+
+Shell 回退方式：
+
+```bash
+codegraph explore "<symbol names or question>"
+```
+
+使用规则：
+
+* CodeGraph 返回的相关源码视为已经读取的上下文；
+* CodeGraph 已提供足够源码时，不再使用 Grep、Glob、Read 重复验证相同内容；
 * 不要为了初始代码探索启动 Explore 子代理；
-* 修改代码前先通过 CodeGraph 确认入口、调用链和影响范围。
+* 修改代码前，优先通过 CodeGraph 确认入口、调用链和影响范围；
+* 只有 CodeGraph 索引过期、缺少具体编辑上下文、结果不足，或目标文件类型不受支持时，才直接读取源码；
+* 如果没有 `.codegraph/`，跳过 CodeGraph，不主动创建或刷新索引，除非用户明确要求。
+
+### 2.2 宏观架构探索：Graphify
+
+Graphify 用于知识图谱和宏观架构理解，不作为普通源码定位工具。
+
+当 `graphify-out/graph.json` 存在时，以下任务优先考虑 Graphify：
+
+* 理解高层模块关系；
+* 分析 community 结构；
+* 分析 god node；
+* 识别跨模块耦合；
+* 理解系统级知识图谱；
+* 研究两个概念、模块或领域之间的结构关系；
+* 做较宏观的架构审查；
+* CodeGraph 无法充分回答的跨领域关系问题。
+
+常用命令：
+
+```bash
+graphify query "<question>"
+```
+
+关系路径：
+
+```bash
+graphify path "<A>" "<B>"
+```
+
+聚焦概念：
+
+```bash
+graphify explain "<concept>"
+```
+
+如果存在：
+
+```text
+graphify-out/wiki/index.md
+```
+
+则宏观导航优先使用该文件，不要直接浏览大量原始源码。
+
+只有在以下情况下读取：
+
+```text
+graphify-out/GRAPH_REPORT.md
+```
+
+* 进行广泛架构审查；
+* `query` / `path` / `explain` 无法提供足够上下文。
+
+### 2.3 CodeGraph 与 Graphify 的优先级
+
+默认规则：
+
+```text
+具体源码 / symbol / 调用链 / 修改影响
+→ CodeGraph
+
+宏观架构 / community / god node / 跨模块知识关系
+→ Graphify
+```
+
+不要因为 Graphify 可用，就对所有代码问题先运行 Graphify。
+
+不要因为 CodeGraph 可用，就用它替代 Graphify 的宏观知识图谱分析。
+
+对同一个普通代码定位任务，不要同时调用 CodeGraph 和 Graphify 做重复探索。
+
+只有当第一种工具无法充分回答问题，且另一种工具能补充不同层级的信息时，才允许组合使用，并说明为什么需要第二种工具。
+
+### 2.4 修改后的索引维护
+
+代码修改完成后：
+
+* 如果任务修改了 Graphify 已覆盖的源码，并且 `graphify-out/graph.json` 存在，运行：
+
+```bash
+graphify update .
+```
+
+保持 Graphify 图谱同步。
+
+* 不得为了保持图谱同步而扩大当前任务范围；
+* CodeGraph 索引是否更新，遵循其自身工作流和用户现有配置，不擅自执行高成本或破坏性重建。
 
 ---
 
@@ -200,7 +327,8 @@ Claude 实施 v0.8 时必须确保：
 * 更新 Traceability；
 * 不得把技术测试通过等同于版本完成；
 * 核心页面需要真实截图和产品文案验收；
-* 未运行的验证必须明确说明。
+* 未运行的验证必须明确说明；
+* 如果 `graphify-out/graph.json` 存在且相关源码发生变化，运行 `graphify update .`。
 
 个人项目默认不创建 Pull Request。
 
@@ -227,18 +355,9 @@ Claude 实施 v0.8 时必须确保：
 10. 是否更新 Traceability；
 11. 是否触碰 BOSS 自动化、BYOK、新 Provider 或正式记忆边界；
 12. 是否 commit、merge、push、Tag 或 Release；
-13. 遗留风险和未完成项。
+13. 是否更新 Graphify 图谱；
+14. 遗留风险和未完成项。
 
 未运行测试不得声称已验证。
 
 不确定产品边界时，停止相关修改并说明冲突，不得自行拍板。
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
