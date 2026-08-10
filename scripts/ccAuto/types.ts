@@ -112,7 +112,9 @@ export type StopReason =
   | 'COST_UNAVAILABLE'
   | 'TRANSPORT_NOT_IMPLEMENTED'
   | 'PROVIDER_TIMEOUT'
-  | 'PROVIDER_AUTH_ERROR';
+  | 'PROVIDER_AUTH_ERROR'
+  // v0.2.0 P9: Windows state persistence EPERM
+  | 'STATE_PERSISTENCE_FAILED';
 
 // ============================================================================
 // v0.2.0 Dual Model Relay 新增类型（与 v0.1 共存）
@@ -418,6 +420,33 @@ export interface UsageRecord {
   executionRole?: ExecutionModelRole | null;
 }
 
+/** Provider 失败诊断——安全结构化摘要，不含密钥/完整请求体/响应体/文件正文/工具结果正文。
+ *
+ * 仅保存脱敏后的 error class、message、errorKind、httpStatus、网络错误码等可观测字段，
+ * 使 stopDetail 不再退化为无诊断价值的 "PROVIDER_ERROR"。 */
+export interface ProviderFailureDetail {
+  /** 异常类名——用于区分 TimeoutError / TransportError / Error 等 */
+  errorClass: string;
+  /** 脱敏后的安全消息 */
+  safeMessage: string;
+  /** 错误类别 */
+  errorKind: ProviderResponseError['kind'] | 'TRANSPORT' | 'TIMEOUT' | 'UNKNOWN';
+  /** HTTP 状态码（若存在） */
+  httpStatus: number | null;
+  /** Node/undici 网络错误码（ECONNRESET / ETIMEDOUT / UND_ERR_SOCKET 等） */
+  networkErrorCode: string | null;
+  /** 底层 error 的 cause name（若存在且安全） */
+  causeName: string | null;
+  /** 调用时的 timeoutMs 配置 */
+  timeoutMs: number;
+  /** 请求的 Provider ID */
+  providerId: string;
+  /** 请求的模型 ID */
+  requestedModelId: string;
+  /** 关联的 callId */
+  callId: string;
+}
+
 /** Provider 执行失败原因（非 stopReason 的领域枚举） */
 export type ProviderExecutionStopReason =
   | 'PRICING_NOT_FOUND'
@@ -453,6 +482,8 @@ export type ProviderExecutionResult =
       httpStatus?: number | null;
       /** 1E-W：TransportError 标记为瞬时传输失败（ECONNRESET 等） */
       transientTransportError?: boolean;
+      /** v0.8.x 诊断修复：安全结构化失败摘要 */
+      failureDetail?: ProviderFailureDetail;
     };
 
 // ============================================================================
@@ -756,6 +787,8 @@ export interface DeepSeekToolLoopResult {
   auditTrail: ToolLoopAuditRecord[];
   /** v0.2.0 Slice 1E-W：结构化摘要 */
   summary: DeepSeekToolLoopSummary;
+  /** v0.8.x 诊断修复：Provider 失败诊断（若因 Provider 异常终止） */
+  failureDetail?: ProviderFailureDetail | null;
 }
 
 /** Tool Loop 执行摘要——完成或失败后必然产生 */
@@ -1025,6 +1058,8 @@ export interface EstimatedCall {
   estimatedInputTokens: { min: number; expected: number; max: number };
   estimatedOutputTokens: { min: number; expected: number; max: number };
   estimatedCostRmb: { min: number | null; expected: number | null; max: number | null };
+  /** 若任一 cost 字段为 null，记录精确原因（例如 "pricingByModel 缺少 deepseek-v4-pro"） */
+  costNullReason?: string | null;
 }
 
 /** 任务预算估算——执行前生成 */
@@ -1037,6 +1072,8 @@ export interface TaskBudgetEstimate {
   currency: 'CNY';
   estimatedCalls: EstimatedCall[];
   totalEstimatedCostRmb: { min: number | null; expected: number | null; max: number | null };
+  /** 若 totalEstimatedCostRmb.max 为 null，记录精确原因（不得留裸 null） */
+  maxNullReason?: string | null;
   assumptions: string[];
   createdAt: string;
 }
@@ -1126,4 +1163,54 @@ export interface RoutedExecutionReporter {
   onBudgetEstimate(estimate: TaskBudgetEstimate, formatted: string): Promise<void> | void;
   onRunningCost?(snapshot: RunningCostSnapshot, formatted: string): Promise<void> | void;
   onCostSummary(summary: TaskCostSummary, formatted: string): Promise<void> | void;
+  /** v0.2.0 P8: Routed Tool Loop observation — called after each routed attempt.
+   *  Replaces Claude CLI metadata for routedExecution runs. */
+  onToolLoopObservation?(observation: RoutedToolLoopObservation): Promise<void> | void;
 }
+
+// ============================================================================
+// v0.2.0 P8: Routed Tool Loop Observability
+// ============================================================================
+
+/** 单条脱敏工具调用审计记录——从 ToolLoopAuditRecord 派生。
+ *  禁止保存：文件正文、完整 prompt、tool result 正文、secret、Authorization。 */
+export interface ToolLoopAuditEntry {
+  turn: number;
+  toolName: string;
+  toolCallId: string;
+  ok: boolean | null;
+  errorCode: string | null;
+}
+
+/** 单次 Routed Tool Loop 尝试的结构化观测（脱敏）。
+ *  外部可在报告/日志中使用，无需读取 state.json。 */
+export interface RoutedToolLoopObservation {
+  role: ExecutionModelRole;
+  modelLogicalName: string;
+  turns: number;
+  totalToolCalls: number;
+  auditTrail: ToolLoopAuditEntry[];
+  terminationReason: ToolLoopTerminationReason | null;
+  changedFiles: string[];
+  /** 写入工具被调用的次数（write_file + edit_file），0 表示模型从未尝试写 */
+  writeToolCalls: number;
+  /** 若 stopped + no changedFiles，记录精确原因码 */
+  noEffectReason?: string | null;
+  /** P10: true 当 changedFiles.length > 0 且 Tool Loop 非正常完成（COMPLETED） */
+  partialProgress?: boolean;
+  /** P10: Tool Loop 失败原因码（changedFiles > 0 时记录，替代 noEffectReason） */
+  failureReason?: ToolLoopNoEffectReason | null;
+  /** P10: 建议的下一步动作 */
+  nextAction?: 'VERIFY' | 'ESCALATE' | 'STOP';
+}
+
+/** Routed Tool Loop 在当前 attempt 无效改动的原因码（P8） */
+export type ToolLoopNoEffectReason =
+  | 'NO_WRITE_TOOL_CALLED'
+  | 'TOOL_EXECUTION_FAILED'
+  | 'OLD_TEXT_MISMATCH'
+  | 'REPEATED_TOOL_CALL'
+  | 'TOOL_PROTOCOL_ERROR'
+  | 'PROVIDER_STOPPED'
+  | 'MAX_TURNS'
+  | 'FILE_NOT_APPROVED';

@@ -9,6 +9,7 @@ import type {
   RoutingDecisionRecord,
   TaskCostSummary,
   ArbitrationCapsule,
+  RoutedToolLoopObservation,
 } from './types';
 import type { PricingMode } from './config';
 import { redactForDisk } from './redact';
@@ -68,6 +69,8 @@ export interface RunState {
   perRunRequestedRole?: import('./types').ExecutionModelRole;
   /** v0.2.0 Slice 1F-RUN Blockers: Flash attempt's last Provider callId for M3 escalation linkage. */
   flashLastCallId?: string;
+  /** v0.2.0 Slice P5: whether routing was enabled for this run (determines executionMode label). */
+  routedExecution?: boolean;
   /** v0.2.0 Slice 1B：当前挂起的模型调用（持久化用于崩溃恢复探测；非挂起状态时不存在） */
   pendingCall?: PendingCall;
   /** v0.2.0 Slice 1F：已完成的调用尝试痕迹（append-only，包括 UNKNOWN_AFTER_CRASH）。
@@ -83,6 +86,9 @@ export interface RunState {
   costSummary?: TaskCostSummary;
   /** 裁决 Capsule——需要 Opus 外部仲裁时写入 */
   arbitrationCapsule?: ArbitrationCapsule;
+  /** v0.2.0 P8: Routed Tool Loop 观测记录（append-only，每次 attempt 一条）。
+   *  脱敏：不含文件正文、prompt、tool result 正文、secret */
+  toolLoopObservations?: RoutedToolLoopObservation[];
 }
 
 export interface DirectEditDetail {
@@ -142,10 +148,83 @@ export function createRunState(cwd: string, runId: string, taskDescription: stri
     changedFiles: [],
     done: false,
     pricingMode,
+    toolLoopObservations: [],
   };
   mkdirSync(phasesDir(cwd, runId), { recursive: true });
   saveRunState(cwd, state);
   return state;
+}
+
+// ============================================================================
+// v0.2.0 P9: Windows 原子持久化 — EPERM 收口
+// ============================================================================
+
+let _saveRunStateCounter = 0;
+
+/** 同步暂停（毫秒级），仅用于 rename 重试退避。 */
+function _syncSleep(ms: number): void {
+  const end = process.hrtime.bigint() + BigInt(ms) * BigInt(1_000_000);
+  while (process.hrtime.bigint() < end) {
+    // 短暂空转；仅重试路径触发，总等待亚秒级
+  }
+}
+
+export class StatePersistenceError extends Error {
+  public readonly operation: string;
+  public readonly file: string;
+  public readonly errorCode: string;
+  public readonly attempts: number;
+
+  constructor(detail: { operation: string; file: string; errorCode: string; attempts: number }) {
+    super(
+      `State persistence failed: ${detail.operation} '${detail.file}' after ${detail.attempts} attempts (${detail.errorCode})`,
+    );
+    this.name = 'StatePersistenceError';
+    this.operation = detail.operation;
+    this.file = detail.file;
+    this.errorCode = detail.errorCode;
+    this.attempts = detail.attempts;
+  }
+}
+
+/**
+ * 原子 rename，带 bounded retry 收口 Windows 瞬时文件锁（EPERM / EACCES / EBUSY）。
+ *
+ * 约束：
+ * - 仅对 rename 做本地 retry，不涉及 Provider / Tool Loop / Run 层。
+ * - 禁止先 unlink 目标——保证已有 state.json 不被破坏。
+ * - 最大 5 次尝试，总等待亚秒级；非 transient 错误立即透传。
+ *
+ * @param renameFn — 注入点，仅用于测试；生产调用不传，使用 node:fs renameSync。
+ */
+export function _atomicRenameWithRetry(
+  tmpPath: string,
+  targetPath: string,
+  renameFn?: (tmp: string, target: string) => void,
+): void {
+  const rename = renameFn ?? renameSync;
+  const RETRY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+  const MAX_ATTEMPTS = 5;
+  const BACKOFF_MS = [20, 50, 100, 200];
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      rename(tmpPath, targetPath);
+      return;
+    } catch (err: any) {
+      const code: string | undefined = (err as { code?: string })?.code;
+      if (!RETRY_CODES.has(code ?? '')) throw err;
+      if (attempt >= MAX_ATTEMPTS) {
+        throw new StatePersistenceError({
+          operation: 'rename',
+          file: 'state.json',
+          errorCode: code ?? 'UNKNOWN',
+          attempts: attempt,
+        });
+      }
+      _syncSleep(BACKOFF_MS[attempt - 1] ?? 200);
+    }
+  }
 }
 
 export function saveRunState(cwd: string, state: RunState): void {
@@ -157,10 +236,12 @@ export function saveRunState(cwd: string, state: RunState): void {
     state.phaseHistory.push(state.currentPhase);
   }
   const file = path.join(runDir(cwd, state.runId), 'state.json');
-  // 原子写：临时文件 + rename，避免半写状态
-  const tmp = file + '.tmp';
+  // P9: 同目录唯一临时文件 + bounded rename retry（Windows EPERM 收口）
+  const pid = process.pid;
+  const cnt = (_saveRunStateCounter = (_saveRunStateCounter + 1) % 1_000_000);
+  const tmp = path.join(path.dirname(file), `state.json.${pid}.${cnt}.tmp`);
   writeFileSync(tmp, redactForDisk(JSON.stringify(state, null, 2)), 'utf8');
-  renameSync(tmp, file);
+  _atomicRenameWithRetry(tmp, file);
 }
 
 export function loadRunState(cwd: string, runId: string): RunState {
@@ -273,6 +354,20 @@ export function saveArbitrationCapsule(cwd: string, runId: string, capsule: Arbi
   if (!runStateExists(cwd, runId)) return;
   const state = loadRunState(cwd, runId);
   state.arbitrationCapsule = capsule;
+  state.updatedAt = new Date().toISOString();
+  saveRunState(cwd, state);
+}
+
+/**
+ * v0.2.0 P8: 追加一条 RoutedToolLoopObservation 到 RunState。
+ * 脱敏：不含文件正文、prompt、tool result 正文、secret。
+ * 每次 routed attempt 调用一次（Flash 一次、Pro 升级一次）。
+ */
+export function saveToolLoopObservation(cwd: string, runId: string, observation: RoutedToolLoopObservation): void {
+  if (!runStateExists(cwd, runId)) return;
+  const state = loadRunState(cwd, runId);
+  if (!state.toolLoopObservations) state.toolLoopObservations = [];
+  state.toolLoopObservations.push(observation);
   state.updatedAt = new Date().toISOString();
   saveRunState(cwd, state);
 }

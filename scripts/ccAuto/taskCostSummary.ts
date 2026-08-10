@@ -268,7 +268,7 @@ export function buildTaskCostSummary(input: SummaryInput): TaskCostSummary {
   const absoluteVariance = (actualCost !== null && expectedCost !== null)
     ? roundCost(actualCost - expectedCost) : null;
   const variancePercent = safeRatio((actualCost !== null && expectedCost !== null)
-    ? Math.abs(actualCost - expectedCost) * 100 : null, expectedCost);
+    ? Math.abs(actualCost - expectedCost) : null, expectedCost);
 
   const estimateComparison: EstimateComparison = {
     actualVsExpectedRatio: actualVsExpected,
@@ -348,7 +348,7 @@ export function buildTaskCostSummary(input: SummaryInput): TaskCostSummary {
   if (hypotheticalAllProCostRmb !== null && actualCost !== null) {
     savedVsAllProRmb = roundCost(hypotheticalAllProCostRmb - actualCost);
     savedVsAllProPercent = safeRatio(
-      savedVsAllProRmb > 0 ? savedVsAllProRmb * 100 : null,
+      savedVsAllProRmb > 0 ? savedVsAllProRmb : null,
       hypotheticalAllProCostRmb,
     );
   } else {
@@ -415,16 +415,17 @@ function roundCost(cost: number): number {
 // 成本报告格式化（供 CLI / 报告使用）
 // ============================================================================
 
-/** 安全格式化人民币金额——null 时显示不可核验 */
+/** 安全格式化人民币金额——null 时显示「无法计算」 */
 export function formatCostRmbOrUnknown(cost: number | null): string {
-  if (cost === null) return '(不可核验)';
+  if (cost === null) return '无法计算';
   return `¥${cost.toFixed(4)}`;
 }
 
-/** 安全格式化百分比——null 时显示 N/A */
+/** 安全格式化百分比——null 时显示 N/A。
+ *  @param ratio 0-1 比例值（如 0.262 表示 26.2%） */
 export function formatPercentOrNA(ratio: number | null): string {
   if (ratio === null) return 'N/A';
-  const pct = ratio;
+  const pct = ratio * 100;
   return `${pct.toFixed(1)}%`;
 }
 

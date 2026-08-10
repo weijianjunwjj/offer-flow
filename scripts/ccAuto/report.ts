@@ -24,7 +24,14 @@ export function renderReport(state: RunState): string {
   }
   // 执行模式只在**真实进入并成功执行** Direct Edit 路径（directEdit=true）时标记，
   // 仅满足命中条件但准备/应用失败的运行一律显示标准路径，绝不伪装为 Direct Edit。
-  lines.push(`- 执行模式：${state.directEdit ? 'Simple Direct Edit（机器读取上下文 → tools:[] 定向编辑 → 机器原子应用）' : '标准 Agent Builder（探路 → 构建 → 验证）'}`);
+  // P5: routed run → distinct label; non-routed → legacy label.
+  if (state.routedExecution) {
+    lines.push('- 执行模式：Routed Agent Execution（Flash / Pro → Tool Loop → Safe Write → Verify）');
+  } else if (state.directEdit) {
+    lines.push('- 执行模式：Simple Direct Edit（机器读取上下文 → tools:[] 定向编辑 → 机器原子应用）');
+  } else {
+    lines.push('- 执行模式：标准 Agent Builder（探路 → 构建 → 验证）');
+  }
   lines.push('');
 
   if (state.directEdit && state.directEditDetail) {
@@ -97,22 +104,95 @@ export function renderReport(state: RunState): string {
     lines.push('');
   }
 
+  // P8: Routed Execution tool loop observations — rendered directly from persisted audit trail.
+  // This section appears BEFORE per-call observability for routed runs.
+  if (state.routedExecution && state.toolLoopObservations && state.toolLoopObservations.length > 0) {
+    lines.push('## Routed Tool Loop 明细');
+    lines.push('');
+    const roleNames: Record<string, string> = {
+      FAST_EXECUTOR: 'V4 Flash',
+      STRONG_EXECUTOR: 'V4 Pro',
+      ARBITER: 'Opus 5',
+    };
+    for (const obs of state.toolLoopObservations) {
+      lines.push(`### ${roleNames[obs.role] ?? obs.role} (${obs.modelLogicalName})`);
+      lines.push(`- Provider calls: ${obs.totalToolCalls}`);
+      lines.push(`- Turns: ${obs.turns}`);
+      lines.push(`- Termination reason: ${obs.terminationReason ?? 'N/A'}`);
+      if (obs.changedFiles.length > 0) {
+        lines.push(`- Changed files: ${obs.changedFiles.join(', ')}`);
+      } else {
+        lines.push('- Changed files: （无）');
+      }
+      if (obs.noEffectReason) {
+        lines.push(`- No-effect reason: ${obs.noEffectReason}`);
+      }
+      if (obs.writeToolCalls > 0) {
+        lines.push(`- Write tool calls: ${obs.writeToolCalls}`);
+      }
+      lines.push('');
+      lines.push('| Turn | Tool | OK | Error Code |');
+      lines.push('| ---- | ---- | -- | ---------- |');
+      if (obs.auditTrail.length > 0) {
+        for (const entry of obs.auditTrail) {
+          const okText = entry.ok === true ? '✓' : entry.ok === false ? '✗' : '?';
+          lines.push(`| ${entry.turn} | ${entry.toolName} | ${okText} | ${entry.errorCode ?? ''} |`);
+        }
+      } else {
+        lines.push('| — | （无记录） | — | — |');
+      }
+      lines.push('');
+    }
+    lines.push('工具调用次数：由 Tool Loop audit trail 提供（见上方 Tool Loop 明细）');
+    lines.push('');
+  } else if (state.routedExecution) {
+    // Routed run but observations are missing — report the gap explicitly.
+    // Must not reference a non-existent "上方明细".
+    lines.push('## Routed Tool Loop 明细缺失');
+    lines.push('');
+    lines.push('Routed Tool Loop 明细缺失：运行状态未保存 audit trail。');
+    lines.push('');
+  }
+
   // 可观测性明细：每个调用都列出，不再整段跳过「无任何可观测字段」的调用。
-  // CLI 未回传的字段一律显式标注「不可用」，绝不写成「（无记录）/（无）」——
-  // 「无记录」会把「CLI 未提供」与「确实为空」混为一谈，掩盖可观测性缺口。
+  // P8: routedExecution 使用 TaskAttempt 的 toolLoopObservations，
+  // 不再依赖 Claude CLI 回传的 conversation 元数据（tool_use 明细等始终不可用）。
+  // 非 routed run 保持原 Claude CLI 观测路径。
   const UNAVAILABLE = '不可用（CLI 未返回该字段）';
   if (state.calls.length > 0) {
     lines.push('## 调用可观测性明细');
     lines.push('');
-    lines.push('> 说明：以下字段依赖 claude CLI 回传的 conversation 元数据。当前 CLI 未稳定回传 tool_use 明细与 MCP server 列表，');
-    lines.push('> 相应字段会显示为「不可用」，代表**缺少可观测数据**，而非「该调用未使用工具/无错误」。permission_denials 数量为 CLI 直接回传，恒可用。');
-    lines.push('');
+    if (state.routedExecution) {
+      lines.push('> 说明：routed 执行直接使用 Tool Loop audit trail，不依赖 Claude CLI conversation 元数据。');
+      lines.push('> 每个 Provider 调用的工具执行由 Tool Loop 自行记录并脱敏。');
+      lines.push('');
+    } else {
+      lines.push('> 说明：以下字段依赖 claude CLI 回传的 conversation 元数据。当前 CLI 未稳定回传 tool_use 明细与 MCP server 列表，');
+      lines.push('> 相应字段会显示为「不可用」，代表**缺少可观测数据**，而非「该调用未使用工具/无错误」。permission_denials 数量为 CLI 直接回传，恒可用。');
+      lines.push('');
+    }
     for (const call of state.calls) {
       lines.push(`### ${call.model}（${call.modelId}，subtype=${call.subtype}）`);
-      lines.push(`- 工具调用次数：${call.toolUseCounts ? JSON.stringify(call.toolUseCounts) : UNAVAILABLE}`);
-      lines.push(`- 工具错误次数：${call.toolErrorCounts ? JSON.stringify(call.toolErrorCounts) : UNAVAILABLE}`);
-      lines.push(`- permission_denials 数量：${call.permissionDenialsCount}`);
-      lines.push(`- MCP server：${call.mcpServers ? (call.mcpServers.length > 0 ? call.mcpServers.join(', ') : '（无，已隔离）') : UNAVAILABLE}`);
+
+      if (state.routedExecution) {
+        // Routed: tool loop observability comes from persisted audit trail.
+        // Claude CLI fields (toolUseCounts, toolErrorCounts, mcpServers) are not delivered by routed execution.
+        const hasObs = state.toolLoopObservations && state.toolLoopObservations.length > 0;
+        if (hasObs) {
+          lines.push('- 工具调用次数：由 Tool Loop audit trail 提供（见上方 Tool Loop 明细）');
+          lines.push('- 工具错误次数：由 Tool Loop audit trail 提供（见上方 Tool Loop 明细）');
+        } else {
+          lines.push('- 工具调用次数：不可用（Routed Tool Loop 明细缺失，audit trail 未持久化）');
+          lines.push('- 工具错误次数：不可用（Routed Tool Loop 明细缺失，audit trail 未持久化）');
+        }
+        lines.push(`- permission_denials 数量：${call.permissionDenialsCount}`);
+        lines.push('- MCP server：routed 执行无 MCP（Tool Loop 自宿主）');
+      } else {
+        lines.push(`- 工具调用次数：${call.toolUseCounts ? JSON.stringify(call.toolUseCounts) : UNAVAILABLE}`);
+        lines.push(`- 工具错误次数：${call.toolErrorCounts ? JSON.stringify(call.toolErrorCounts) : UNAVAILABLE}`);
+        lines.push(`- permission_denials 数量：${call.permissionDenialsCount}`);
+        lines.push(`- MCP server：${call.mcpServers ? (call.mcpServers.length > 0 ? call.mcpServers.join(', ') : '（无，已隔离）') : UNAVAILABLE}`);
+      }
       lines.push(`- 最后一次 assistant 文本摘要：${call.lastAssistantTextSummary ? call.lastAssistantTextSummary : UNAVAILABLE}`);
       lines.push('');
     }

@@ -644,9 +644,12 @@ function formatBudgetForUser(
   const exp = estimate.totalEstimatedCostRmb;
   if (exp.expected !== null) {
     lines.push(`常规预计：¥${exp.expected.toFixed(4)}`);
-    lines.push(`合理区间：¥${exp.min?.toFixed(4) ?? '(未知)'}～¥${exp.max?.toFixed(4) ?? '(未知)'}`);
+    const minText = exp.min !== null ? `¥${exp.min.toFixed(4)}` : (estimate.maxNullReason ? `无法计算：${estimate.maxNullReason}` : '未知');
+    const maxText = exp.max !== null ? `¥${exp.max.toFixed(4)}` : (estimate.maxNullReason ? `无法计算：${estimate.maxNullReason}` : '未知');
+    lines.push(`合理区间：${minText}～${maxText}`);
   } else {
-    lines.push(`人民币成本暂不可核验`);
+    const reason = estimate.maxNullReason ?? '主模型缺少 pricing';
+    lines.push(`常规预计：无法计算——${reason}`);
   }
 
   // 调用分布
@@ -682,8 +685,9 @@ function formatCostSummaryForUser(
   ];
 
   const exp = summary.estimate.totalEstimatedCostRmb;
-  lines.push(`任务前常规预计：${exp.expected !== null ? `¥${exp.expected.toFixed(4)}` : '(不可核验)'}`);
-  lines.push(`任务前最坏上限：${exp.max !== null ? `¥${exp.max.toFixed(4)}` : '(不可核验)'}`);
+  const estMaxReason = summary.estimate.maxNullReason;
+  lines.push(`任务前常规预计：${exp.expected !== null ? `¥${exp.expected.toFixed(4)}` : (estMaxReason ? `无法计算——${estMaxReason}` : '无法计算')}`);
+  lines.push(`任务前最坏上限：${exp.max !== null ? `¥${exp.max.toFixed(4)}` : (estMaxReason ? `无法计算——${estMaxReason}` : '无法计算')}`);
   lines.push(`实际成本：${formatRmb(summary.actual.costRmb)}`);
   lines.push(``);
 
@@ -730,7 +734,7 @@ function formatCostSummaryForUser(
 }
 
 function formatRmb(v: number | null): string {
-  if (v === null) return '(不可核验)';
+  if (v === null) return '无法计算';
   return `¥${v.toFixed(4)}`;
 }
 

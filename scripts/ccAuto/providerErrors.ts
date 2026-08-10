@@ -17,15 +17,21 @@ export class TimeoutError extends Error {
 /** Provider 网络/传输层错误——DNS、TLS、socket、fetch rejection、redirect rejection。
  *
  * transient 用于标记已知瞬时网络失败（ECONNRESET、ETIMEDOUT、EAI_AGAIN 等），
- * 由 Tool Loop 据此决定是否有限重试。默认 false（fail closed）。 */
+ * 由 Tool Loop 据此决定是否有限重试。默认 false（fail closed）。
+ *
+ * cause 保留原始 runtime error 引用——仅内存中使用，禁止持久化到
+ * state.json / report.md / logs。持久化时只提取脱敏字段（causeName/causeCode/networkCode）。 */
 export class TransportError extends Error {
   /** true 表示该传输错误被识别为瞬时失败，可有限重试 */
   readonly transient?: boolean;
+  /** 原始 runtime error 引用（仅内存，禁止持久化） */
+  readonly cause?: unknown;
 
-  constructor(message: string, opts?: { transient?: boolean }) {
+  constructor(message: string, opts?: { transient?: boolean; cause?: unknown }) {
     super(message);
     this.name = 'TransportError';
     this.transient = opts?.transient;
+    this.cause = opts?.cause;
   }
 }
 

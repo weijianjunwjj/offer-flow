@@ -10,18 +10,20 @@ import { redactForDisk } from './redact';
 import {
   createRunState, saveRunState, loadRunState, runStateExists,
   savePhaseRecord, loadPhaseRecord, newRunId, writeReport,
+  saveToolLoopObservation,
   type RunState,
 } from './store';
 import { renderReport } from './report';
 import { shouldEscalateToArbiter, budgetGate, changedFilesExceeded } from './stateMachine';
 import { validateConfiguredModelPricing } from './budget';
-import { changedFilesSince, shortStatus } from './git';
+import { changedFilesSince, shortStatus, captureRunStartBaseline, computeRunChangedFiles } from './git';
+import type { RunStartBaseline } from './git';
 import {
   evaluateDirectEditEligibility, prepareDirectEditContext, validateDirectEdits, applyDirectEdits,
   DIRECT_EDIT_SCHEMA, type DirectEditBuilderOutput, type PreparedFile,
 } from './directEdit';
 import type { ClaudeCallOptions, ClaudeCallResult } from './runner';
-import type { Phase, FileScope } from './types';
+import type { Phase, FileScope, RoutedToolLoopObservation } from './types';
 import { evaluateFileProposals } from './fileScope';
 
 export interface OrchestratorDeps {
@@ -381,6 +383,9 @@ export async function runTask(deps: OrchestratorDeps, taskDescription: string, e
   if (perRunOpts?.requestedRole) {
     state.perRunRequestedRole = perRunOpts.requestedRole;
   }
+  if (deps.routedExecution) {
+    state.routedExecution = true;
+  }
   return driveStateMachine(deps, state, estimatedFiles);
 }
 
@@ -402,6 +407,11 @@ async function finish(deps: OrchestratorDeps, state: RunState): Promise<RunState
       const authoritative = loadRunState(deps.cwd, state.runId);
       // Use in-memory state but sync calls from disk
       state.calls = authoritative.calls;
+      // P8: Sync toolLoopObservations from disk — protects against in-memory
+      // overwrite even if the in-memory push was missed upstream.
+      if (authoritative.toolLoopObservations && authoritative.toolLoopObservations.length > 0) {
+        state.toolLoopObservations = authoritative.toolLoopObservations;
+      }
 
       // Build cost summary from authoritative ledger
       const summary = await buildAndPersistCostSummary(deps, state);
@@ -547,6 +557,7 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
   // ROUTED RUN-LEVEL LEASE: acquire once for entire run, release in finish()
   // Flash and Pro share the same run lease — no per-attempt acquisition.
   // =========================================================================
+  let runStartBaseline: RunStartBaseline | undefined;
   if (deps.routedExecution) {
     const fp = computeWorktreeFingerprint(deps.cwd);
     const leaseResult = acquireRunLease(deps.cwd, state.runId, fp);
@@ -561,6 +572,14 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
     }
     setWriter(deps.cwd, state.runId, 'deepseek');
     deps.log('Run Lease 已获取，writer=deepseek');
+
+    // P4: Capture per-file baseline BEFORE any model runs.
+    // This allows us to later distinguish pre-existing dirty files (untouched by model)
+    // from files actually changed during this run.
+    runStartBaseline = captureRunStartBaseline(deps.cwd);
+    if (runStartBaseline.files.length > 0) {
+      deps.log(`Run-start baseline 已捕获 ${runStartBaseline.files.length} 个预存脏文件`);
+    }
   }
 
   const classification = state.classification!;
@@ -617,7 +636,7 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
       deps.routedExecution &&
       (phase === 'IMPLEMENT' || phase === 'REPAIR_1' || phase === 'REPAIR_2')
     ) {
-      await driveRoutedImplement(deps, state, scoutFiles);
+      await driveRoutedImplement(deps, state, scoutFiles, runStartBaseline);
 
       if (state.done) break;
 
@@ -813,10 +832,11 @@ import { computeWorktreeFingerprint } from './worktreeFingerprint';
  *   - VERIFY → fail + flashLastCallId → escalate to REPAIR_1 + nextRoutedRole=Pro
  *   - VERIFY → fail + Pro → normal repair or arbitration
  */
-async function driveRoutedImplement(
+export async function driveRoutedImplement(
   deps: OrchestratorDeps,
   state: RunState,
   _scoutFiles: string[],
+  runStartBaseline: RunStartBaseline | undefined,
 ): Promise<void> {
   const config = deps.config;
   const mrConfig = config.modelRouting!;
@@ -936,12 +956,17 @@ async function driveRoutedImplement(
 
   deps.log(`路由选择：${selection.role === 'FAST_EXECUTOR' ? 'V4 Flash' : 'V4 Pro'}（${selection.reasonCodes.join('、')}）`);
 
-  // --- 6. Budget estimate ---
+  // --- 6. Budget estimate —— 收集所有 Provider Profile 的定价（不仅仅是当前模型）
   const _pricingByModel: Record<string, ModelPricing> = {};
-  for (const pricingKey of Object.keys(currentProfile.pricing)) {
-    const modelConfig = currentProfile.models.find((m) => m.requestedModelId === pricingKey);
-    const logicalName = modelConfig?.logicalName ?? pricingKey;
-    _pricingByModel[logicalName] = currentProfile.pricing[pricingKey];
+  for (const profile of [flashProfile, proProfile]) {
+    if (!profile) continue;
+    for (const pricingKey of Object.keys(profile.pricing)) {
+      const modelConfig = profile.models.find((m) => m.requestedModelId === pricingKey);
+      const logicalName = modelConfig?.logicalName ?? pricingKey;
+      if (!_pricingByModel[logicalName]) {
+        _pricingByModel[logicalName] = profile.pricing[pricingKey];
+      }
+    }
   }
 
   const budgetEstimate = estimateTaskBudget({
@@ -970,7 +995,23 @@ async function driveRoutedImplement(
     return;
   }
 
-  // --- 7. Read-only discovery (if no approved files) ---
+  // --- 7. Seed explicitFiles from task ---
+  // explicitFiles are always pre-approved (if they pass FileScope checks).
+  // Discovery can supplement but NEVER replace or erase explicitFiles.
+  const explicitFiles = extractExplicitFiles(state.taskDescription);
+  if (explicitFiles.length > 0) {
+    const explicitEval = evaluateFileProposals(fileScope, explicitFiles);
+    fileScope.proposedFiles = [...fileScope.proposedFiles, ...explicitEval.decisions.map(d => d.path)];
+    fileScope.approvedFiles = explicitEval.approvedFiles;
+    if (explicitEval.approvedFiles.length === 0 && explicitEval.denied) {
+      deps.log(`显式文件 FileScope 审批全部失败：${explicitEval.decisions.map(d => `${d.path}=${d.decision}`).join(', ')}`);
+    } else {
+      deps.log(`显式文件已预批准：${explicitEval.approvedFiles.join(', ') || '（无）'}`);
+    }
+  }
+
+  // --- 8. Read-only discovery (if no approved files) ---
+  // Only run when explicitFiles didn't produce any approved files.
   if (fileScope.approvedFiles.length === 0) {
     deps.log('未持有已批准文件，执行只读 routed discovery');
     const discoveryFiles = await runRoutedDiscovery(
@@ -978,8 +1019,11 @@ async function driveRoutedImplement(
     );
     if (state.done) return;
     if (discoveryFiles.length > 0) {
+      // Merge discoveryFiles with existing proposedFiles (avoid duplicates)
+      const allProposed = Array.from(new Set([...fileScope.proposedFiles, ...discoveryFiles]));
       const discoveryEvaluation = evaluateFileProposals(fileScope, discoveryFiles);
-      fileScope.proposedFiles = discoveryFiles;
+      fileScope.proposedFiles = allProposed;
+      // evaluateFileProposals already returns accumulated approvedFiles (existing + new)
       fileScope.approvedFiles = discoveryEvaluation.approvedFiles;
       if (fileScope.approvedFiles.length === 0) {
         stop(state, 'PROVIDER_ERROR', `STAGE_GATE_BLOCKED: 只读探索发现 ${discoveryFiles.length} 个候选文件但 FileScope 审批全部失败。`);
@@ -1025,8 +1069,16 @@ async function driveRoutedImplement(
   if (reloaded.changedFiles) state.changedFiles = reloaded.changedFiles;
 
   // --- 9. changedFiles audit ---
-  const changedFilesFromGit = changedFilesSince(cwd);
-  const auditResult = auditChangedFilesAgainstScope(fileScope, changedFilesFromGit);
+  // P4: Use run-scoped changed files (computed against run-start baseline)
+  // instead of all currently dirty files. This prevents pre-existing dirty files
+  // that the model never touched from being wrongly flagged as FILE_NOT_APPROVED.
+  const changedFilesForAudit = runStartBaseline
+    ? computeRunChangedFiles(cwd, runStartBaseline)
+    : changedFilesSince(cwd);
+  if (runStartBaseline) {
+    deps.log(`runChangedFiles（相对 run-start baseline）：${changedFilesForAudit.join(', ') || '（无）'}`);
+  }
+  const auditResult = auditChangedFilesAgainstScope(fileScope, changedFilesForAudit);
 
   if (!auditResult.ok) {
     const violations = auditResult.violations.map(v => `${v.path}: ${v.reason}`).join('; ');
@@ -1038,7 +1090,100 @@ async function driveRoutedImplement(
   }
 
   // --- 10. Result evaluation ---
+  // P8: Derive noEffectReason from audit trail before result evaluation
+  const writeTools = ['write_file', 'edit_file'];
+  const writeToolAuditEntries = toolLoopResult.auditTrail.filter(
+    (e) => e.status === 'EXECUTED' && writeTools.includes(e.toolName),
+  );
+  const writeToolCallCount = writeToolAuditEntries.length;
+  const anyWriteFailed = writeToolAuditEntries.some((e) => e.resultOk === false);
+  const writeFailureCodes = writeToolAuditEntries
+    .filter((e) => e.resultOk === false)
+    .map((e) => e.errorReason)
+    .filter(Boolean);
+
+  let noEffectReason: string | null = null;
+  if (!toolLoopResult.stopReason && writeToolCallCount > 0 && toolLoopResult.status !== 'COMPLETED') {
+    // This is unexpected — stopReason missing but unclean completion
+    noEffectReason = 'PROVIDER_STOPPED';
+  } else if (writeToolCallCount === 0) {
+    // No write tools were ever called — regardless of stopReason or COMPLETED.
+    noEffectReason = 'NO_WRITE_TOOL_CALLED';
+    if (toolLoopResult.stopReason === 'MAX_TURNS_EXCEEDED') {
+      noEffectReason = 'MAX_TURNS';
+    }
+  } else if (anyWriteFailed) {
+    const firstError = writeFailureCodes[0];
+    if (firstError === 'EDIT_TARGET_NOT_FOUND' || firstError === 'EDIT_TARGET_NOT_UNIQUE') {
+      noEffectReason = 'OLD_TEXT_MISMATCH';
+    } else if (firstError === 'FILE_NOT_APPROVED') {
+      noEffectReason = 'FILE_NOT_APPROVED';
+    } else if (writeFailureCodes.some((c) => c?.startsWith('EDIT_'))) {
+      noEffectReason = 'OLD_TEXT_MISMATCH';
+    } else {
+      noEffectReason = 'TOOL_EXECUTION_FAILED';
+    }
+  } else if (toolLoopResult.stopReason === 'REPEATED_TOOL_CALL') {
+    noEffectReason = 'REPEATED_TOOL_CALL';
+  } else if (toolLoopResult.stopReason === 'TOOL_PROTOCOL_ERROR') {
+    noEffectReason = 'TOOL_PROTOCOL_ERROR';
+  }
+
+  // Compute tolOk early for P10 partial-progress detection
   const tolOk = toolLoopResult.status === 'COMPLETED' && toolLoopResult.stopReason === null && auditResult.ok;
+  const hasChangedFiles = state.changedFiles.length > 0;
+  const isPartialProgress = !tolOk && hasChangedFiles;
+  let partialFailureReason: import('./types').ToolLoopNoEffectReason | null = null;
+  if (isPartialProgress) {
+    partialFailureReason = (noEffectReason ?? 'TOOL_EXECUTION_FAILED') as import('./types').ToolLoopNoEffectReason;
+    // When partial progress: clear noEffectReason — changedFiles > 0 contradicts "no effect"
+    noEffectReason = null;
+  }
+
+  // P8: Build and report RoutedToolLoopObservation
+  const observation: RoutedToolLoopObservation = {
+    role: selection.role,
+    modelLogicalName: selection.modelLogicalName,
+    turns: toolLoopResult.turns,
+    totalToolCalls: toolLoopResult.totalToolCalls,
+    auditTrail: toolLoopResult.auditTrail.map((e) => ({
+      turn: e.turn,
+      toolName: e.toolName,
+      toolCallId: e.toolCallId,
+      ok: e.resultOk,
+      errorCode: e.errorReason,
+    })),
+    terminationReason: toolLoopResult.summary.terminationReason,
+    changedFiles: toolLoopResult.summary.changedFiles,
+    writeToolCalls: writeToolCallCount,
+    noEffectReason,
+    ...(isPartialProgress ? {
+      partialProgress: true,
+      failureReason: partialFailureReason,
+      nextAction: 'VERIFY' as const,
+    } : {}),
+  };
+
+  try {
+    await reporter.onToolLoopObservation?.(observation);
+  } catch {
+    // Observation is diagnostic; failure is non-blocking
+  }
+
+  // P8: Persist observation to RunState for report.md and state.json audit trail
+  try {
+    saveToolLoopObservation(cwd, runId, observation);
+  } catch {
+    // Persistence failure is non-blocking
+  }
+  // P8 CRITICAL: Sync in-memory state to prevent subsequent saveRunState()
+  // from overwriting the persisted observation (the in-memory state lacked the
+  // field, so the next saveRunState(cwd, state) in the caller loop or finish()
+  // would silently wipe the observation from disk).
+  if (!state.toolLoopObservations) state.toolLoopObservations = [];
+  state.toolLoopObservations.push(observation);
+
+  // tolOk already computed above for P10 partial-progress detection
 
   // MIStake check: if the tool loop stopped due to MODEL_IDENTITY_MISMATCH, stop immediately
   if (toolLoopResult.stopReason === 'MODEL_IDENTITY_MISMATCH') {
@@ -1047,9 +1192,35 @@ async function driveRoutedImplement(
     return;
   }
 
-  // PROCO error from the tool loop also stops
+  // UNKNOWN_AFTER_CRASH from the tool loop
+  if (toolLoopResult.stopReason === 'UNKNOWN_AFTER_CRASH') {
+    const fd = toolLoopResult.failureDetail;
+    const detail = fd
+      ? `UNKNOWN_AFTER_CRASH | errorClass=${fd.errorClass} errorKind=${fd.errorKind} networkCode=${fd.networkErrorCode ?? 'N/A'} msg="${fd.safeMessage.slice(0, 200)}"`
+      : 'UNKNOWN_AFTER_CRASH';
+    stop(state, 'PROVIDER_ERROR', detail);
+    deps.log(`Tool Loop UNKNOWN_AFTER_CRASH → STOPPED: ${detail}`);
+    return;
+  }
+
+  // TURN_TIMEOUT from the tool loop
+  if (toolLoopResult.stopReason === 'TURN_TIMEOUT') {
+    const fd = toolLoopResult.failureDetail;
+    const detail = fd
+      ? `TURN_TIMEOUT | timeoutMs=${fd.timeoutMs} provider=${fd.providerId} model=${fd.requestedModelId} callId=${fd.callId}`
+      : 'TURN_TIMEOUT';
+    stop(state, 'PROVIDER_TIMEOUT', detail);
+    deps.log(`Tool Loop TURN_TIMEOUT → STOPPED: ${detail}`);
+    return;
+  }
+
+  // PROVIDER_ERROR from the tool loop also stops
   if (toolLoopResult.stopReason === 'PROVIDER_ERROR') {
-    stop(state, 'PROVIDER_ERROR', toolLoopResult.summary.terminationReason);
+    const fd = toolLoopResult.failureDetail;
+    const detail = fd
+      ? `PROVIDER_ERROR | errorClass=${fd.errorClass} errorKind=${fd.errorKind} networkCode=${fd.networkErrorCode ?? 'N/A'} msg="${fd.safeMessage.slice(0, 200)}"`
+      : toolLoopResult.summary.terminationReason;
+    stop(state, 'PROVIDER_ERROR', detail);
     deps.log('Tool Loop Provider 错误 → STOPPED');
     return;
   }
@@ -1065,20 +1236,53 @@ async function driveRoutedImplement(
     return;
   }
 
-  // --- 11. Failure: no changed files or tool-loop stopped ---
-  if (selection.role === 'FAST_EXECUTOR') {
-    // Flash attempt failed — persist flashLastCallId so the shared VERIFY handler
-    // (which runs next) can escalate to Pro.
-    state.flashLastCallId = toolLoopResult.callIds[toolLoopResult.callIds.length - 1] ?? undefined;
-    deps.log('Flash Tool Loop 未产生有效改动 → 进入 VERIFY (将由 VERIFY 失败驱动升级)');
+  // P10: Partial Progress — Tool Loop 未正常完成（status !== COMPLETED 或 stopReason 存在）
+  // 但 worktree 已有合法修改（changedFiles.length > 0）。
+  // 不得直接 Arbitration——应由现有 VERIFY/REPAIR 状态机判断 worktree 是否已满足任务。
+  if (isPartialProgress) {
+    deps.log(
+      `Partial progress: ${state.changedFiles.length} changed files, ` +
+      `tool failure=${partialFailureReason} → VERIFY`,
+    );
     state.currentPhase = 'VERIFY';
     saveRunState(cwd, state);
     return;
   }
 
+  // --- 11. Failure: no changed files or tool-loop stopped ---
+  if (selection.role === 'FAST_EXECUTOR') {
+    // Flash attempt produced no changes — persist flashLastCallId for attribution.
+    state.flashLastCallId = toolLoopResult.callIds[toolLoopResult.callIds.length - 1] ?? undefined;
+
+    if (mrConfig.allowStrongEscalation) {
+      // P2 fix: direct Pro escalation, skip VERIFY entirely.
+      // No full test suite when no changes exist.
+      // P8: persist escalation reason for observability
+      const escReason = noEffectReason ?? 'NO_WRITE_TOOL_CALLED';
+      deps.log(`Flash Tool Loop 未产生有效改动（${escReason}）→ 直接升级到 Pro STRONG_EXECUTOR`);
+      state.nextRoutedRole = 'STRONG_EXECUTOR';
+      state.repairCycles += 1;
+      state.currentPhase = 'REPAIR_1';
+      saveRunState(cwd, state);
+      return;
+    }
+
+    // Escalation disabled → fail closed, no VERIFY waste.
+    // P8 fix: use specific noEffectReason instead of generic IMPLEMENTATION_NO_EFFECT.
+    const reason = noEffectReason ?? 'NO_WRITE_TOOL_CALLED';
+    state.stopReason = 'PROVIDER_ERROR';
+    state.stopDetail = `Flash escalation disabled: ${reason} — Tool Loop 未产生有效改动`;
+    state.done = true;
+    deps.log(`Flash 无改动（${reason}）+ 不允许升级 → STOPPED`);
+    return;
+  }
+
   if (selection.role === 'STRONG_EXECUTOR') {
     // Pro failed → Arbitration Capsule
-    deps.log('Pro 失败 → 生成 ArbitrationCapsule → STOP');
+    // P8: include specific failure reason
+    const proFailureReason = noEffectReason
+      ?? (toolLoopResult.stopReason ? `TOOL_LOOP_${toolLoopResult.stopReason}` : 'UNKNOWN');
+    deps.log(`Pro 失败（${proFailureReason}）→ 生成 ArbitrationCapsule → STOP`);
     const capsule = {
       taskGoal: state.taskDescription.slice(0, 2000),
       hardConstraints: [],
@@ -1100,7 +1304,9 @@ async function driveRoutedImplement(
   }
 
   // Fallback
-  stop(state, 'PROVIDER_ERROR', toolLoopResult.stopReason ?? 'Tool Loop 无法完成');
+  stop(state, 'PROVIDER_ERROR', toolLoopResult.stopReason
+    ? `TOOL_LOOP_${toolLoopResult.stopReason}`
+    : 'Tool Loop 无法完成（无明确停止原因）');
 }
 
 /**

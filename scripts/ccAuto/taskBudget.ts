@@ -95,6 +95,10 @@ export function estimateTaskBudget(input: BudgetEstimateInput): TaskBudgetEstima
     ? computeCallCost(primaryTokens.max.input, primaryTokens.max.output, primaryPricing)
     : null;
 
+  const primaryCostNullReason = primaryPricing === null
+    ? `${primaryModelConfig.modelLogicalName} 缺少 pricing`
+    : null;
+
   estimatedCalls.push({
     role: primaryRole,
     provider: primaryModelConfig.provider,
@@ -109,22 +113,29 @@ export function estimateTaskBudget(input: BudgetEstimateInput): TaskBudgetEstima
       expected: primaryCostExp !== null ? primaryCostExp * primaryCallCount.expected : null,
       max: primaryCostMax !== null ? primaryCostMax * primaryCallCount.max : null,
     },
+    costNullReason: primaryCostNullReason,
   });
 
   if (primaryPricing === null) {
     assumptions.push('主模型价格配置缺失，成本无法估算');
   }
 
-  // 升级链
+  // 升级链 —— 可执行预算（只计算当前程序真正能自动调用的 Provider 分支）
+  // Flash ✅  Pro ✅  自动 Opus ❌
+  // 自动 Opus 缺少 Provider/价格不计入 executableMaxCost，不得将其变成 null
   let totalMinCost = primaryCostMin !== null ? primaryCostMin * primaryCallCount.min : null;
   let totalExpectedCost = primaryCostExp !== null ? primaryCostExp * primaryCallCount.expected : null;
   let totalMaxCost = primaryCostMax !== null ? primaryCostMax * primaryCallCount.max : null;
+  let maxNullReason: string | null = null;
 
   // Flash → Pro 升级
   if (primaryRole === 'FAST_EXECUTOR' && routingConfig.allowStrongEscalation) {
     const strongConfig = routingConfig.strongModel;
     const strongPricing = pricingByModel[strongConfig.modelLogicalName] ?? null;
     const strongCostMax = strongPricing ? computeCallCost(primaryTokens.max.input, primaryTokens.max.output, strongPricing) : null;
+    const strongCostNullReason = strongCostMax === null
+      ? `${strongConfig.modelLogicalName} 缺少 pricingByModel 中的 outputPerMTokens/inputPerMTokens`
+      : null;
 
     estimatedCalls.push({
       role: 'STRONG_EXECUTOR',
@@ -136,23 +147,32 @@ export function estimateTaskBudget(input: BudgetEstimateInput): TaskBudgetEstima
       estimatedInputTokens: { min: 0, expected: 0, max: primaryTokens.max.input },
       estimatedOutputTokens: { min: 0, expected: 0, max: primaryTokens.max.output },
       estimatedCostRmb: { min: null, expected: null, max: strongCostMax },
+      costNullReason: strongCostNullReason,
     });
 
-    if (totalMaxCost !== null && strongCostMax !== null) {
-      totalMaxCost += strongCostMax;
+    if (strongCostMax !== null) {
+      // Pro 价格完整 → 加入可执行最坏上限
+      if (totalMaxCost !== null) {
+        totalMaxCost += strongCostMax;
+      }
     } else {
-      totalMaxCost = null;
+      // Pro 价格缺失 → 记录原因但不 null totalMaxCost
+      // Flash 的 primaryCostMax 仍然有效
+      maxNullReason = strongCostNullReason;
     }
     assumptions.push('Flash 失败时最多升级 Pro 1 次');
   }
 
-  // Pro → Opus 升级
+  // Pro → Opus 升级：自动 Opus 关闭，不计入可执行预算
   if (routingConfig.allowArbiterEscalation && routingConfig.arbiterModel) {
     const arbiterConfig = routingConfig.arbiterModel;
-    const arbiterPricing = pricingByModel[arbiterConfig.modelLogicalName] ?? null;
 
     if (hasOpusProvider) {
+      const arbiterPricing = pricingByModel[arbiterConfig.modelLogicalName] ?? null;
       const opusArbiterCostMax = arbiterPricing ? computeCallCost(15000, 8000, arbiterPricing) : null;
+      const opusCostNullReason = opusArbiterCostMax === null
+        ? `${arbiterConfig.modelLogicalName} 缺少 pricingByModel 中的 pricing 数据`
+        : null;
 
       estimatedCalls.push({
         role: 'ARBITER',
@@ -164,26 +184,31 @@ export function estimateTaskBudget(input: BudgetEstimateInput): TaskBudgetEstima
         estimatedInputTokens: { min: 0, expected: 0, max: 15000 },
         estimatedOutputTokens: { min: 0, expected: 0, max: 8000 },
         estimatedCostRmb: { min: null, expected: null, max: opusArbiterCostMax },
+        costNullReason: opusCostNullReason,
       });
 
-      if (totalMaxCost !== null && opusArbiterCostMax !== null) {
-        totalMaxCost += opusArbiterCostMax;
+      if (opusArbiterCostMax !== null) {
+        if (totalMaxCost !== null) {
+          totalMaxCost += opusArbiterCostMax;
+        }
       } else {
-        totalMaxCost = null;
+        if (maxNullReason === null) maxNullReason = opusCostNullReason;
       }
     } else {
+      // 自动 Opus 关闭 → 不计入可执行预算，但单独记录
       estimatedCalls.push({
         role: 'ARBITER',
         provider: arbiterConfig.provider,
         modelLogicalName: arbiterConfig.modelLogicalName,
         minCalls: 0,
         expectedCalls: 0,
-        maxCalls: 1,
+        maxCalls: 0,  // maxCalls=0 表示不会自动调用
         estimatedInputTokens: { min: 0, expected: 0, max: 0 },
         estimatedOutputTokens: { min: 0, expected: 0, max: 0 },
         estimatedCostRmb: { min: null, expected: null, max: null },
+        costNullReason: '自动 Opus 关闭：缺少 Provider/Provider profile，不计入可执行预算',
       });
-      assumptions.push('当前无自动 Opus Provider，只会生成 ArbitrationCapsule，不会自动产生实际 Opus 消费');
+      assumptions.push('自动 Opus：关闭，不计入可执行预算（只会生成 ArbitrationCapsule）');
     }
   }
 
@@ -201,6 +226,7 @@ export function estimateTaskBudget(input: BudgetEstimateInput): TaskBudgetEstima
       expected: totalExpectedCost !== null ? roundCost(totalExpectedCost) : null,
       max: (totalMaxCost !== null) ? roundCost(totalMaxCost) : null,
     },
+    maxNullReason,
     assumptions,
     createdAt: new Date().toISOString(),
   };

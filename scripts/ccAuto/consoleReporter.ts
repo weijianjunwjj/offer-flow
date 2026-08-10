@@ -20,6 +20,7 @@ import type {
   TaskCostSummary,
   BudgetMode,
   ExecutionModelRole,
+  RoutedToolLoopObservation,
 } from './types';
 import { redactSecretLiterals } from './redact';
 
@@ -46,30 +47,42 @@ function budgetModeLabel(mode: BudgetMode): string {
 }
 
 function fmtRmb(v: number | null): string {
-  if (v === null || v === undefined) return '(不可核验)';
-  if (!Number.isFinite(v)) return '(不可核验)';
+  if (v === null || v === undefined) return 'N/A';
+  if (!Number.isFinite(v)) return 'N/A';
   return `¥${v.toFixed(4)}`;
+}
+
+function fmtRmbWithReason(v: number | null, reason: string | null | undefined): string {
+  if (v !== null && v !== undefined && Number.isFinite(v)) return `¥${v.toFixed(4)}`;
+  if (reason) return `无法计算：${reason}`;
+  return '无法计算：原因未记录';
 }
 
 function fmtPct(v: number | null): string {
   if (v === null || v === undefined) return 'N/A';
   if (!Number.isFinite(v)) return 'N/A';
-  return `${v.toFixed(1)}%`;
+  return `${(v * 100).toFixed(1)}%`;
 }
 
 function fmtNum(v: number | null | undefined): string {
-  if (v === null || v === undefined) return '(不可核验)';
-  if (!Number.isFinite(v)) return '(不可核验)';
+  if (v === null || v === undefined) return 'N/A';
+  if (!Number.isFinite(v)) return 'N/A';
   return String(v);
 }
 
 function safeCost(v: number | null): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return '(不可核验)';
+  if (v === null || v === undefined || !Number.isFinite(v)) return 'N/A';
   if (v === 0 && v !== null) {
     // Zero cost is valid if there were truly no calls (e.g. budget blocked)
     return '¥0.0000';
   }
   return `¥${v.toFixed(4)}`;
+}
+
+function safeCostWithReason(v: number | null, reason: string | null | undefined): string {
+  if (v !== null && v !== undefined && Number.isFinite(v)) return `¥${v.toFixed(4)}`;
+  if (reason) return `无法计算：${reason}`;
+  return '无法计算：原因未记录';
 }
 
 // ============================================================================
@@ -155,7 +168,11 @@ export function createConsoleRoutedExecutionReporter(
       write('预计调用：');
       for (const c of estimate.estimatedCalls) {
         const name = roleLabel(c.role);
-        if (c.minCalls === 0 && c.expectedCalls === 0 && c.maxCalls === 1) {
+        if (c.role === 'ARBITER' && c.maxCalls === 0) {
+          // 自动 Opus 关闭 → 不计入可执行预算
+          const reason = c.costNullReason ?? '自动 Opus 关闭';
+          write(`${name}：${reason}`);
+        } else if (c.minCalls === 0 && c.expectedCalls === 0 && c.maxCalls === 1) {
           write(`${name}：正常 0 次，升级时最多 1 次`);
         } else if (c.maxCalls > 0) {
           write(`${name}：预计 ${c.expectedCalls} 次，最多 ${c.maxCalls} 次`);
@@ -164,33 +181,45 @@ export function createConsoleRoutedExecutionReporter(
         }
       }
 
-      // Opus 说明
-      const hasOpusEstimate = estimate.estimatedCalls.some((c) => c.role === 'ARBITER' && c.maxCalls > 0);
-      if (!hasOpusEstimate) {
-        write('Opus 5：当前不自动调用');
-      }
-
       write('');
 
       // Token 预估
-      const totalMinInput = estimate.estimatedCalls.reduce((s, c) => s + c.estimatedInputTokens.min, 0);
-      const totalMaxInput = estimate.estimatedCalls.reduce((s, c) => s + c.estimatedInputTokens.max, 0);
-      const totalMinOutput = estimate.estimatedCalls.reduce((s, c) => s + c.estimatedOutputTokens.min, 0);
-      const totalMaxOutput = estimate.estimatedCalls.reduce((s, c) => s + c.estimatedOutputTokens.max, 0);
-      write('预计 Token：');
+      // Only sum executable (non-Opus-disabled) call estimates
+      const executableCalls = estimate.estimatedCalls.filter((c) => c.maxCalls > 0);
+      const totalMinInput = executableCalls.reduce((s, c) => s + c.estimatedInputTokens.min, 0);
+      const totalMaxInput = executableCalls.reduce((s, c) => s + c.estimatedInputTokens.max, 0);
+      const totalMinOutput = executableCalls.reduce((s, c) => s + c.estimatedOutputTokens.min, 0);
+      const totalMaxOutput = executableCalls.reduce((s, c) => s + c.estimatedOutputTokens.max, 0);
+      write('预计 Token（仅可执行分支）：');
       write(`输入：${totalMinInput}～${totalMaxInput}`);
       write(`输出：${totalMinOutput}～${totalMaxOutput}`);
       write('');
 
-      // 成本
-      write('预计成本：');
+      // 成本 —— 使用 explicit reason
+      write('预计成本（可执行分支）：');
       if (exp.expected !== null && Number.isFinite(exp.expected)) {
         write(`常规预计：${fmtRmb(exp.expected)}`);
-        write(`合理区间：${fmtRmb(exp.min)}～${fmtRmb(exp.max)}`);
+        write(`合理区间：${fmtRmbWithReason(exp.min, estimate.maxNullReason)}～${fmtRmbWithReason(exp.max, estimate.maxNullReason)}`);
       } else {
-        write('常规预计：人民币成本暂不可核验');
+        // 主模型没有价格
+        const primaryReason = primary?.costNullReason ?? '主模型缺少定价';
+        write(`常规预计：无法计算——${primaryReason}`);
       }
-      write(`最坏上限：${exp.max !== null && Number.isFinite(exp.max) ? fmtRmb(exp.max) : '人民币成本暂不可核验'}`);
+
+      // 可执行最坏上限
+      const maxDisplay = estimate.maxNullReason
+        ? `可执行最坏上限：${fmtRmbWithReason(exp.max, estimate.maxNullReason)}`
+        : `可执行最坏上限：${fmtRmb(exp.max)}`;
+      write(maxDisplay);
+
+      // 自动 Opus 说明
+      const opusEstimate = estimate.estimatedCalls.find((c) => c.role === 'ARBITER');
+      if (opusEstimate) {
+        const opusReason = opusEstimate.costNullReason ?? '自动 Opus 未启用';
+        write(`自动 Opus：${opusReason}`);
+      }
+
+      write('');
 
       write('');
 
@@ -209,11 +238,11 @@ export function createConsoleRoutedExecutionReporter(
     async onRunningCost(snapshot: RunningCostSnapshot, _formatted: string): Promise<void> {
       if (snapshot.actualCostRmb !== null && Number.isFinite(snapshot.actualCostRmb)) {
         const ratio = snapshot.expectedBudgetUsedRatio !== null && Number.isFinite(snapshot.expectedBudgetUsedRatio)
-          ? `，使用常规预算 ${fmtPct(snapshot.expectedBudgetUsedRatio * 100)}`
+          ? `，使用常规预算 ${fmtPct(snapshot.expectedBudgetUsedRatio)}`
           : '';
         write(`[cc-auto 成本] 已完成 ${snapshot.completedCallCount} 次调用，当前实际 ${fmtRmb(snapshot.actualCostRmb)}${ratio}`);
       } else {
-        write(`[cc-auto 成本] 已完成 ${snapshot.completedCallCount} 次调用，实际成本暂不可核验`);
+        write(`[cc-auto 成本] 已完成 ${snapshot.completedCallCount} 次调用，实际成本暂不可核验（存在 UNPRICED 调用）`);
       }
     },
 
@@ -238,8 +267,8 @@ export function createConsoleRoutedExecutionReporter(
       // 任务前预计
       const est = summary.estimate.totalEstimatedCostRmb;
       write('任务前预计：');
-      write(`常规预计：${est.expected !== null && Number.isFinite(est.expected) ? fmtRmb(est.expected) : '(不可核验)'}`);
-      write(`最坏上限：${est.max !== null && Number.isFinite(est.max) ? fmtRmb(est.max) : '(不可核验)'}`);
+      write(`常规预计：${est.expected !== null && Number.isFinite(est.expected) ? fmtRmb(est.expected) : safeCostWithReason(est.expected, summary.estimate.maxNullReason)}`);
+      write(`最坏上限：${est.max !== null && Number.isFinite(est.max) ? fmtRmb(est.max) : safeCostWithReason(est.max, summary.estimate.maxNullReason)}`);
       write('');
 
       // 实际消耗
@@ -286,7 +315,7 @@ export function createConsoleRoutedExecutionReporter(
       if (re.escalationCostRmb !== null && Number.isFinite(re.escalationCostRmb) && re.escalationCostRmb > 0) {
         write(`无贡献失败调用成本：${fmtRmb(re.escalationCostRmb)}`);
       } else if (re.escalationCostRmb === null) {
-        write(`无贡献失败调用成本：(不可核验)`);
+        write(`无贡献失败调用成本：无法计算（escalatedFromCallId 缺失或 costRmbCustom 为 null）`);
       } else {
         write(`无贡献失败调用成本：¥0.0000`);
       }
@@ -299,9 +328,66 @@ export function createConsoleRoutedExecutionReporter(
         write(`实际节省：${safeCost(re.savedVsAllProRmb)}`);
         write(`节省比例：${fmtPct(re.savedVsAllProPercent)}`);
       } else {
-        write('同 Token 全程使用 Pro：(不可核验)');
+        write('同 Token 全程使用 Pro：无法计算（Pro pricing 缺失或 Token 记录不完整）');
       }
       write(SEP);
+      write('');
+    },
+
+    async onToolLoopObservation(observation: RoutedToolLoopObservation): Promise<void> {
+      const label = roleLabel(observation.role);
+      write('');
+      write(`${label}`);
+      write(`Provider calls: ${observation.totalToolCalls}`);
+      write('Tool Loop:');
+      if (observation.totalToolCalls === 0 || observation.auditTrail.length === 0) {
+        write('  （无工具调用记录）');
+        if (observation.partialProgress) {
+          write(`  write tools called: N/A`);
+          write(`Partial progress: yes`);
+          write(`Tool failure reason: ${observation.failureReason ?? 'UNKNOWN'}`);
+        } else {
+          const noEffect = observation.noEffectReason ?? 'NO_WRITE_TOOL_CALLED';
+          write(`  write tools called: 0`);
+          write(`Result: ${noEffect}`);
+        }
+      } else {
+        // Group by turn
+        let lastTurn = 0;
+        for (const entry of observation.auditTrail) {
+          if (entry.turn !== lastTurn) {
+            lastTurn = entry.turn;
+          }
+          const status = entry.ok === true ? '✓' : entry.ok === false ? '✗' : '?';
+          const errorSuffix = entry.errorCode ? ` ${entry.errorCode}` : '';
+          write(`  turn ${entry.turn}: ${entry.toolName} ${status}${errorSuffix}`);
+        }
+
+        if (observation.partialProgress) {
+          write(`  write tools called: ${observation.writeToolCalls}`);
+          write(`Partial progress: yes`);
+          write(`Tool failure reason: ${observation.failureReason ?? 'UNKNOWN'}`);
+        } else if (observation.writeToolCalls === 0) {
+          write(`  write tools called: 0`);
+          write(`Result: ${observation.noEffectReason ?? 'NO_WRITE_TOOL_CALLED'}`);
+        } else if (observation.noEffectReason) {
+          write(`Result: ${observation.noEffectReason}`);
+        }
+      }
+
+      if (observation.changedFiles.length > 0) {
+        write(`Changed files: ${observation.changedFiles.join(', ')}`);
+      } else {
+        write('Changed files: （无）');
+      }
+
+      if (observation.terminationReason) {
+        write(`Termination: ${observation.terminationReason}`);
+      }
+
+      if (observation.partialProgress && observation.nextAction) {
+        write(`Next action: ${observation.nextAction}`);
+      }
       write('');
     },
   };

@@ -22,6 +22,7 @@ import type {
   ProviderCallResponse,
   ProviderExecutionResult,
   ProviderExecutionStopReason,
+  ProviderFailureDetail,
   UsageRecord,
   IdentityConfirmationContext,
   ProviderAdapterResolver,
@@ -31,8 +32,93 @@ import { buildChildEnv } from './buildChildEnv';
 import { checkModelIdentity } from './modelIdentity';
 import { buildUsageRecord } from './usage';
 import { computeCostRmbFromPricing } from './cost';
+import { redactSecretValues } from './redact';
 import type { ModelPricing } from './types';
 import { saveRunState, loadRunState, runStateExists } from './store';
+
+/**
+ * 构造安全结构化失败摘要——不含密钥/完整请求体/响应体/文件正文。
+ * 用于替代退化为 "PROVIDER_ERROR" 的 stopDetail。
+ */
+function buildProviderFailureDetail(opts: {
+  err: Error;
+  callId: string;
+  providerId: string;
+  requestedModelId: string;
+  timeoutMs: number;
+  credentialValue?: string;
+}): ProviderFailureDetail {
+  const { err, callId, providerId, requestedModelId, timeoutMs, credentialValue } = opts;
+  const secrets = credentialValue ? [credentialValue] : [];
+
+  // 安全提取 error cause name
+  let causeName: string | null = null;
+  const errRecord = err as unknown as Record<string, unknown>;
+  if (errRecord.cause && typeof errRecord.cause === 'object' && (errRecord.cause as Record<string, unknown>)?.name) {
+    causeName = String((errRecord.cause as Record<string, unknown>).name);
+    // 检查 cause name 不含密钥
+    if (secrets.some(s => causeName!.includes(s))) causeName = '<redacted>';
+  }
+
+  // 安全提取网络错误码（复用 openaiChatAdapter 中的 getNetworkErrorCode 逻辑）
+  const networkErrorCode = getSafeNetworkErrorCode(err);
+
+  let errorKind: ProviderFailureDetail['errorKind'];
+  let httpStatus: number | null = null;
+
+  if (err instanceof TimeoutError) {
+    errorKind = 'TIMEOUT';
+  } else if (err instanceof TransportError) {
+    errorKind = 'TRANSPORT';
+    // TransportError 可能携带 HTTP status（从 cause 中无法提取，保持 null）
+  } else if (err instanceof ProviderProtocolError) {
+    errorKind = 'UNKNOWN'; // 协议错误属于未知——格式不符合预期
+  } else {
+    errorKind = 'UNKNOWN';
+  }
+
+  const safeMessage = redactSecretValues(
+    (err as Error).message?.slice(0, 500) ?? 'unknown',
+    secrets,
+  );
+
+  return {
+    errorClass: err.constructor.name,
+    safeMessage,
+    errorKind,
+    httpStatus,
+    networkErrorCode,
+    causeName,
+    timeoutMs,
+    providerId,
+    requestedModelId,
+    callId,
+  };
+}
+
+/**
+ * 安全提取网络错误码——不依赖 openaiChatAdapter.ts 内部导出。
+ * 读取 error.code、error.cause.code、errno 映射。
+ */
+function getSafeNetworkErrorCode(err: unknown): string | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as Record<string, unknown>;
+  // 1. error.cause.code
+  if (e.cause && typeof e.cause === 'object') {
+    const cause = e.cause as Record<string, unknown>;
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  // 2. error.code（Node 原生错误）
+  if (typeof e.code === 'string') return e.code;
+  // 3. errno 到 code 的保守映射
+  if (typeof e.errno === 'number') {
+    if (e.errno === -4078 || e.errno === -54) return 'ECONNRESET';
+    if (e.errno === -4039 || e.errno === -60) return 'ETIMEDOUT';
+    if (e.errno === -3008 || e.errno === -3000) return 'EAI_AGAIN';
+    if (e.errno === -4073 || e.errno === -61) return 'ECONNREFUSED';
+  }
+  return null;
+}
 
 /** 仅当 usage 所有 token 字段非 null 时计算费用，否则返回 null */
 function computeCostRmbFromPricingIfUsageComplete(
@@ -227,6 +313,16 @@ export async function executeProviderCall(
     const isTransientTransport =
       err instanceof TransportError && err.transient === true;
 
+    const credentialValue = childEnv[profile.credentialEnvVars[0]];
+    const failureDetail = buildProviderFailureDetail({
+      err: err as Error,
+      callId,
+      providerId: profile.id,
+      requestedModelId,
+      timeoutMs: opts.timeoutMs,
+      credentialValue,
+    });
+
     return {
       ok: false,
       stopReason,
@@ -238,6 +334,7 @@ export async function executeProviderCall(
       errorKind: isTimeout ? 'HTTP' : undefined,
       httpStatus: null,
       transientTransportError: isTransientTransport || undefined,
+      failureDetail,
     };
   }
 

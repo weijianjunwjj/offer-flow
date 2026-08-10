@@ -556,10 +556,21 @@ export class OpenAIChatAdapter implements ProviderAdapter {
       // 其他网络错误（DNS/TLS/socket/rejection）→ TransportError
       // 根据 error.cause?.code 分类瞬时 vs 永久
       const code = getNetworkErrorCode(err);
-      const transient = isTransientNetworkCode(code);
+      const hasCode = code !== null;
+      const codeIsTransient = isTransientNetworkCode(code);
+      // code-less fetch failed fallback（P6 fix）：
+      // 如果来自 fetch 调用、无 HTTP response、非 AbortController timeout、
+      // 且提取不到 network code，保守分类为瞬时可恢复（real-world evidence：
+      // 同一进程/同一 profile 的后续请求成功）。
+      const isCodeLessFetchRejection =
+        !hasCode &&
+        !controller.signal.aborted &&
+        // 确认是网络级 rejection（instanceof TypeError 常见于 fetch 失败）
+        err instanceof TypeError;
+      const transient = codeIsTransient || isCodeLessFetchRejection;
       throw new TransportError(
         redactSecretValues(`OpenAI Chat 网络错误：${(err as Error).message}`, [credential]),
-        { transient },
+        { transient, cause: err },
       );
     } finally {
       clearTimeout(timer);
@@ -966,6 +977,7 @@ const TRANSIENT_NETWORK_CODES = new Set([
   'EHOSTUNREACH',   // 主机不可达
   'ENETRESET',      // 网络重置
   'UND_ERR_SOCKET', // undici socket 错误
+  'UND_ERR_CONNECT_TIMEOUT', // undici 连接超时
 ]);
 
 function getNetworkErrorCode(err: unknown): string | null {

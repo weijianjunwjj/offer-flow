@@ -1314,4 +1314,58 @@ describe('OpenAIChatAdapter — transient classification (1F-P0.3)', () => {
       expect((err as TransportError).transient).toBe(true);
     }
   });
+
+  // Regression A — code-less fetch failed (real-world root cause)
+  it('code-less TypeError("fetch failed") → transient=true (Regression A)', async () => {
+    const makeCodeLessFetch = (): FetchLike => {
+      return async () => {
+        throw new TypeError('fetch failed');
+      };
+    };
+    const adapter = new OpenAIChatAdapter(makeCodeLessFetch());
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+      expect((err as TransportError).cause).toBeDefined();
+    }
+  });
+
+  // Regression B — UND_ERR_CONNECT_TIMEOUT
+  it('UND_ERR_CONNECT_TIMEOUT → transient=true (Regression B)', async () => {
+    const adapter = new OpenAIChatAdapter(makeFetchRejectionWithCause('UND_ERR_CONNECT_TIMEOUT'));
+    try {
+      await adapter.execute(makeRequest(), makeContext());
+      expect.fail('Expected TransportError with transient=true');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransportError);
+      expect((err as TransportError).transient).toBe(true);
+    }
+  });
+
+  // Regression C — permanent error should NOT be transient
+  it('ProviderProtocolError should NOT be transient (Regression C)', async () => {
+    const { fetch } = createFakeFetch(() => new Response('not json', { status: 200, headers: { 'Content-Type': 'text/plain' } }));
+    const adapter = new OpenAIChatAdapter(fetch);
+    // ProviderProtocolError 是协议层错误，不是 TransportError，不计入 transient
+    await expect(adapter.execute(makeRequest(), makeContext())).rejects.toThrow(ProviderProtocolError);
+  });
+
+  // Regression D — AbortController timeout remains non-transient
+  it('AbortController timeout does NOT become transient (Regression D)', async () => {
+    const { fetch } = createFakeFetch((_url, init) => {
+      return new Promise((_resolve, reject) => {
+        if (init?.signal) {
+          const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+          init.signal.addEventListener('abort', onAbort);
+        }
+      });
+    });
+    const adapter = new OpenAIChatAdapter(fetch);
+    const ctx = makeContext({ timeoutMs: 1 });
+    // TimeoutError 不是 TransportError，不受此修复影响
+    await expect(adapter.execute(makeRequest({ timeoutMs: 1 }), ctx)).rejects.toThrow(TimeoutError);
+  });
 });

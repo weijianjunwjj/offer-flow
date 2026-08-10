@@ -18,6 +18,7 @@ import type {
   CostByRoleEntry,
   EstimateComparison,
   RoutingEffect,
+  RoutedToolLoopObservation,
 } from './types';
 import { resetEstimateSequence } from './taskBudget';
 
@@ -168,28 +169,28 @@ function makeCostSummary(opts: {
         cachedTokens: 200,
         totalTokens: 2500,
         costRmb: 0.0018,
-        tokenShare: 100,
-        costShare: 100,
+        tokenShare: 1.0,
+        costShare: 1.0,
       },
     ],
     estimateComparison: {
-      actualVsExpectedRatio: opts.comparison?.actualVsExpectedRatio ?? 90.0,
-      actualVsMaximumRatio: opts.comparison?.actualVsMaximumRatio ?? 36.0,
+      actualVsExpectedRatio: opts.comparison?.actualVsExpectedRatio ?? 0.90,
+      actualVsMaximumRatio: opts.comparison?.actualVsMaximumRatio ?? 0.36,
       absoluteVarianceRmb: opts.comparison?.absoluteVarianceRmb ?? 0.0002,
       variancePercent: opts.comparison?.variancePercent ?? 10.0,
     },
     routingEffect: {
-      flashCallShare: opts.effect?.flashCallShare ?? 100,
+      flashCallShare: opts.effect?.flashCallShare ?? 1.0,
       proCallShare: opts.effect?.proCallShare ?? 0,
       opusCallShare: opts.effect?.opusCallShare ?? 0,
-      flashCostShare: opts.effect?.flashCostShare ?? 100,
+      flashCostShare: opts.effect?.flashCostShare ?? 1.0,
       proCostShare: opts.effect?.proCostShare ?? 0,
       opusCostShare: opts.effect?.opusCostShare ?? 0,
       escalationCount: opts.effect?.escalationCount ?? 0,
       escalationCostRmb: opts.effect?.escalationCostRmb ?? 0,
       hypotheticalAllProCostRmb: opts.effect?.hypotheticalAllProCostRmb ?? 0.0036,
       savedVsAllProRmb: opts.effect?.savedVsAllProRmb ?? 0.0018,
-      savedVsAllProPercent: opts.effect?.savedVsAllProPercent ?? 50.0,
+      savedVsAllProPercent: opts.effect?.savedVsAllProPercent ?? 0.50,
     },
     completed: opts.completed ?? true,
     generatedAt: new Date().toISOString(),
@@ -250,6 +251,9 @@ describe('createConsoleRoutedExecutionReporter', () => {
     });
 
     it('4. 成本未知', async () => {
+      // P7 语义变更：null 成本必须带 explicit reason，禁止裸"不可核验"
+      // 旧契约：expect '人民币成本暂不可核验'
+      // 新契约：expect '无法计算' + 原因说明
       const estimate = makeBudgetEstimate({
         role: 'FAST_EXECUTOR',
         expectedCost: null,
@@ -258,7 +262,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
       });
       await reporter.onBudgetEstimate(estimate, '');
 
-      expect(writer.contains('人民币成本暂不可核验')).toBe(true);
+      expect(writer.contains('无法计算')).toBe(true);
       // 不得显示 ¥0.00
       expect(writer.lines.some((l) => l.includes('¥0.0000') || l.includes('¥0.00'))).toBe(false);
     });
@@ -334,7 +338,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
           {
             role: 'STRONG_EXECUTOR', provider: 'deepseek', modelLogicalName: 'deepseek-pro',
             calls: 1, inputTokens: 4000, outputTokens: 2000, cachedTokens: 0,
-            totalTokens: 6000, costRmb: 0.0160, tokenShare: 100, costShare: 100,
+            totalTokens: 6000, costRmb: 0.0160, tokenShare: 1.0, costShare: 1.0,
           },
         ],
         effect: { escalationCount: 2 },
@@ -352,7 +356,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
           {
             role: 'FAST_EXECUTOR', provider: 'deepseek', modelLogicalName: 'deepseek-flash',
             calls: 2, inputTokens: 3000, outputTokens: 1600, cachedTokens: 400,
-            totalTokens: 5000, costRmb: 0.0036, tokenShare: 100, costShare: 100,
+            totalTokens: 5000, costRmb: 0.0036, tokenShare: 1.0, costShare: 1.0,
           },
         ],
       });
@@ -372,7 +376,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
           {
             role: 'FAST_EXECUTOR', provider: 'deepseek', modelLogicalName: 'deepseek-flash',
             calls: 1, inputTokens: 1500, outputTokens: 800, cachedTokens: 200,
-            totalTokens: 2500, costRmb: 0.0018, tokenShare: 100, costShare: 100,
+            totalTokens: 2500, costRmb: 0.0018, tokenShare: 1.0, costShare: 1.0,
           },
         ],
       });
@@ -383,7 +387,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
 
     it('13. actual vs expected 比率', async () => {
       const summary = makeCostSummary({
-        comparison: { actualVsExpectedRatio: 85.5 },
+        comparison: { actualVsExpectedRatio: 0.855 },
       });
       await reporter.onCostSummary(summary, '');
 
@@ -392,7 +396,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
 
     it('14. actual vs max 比率', async () => {
       const summary = makeCostSummary({
-        comparison: { actualVsMaximumRatio: 20.0 },
+        comparison: { actualVsMaximumRatio: 0.20 },
       });
       await reporter.onCostSummary(summary, '');
 
@@ -401,7 +405,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
 
     it('15. 全 Pro 基准', async () => {
       const summary = makeCostSummary({
-        effect: { hypotheticalAllProCostRmb: 0.0050, savedVsAllProRmb: 0.0020, savedVsAllProPercent: 40.0 },
+        effect: { hypotheticalAllProCostRmb: 0.0050, savedVsAllProRmb: 0.0020, savedVsAllProPercent: 0.40 },
       });
       await reporter.onCostSummary(summary, '');
 
@@ -420,7 +424,7 @@ describe('createConsoleRoutedExecutionReporter', () => {
 
     it('17. 节省比例', async () => {
       const summary = makeCostSummary({
-        effect: { savedVsAllProPercent: 64.3 },
+        effect: { savedVsAllProPercent: 0.643 },
       });
       await reporter.onCostSummary(summary, '');
 
@@ -499,6 +503,9 @@ describe('createConsoleRoutedExecutionReporter', () => {
     });
 
     it('成本未知时输出可核验提示', async () => {
+      // P7 语义变更：必须带原因说明
+      // 旧契约：expect '实际成本暂不可核验'（裸文案）
+      // 新契约：expect '实际成本暂不可核验（存在 UNPRICED 调用）'（含原因）
       const snapshot: RunningCostSnapshot = {
         runId: 'r', taskId: 't',
         completedCallCount: 1,
@@ -513,7 +520,111 @@ describe('createConsoleRoutedExecutionReporter', () => {
       };
       await reporter.onRunningCost!(snapshot, '');
 
-      expect(writer.contains('实际成本暂不可核验')).toBe(true);
+      expect(writer.contains('实际成本暂不可核验（存在 UNPRICED 调用）')).toBe(true);
+    });
+  });
+
+  // === P10: Partial Progress Tool Loop Observation ===
+
+  describe('onToolLoopObservation', () => {
+    function makeObservation(overrides: Partial<RoutedToolLoopObservation> = {}): RoutedToolLoopObservation {
+      return {
+        role: 'STRONG_EXECUTOR',
+        modelLogicalName: 'deepseek-v4-pro',
+        turns: 3,
+        totalToolCalls: 4,
+        auditTrail: [
+          { turn: 1, toolName: 'read_file', toolCallId: 'c1', ok: true, errorCode: null },
+          { turn: 2, toolName: 'edit_file', toolCallId: 'c2', ok: true, errorCode: null },
+          { turn: 3, toolName: 'edit_file', toolCallId: 'c3', ok: false, errorCode: 'EDIT_TARGET_NOT_FOUND' },
+        ],
+        terminationReason: 'TOOL_EXECUTION_FAILED',
+        changedFiles: ['scripts/ccAuto/__fixtures__/demoRun.ts'],
+        writeToolCalls: 2,
+        ...overrides,
+      };
+    }
+
+    it('P10: partialProgress=true → displays Partial progress instead of No-effect reason', async () => {
+      const obs = makeObservation({
+        partialProgress: true,
+        failureReason: 'OLD_TEXT_MISMATCH',
+        nextAction: 'VERIFY',
+        noEffectReason: null,
+        changedFiles: ['scripts/ccAuto/__fixtures__/demoRun.ts'],
+      });
+      await reporter.onToolLoopObservation!(obs);
+
+      expect(writer.contains('Partial progress: yes')).toBe(true);
+      expect(writer.contains('Tool failure reason: OLD_TEXT_MISMATCH')).toBe(true);
+      expect(writer.contains('Next action: VERIFY')).toBe(true);
+      expect(writer.contains('Changed files: scripts/ccAuto/__fixtures__/demoRun.ts')).toBe(true);
+      // Must NOT display no-effect reason when changedFiles > 0
+      expect(writer.lines.some((l) => l.startsWith('Result:') && !l.includes('No-effect'))).toBe(false);
+      // Check "No-effect reason" doesn't appear
+      const full = writer.fullText();
+      expect(full).not.toContain('No-effect reason');
+    });
+
+    it('P10: noEffect with changedFiles=0 → displays Result: noEffectReason (unchanged)', async () => {
+      const obs = makeObservation({
+        noEffectReason: 'OLD_TEXT_MISMATCH',
+        changedFiles: [],
+        writeToolCalls: 1,
+      });
+      await reporter.onToolLoopObservation!(obs);
+
+      expect(writer.contains('Result: OLD_TEXT_MISMATCH')).toBe(true);
+      expect(writer.contains('Changed files: （无）')).toBe(true);
+      expect(writer.contains('Partial progress: yes')).toBe(false);
+    });
+
+    it('P10: partialProgress=true → shows termination + next action', async () => {
+      const obs = makeObservation({
+        partialProgress: true,
+        failureReason: 'TOOL_EXECUTION_FAILED',
+        nextAction: 'VERIFY',
+        noEffectReason: null,
+        terminationReason: 'TOOL_EXECUTION_FAILED',
+      });
+      await reporter.onToolLoopObservation!(obs);
+
+      expect(writer.contains('Termination: TOOL_EXECUTION_FAILED')).toBe(true);
+      expect(writer.contains('Next action: VERIFY')).toBe(true);
+    });
+
+    it('P10: completed Tool Loop → no partialProgress fields (unchanged)', async () => {
+      const obs = makeObservation({
+        noEffectReason: null,
+        terminationReason: null,
+        writeToolCalls: 3,
+        auditTrail: [
+          { turn: 1, toolName: 'read_file', toolCallId: 'c1', ok: true, errorCode: null },
+          { turn: 2, toolName: 'edit_file', toolCallId: 'c2', ok: true, errorCode: null },
+        ],
+      });
+      await reporter.onToolLoopObservation!(obs);
+
+      const full = writer.fullText();
+      expect(full).not.toContain('Partial progress: yes');
+      expect(full).not.toContain('Tool failure reason:');
+      expect(full).not.toContain('Next action:');
+    });
+
+    it('P10: partialProgress with empty audit trail → shows partial progress context', async () => {
+      const obs = makeObservation({
+        partialProgress: true,
+        failureReason: 'TOOL_EXECUTION_FAILED',
+        nextAction: 'VERIFY',
+        noEffectReason: null,
+        totalToolCalls: 0,
+        auditTrail: [],
+        changedFiles: ['a.ts'],
+      });
+      await reporter.onToolLoopObservation!(obs);
+
+      expect(writer.contains('Partial progress: yes')).toBe(true);
+      expect(writer.contains('Tool failure reason: TOOL_EXECUTION_FAILED')).toBe(true);
     });
   });
 });

@@ -1,12 +1,12 @@
-import { expect, it, describe, beforeEach, afterEach } from 'vitest';
+import { expect, it, describe, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { runTask, resumeTask, builderPrompt, extractExplicitFiles, directEditPrompt } from './orchestrator';
+import { runTask, resumeTask, builderPrompt, extractExplicitFiles, directEditPrompt, driveRoutedImplement } from './orchestrator';
 import { DEFAULT_CONFIG, type CcAutoConfig } from './config';
-import { createRunState, loadRunState, saveRunState } from './store';
+import { createRunState, loadRunState, saveRunState, _atomicRenameWithRetry } from './store';
 import { customRmbCost, usdToRmb, summarizeUsage } from './budget';
 import { renderReport } from './report';
 import { classifyTask } from './classify';
@@ -15,7 +15,7 @@ import {
   isPathWithinRepo, resolveExplicitFileReferences, type PreparedFile,
 } from './directEdit';
 import type { ClaudeCallOptions, ClaudeCallResult } from './runner';
-import type { CallUsage } from './types';
+import type { CallUsage, DeepSeekToolLoopResult, ToolLoopAuditRecord, ToolLoopTerminationReason } from './types';
 
 let cwd: string;
 
@@ -808,6 +808,102 @@ describe('renderReport：执行模式与可观测性缺失字段显式「不可�
     expect(md).toContain('MCP server：（无，已隔离）');
     expect(md).toContain(`MCP server：不可用（CLI 未返回该字段）`);
   });
+
+  // ==========================================================================
+  // P8: Routed Tool Loop Observation persistence & renderReport
+  // ==========================================================================
+
+  it('P8 regression A: routedExecution=true + observations present → renders Routed Tool Loop 明细', () => {
+    const state = createRunState(cwd, 'run-p8-obs', '修复 src/test.ts 的一处 bug', 'custom');
+    state.routedExecution = true;
+    state.calls = [baseCall({ model: 'builder', modelId: 'deepseek-chat-flash' })];
+    state.toolLoopObservations = [{
+      role: 'FAST_EXECUTOR',
+      modelLogicalName: 'deepseek-v4-flash',
+      turns: 2,
+      totalToolCalls: 3,
+      auditTrail: [
+        { turn: 1, toolName: 'read_file', toolCallId: 'c1', ok: true, errorCode: null },
+        { turn: 2, toolName: 'edit_file', toolCallId: 'c2', ok: false, errorCode: 'OLD_TEXT_MISMATCH' },
+        { turn: 2, toolName: 'read_file', toolCallId: 'c3', ok: true, errorCode: null },
+      ],
+      terminationReason: 'FINAL_RESPONSE',
+      changedFiles: [],
+      writeToolCalls: 1,
+      noEffectReason: 'OLD_TEXT_MISMATCH',
+    }];
+    const md = renderReport(state);
+    expect(md).toContain('## Routed Tool Loop 明细');
+    expect(md).toContain('V4 Flash');
+    expect(md).toContain('deepseek-v4-flash');
+    expect(md).toContain('FINAL_RESPONSE');
+    expect(md).toContain('OLD_TEXT_MISMATCH');
+    expect(md).toContain('edit_file');
+    expect(md).toContain('OLD_TEXT_MISMATCH');
+    // Must not show the "missing" message
+    expect(md).not.toContain('Routed Tool Loop 明细缺失');
+  });
+
+  it('P8 regression B: routedExecution=true but observations missing → shows explicit missing message', () => {
+    const state = createRunState(cwd, 'run-p8-missing', '修复 src/test.ts', 'custom');
+    state.routedExecution = true;
+    state.calls = [baseCall({ model: 'builder', modelId: 'deepseek-chat-pro' })];
+    state.toolLoopObservations = [];  // empty — treated as missing
+    const md = renderReport(state);
+    expect(md).toContain('Routed Tool Loop 明细缺失');
+    expect(md).toContain('运行状态未保存 audit trail');
+    // Must NOT reference a non-existent "上方明细"
+    expect(md).not.toContain('见上方 Tool Loop 明细');
+  });
+
+  it('P8 regression C: routedExecution=true + observations[].turns are preserved in report section', () => {
+    const state = createRunState(cwd, 'run-p8-mult', '优化两处代码', 'custom');
+    state.routedExecution = true;
+    state.calls = [baseCall({ model: 'builder', modelId: 'deepseek-chat-flash' }), baseCall({ model: 'builder', modelId: 'deepseek-chat-pro' })];
+    state.toolLoopObservations = [
+      {
+        role: 'FAST_EXECUTOR', modelLogicalName: 'deepseek-v4-flash',
+        turns: 1, totalToolCalls: 1,
+        auditTrail: [{ turn: 1, toolName: 'read_file', toolCallId: 'c1', ok: true, errorCode: null }],
+        terminationReason: 'FINAL_RESPONSE',
+        changedFiles: [], writeToolCalls: 0, noEffectReason: 'NO_WRITE_TOOL_CALLED',
+      },
+      {
+        role: 'STRONG_EXECUTOR', modelLogicalName: 'deepseek-v4-pro',
+        turns: 2, totalToolCalls: 3,
+        auditTrail: [
+          { turn: 1, toolName: 'read_file', toolCallId: 'c2', ok: true, errorCode: null },
+          { turn: 1, toolName: 'edit_file', toolCallId: 'c3', ok: true, errorCode: null },
+          { turn: 2, toolName: 'read_file', toolCallId: 'c4', ok: true, errorCode: null },
+        ],
+        terminationReason: 'FINAL_RESPONSE',
+        changedFiles: ['src/demoRun.ts'], writeToolCalls: 1,
+        noEffectReason: null,
+      },
+    ];
+    const md = renderReport(state);
+    expect(md).toContain('## Routed Tool Loop 明细');
+    expect(md).toContain('V4 Flash');
+    expect(md).toContain('NO_WRITE_TOOL_CALLED');
+    expect(md).toContain('V4 Pro');
+    expect(md).toContain('FINAL_RESPONSE');
+    expect(md).toContain('src/demoRun.ts');
+    // Call detail section references "上方" correctly since observations exist
+    expect(md).toContain('由 Tool Loop audit trail 提供（见上方 Tool Loop 明细）');
+  });
+
+  it('P8 regression legacy: routedExecution=false → NO Routed Tool Loop section, legacy contract preserved', () => {
+    const state = createRunState(cwd, 'run-legacy', '普通任务', 'custom');
+    state.routedExecution = false;
+    state.calls = [baseCall({ model: 'builder', modelId: 'claude-sonnet-5' })];
+    // Legacy runs should NOT have toolLoopObservations
+    const md = renderReport(state);
+    expect(md).not.toContain('Routed Tool Loop');
+    expect(md).not.toContain('toolLoopObservations');
+    expect(md).toContain('执行模式：标准');
+    // Legacy Claude CLI observability path preserved
+    expect(md).toContain('调用可观测性明细');
+  });
 });
 
 describe('runDirectEdit 端到端：真实执行路径（不调用真实模型）', () => {
@@ -1211,5 +1307,416 @@ describe('runDirectEdit 端到端：真实执行路径（不调用真实模型�
 
     // H. Builder 被调用
     expect(builderCalled).toBe(true);
+  });
+
+  // ====================================================================
+  // P9 Regression F: Flash→Pro escape hatches EPERM — rename retry succeeds,
+  // Pro escalation state survives, core regression for the real bug.
+  // Uses injectable renameFn to test _atomicRenameWithRetry directly.
+  // ====================================================================
+  it('P9-F: Flash→Pro 升级时 EPERM 一次后 retry 成功，Pro 升级数据完整保存', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-p9f-'));
+    const target = path.join(tmpDir, 'state.json');
+    const tmp = target + '.42368.0.tmp';
+    writeFileSync(tmp, JSON.stringify({ flashLastCallId: 'call-flash-1', repairCycles: 1, nextRoutedRole: 'STRONG_EXECUTOR', currentPhase: 'REPAIR_1' }), 'utf8');
+
+    let calls = 0;
+    const renameFn = (_t: string, _d: string) => {
+      calls += 1;
+      if (calls === 1) {
+        const err: any = new Error('EPERM: operation not permitted, rename');
+        err.code = 'EPERM';
+        throw err;
+      }
+      // Success on attempt 2 — simulates the real scenario
+      // where the Flash Tool Loop observation persists, Flash→Pro decision
+      // is made, saveRunState triggers the EPERM-affected rename, retry works,
+      // and Pro is still called
+    };
+
+    _atomicRenameWithRetry(tmp, target, renameFn);
+    expect(calls).toBe(2);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+// ============================================================================
+// P10: Partial Progress → VERIFY (not direct Arbitration)
+// ============================================================================
+
+vi.mock('./deepseekToolLoop', () => ({
+  runDeepSeekToolLoop: vi.fn(),
+}));
+
+import { runDeepSeekToolLoop } from './deepseekToolLoop';
+import { captureRunStartBaseline } from './git';
+import type { OrchestratorDeps } from './orchestrator';
+
+function makeToolLoopResult(overrides: Partial<DeepSeekToolLoopResult> = {}): DeepSeekToolLoopResult {
+  return {
+    status: 'COMPLETED',
+    finalText: 'done',
+    turns: 2,
+    totalToolCalls: 3,
+    executedTools: [],
+    stopReason: null,
+    callIds: ['c1', 'c2', 'c3'],
+    auditTrail: [
+      { turn: 1, toolCallId: 'c1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      { turn: 2, toolCallId: 'c2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      { turn: 2, toolCallId: 'c3', toolName: 'edit_file', status: 'EXECUTED', resultOk: false, errorReason: 'EDIT_TARGET_NOT_FOUND' },
+    ] as ToolLoopAuditRecord[],
+    summary: {
+      turns: 2,
+      toolCallCount: 3,
+      inputTokens: 4000,
+      outputTokens: 800,
+      totalTokens: 4800,
+      durationMs: 5000,
+      terminationReason: (overrides.stopReason ? 'TOOL_EXECUTION_FAILED' : null) as ToolLoopTerminationReason,
+      provider: 'deepseek',
+      profileId: 'ds-pro',
+      requestedModelId: 'deepseek-chat-pro',
+      resolvedModelId: 'deepseek-chat-pro',
+      modelIdentity: 'VERIFIED' as const,
+      callIds: ['c1', 'c2', 'c3'],
+      changedFiles: [],
+    },
+    ...overrides,
+  };
+}
+
+function routedOrchDeps(cwd: string, overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
+  return {
+    cwd,
+    config: {
+      ...DEFAULT_CONFIG,
+      modelRouting: {
+        enabled: true,
+        fastModel: { provider: 'deepseek', profileId: 'ds-flash', modelLogicalName: 'deepseek-v4-flash', budgetMultiplier: 1 },
+        strongModel: { provider: 'deepseek', profileId: 'ds-pro', modelLogicalName: 'deepseek-v4-pro', budgetMultiplier: 2 },
+        allowStrongEscalation: true,
+        arbiterModel: { provider: 'anthropic', profileId: 'opus', modelLogicalName: 'opus-5', budgetMultiplier: 10 },
+      },
+      providerProfiles: {
+        'ds-flash': {
+          id: 'ds-flash', vendor: 'deepseek', apiKey: 'sk-test', baseUrl: 'http://localhost',
+          models: [{ requestedModelId: 'deepseek-chat-flash', logicalName: 'deepseek-v4-flash', maxInputTokens: 64000, maxOutputTokens: 8192 }],
+          pricing: { 'deepseek-chat-flash': { inputPricePerMTok: 0.5, outputPricePerMTok: 2, currency: 'CNY' } },
+        },
+        'ds-pro': {
+          id: 'ds-pro', vendor: 'deepseek', apiKey: 'sk-test', baseUrl: 'http://localhost',
+          models: [{ requestedModelId: 'deepseek-chat-pro', logicalName: 'deepseek-v4-pro', maxInputTokens: 64000, maxOutputTokens: 8192 }],
+          pricing: { 'deepseek-chat-pro': { inputPricePerMTok: 1, outputPricePerMTok: 4, currency: 'CNY' } },
+        },
+      },
+      budgetPolicy: {
+        softLimitRmb: 1, hardLimitRmb: 5, maxConsecutiveErrors: 3,
+        timeoutMs: 300000, budgetMode: 'ECONOMY',
+      },
+    } as unknown as CcAutoConfig,
+    runClaude: async () => ({ raw: {}, resultText: '', structuredOutput: null, isError: false, subtype: 'success', usage: usage('builder'), permissionDenials: [] }),
+    runTests: async () => ({ passed: true, output: 'ok' }),
+    runFullVerification: async () => ({ passed: true, output: 'full ok' }),
+    currentDailyRmb: () => 0,
+    recordDailySpend: () => {},
+    hookSettingsInlineJson: '{}',
+    log: () => {},
+    routedExecution: true,
+    ...overrides,
+  };
+}
+
+describe('P10 Partial Progress → VERIFY', () => {
+  let cwd2: string;
+
+  beforeEach(() => {
+    cwd2 = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-p10-'));
+    execFileSync('git', ['init', '-q'], { cwd: cwd2 });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: cwd2 });
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: cwd2 });
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(cwd2, { recursive: true, force: true });
+  });
+
+  // ====================================================================
+  // Regression A: Flash no changes → Pro escalation, partialProgress=false
+  // ====================================================================
+  it('Regression A: Flash 无改动失败 → partialProgress=false → Pro escalation', async () => {
+    const state = createRunState(cwd2, `run-p10a-${Date.now()}`, '修改 demoRun.ts 的一个函数签名', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 0;
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(cwd2, state);
+
+    // Flash: changedFiles=[], status=STOPPED, stopReason=TOOL_EXECUTION_FAILED
+    const mockResult = makeToolLoopResult({
+      status: 'STOPPED' as const,
+      stopReason: 'TOOL_EXECUTION_FAILED',
+      callIds: ['f1'],
+      auditTrail: [
+        { turn: 1, toolCallId: 'f1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'f2', toolName: 'edit_file', status: 'EXECUTED', resultOk: false, errorReason: 'EDIT_TARGET_NOT_FOUND' },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], terminationReason: 'TOOL_EXECUTION_FAILED' as ToolLoopTerminationReason, callIds: ['f1', 'f2'] },
+    });
+    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // Reload state from disk
+    const reloaded = loadRunState(cwd2, state.runId);
+
+    // Flash should escalate to Pro REPAIR_1 (not VERIFY, not Arbitration)
+    expect(reloaded.stopReason).toBeFalsy();
+    expect(reloaded.done).toBe(false);
+    expect(reloaded.currentPhase).toBe('REPAIR_1');
+    expect(reloaded.nextRoutedRole).toBe('STRONG_EXECUTOR');
+    expect(reloaded.flashLastCallId).toBeTruthy();
+    expect(reloaded.arbitrationCapsule).toBeUndefined();
+
+    // Observation should NOT have partialProgress=true
+    const obs = reloaded.toolLoopObservations?.[0];
+    expect(obs).toBeTruthy();
+    expect(obs?.partialProgress).toBeFalsy();
+    expect(obs?.noEffectReason).toBeTruthy(); // OLD_TEXT_MISMATCH for changedFiles=0
+  });
+
+  // ====================================================================
+  // Regression B: Pro has changes + tool failure → partial progress → VERIFY
+  // Core regression: MUST NOT go to Arbitration
+  // ====================================================================
+  it('Regression B: Pro 有修改后失败 → partialProgress=true → VERIFY（不得 Arbitration）', async () => {
+    const state = createRunState(cwd2, `run-p10b-${Date.now()}`, '修改 demoRun.ts 的一个函数签名', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1; // already past Flash
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = ['scripts/ccAuto/__fixtures__/demoRun.ts'];
+    saveRunState(cwd2, state);
+
+    // Pro: changedFiles=[demoRun.ts], status=STOPPED, stopReason=TOOL_EXECUTION_FAILED
+    const mockResult = makeToolLoopResult({
+      status: 'STOPPED' as const,
+      stopReason: 'TOOL_EXECUTION_FAILED',
+      callIds: ['p1', 'p2', 'p3'],
+      auditTrail: [
+        { turn: 1, toolCallId: 'p1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'p2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 3, toolCallId: 'p3', toolName: 'edit_file', status: 'EXECUTED', resultOk: false, errorReason: 'EDIT_TARGET_NOT_FOUND' },
+      ] as ToolLoopAuditRecord[],
+      summary: {
+        ...makeToolLoopResult().summary,
+        changedFiles: ['scripts/ccAuto/__fixtures__/demoRun.ts'],
+        terminationReason: 'TOOL_EXECUTION_FAILED' as ToolLoopTerminationReason,
+        callIds: ['p1', 'p2', 'p3'],
+      },
+    });
+    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+
+    // Must go to VERIFY, NOT Arbitration, NOT STOPPED
+    expect(reloaded.currentPhase).toBe('VERIFY');
+    expect(reloaded.stopReason).toBeFalsy();
+    expect(reloaded.done).toBe(false);
+    expect(reloaded.arbitrationCapsule).toBeUndefined();
+
+    // Observation must have partialProgress=true
+    const obs = reloaded.toolLoopObservations?.[0];
+    expect(obs).toBeTruthy();
+    expect(obs?.partialProgress).toBe(true);
+    expect(obs?.failureReason).toBe('OLD_TEXT_MISMATCH');
+    expect(obs?.nextAction).toBe('VERIFY');
+    // noEffectReason must be null when partialProgress
+    expect(obs?.noEffectReason).toBeFalsy();
+  });
+
+  // ====================================================================
+  // Regression C: Partial progress + VERIFY PASS → DONE
+  // ====================================================================
+  it('Regression C: Partial progress → VERIFY → FINAL_VERIFY → DONE', async () => {
+    const state = createRunState(cwd2, `run-p10c-${Date.now()}`, '修改 demoRun.ts 的一个函数签名', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = ['scripts/ccAuto/__fixtures__/demoRun.ts'];
+    // Classification required by driveStateMachine when resuming
+    state.classification = {
+      complexity: 'simple',
+      riskScore: 0,
+      reasons: ['test'],
+      touchesHighRisk: false,
+    };
+    saveRunState(cwd2, state);
+
+    // Pro returns partial progress: changedFiles present, Tool Loop failed
+    const mockResult = makeToolLoopResult({
+      status: 'STOPPED' as const,
+      stopReason: 'TOOL_EXECUTION_FAILED',
+      auditTrail: [
+        { turn: 1, toolCallId: 'p1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'p2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 3, toolCallId: 'p3', toolName: 'edit_file', status: 'EXECUTED', resultOk: false, errorReason: 'EDIT_TARGET_NOT_FOUND' },
+      ] as ToolLoopAuditRecord[],
+      summary: {
+        ...makeToolLoopResult().summary,
+        changedFiles: ['scripts/ccAuto/__fixtures__/demoRun.ts'],
+        terminationReason: 'TOOL_EXECUTION_FAILED' as ToolLoopTerminationReason,
+      },
+    });
+    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+
+    // Fake verifier that passes
+    const deps = routedOrchDeps(cwd2, {
+      runTests: async () => ({ passed: true, output: 'verify ok' }),
+      runFullVerification: async () => ({ passed: true, output: 'final ok' }),
+    });
+
+    // driveRoutedImplement → sets VERIFY → returns
+    // Then we manually advance through VERIFY → FINAL_VERIFY → DONE
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const afterImpl = loadRunState(cwd2, state.runId);
+    expect(afterImpl.currentPhase).toBe('VERIFY');
+    expect(afterImpl.done).toBe(false);
+
+    // Now resume to advance through VERIFY and FINAL_VERIFY
+    const finalState = await resumeTask(deps, state.runId);
+
+    expect(finalState.currentPhase).toBe('DONE');
+    expect(finalState.done).toBe(true);
+    expect(finalState.stopReason).toBeFalsy();
+  });
+
+  // ====================================================================
+  // Regression D: Partial progress + VERIFY FAIL → existing repair path
+  // ====================================================================
+  it('Regression D: Partial progress → VERIFY FAIL → REPAIR_1（受原上限约束）', async () => {
+    const state = createRunState(cwd2, `run-p10d-${Date.now()}`, '修改 demoRun.ts 的一个函数签名', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;  // already used 1 (Flash→Pro counts as 1)
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = ['scripts/ccAuto/__fixtures__/demoRun.ts'];
+    // Classification required by driveStateMachine
+    state.classification = {
+      complexity: 'simple',
+      riskScore: 0,
+      reasons: ['test'],
+      touchesHighRisk: false,
+    };
+    saveRunState(cwd2, state);
+
+    // Pro returns partial progress
+    const mockResult = makeToolLoopResult({
+      status: 'STOPPED' as const,
+      stopReason: 'TOOL_EXECUTION_FAILED',
+      auditTrail: [
+        { turn: 1, toolCallId: 'p1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'p2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 3, toolCallId: 'p3', toolName: 'edit_file', status: 'EXECUTED', resultOk: false, errorReason: 'EDIT_TARGET_NOT_FOUND' },
+      ] as ToolLoopAuditRecord[],
+      summary: {
+        ...makeToolLoopResult().summary,
+        changedFiles: ['scripts/ccAuto/__fixtures__/demoRun.ts'],
+        terminationReason: 'TOOL_EXECUTION_FAILED' as ToolLoopTerminationReason,
+      },
+    });
+    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+
+    // Fake verifier that FAILS
+    const deps = routedOrchDeps(cwd2, {
+      runTests: async () => ({ passed: false, output: 'typecheck failed' }),
+      runFullVerification: async () => ({ passed: false, output: 'typecheck failed' }),
+    });
+
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // driveRoutedImplement saved to disk (saveRunState is called inside)
+    const afterImpl = loadRunState(cwd2, state.runId);
+    expect(afterImpl.currentPhase).toBe('VERIFY');
+
+    // Resume: VERIFY should fail. With repairCycles=1 and maxRepairCycles=2 (default),
+    // one VERIFY failure triggers REPAIR_2 (2nd repair cycle).
+    // But if repairCycles already >= maxRepairCycles after increment, it stops.
+    const afterVerify = await resumeTask(deps, state.runId);
+
+    // VERIFY failed, repairCycles was 1 → increments to 2 → equals maxRepairCycles (2)
+    // → stop with REPEATED_FAILURE_FINGERPRINT
+    expect(afterVerify.done).toBe(true);
+    expect(afterVerify.stopReason).toBeTruthy();
+    // Key assertion: did NOT go to ArbitrationCapsule from driveRoutedImplement
+    const finalState = loadRunState(cwd2, state.runId);
+    expect(finalState.arbitrationCapsule).toBeUndefined();
+  });
+
+  // ====================================================================
+  // Regression E: Pro no changes → ArbitrationCapsule → STOP (unchanged behavior)
+  // ====================================================================
+  it('Regression E: Pro 无修改失败 → ArbitrationCapsule → STOP', async () => {
+    const state = createRunState(cwd2, `run-p10e-${Date.now()}`, '修改 demoRun.ts 的一个函数签名', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = [];
+    saveRunState(cwd2, state);
+
+    // Pro: changedFiles=[], status=STOPPED
+    const mockResult = makeToolLoopResult({
+      status: 'STOPPED' as const,
+      stopReason: 'TOOL_EXECUTION_FAILED',
+      callIds: ['p1'],
+      auditTrail: [
+        { turn: 1, toolCallId: 'p1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'p2', toolName: 'edit_file', status: 'EXECUTED', resultOk: false, errorReason: 'EDIT_TARGET_NOT_FOUND' },
+      ] as ToolLoopAuditRecord[],
+      summary: {
+        ...makeToolLoopResult().summary,
+        changedFiles: [],
+        terminationReason: 'TOOL_EXECUTION_FAILED' as ToolLoopTerminationReason,
+        callIds: ['p1', 'p2'],
+      },
+    });
+    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // driveRoutedImplement called stop() which modifies in-memory state only.
+    // Persist so loadRunState picks up the changes.
+    saveRunState(cwd2, state);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+
+    // Must be STOPPED with Arbitration
+    expect(reloaded.done).toBe(true);
+    expect(reloaded.stopReason).toBe('ARBITRATION_FAILED');
+    expect(reloaded.arbitrationCapsule).toBeTruthy();
+    expect(reloaded.arbitrationCapsule?.changedFiles).toEqual([]);
+
+    // Observation should NOT have partialProgress
+    const obs = reloaded.toolLoopObservations?.[0];
+    expect(obs).toBeTruthy();
+    expect(obs?.partialProgress).toBeFalsy();
+    expect(obs?.noEffectReason).toBeTruthy();
   });
 });

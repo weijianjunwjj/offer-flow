@@ -15,6 +15,9 @@ import {
   loadArbitrationCapsule,
   loadRunState,
   runDir,
+  saveRunState,
+  _atomicRenameWithRetry,
+  StatePersistenceError,
   type RunState,
 } from './store';
 import type {
@@ -287,7 +290,6 @@ describe('持久化 — 仲裁 Capsule', () => {
 describe('持久化 — 老状态兼容', () => {
   it('老 RunState 无新字段时仍可读取', () => {
     const state = createRunState(cwd, 'r-old', 'old task', 'custom');
-    // 新字段为 optional，loadRunState 不应抛异常
     const loaded = loadRunState(cwd, state.runId);
     expect(loaded.budgetEstimate).toBeUndefined();
     expect(loaded.routingDecisions).toBeUndefined();
@@ -303,7 +305,6 @@ describe('持久化 — 老状态兼容', () => {
 
   it('手动写入缺少新字段的 JSON 也不抛错', () => {
     const state = createRunState(cwd, 'r-manual', 'manual', 'custom');
-    // 模拟老格式：移除新字段后保存
     const raw: any = { ...loadRunState(cwd, state.runId) };
     delete raw.budgetEstimate;
     delete raw.routingDecisions;
@@ -322,28 +323,176 @@ describe('持久化 — 老状态兼容', () => {
   });
 });
 
-describe('持久化 — 原子保存', () => {
-  it('saveRunState 使用临时文件+rename 原子写', () => {
+// ============================================================================
+// v0.2.0 P9: Windows state.json 原子持久化 EPERM 收口
+// ============================================================================
+
+describe('持久化 — 原子保存 (P9 Windows EPERM 收口)', () => {
+  it('saveRunState 使用唯一临时文件+rename 原子写', () => {
     const state = createRunState(cwd, 'r-atomic', 'atomic', 'custom');
     const loaded = loadRunState(cwd, state.runId);
     expect(loaded.runId).toBe(state.runId);
-    // 确认 state.json 存在（临时文件已 rename）
-    const { existsSync } = require('node:fs');
+    // P9: 不再使用固定 state.json.tmp，唯一临时文件不应残留
+    const { readdirSync, existsSync } = awaitFs();
     const statePath = path.join(runDir(cwd, state.runId), 'state.json');
     expect(existsSync(statePath)).toBe(true);
-    // tmp 文件不应留下
-    const tmpPath = statePath + '.tmp';
-    expect(existsSync(tmpPath)).toBe(false);
+    const runDirPath = runDir(cwd, state.runId);
+    const residualTmps = readdirSync(runDirPath).filter((f: string) => f.endsWith('.tmp'));
+    expect(residualTmps).toEqual([]);
   });
 
-  it('saveBudgetEstimate 使用原子机制（临时文件不留存）', () => {
+  it('saveBudgetEstimate 也通过原子 saveRunState（临时文件不留存）', () => {
     const state = createRunState(cwd, 'r-atomic2', 'atomic2', 'custom');
     saveBudgetEstimate(cwd, state.runId, fakeEstimate({ runId: state.runId }));
     saveBudgetEstimate(cwd, state.runId, fakeEstimate({ runId: state.runId, estimateId: 'est-v2' }));
     const loaded = loadBudgetEstimate(cwd, state.runId);
     expect(loaded!.estimateId).toBe('est-v2');
-    // 没有 tmp 残留
-    const { existsSync } = require('node:fs');
-    expect(existsSync(path.join(runDir(cwd, state.runId), 'state.json.tmp'))).toBe(false);
+    // P9: 无任何 tmp 残留
+    const { readdirSync } = awaitFs();
+    const runDirPath = runDir(cwd, state.runId);
+    const residualTmps = readdirSync(runDirPath).filter((f: string) => f.endsWith('.tmp'));
+    expect(residualTmps).toEqual([]);
+  });
+
+  // ====================================================================
+  // P9 Regression A — EPERM 一次后成功
+  // ====================================================================
+  it('P9-A: EPERM 一次后 rename 成功，attempts=2', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-p9a-'));
+    const target = path.join(tmpDir, 'state.json');
+    const tmp = target + '.42368.0.tmp';
+    writeFileSync(tmp, 'updated content', 'utf8');
+
+    let calls = 0;
+    const renameFn = (_t: string, _d: string) => {
+      calls += 1;
+      if (calls === 1) {
+        const err: any = new Error('EPERM: operation not permitted');
+        err.code = 'EPERM';
+        throw err;
+      }
+      // Success on attempt 2
+    };
+
+    _atomicRenameWithRetry(tmp, target, renameFn);
+    expect(calls).toBe(2);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // ====================================================================
+  // P9 Regression B — 连续 EPERM 后成功
+  // ====================================================================
+  it('P9-B: 连续 EPERM ×2 后第三次成功，backoff 生效', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-p9b-'));
+    const target = path.join(tmpDir, 'state.json');
+    const tmp = target + '.42368.0.tmp';
+    writeFileSync(tmp, 'content', 'utf8');
+
+    let calls = 0;
+    const renameFn = (_t: string, _d: string) => {
+      calls += 1;
+      if (calls <= 2) {
+        const err: any = new Error('EPERM');
+        err.code = 'EPERM';
+        throw err;
+      }
+    };
+
+    _atomicRenameWithRetry(tmp, target, renameFn);
+    expect(calls).toBe(3);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // ====================================================================
+  // P9 Regression C — EPERM 永久失败
+  // ====================================================================
+  it('P9-C: 所有 attempts EPERM → StatePersistenceError', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-p9c-'));
+    const target = path.join(tmpDir, 'state.json');
+    const tmp = target + '.42368.0.tmp';
+    writeFileSync(tmp, 'content', 'utf8');
+
+    const renameFn = () => {
+      const err: any = new Error('EPERM');
+      err.code = 'EPERM';
+      throw err;
+    };
+
+    expect(() => _atomicRenameWithRetry(tmp, target, renameFn)).toThrow(StatePersistenceError);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // ====================================================================
+  // P9 Regression D — 非 transient filesystem error 不 retry
+  // ====================================================================
+  it('P9-D: ENOSPC 不 retry，直接透传', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-p9d-'));
+    const target = path.join(tmpDir, 'state.json');
+    const tmp = target + '.42368.0.tmp';
+    writeFileSync(tmp, 'content', 'utf8');
+
+    let calls = 0;
+    const renameFn = () => {
+      calls += 1;
+      const err: any = new Error('ENOSPC: no space left on device');
+      err.code = 'ENOSPC';
+      throw err;
+    };
+
+    expect(() => _atomicRenameWithRetry(tmp, target, renameFn)).toThrow();
+    expect(calls).toBe(1);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // ====================================================================
+  // P9 Regression E — unique temp，连续保存无 collision
+  // ====================================================================
+  it('P9-E: 连续两次 saveRunState temp path 不冲突，最终内容为最后一次合法内容，无 tmp 残留', () => {
+    const state = createRunState(cwd, 'r-e', 'task E', 'custom');
+    state.taskDescription = 'first';
+    saveRunState(cwd, state);
+    expect(loadRunState(cwd, state.runId).taskDescription).toBe('first');
+
+    state.taskDescription = 'second';
+    saveRunState(cwd, state);
+    expect(loadRunState(cwd, state.runId).taskDescription).toBe('second');
+
+    // 无 tmp 残留
+    const { readdirSync } = awaitFs();
+    const runDirPath = runDir(cwd, state.runId);
+    const residualTmps = readdirSync(runDirPath).filter((f: string) => f.endsWith('.tmp'));
+    expect(residualTmps).toEqual([]);
+  });
+
+  // ====================================================================
+  // P9 — StatePersistenceError 结构化字段
+  // ====================================================================
+  it('P9: StatePersistenceError 包含脱敏字段 (operation/errorCode/attempts)', () => {
+    const err = new StatePersistenceError({
+      operation: 'rename',
+      file: 'state.json',
+      errorCode: 'EPERM',
+      attempts: 5,
+    });
+    expect(err.name).toBe('StatePersistenceError');
+    expect(err.operation).toBe('rename');
+    expect(err.file).toBe('state.json');
+    expect(err.errorCode).toBe('EPERM');
+    expect(err.attempts).toBe(5);
+    expect(err.message).toContain('5 attempts');
+    expect(err.message).toContain('EPERM');
   });
 });
+
+/**
+ * Small helper to avoid dynamic require() in vitest.
+ * Returns the node:fs module with renameSync mutable for mocking.
+ */
+function awaitFs(): typeof import('node:fs') {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('node:fs');
+}

@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { loadEffectiveConfig, type CcAutoConfig } from './config';
 import { runTask, resumeTask, type OrchestratorDeps } from './orchestrator';
 import { runClaude, verifyClaudeBinary, type ClaudeCallOptions } from './runner';
-import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded } from './store';
+import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded, StatePersistenceError, writeReport } from './store';
 import { renderReport } from './report';
 import { resolveLocalPackageBin } from './localBin';
 import { runPreflight } from './preflight';
@@ -16,6 +16,36 @@ const CWD = process.cwd();
 const HOOK_SCRIPT_PATH = path.join('scripts', 'ccAuto', 'hookScript.cjs');
 /** 机器侧验证子进程超时上限（毫秒）：区分「校验超时」与「测试真实失败」。 */
 const VERIFY_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Provider credential and routing env vars that must NEVER be inherited
+ * by child processes spawned for verification (vitest, vue-tsc, etc.).
+ *
+ * These are NOT an allowlist-based filter — they are an explicit blocklist
+ * of known production credential/config variable names. An allowlist would
+ * risk silently passing new credential vars added to the profile later.
+ */
+const CHILD_ENV_BLOCKLIST = new Set([
+  'DEEPSEEK_API_KEY',
+  'CC_AUTO_DEEPSEEK_PROFILE',
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'GEMINI_API_KEY',
+  'CC_AUTO_CLAUDE_BIN',
+]);
+
+/** Return a sanitized copy of process.env with provider credentials stripped. */
+function sanitizedChildEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of Object.keys(process.env)) {
+    if (CHILD_ENV_BLOCKLIST.has(key)) continue;
+    // Also strip any CC_AUTO_ credential-prefixed vars not explicitly listed
+    if (key.startsWith('CC_AUTO_') && key.toLowerCase().includes('key')) continue;
+    const v = process.env[key];
+    if (v !== undefined) env[key] = v;
+  }
+  return env;
+}
 
 function hookSettingsInlineJson(): string {
   return JSON.stringify({
@@ -72,6 +102,7 @@ function runLocalBin(
       encoding: 'utf8',
       timeout: VERIFY_TIMEOUT_MS,
       maxBuffer: 32 * 1024 * 1024,
+      env: sanitizedChildEnv(),
     });
     return { passed: true, output };
   } catch (err) {
@@ -319,9 +350,16 @@ export async function runCli(
     const deps: OrchestratorDeps = depsOverride ? { ...baseDeps, ...depsOverride } : baseDeps;
     // H4: Propagate --fast CLI flag as per-run requestedRole
     const perRunOpts = parsed.fast ? { requestedRole: 'FAST_EXECUTOR' as const } : undefined;
-    const state = await runTask(deps, taskDescription, estimatedFiles, perRunOpts);
-    console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
-    return { exitCode: isTaskSucceeded(state) ? 0 : 1, state };
+    try {
+      const state = await runTask(deps, taskDescription, estimatedFiles, perRunOpts);
+      console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
+      return { exitCode: isTaskSucceeded(state) ? 0 : 1, state };
+    } catch (err) {
+      if (err instanceof StatePersistenceError) {
+        return handleStatePersistenceFailure(cwd, err, 'run');
+      }
+      throw err;
+    }
   } else if (command === 'resume') {
     const { positional } = parseFlags(argv.slice(3));
     const runId = positional[0] ?? latestRunId(cwd);
@@ -338,9 +376,16 @@ export async function runCli(
     const config = configResult.config;
     const baseDeps = buildDeps(config, cwd);
     const deps: OrchestratorDeps = depsOverride ? { ...baseDeps, ...depsOverride } : baseDeps;
-    const state = await resumeTask(deps, runId);
-    console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
-    return { exitCode: isTaskSucceeded(state) ? 0 : 1, state };
+    try {
+      const state = await resumeTask(deps, runId);
+      console.log(`\n最终阶段：${state.currentPhase}${state.stopReason ? `（${state.stopReason}）` : ''}`);
+      return { exitCode: isTaskSucceeded(state) ? 0 : 1, state };
+    } catch (err) {
+      if (err instanceof StatePersistenceError) {
+        return handleStatePersistenceFailure(cwd, err, 'resume');
+      }
+      throw err;
+    }
   } else if (command === 'report') {
     const { positional } = parseFlags(argv.slice(3));
     const runId = positional[0] ?? latestRunId(cwd);
@@ -412,6 +457,70 @@ export async function runCli(
     console.error('用法：pnpm cc:auto <run|resume|report|preflight> ...');
     return { exitCode: 1 };
   }
+}
+
+/**
+ * v0.2.0 P9: Best-effort terminal output and report.md when state persistence fails.
+ *
+ * 不覆盖/伪造 state，只从最后可读的 state.json 生成报告并打印结构化错误。
+ * report best-effort 失败不得掩盖原始 persistence error。
+ */
+function handleStatePersistenceFailure(
+  cwd: string,
+  err: StatePersistenceError,
+  command: string,
+): { exitCode: number; state?: import('./store').RunState } {
+  console.error('');
+  console.error('═══════════════════════════════════════════');
+  console.error('  状态持久化失败');
+  console.error('═══════════════════════════════════════════');
+  console.error(`  操作：     ${err.operation}`);
+  console.error(`  文件：     ${err.file}`);
+  console.error(`  错误码：   ${err.errorCode}`);
+  console.error(`  尝试次数： ${err.attempts}`);
+  console.error('═══════════════════════════════════════════');
+  console.error('');
+
+  // best-effort: 尝试从最后可读的 state.json 生成 report.md
+  const runIds = (() => {
+    try {
+      const dir = path.join(ccAutoRoot(cwd), 'runs');
+      if (existsSync(dir)) {
+        return readdirSync(dir, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name)
+          .sort();
+      }
+    } catch { /* 目录不可读，放弃 */ }
+    return [];
+  })();
+
+  const latestId = runIds.length > 0 ? runIds[runIds.length - 1] : undefined;
+
+  if (latestId) {
+    try {
+      const existing = loadRunState(cwd, latestId);
+      if (existing && !existing.done) {
+        existing.stopReason = 'STATE_PERSISTENCE_FAILED';
+        existing.stopDetail = `${err.errorCode} after ${err.attempts} attempts`;
+        existing.done = true;
+        try {
+          const md = renderReport(existing);
+          const rp = writeReport(cwd, latestId, md);
+          console.error(`[cc-auto] 已从旧 state 生成 best-effort 报告：${rp}`);
+        } catch {
+          console.error('[cc-auto] best-effort report.md 生成失败');
+        }
+      }
+    } catch {
+      console.error('[cc-auto] 无法读取旧 state.json，report.md 未生成');
+    }
+  }
+
+  console.error(`\n最终状态：STOPPED`);
+  console.error(`停止原因：STATE_PERSISTENCE_FAILED`);
+  console.error(`\n命令：${command}`);
+  return { exitCode: 1 };
 }
 
 async function main(): Promise<void> {

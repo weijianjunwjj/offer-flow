@@ -238,11 +238,12 @@ describe('buildTaskCostSummary — 成本总结', () => {
   });
 
   it('成本不可核验时标记正确', () => {
+    // P7 语义变更：null → "无法计算"，不再输出裸"不可核验"
     const summary = makeSummary([
       { usage: fakeUsage({ costRmbCustom: null }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash' },
     ]);
     expect(summary.actual.costRmb).toBeNull();
-    expect(formatCostRmbOrUnknown(summary.actual.costRmb)).toBe('(不可核验)');
+    expect(formatCostRmbOrUnknown(summary.actual.costRmb)).toBe('无法计算');
   });
 
   it('UNVERIFIED 模型 costRmb 为 null', () => {
@@ -487,8 +488,9 @@ describe('升级成本', () => {
 // ============================================================================
 
 describe('格式化', () => {
-  it('formatCostRmbOrUnknown — null → (不可核验)', () => {
-    expect(formatCostRmbOrUnknown(null)).toBe('(不可核验)');
+  it('formatCostRmbOrUnknown — null → 无法计算', () => {
+    // P7 语义变更：null → "无法计算"，不再输出裸"不可核验"
+    expect(formatCostRmbOrUnknown(null)).toBe('无法计算');
   });
 
   it('formatCostRmbOrUnknown — 正常值', () => {
@@ -500,7 +502,9 @@ describe('格式化', () => {
   });
 
   it('formatPercentOrNA — 正常值', () => {
-    expect(formatPercentOrNA(50)).toContain('%');
+    expect(formatPercentOrNA(0.5)).toBe('50.0%');
+    expect(formatPercentOrNA(0.262)).toBe('26.2%');
+    expect(formatPercentOrNA(1.0)).toBe('100.0%');
   });
 
   it('formatRoleName', () => {

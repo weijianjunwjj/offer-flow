@@ -297,6 +297,9 @@ export async function runDeepSeekToolLoop(
     profileId: string;
   } | null = null;
 
+  // 保存最后一次 Provider 失败诊断（用于 Summary 和 Orchestrator stopDetail）
+  let lastFailureDetail: import('./types').ProviderFailureDetail | null = null;
+
   if (!validLimits(limits)) return buildResult('STOPPED', null, 'LIMIT_CONFIGURATION_INVALID');
   const readBudget = createWorkspaceReadBudget(limits.maxTotalReadBytes);
   const secretValues = executorContext.profile.credentialEnvVars
@@ -335,6 +338,8 @@ export async function runDeepSeekToolLoop(
     // 2. Provider 失败 → 根据原因分类终止
     if (!providerResult.ok) {
       const errResult = providerResult;
+      // 捕获 failureDetail 用于最终诊断
+      lastFailureDetail = errResult.failureDetail ?? null;
       // requiresHumanConfirmation → MODEL_IDENTITY_UNVERIFIED
       if (errResult.requiresHumanConfirmation) {
         return buildResult('STOPPED', null, 'MODEL_IDENTITY_UNVERIFIED');
@@ -514,6 +519,7 @@ export async function runDeepSeekToolLoop(
       callIds,
       auditTrail,
       summary,
+      failureDetail: lastFailureDetail,
     };
   }
 
@@ -559,6 +565,8 @@ interface RetryResult {
   httpStatus?: number | null;
   transientTransportError?: boolean;
   providerRetryExhausted?: boolean;
+  /** v0.8.x 诊断修复：最后一个失败 attempt 的安全结构化诊断摘要 */
+  failureDetail?: import('./types').ProviderFailureDetail | null;
 }
 
 const BACKOFF_MS = [250, 500];
@@ -632,6 +640,7 @@ async function executeProviderCallWithRetry(
       errorKind: result.errorKind,
       httpStatus: result.httpStatus,
       transientTransportError: result.transientTransportError,
+      failureDetail: result.failureDetail ?? null,
       providerRetryExhausted: attempts > 1 && isTransientProviderError({
         errorKind: result.errorKind,
         httpStatus: result.httpStatus,
