@@ -245,3 +245,35 @@ Do not explain implementation details unless the user explicitly asks.
 Do not continue solving the original coding task after the summary.
 
 The execution right belongs to cc-auto for the entire `/offload` turn.
+
+### Strict output rule — NO POST-SUMMARY CONTENT
+
+After outputting the compact summary template (either "Offload completed" or "Offload stopped" block), the Bridge response MUST end immediately with no additional content whatsoever.
+
+**Forbidden after the summary template:**
+
+- Root cause analysis（根因分析）
+- Diagnosis of what happened（诊断解释）
+- Judgments about model capability（对模型能力下结论）
+- Judgments about whether this is/is not an infrastructure defect（判断是否基础设施缺陷）
+- Fix suggestions（修复建议）
+- Recommendations for next run（建议下次运行）
+- Interpretation of cc-auto internals（解释 cc-auto 内部行为）
+- Speculation about audit trail gaps（猜测 audit trail 缺失原因）
+- Any continuation of the original coding task（接管原任务，继续解决用户原需求）
+- Any additional paragraph, sentence, or bullet point（任何额外段落、句子或要点）
+
+**Reason field — prefer the most direct persisted reason:**
+
+The `Reason` line must use the most specific persisted reason available from the run/report output — not just the broad stopReason category.
+
+Example: if the report shows:
+  `ARBITRATION_FAILED — STAGE_GATE_BLOCKED: DISCOVERY_STRUCTURED_OUTPUT_MISSING`
+
+Prefer:
+  `STAGE_GATE_BLOCKED: DISCOVERY_STRUCTURED_OUTPUT_MISSING`
+
+Not just:
+  `ARBITRATION_FAILED`
+
+Always prefer concrete, specific error codes from the report over generic categories. If the report provides a `—`-delimited detail after the stop reason, use the most specific component that identifies the actual failure.
