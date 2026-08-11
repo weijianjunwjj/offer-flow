@@ -186,7 +186,7 @@ function dispatchGrep(
       toolName: 'grep',
       result: null,
       error: {
-        reason: 'IO_ERROR',
+        reason: mapReadDenyReason(result.reason),
         message: result.message,
       },
       truncated: false,
@@ -232,7 +232,7 @@ function dispatchGlob(
       toolName: 'glob',
       result: null,
       error: {
-        reason: 'IO_ERROR',
+        reason: mapReadDenyReason(outcome.reason),
         message: outcome.message,
       },
       truncated: false,
@@ -326,6 +326,7 @@ function mapReadDenyReason(reason: string): ToolExecutionErrorReason {
     case 'PROTECTED_PATH': return 'PROTECTED_PATH';
     case 'PATH_OUTSIDE_ROOTS': return 'PATH_OUTSIDE_ROOTS';
     case 'FILE_NOT_REGULAR_FILE': return 'FILE_NOT_REGULAR_FILE';
+    case 'DIRECTORY_NOT_ALLOWED': return 'DIRECTORY_NOT_ALLOWED';
     case 'SYMLINK_DETECTED': return 'SYMLINK_DETECTED';
     case 'JUNCTION_DETECTED': return 'JUNCTION_DETECTED';
     case 'RUN_LEASE_MISSING': return 'READ_PERMISSION_DENIED';
@@ -338,6 +339,7 @@ function mapReadDenyReason(reason: string): ToolExecutionErrorReason {
     case 'READ_PERMISSION_DENIED': return 'READ_PERMISSION_DENIED';
     case 'READ_BUDGET_EXCEEDED': return 'READ_BUDGET_EXCEEDED';
     case 'SCAN_LIMIT_EXCEEDED': return 'SCAN_LIMIT_EXCEEDED';
+    case 'ARGUMENT_VALUE_INVALID': return 'ARGUMENT_VALUE_INVALID';
     case 'MAX_OUTPUT_EXCEEDED': return 'MAX_OUTPUT_EXCEEDED';
     default: return 'IO_ERROR';
   }

@@ -115,7 +115,8 @@ export function renderReport(state: RunState): string {
       ARBITER: 'Opus 5',
     };
     for (const obs of state.toolLoopObservations) {
-      lines.push(`### ${roleNames[obs.role] ?? obs.role} (${obs.modelLogicalName})`);
+      const stageLabel = obs.stage ? ` [${obs.stage}]` : '';
+      lines.push(`### ${roleNames[obs.role] ?? obs.role} (${obs.modelLogicalName})${stageLabel}`);
       lines.push(`- Provider calls: ${obs.totalToolCalls}`);
       lines.push(`- Turns: ${obs.turns}`);
       lines.push(`- Termination reason: ${obs.terminationReason ?? 'N/A'}`);

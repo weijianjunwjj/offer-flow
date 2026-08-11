@@ -1202,6 +1202,9 @@ export interface RoutedToolLoopObservation {
   failureReason?: ToolLoopNoEffectReason | null;
   /** P10: 建议的下一步动作 */
   nextAction?: 'VERIFY' | 'ESCALATE' | 'STOP';
+  /** 诊断字段：DISCOVERY（只读探索）或 WRITER（写入执行）。
+   *  只用于 report 展示与诊断，不参与路由/安全/状态机决策。 */
+  stage?: 'DISCOVERY' | 'WRITER';
 }
 
 /** Routed Tool Loop 在当前 attempt 无效改动的原因码（P8） */

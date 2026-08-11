@@ -1012,25 +1012,80 @@ export async function driveRoutedImplement(
 
   // --- 8. Read-only discovery (if no approved files) ---
   // Only run when explicitFiles didn't produce any approved files.
+  let discoveryOutcome: RoutedDiscoveryOutcome | null = null;
   if (fileScope.approvedFiles.length === 0) {
     deps.log('未持有已批准文件，执行只读 routed discovery');
-    const discoveryFiles = await runRoutedDiscovery(
-      deps, state, fileScope, currentProfile, selection.modelLogicalName,
+    const outcome = await runRoutedDiscovery(
+      deps, state, fileScope, currentProfile, selection.modelLogicalName, selection.role,
     );
+    discoveryOutcome = outcome;
     if (state.done) return;
-    if (discoveryFiles.length > 0) {
+    if (outcome.status === 'COMPLETED' && outcome.candidateFiles.length > 0) {
       // Merge discoveryFiles with existing proposedFiles (avoid duplicates)
-      const allProposed = Array.from(new Set([...fileScope.proposedFiles, ...discoveryFiles]));
-      const discoveryEvaluation = evaluateFileProposals(fileScope, discoveryFiles);
+      const allProposed = Array.from(new Set([...fileScope.proposedFiles, ...outcome.candidateFiles]));
+      const discoveryEvaluation = evaluateFileProposals(fileScope, outcome.candidateFiles);
       fileScope.proposedFiles = allProposed;
       // evaluateFileProposals already returns accumulated approvedFiles (existing + new)
       fileScope.approvedFiles = discoveryEvaluation.approvedFiles;
       if (fileScope.approvedFiles.length === 0) {
-        stop(state, 'PROVIDER_ERROR', `STAGE_GATE_BLOCKED: 只读探索发现 ${discoveryFiles.length} 个候选文件但 FileScope 审批全部失败。`);
+        stop(state, 'PROVIDER_ERROR', `STAGE_GATE_BLOCKED: 只读探索发现 ${outcome.candidateFiles.length} 个候选文件但 FileScope 审批全部失败。`);
         deps.log(`探索结果 FileScope 审批：${discoveryEvaluation.decisions.map(d => `${d.path}=${d.decision}`).join(', ')}`);
         return;
       }
     }
+  }
+
+  // --- 8b. STAGE GATE: discovery 空结果不得启动 Writer ---
+  // 当任务未显式指定文件且探索未产生任何可批准候选文件时，写入型 Tool Loop
+  // 没有任何可写目标，启动只会触发大范围探索与无效写入。
+  if (explicitFiles.length === 0 && fileScope.approvedFiles.length === 0) {
+    const gateLabel = discoveryOutcome ? discoveryGateLabel(discoveryOutcome) : 'DISCOVERY_NOT_RUN';
+    const blockedReason = `STAGE_GATE_BLOCKED: ${gateLabel}`;
+    if (selection.role === 'FAST_EXECUTOR') {
+      deps.log(`Flash ${blockedReason} → 升级到 Pro STRONG_EXECUTOR`);
+      // Persist flashLastCallId from discovery for escalatedFromCallId linkage in next RoutingDecision
+      const lastDiscoveryCallId = discoveryOutcome?.callIds?.[(discoveryOutcome?.callIds?.length ?? 1) - 1];
+      if (lastDiscoveryCallId) {
+        state.flashLastCallId = lastDiscoveryCallId;
+      }
+      if (mrConfig.allowStrongEscalation) {
+        state.nextRoutedRole = 'STRONG_EXECUTOR';
+        state.repairCycles += 1;
+        state.currentPhase = 'REPAIR_1';
+        saveRunState(cwd, state);
+        return;
+      }
+      state.stopReason = 'PROVIDER_ERROR';
+      state.stopDetail = `${blockedReason}，且升级到 Pro 被禁用`;
+      state.done = true;
+      deps.log(`Flash ${blockedReason} + 不允许升级 → STOPPED`);
+      return;
+    }
+    // Pro 也拿不到候选文件 → 生成 ArbitrationCapsule → STOP
+    deps.log(`Pro ${blockedReason} → 生成 ArbitrationCapsule → STOP`);
+    const outcomeDetail = discoveryOutcome
+      ? (discoveryOutcome.status === 'STOPPED'
+        ? `DISCOVERY_STOPPED: ${discoveryOutcome.stopReason ?? discoveryOutcome.terminationReason}`
+        : `DISCOVERY_${discoveryOutcome.status}`)
+      : 'DISCOVERY_NOT_RUN';
+    const capsule = {
+      taskGoal: state.taskDescription.slice(0, 2000),
+      hardConstraints: [],
+      attemptedModels: (state.routingDecisions ?? []).map((d) => ({
+        role: d.role,
+        modelLogicalName: d.modelLogicalName,
+        outcome: `FAILED: ${gateLabel}`,
+        failureCategory: 'MODEL_QUALITY_FAILURE' as const,
+      })),
+      changedFiles: state.changedFiles,
+      verifierFailures: [gateLabel],
+      relevantDiff: '',
+      unresolvedQuestions: [`Discovery outcome: ${outcomeDetail}`],
+    };
+    saveArbitrationCapsule(cwd, runId, capsule);
+    state.arbitrationCapsule = capsule;
+    stop(state, 'ARBITRATION_FAILED', blockedReason);
+    return;
   }
 
   deps.log(`FileScope 批准文件：${fileScope.approvedFiles.join(', ') || '（无候选文件）'}`);
@@ -1047,11 +1102,19 @@ export async function driveRoutedImplement(
     executionRole: selection.role,  // FAST_EXECUTOR or STRONG_EXECUTOR for cost attribution
   };
 
+  // 写入型 Tool Loop：把已批准文件列表显式注入 prompt，避免模型做宽泛探索。
+  // 显式文件与 discovery 产物都会进入 approvedFiles，这里只强调“只改这些文件”。
+  const approvedFilesContext = fileScope.approvedFiles.length > 0
+    ? `\n只允许修改以下文件（写入范围，禁止探索其他路径）：${fileScope.approvedFiles.join(', ')}`
+    : '';
+  const writerSystemPrompt = `${state.taskDescription}${approvedFilesContext}`;
+  const writerUserPrompt = `${state.taskDescription}\n请直接修改已批准的目标文件，不要探索仓库其他区域。${approvedFilesContext}`;
+
   const toolLoopResult = await runDeepSeekToolLoop({
     repositoryRoot: cwd, cwd, runId, fileScope,
     executorContext,
-    systemPrompt: state.taskDescription,
-    userPrompt: state.taskDescription,
+    systemPrompt: writerSystemPrompt,
+    userPrompt: writerUserPrompt,
     maxTurns: 8,
     maxToolCallsPerTurn: 4,
     maxTotalToolCalls: 16,
@@ -1157,6 +1220,7 @@ export async function driveRoutedImplement(
     changedFiles: toolLoopResult.summary.changedFiles,
     writeToolCalls: writeToolCallCount,
     noEffectReason,
+    stage: 'WRITER',
     ...(isPartialProgress ? {
       partialProgress: true,
       failureReason: partialFailureReason,
@@ -1444,6 +1508,28 @@ async function buildAndPersistCostSummary(
   return summary;
 }
 
+// ── Discovery outcome type ──────────────────────────────────────────────────
+// 三类结果必须区分：Tool Loop 异常停止、COMPLETED 但非结构化、正常空候选。
+
+type RoutedDiscoveryOutcome =
+  | { status: 'COMPLETED'; candidateFiles: string[]; callIds: string[]; }
+  | { status: 'STOPPED'; candidateFiles: [];
+      stopReason: import('./types').DeepSeekToolLoopStopReason | null;
+      terminationReason: import('./types').ToolLoopTerminationReason;
+      callIds: string[]; }
+  | { status: 'STRUCTURED_OUTPUT_MISSING'; candidateFiles: []; callIds: string[]; }
+  | { status: 'EMPTY'; candidateFiles: []; callIds: string[]; };
+
+/** 将 discovery outcome 映射为 Stage Gate 日志/胶囊中的精确分类。 */
+function discoveryGateLabel(outcome: RoutedDiscoveryOutcome): string {
+  switch (outcome.status) {
+    case 'EMPTY': return 'DISCOVERY_EMPTY';
+    case 'STRUCTURED_OUTPUT_MISSING': return 'DISCOVERY_STRUCTURED_OUTPUT_MISSING';
+    case 'STOPPED': return `DISCOVERY_${outcome.stopReason ?? outcome.terminationReason ?? 'UNKNOWN'}`;
+    case 'COMPLETED': return ''; // 不会被 gate 调用（已有 candidateFiles）
+  }
+}
+
 /**
  * READ-ONLY DISCOVERY: routed model explores files but cannot write.
  *
@@ -1454,7 +1540,8 @@ async function buildAndPersistCostSummary(
  * - Every executeProviderCall enters state.calls via executor.ts completeKnownCall.
  * - Separated from WRITE-CAPABLE IMPLEMENT — model cannot self-approve files.
  *
- * Returns candidate file paths for evaluateFileProposals.
+ * Returns a typed RoutedDiscoveryOutcome that distinguishes STOPPED / STRUCTURED_OUTPUT_MISSING / EMPTY / COMPLETED.
+ * Persists a RoutedToolLoopObservation (stage=DISCOVERY) before returning.
  */
 async function runRoutedDiscovery(
   deps: OrchestratorDeps,
@@ -1462,7 +1549,8 @@ async function runRoutedDiscovery(
   fileScope: FileScope,
   profile: ProviderProfile,
   modelLogicalName: string,
-): Promise<string[]> {
+  role: import('./types').ExecutionModelRole,
+): Promise<RoutedDiscoveryOutcome> {
   const registry = createProductionAdapterRegistry(
     deps.adapterFetchImpl ? { fetchImpl: deps.adapterFetchImpl } : undefined,
   );
@@ -1489,15 +1577,25 @@ async function runRoutedDiscovery(
       timeoutMs: 120_000,
       adapterRegistry: registry,
       parentEnv,
-      executionRole: null,  // Discovery is shared — role assigned by IMPLEMENT caller
+      executionRole: role,  // FAST_EXECUTOR or STRONG_EXECUTOR — cost attribution to correct model
     },
     systemPrompt: `你是只读探索角色。只能使用 read_file、grep、glob 工具。禁止 write_file 和 edit_file。
 任务：定位与以下任务相关的候选文件路径。只做探索，不修改任何文件。
-必须以结构化 JSON 格式返回结果：{"candidateFiles": ["相对路径1", "相对路径2", ...]}`,
+探索收敛规则：
+- 优先用 glob 按文件名/目录名定位（如 glob "**/*Radar*.vue"），不要先从全仓库 read_file 遍历；
+- grep 必须指定尽量小的 roots，避免对 src 和 scripts 两个根目录做全量扫描；
+- 一旦定位到足够候选（2～5 个），立即停止探索并返回结果；
+- 必须返回相对仓库根目录的路径，格式：{"candidateFiles": ["相对路径1", "相对路径2", ...]}`,
     userPrompt: state.taskDescription,
-    maxTurns: 4,
-    maxToolCallsPerTurn: 3,
+    // Discovery execution window: 5 turns allows model to use tools on turn 4
+    // and return final candidateFiles JSON on turn 5.
+    maxTurns: 5,
+    // Single-turn 4 read-only tools — matches writer's maxToolCallsPerTurn.
+    maxToolCallsPerTurn: 4,
     maxTotalToolCalls: 8,
+    // Discovery 用独立的 2 MiB 只读预算——grep 遍历 src/scripts 需要更大扫描空间，
+    // 不得挤占全局 256 KiB 默认只读预算（该默认值仍适用于写入型 Tool Loop）。
+    maxTotalReadBytes: 2 * 1024 * 1024,
     toolDefinitions: DEEPSEEK_READ_ONLY_TOOL_DEFINITIONS,
   });
 
@@ -1512,20 +1610,67 @@ async function runRoutedDiscovery(
   if (reloaded.routingDecisions) state.routingDecisions = reloaded.routingDecisions;
   if (reloaded.budgetEstimate) state.budgetEstimate = reloaded.budgetEstimate;
 
+  // Build DISCOVERY observation
+  const discoveryObs: RoutedToolLoopObservation = {
+    role,
+    modelLogicalName,
+    turns: discoveryResult.turns,
+    totalToolCalls: discoveryResult.totalToolCalls,
+    auditTrail: discoveryResult.auditTrail.map((e) => ({
+      turn: e.turn,
+      toolName: e.toolName,
+      toolCallId: e.toolCallId,
+      ok: e.resultOk,
+      errorCode: e.errorReason,
+    })),
+    terminationReason: discoveryResult.summary.terminationReason,
+    changedFiles: [],
+    writeToolCalls: 0,  // Discovery is read-only — 0 is normal, not NO_WRITE_TOOL_CALLED
+    stage: 'DISCOVERY',
+  };
+  // Persist discovery observation regardless of outcome
+  try {
+    saveToolLoopObservation(cwd, runId, discoveryObs);
+    if (!state.toolLoopObservations) state.toolLoopObservations = [];
+    state.toolLoopObservations.push(discoveryObs);
+  } catch {
+    // Non-blocking
+  }
+
+  // Extract callIds from discovery result for Flash→Pro escalation linkage
+  const discoveryCallIds = discoveryResult.callIds ?? [];
+
+  // Classify outcome
+  if (discoveryResult.stopReason) {
+    deps.log(`Discovery Tool Loop STOPPED: ${discoveryResult.stopReason}`);
+    return {
+      status: 'STOPPED',
+      candidateFiles: [],
+      stopReason: discoveryResult.stopReason,
+      terminationReason: discoveryResult.summary.terminationReason,
+      callIds: discoveryCallIds,
+    };
+  }
+
   if (discoveryResult.finalText) {
-    // Prefer structured JSON extraction — do NOT regex-scan natural language for file paths
     const structured = extractStructuredCandidateFiles(discoveryResult.finalText);
     if (structured && Array.isArray(structured)) {
       const normalized = structured
         .map((f: unknown) => (typeof f === 'string' ? f.trim() : ''))
         .filter((f: string) => f.startsWith('src/') || f.startsWith('scripts/'));
-      deps.log(`只读探索发现候选文件（结构化）：${normalized.join(', ') || '（无）'}`);
-      return Array.from(new Set(normalized));
+      if (normalized.length > 0) {
+        deps.log(`只读探索发现候选文件（结构化）：${normalized.join(', ') || '（无）'}`);
+        return { status: 'COMPLETED', candidateFiles: Array.from(new Set(normalized)), callIds: discoveryCallIds };
+      }
+      // Candidate files JSON present but empty
+      deps.log('只读探索返回空候选列表（DISCOVERY_EMPTY）');
+      return { status: 'EMPTY', candidateFiles: [], callIds: discoveryCallIds };
     }
   }
 
-  deps.log('只读探索未返回结构化 candidateFiles');
-  return [];
+  // Tool Loop COMPLETED but finalText missing or non-structured
+  deps.log('Discovery 完成但 finalText 无结构化 candidateFiles JSON（DISCOVERY_STRUCTURED_OUTPUT_MISSING）');
+  return { status: 'STRUCTURED_OUTPUT_MISSING', candidateFiles: [], callIds: discoveryCallIds };
 }
 
 /**

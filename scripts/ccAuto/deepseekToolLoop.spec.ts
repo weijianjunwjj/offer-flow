@@ -260,44 +260,60 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     expect(state.pendingCall).toBeUndefined();
   });
 
-  // 6.4 Tool failure → stops remaining tools
-  it('tool failure stops remaining tools and does not call provider again', async () => {
+  // 6.4 Read-only tool failure → recovery (not fail-fast)
+  it('read-only turn failure does not stop — model sees error, recovers next turn', async () => {
     const registry = new AdapterRegistry();
+    let callNum = 0;
     const fakeAdapter = {
       transport: 'openai-chat' as const,
       async execute(req: ProviderCallRequest) {
-        // single call with 2 tools — first fails, second must be skipped
+        callNum++;
+        if (callNum === 1) {
+          // Turn 1: two read-only tool calls — first fails (FILE_NOT_FOUND), second succeeds
+          return {
+            callId: req.callId, providerId: req.providerId, requestedModelId: req.requestedModelId,
+            reportedModel: 'deepseek-chat', content: '',
+            usage: { inputTokens: 500, outputTokens: 100, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+            durationMs: 200, numTurns: 1, subtype: 'tool_calls', isError: false, error: null,
+            toolCalls: [
+              { id: 'bad', type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/nonexistent.txt' }) } },
+              { id: 'good', type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/test.txt' }) } },
+            ],
+          };
+        }
+        // Turn 2: model sees both tool results, returns final text
         return {
           callId: req.callId, providerId: req.providerId, requestedModelId: req.requestedModelId,
-          reportedModel: 'deepseek-chat', content: '',
-          usage: { inputTokens: 500, outputTokens: 100, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
-          durationMs: 200, numTurns: 1, subtype: 'tool_calls', isError: false, error: null,
-          toolCalls: [
-            { id: 'bad', type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/nonexistent.txt' }) } },
-            { id: 'good', type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/test.txt' }) } },
-          ],
+          reportedModel: 'deepseek-chat', content: 'Recovered after first error, second succeeded.',
+          usage: { inputTokens: 300, outputTokens: 80, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          durationMs: 150, numTurns: 1, subtype: 'stop', isError: false, error: null,
         };
       },
     };
     registry.register(fakeAdapter);
 
-    const runId = createRunState(TEST_CWD, 'int-fail', 'fail', 'custom').runId;
+    const runId = createRunState(TEST_CWD, 'int-recover', 'recover', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
     setWriter(TEST_CWD, runId, 'deepseek');
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
       executorContext: { profile: testProfile, logicalModelName: 'deepseek', role: 'builder', maxOutputTokens: 4096, timeoutMs: 30000, adapterRegistry: registry, parentEnv: { PATH: process.env.PATH ?? '', DEEPSEEK_API_KEY: 'sk-test' } },
-      systemPrompt: 'Test.', userPrompt: 'Fail.', maxTurns: 5, maxToolCallsPerTurn: 10, maxTotalToolCalls: 50,
+      systemPrompt: 'Test.', userPrompt: 'Recover.', maxTurns: 5, maxToolCallsPerTurn: 10, maxTotalToolCalls: 50,
     });
 
-    expect(result.status).toBe('STOPPED');
-    expect(result.stopReason).toBe('TOOL_EXECUTION_FAILED');
-    expect(result.executedTools.length).toBe(1);
-    expect(result.turns).toBe(1);
-    // Still recorded the first call
-    expect(result.callIds.length).toBe(1);
-    expect(result.auditTrail.map((entry) => entry.status)).toEqual(['EXECUTED', 'SKIPPED_AFTER_FAILURE']);
+    expect(result.status).toBe('COMPLETED');
+    expect(result.turns).toBe(2);
+    expect(result.finalText).toContain('Recovered');
+    expect(result.callIds.length).toBe(2);
+    expect(result.executedTools.length).toBe(2);
+    // First tool FAILED, second SUCCEEDED — both EXECUTED, no SKIPPED_AFTER_FAILURE
+    expect(result.executedTools[0].ok).toBe(false);
+    if (!result.executedTools[0].ok) {
+      expect(result.executedTools[0].error.reason).toBe('FILE_NOT_FOUND');
+    }
+    expect(result.executedTools[1].ok).toBe(true);
+    expect(result.auditTrail.map((entry) => entry.status)).toEqual(['EXECUTED', 'EXECUTED']);
   });
 
   // 6.5 Second turn timeout → first turn keeps its records
@@ -468,6 +484,121 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     expect(result.stopReason).toBe('MAX_TOOL_CALLS_PER_TURN_EXCEEDED');
     expect(result.executedTools).toHaveLength(0);
     expect(result.auditTrail.every((entry) => entry.status === 'REJECTED_LIMIT')).toBe(true);
+  });
+
+  // 6.7 Write failure in a mixed turn still fails fast
+  it('write failure on unapproved file stops immediately — no recovery', async () => {
+    const registry = new AdapterRegistry();
+    const fakeAdapter = {
+      transport: 'openai-chat' as const,
+      async execute(req: ProviderCallRequest) {
+        return {
+          callId: req.callId, providerId: req.providerId, requestedModelId: req.requestedModelId,
+          reportedModel: 'deepseek-chat', content: '',
+          usage: { inputTokens: 500, outputTokens: 100, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          durationMs: 200, numTurns: 1, subtype: 'tool_calls', isError: false, error: null,
+          toolCalls: [
+            { id: 'w1', type: 'function' as const, function: { name: 'write_file', arguments: JSON.stringify({ path: 'src/not-approved.txt', content: 'x' }) } },
+            { id: 'r2', type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/test.txt' }) } },
+          ],
+        };
+      },
+    };
+    registry.register(fakeAdapter);
+
+    const runId = createRunState(TEST_CWD, 'int-write-fail', 'write fail', 'custom').runId;
+    acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
+    setWriter(TEST_CWD, runId, 'deepseek');
+
+    const result = await runDeepSeekToolLoop({
+      repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
+      executorContext: { profile: testProfile, logicalModelName: 'deepseek', role: 'builder', maxOutputTokens: 4096, timeoutMs: 30000, adapterRegistry: registry, parentEnv: { PATH: process.env.PATH ?? '', DEEPSEEK_API_KEY: 'sk-test' } },
+      systemPrompt: 'Test.', userPrompt: 'Write to unapproved.', maxTurns: 5, maxToolCallsPerTurn: 10, maxTotalToolCalls: 50,
+    });
+
+    expect(result.status).toBe('STOPPED');
+    expect(result.stopReason).toBe('TOOL_EXECUTION_FAILED');
+    expect(result.turns).toBe(1);
+    expect(result.executedTools.length).toBe(1);
+    expect(result.executedTools[0].ok).toBe(false);
+    if (!result.executedTools[0].ok) {
+      expect(result.executedTools[0].error.reason).toBe('FILE_NOT_APPROVED');
+    }
+    expect(result.auditTrail.at(-1)?.status).toBe('SKIPPED_AFTER_FAILURE');
+  });
+
+  // 6.8 Security boundary read error still fails fast
+  it('read_file on protected path fails fast — no recovery for security errors', async () => {
+    const registry = new AdapterRegistry();
+    const fakeAdapter = {
+      transport: 'openai-chat' as const,
+      async execute(req: ProviderCallRequest) {
+        return {
+          callId: req.callId, providerId: req.providerId, requestedModelId: req.requestedModelId,
+          reportedModel: 'deepseek-chat', content: '',
+          usage: { inputTokens: 500, outputTokens: 100, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          durationMs: 200, numTurns: 1, subtype: 'tool_calls', isError: false, error: null,
+          toolCalls: [
+            { id: 'p1', type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: '.git/config' }) } },
+            { id: 'r2', type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/test.txt' }) } },
+          ],
+        };
+      },
+    };
+    registry.register(fakeAdapter);
+
+    const runId = createRunState(TEST_CWD, 'int-protected', 'protected', 'custom').runId;
+    acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
+    setWriter(TEST_CWD, runId, 'deepseek');
+
+    const result = await runDeepSeekToolLoop({
+      repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
+      executorContext: { profile: testProfile, logicalModelName: 'deepseek', role: 'builder', maxOutputTokens: 4096, timeoutMs: 30000, adapterRegistry: registry, parentEnv: { PATH: process.env.PATH ?? '', DEEPSEEK_API_KEY: 'sk-test' } },
+      systemPrompt: 'Test.', userPrompt: 'Read protected.', maxTurns: 5, maxToolCallsPerTurn: 10, maxTotalToolCalls: 50,
+    });
+
+    expect(result.status).toBe('STOPPED');
+    expect(result.stopReason).toBe('TOOL_EXECUTION_FAILED');
+    expect(result.turns).toBe(1);
+    expect(result.executedTools.length).toBe(1);
+    // Second tool must be skipped
+    expect(result.auditTrail.at(-1)?.status).toBe('SKIPPED_AFTER_FAILURE');
+  });
+
+  // 6.9 Recovery bounded by maxTurns (not infinite retry)
+  it('recovery stops at maxTurns — no infinite retry', async () => {
+    const registry = new AdapterRegistry();
+    let turn = 0;
+    const fakeAdapter = {
+      transport: 'openai-chat' as const,
+      async execute(req: ProviderCallRequest) {
+        turn++;
+        // Each turn requests a different non-existent file — avoids REPEATED_TOOL_CALL
+        return {
+          callId: req.callId, providerId: req.providerId, requestedModelId: req.requestedModelId,
+          reportedModel: 'deepseek-chat', content: '',
+          usage: { inputTokens: 300, outputTokens: 80, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+          durationMs: 100, numTurns: 1, subtype: 'tool_calls', isError: false, error: null,
+          toolCalls: [{ id: `r_${turn}`, type: 'function' as const, function: { name: 'read_file', arguments: JSON.stringify({ path: `src/missing-${turn}.txt` }) } }],
+        };
+      },
+    };
+    registry.register(fakeAdapter);
+
+    const runId = createRunState(TEST_CWD, 'int-maxturns', 'maxturns', 'custom').runId;
+    acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
+    setWriter(TEST_CWD, runId, 'deepseek');
+
+    const result = await runDeepSeekToolLoop({
+      repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
+      executorContext: { profile: testProfile, logicalModelName: 'deepseek', role: 'builder', maxOutputTokens: 4096, timeoutMs: 30000, adapterRegistry: registry, parentEnv: { PATH: process.env.PATH ?? '', DEEPSEEK_API_KEY: 'sk-test' } },
+      systemPrompt: 'Test.', userPrompt: 'Keep missing.', maxTurns: 2, maxToolCallsPerTurn: 10, maxTotalToolCalls: 50,
+    });
+
+    expect(result.status).toBe('STOPPED');
+    expect(result.stopReason).toBe('MAX_TURNS_EXCEEDED');
+    expect(result.turns).toBe(2);
+    expect(result.executedTools.length).toBe(2);
   });
 
   it('enforces the total tool-call limit across turns', async () => {

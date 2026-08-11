@@ -27,6 +27,7 @@ import type {
   ProviderToolMode,
   DeepSeekToolLoopExecutorContext,
   ProviderExecutionStopReason,
+  ToolExecutionErrorReason,
 } from './types';
 import { parseToolCalls, DEEPSEEK_FILE_TOOL_DEFINITIONS } from './toolProtocol';
 import { dispatchDeepSeekTool, buildToolResultMessage } from './toolDispatcher';
@@ -103,6 +104,31 @@ function auditRecord(
     resultOk,
     errorReason,
   };
+}
+
+/** 只读工具：read_file、grep、glob */
+const READ_ONLY_TOOL_NAMES = new Set<string>(['read_file', 'grep', 'glob']);
+
+/** 可恢复的只读探索错误——模型定位/搜索范围有误，允许看到错误后自行修正路径 */
+const RECOVERABLE_READ_FAILURE_REASONS: ReadonlySet<ToolExecutionErrorReason> = new Set([
+  'FILE_NOT_FOUND',
+  'FILE_NOT_REGULAR_FILE',
+  'DIRECTORY_NOT_ALLOWED',
+  'FILE_TOO_LARGE',
+  'FILE_NOT_UTF8',
+  'BINARY_FILE',
+  'MAX_OUTPUT_EXCEEDED',
+  'SCAN_LIMIT_EXCEEDED',
+  'ARGUMENT_VALUE_INVALID',
+]);
+
+function isReadOnlyToolCall(tc: ParsedToolCall): boolean {
+  return READ_ONLY_TOOL_NAMES.has(tc.name);
+}
+
+function isRecoverableReadToolFailure(envelope: ToolExecutionEnvelope): boolean {
+  if (envelope.ok) return false;
+  return RECOVERABLE_READ_FAILURE_REASONS.has(envelope.error.reason);
 }
 
 function toolCallSignature(parsedCall: ParsedToolCall): string {
@@ -433,6 +459,9 @@ export async function runDeepSeekToolLoop(
     messages.push(buildAssistantMessage(content, rawToolCalls, reasoningContent));
 
     // 8. 串行执行工具
+    const readOnlyTurn = parsedResult.parsed.every(isReadOnlyToolCall);
+    let recoverableFailureOccurred = false;
+
     for (let index = 0; index < parsedResult.parsed.length; index++) {
       const tc = parsedResult.parsed[index];
       seenToolCallIds.add(tc.id);
@@ -454,8 +483,6 @@ export async function runDeepSeekToolLoop(
         } else if (envelope.toolName === 'edit_file' && envelope.result?.kind === 'edit_file') {
           (changedFilesSet as Set<string>).add(envelope.result.path);
         }
-      } else {
-        // Tool execution failed: tracked in auditTrail above
       }
 
       messages.push(buildToolResultMessage(envelope, {
@@ -463,14 +490,23 @@ export async function runDeepSeekToolLoop(
         secrets: secretValues,
       }));
 
-      // 任何工具失败 → 停止当前轮剩余工具、停止下一轮 Provider
+      // 任何工具失败 → 判断是否可恢复
       if (!envelope.ok) {
+        if (readOnlyTurn && isRecoverableReadToolFailure(envelope)) {
+          recoverableFailureOccurred = true;
+          continue; // 继续本 turn 剩余工具，允许下一 Provider turn 看到错误后自行修正
+        }
+        // 不可恢复：skip 剩余工具，fail-fast
         for (const skipped of parsedResult.parsed.slice(index + 1)) {
           auditTrail.push(auditRecord(turns, skipped, 'SKIPPED_AFTER_FAILURE', null, null));
         }
         return buildResult('STOPPED', null, 'TOOL_EXECUTION_FAILED');
       }
     }
+
+    // 如果本 turn 所有工具都失败了但都是可恢复的，仍然不返回 TOOL_EXECUTION_FAILED —
+    // 自然进入下一 Provider turn（受 maxTurns / maxTotalToolCalls 限制）
+    void recoverableFailureOccurred;
   }
 
   return buildResult('STOPPED', null, 'MAX_TURNS_EXCEEDED');

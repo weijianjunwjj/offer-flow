@@ -1453,8 +1453,18 @@ describe('P10 Partial Progress → VERIFY', () => {
     state.currentPhase = 'IMPLEMENT';
     saveRunState(cwd2, state);
 
-    // Flash: changedFiles=[], status=STOPPED, stopReason=TOOL_EXECUTION_FAILED
-    const mockResult = makeToolLoopResult({
+    // Discovery: empty (demoRun.ts is REQUIRES_HUMAN_APPROVAL, so approvedFiles stays empty)
+    const discoveryMock = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '未找到候选文件',
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1'] },
+    });
+    // Writer: changedFiles=[], status=STOPPED, stopReason=TOOL_EXECUTION_FAILED
+    const writerResult = makeToolLoopResult({
       status: 'STOPPED' as const,
       stopReason: 'TOOL_EXECUTION_FAILED',
       callIds: ['f1'],
@@ -1464,7 +1474,9 @@ describe('P10 Partial Progress → VERIFY', () => {
       ] as ToolLoopAuditRecord[],
       summary: { ...makeToolLoopResult().summary, changedFiles: [], terminationReason: 'TOOL_EXECUTION_FAILED' as ToolLoopTerminationReason, callIds: ['f1', 'f2'] },
     });
-    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryMock)
+      .mockResolvedValueOnce(writerResult);
 
     const deps = routedOrchDeps(cwd2);
     const baseline = captureRunStartBaseline(cwd2);
@@ -1482,11 +1494,11 @@ describe('P10 Partial Progress → VERIFY', () => {
     expect(reloaded.flashLastCallId).toBeTruthy();
     expect(reloaded.arbitrationCapsule).toBeUndefined();
 
-    // Observation should NOT have partialProgress=true
-    const obs = reloaded.toolLoopObservations?.[0];
-    expect(obs).toBeTruthy();
-    expect(obs?.partialProgress).toBeFalsy();
-    expect(obs?.noEffectReason).toBeTruthy(); // OLD_TEXT_MISMATCH for changedFiles=0
+    // Writer observation should NOT have partialProgress=true
+    const writerObs = reloaded.toolLoopObservations?.find(o => o.stage === 'WRITER');
+    expect(writerObs).toBeTruthy();
+    expect(writerObs?.partialProgress).toBeFalsy();
+    expect(writerObs?.noEffectReason).toBeTruthy(); // OLD_TEXT_MISMATCH for changedFiles=0
   });
 
   // ====================================================================
@@ -1502,8 +1514,18 @@ describe('P10 Partial Progress → VERIFY', () => {
     state.changedFiles = ['scripts/ccAuto/__fixtures__/demoRun.ts'];
     saveRunState(cwd2, state);
 
-    // Pro: changedFiles=[demoRun.ts], status=STOPPED, stopReason=TOOL_EXECUTION_FAILED
-    const mockResult = makeToolLoopResult({
+    // Discovery: returned empty (non-structured) — demoRun.ts is outside allowed roots
+    const discoveryMock = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '探路未发现候选文件',
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1'] },
+    });
+    // Pro writer: changedFiles=[demoRun.ts], status=STOPPED, stopReason=TOOL_EXECUTION_FAILED
+    const writerResult = makeToolLoopResult({
       status: 'STOPPED' as const,
       stopReason: 'TOOL_EXECUTION_FAILED',
       callIds: ['p1', 'p2', 'p3'],
@@ -1519,7 +1541,9 @@ describe('P10 Partial Progress → VERIFY', () => {
         callIds: ['p1', 'p2', 'p3'],
       },
     });
-    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryMock)
+      .mockResolvedValueOnce(writerResult);
 
     const deps = routedOrchDeps(cwd2);
     const baseline = captureRunStartBaseline(cwd2);
@@ -1534,14 +1558,14 @@ describe('P10 Partial Progress → VERIFY', () => {
     expect(reloaded.done).toBe(false);
     expect(reloaded.arbitrationCapsule).toBeUndefined();
 
-    // Observation must have partialProgress=true
-    const obs = reloaded.toolLoopObservations?.[0];
-    expect(obs).toBeTruthy();
-    expect(obs?.partialProgress).toBe(true);
-    expect(obs?.failureReason).toBe('OLD_TEXT_MISMATCH');
-    expect(obs?.nextAction).toBe('VERIFY');
+    // Writer observation must have partialProgress=true (DISCOVERY obs is index 0)
+    const writerObs = reloaded.toolLoopObservations?.find(o => o.stage === 'WRITER');
+    expect(writerObs).toBeTruthy();
+    expect(writerObs?.partialProgress).toBe(true);
+    expect(writerObs?.failureReason).toBe('OLD_TEXT_MISMATCH');
+    expect(writerObs?.nextAction).toBe('VERIFY');
     // noEffectReason must be null when partialProgress
-    expect(obs?.noEffectReason).toBeFalsy();
+    expect(writerObs?.noEffectReason).toBeFalsy();
   });
 
   // ====================================================================
@@ -1667,10 +1691,212 @@ describe('P10 Partial Progress → VERIFY', () => {
   });
 
   // ====================================================================
-  // Regression E: Pro no changes → ArbitrationCapsule → STOP (unchanged behavior)
+  // P10-F: Discovery 2 MiB 只读预算——不挤占全局 256 KiB 默认
   // ====================================================================
-  it('Regression E: Pro 无修改失败 → ArbitrationCapsule → STOP', async () => {
-    const state = createRunState(cwd2, `run-p10e-${Date.now()}`, '修改 demoRun.ts 的一个函数签名', 'custom');
+  it('P10-F: Discovery 获得独立 2 MiB 只读预算，Writer 保持全局 256 KiB 默认', async () => {
+    // Task with NO file-path tokens → explicitFiles=[] → discovery runs
+    const state = createRunState(cwd2, `run-p10f-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    // Pre-set changedFiles so the success path (changedFiles>0 → VERIFY) triggers
+    // even though the mock doesn't write real files to disk.
+    state.changedFiles = ['src/app.spec.ts'];
+    saveRunState(cwd2, state);
+
+    // Discovery returns real candidates
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED',
+      stopReason: null,
+      finalText: '```json\n{"candidateFiles":["src/app.spec.ts"]}\n```',
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'd2', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1', 'd2'] },
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED',
+      stopReason: null,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/app.spec.ts'], callIds: ['w1', 'w2'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    expect(reloaded.currentPhase).toBe('VERIFY');
+
+    // Discovery call got 2 MiB budget, 5 turns, 4 tools per turn
+    const discoveryCallOpts = (runDeepSeekToolLoop as any).mock.calls[0][0];
+    expect(discoveryCallOpts.maxTotalReadBytes).toBe(2 * 1024 * 1024);
+    expect(discoveryCallOpts.maxTurns).toBe(5);
+    expect(discoveryCallOpts.maxToolCallsPerTurn).toBe(4);
+    expect(discoveryCallOpts.maxTotalToolCalls).toBe(8);
+    expect(discoveryCallOpts.executorContext.executionRole).toBe('FAST_EXECUTOR');
+    // Writer call did NOT get 2 MiB — uses global 256 KiB default
+    const writerCallOpts = (runDeepSeekToolLoop as any).mock.calls[1][0];
+    expect(writerCallOpts.maxTotalReadBytes).toBeUndefined();
+
+    // Writer prompt contains approved file
+    expect(writerCallOpts.systemPrompt).toContain('src/app.spec.ts');
+    expect(writerCallOpts.userPrompt).toContain('src/app.spec.ts');
+  });
+
+  // ====================================================================
+  // P10-G: Discovery 空结果 + Flash → Stage Gate 阻止 Writer 并升级到 Pro
+  // ====================================================================
+  it('P10-G: 无显式文件 + Discovery 空结果 + Flash → 升级到 Pro REPAIR_1', async () => {
+    const state = createRunState(cwd2, `run-p10g-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 0;
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(cwd2, state);
+
+    // Discovery returns NO candidates
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'COMPLETED',
+        stopReason: null,
+        finalText: '{"candidateFiles":[]}',
+        auditTrail: [
+          { turn: 1, toolCallId: 'd1', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+        ] as ToolLoopAuditRecord[],
+        summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1'] },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    // Flash→Pro escalation
+    expect(reloaded.stopReason).toBeFalsy();
+    expect(reloaded.done).toBe(false);
+    expect(reloaded.currentPhase).toBe('REPAIR_1');
+    expect(reloaded.nextRoutedRole).toBe('STRONG_EXECUTOR');
+    expect(reloaded.repairCycles).toBe(1);
+    expect(reloaded.arbitrationCapsule).toBeUndefined();
+
+    // Discovery observation persisted despite Stage Gate early return
+    const obs = reloaded.toolLoopObservations?.[0];
+    expect(obs).toBeTruthy();
+    expect(obs?.stage).toBe('DISCOVERY');
+    expect(obs?.auditTrail.length).toBeGreaterThan(0);
+  });
+
+  // ====================================================================
+  // P10-H: Discovery 非结构化输出 + Pro → Stage Gate ArbitrationCapsule → STOP
+  // ====================================================================
+  it('P10-H: Discovery 非结构化输出 + Pro → Stage Gate 精确原因保留', async () => {
+    const state = createRunState(cwd2, `run-p10h-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1; // past Flash
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = [];
+    saveRunState(cwd2, state);
+
+    // Discovery COMPLETED but finalText non-structured
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'COMPLETED',
+        stopReason: null,
+        finalText: '未找到任何相关候选文件',
+        auditTrail: [
+          { turn: 1, toolCallId: 'p1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        ] as ToolLoopAuditRecord[],
+        summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['p1'] },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // stop() sets state.done/stopReason only in-memory — persist so loadRunState picks it up
+    saveRunState(cwd2, state);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    expect(reloaded.done).toBe(true);
+    expect(reloaded.stopReason).toBe('ARBITRATION_FAILED');
+    // stopDetail carries the precise gate label
+    expect(reloaded.stopDetail).toContain('STAGE_GATE_BLOCKED');
+    expect(reloaded.stopDetail).toContain('DISCOVERY_STRUCTURED_OUTPUT_MISSING');
+    expect(reloaded.arbitrationCapsule).toBeTruthy();
+    // Capsule unresolvedQuestions carries the precise discovery outcome
+    const q = reloaded.arbitrationCapsule?.unresolvedQuestions?.join(' ') ?? '';
+    expect(q).toContain('DISCOVERY_STRUCTURED_OUTPUT_MISSING');
+
+    // Discovery observation persisted
+    const obs = reloaded.toolLoopObservations?.[0];
+    expect(obs).toBeTruthy();
+    expect(obs?.stage).toBe('DISCOVERY');
+    expect(obs?.writeToolCalls).toBe(0); // Read-only — NOT NO_WRITE_TOOL_CALLED
+  });
+
+  // ====================================================================
+  // P10-I: Writer 提示写入范围受 approvedFiles 约束，不能自行扩大
+  // ====================================================================
+  it('P10-I: Writer 提示写入范围受 approvedFiles 约束，不能自行扩大', async () => {
+    // Task with NO file-path tokens → no explicitFiles → discovery runs
+    const state = createRunState(cwd2, `run-p10i-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    state.changedFiles = ['src/radarView.spec.ts'];
+    saveRunState(cwd2, state);
+
+    // Discovery finds two candidates, one gets approved (src/) and one blocked (root)
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/radarView.spec.ts","root-config.ts"]}',
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1'] },
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/radarView.spec.ts'], callIds: ['w1', 'w2'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    expect(reloaded.currentPhase).toBe('VERIFY');
+
+    // Writer prompt explicitly names only approved files (src/radarView.spec.ts),
+    // NOT the denied one (root-config.ts)
+    const writerOpts = (runDeepSeekToolLoop as any).mock.calls[1][0];
+    expect(writerOpts.systemPrompt).toContain('只允许修改以下文件');
+    expect(writerOpts.systemPrompt).toContain('src/radarView.spec.ts');
+    expect(writerOpts.systemPrompt).not.toContain('root-config.ts');
+  });
+
+  // ====================================================================
+  // P10-J: Discovery Tool Loop STOPPED → 精确 stopReason 进入 Stage Gate
+  // ====================================================================
+  it('P10-J: Discovery Tool Loop STOPPED（MAX_TURNS_EXCEEDED）→ Stage Gate 保留精确原因', async () => {
+    const state = createRunState(cwd2, `run-p10j-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
     state.routedExecution = true;
     state.repairCycles = 1;
     state.currentPhase = 'REPAIR_1';
@@ -1678,23 +1904,227 @@ describe('P10 Partial Progress → VERIFY', () => {
     state.changedFiles = [];
     saveRunState(cwd2, state);
 
-    // Pro: changedFiles=[], status=STOPPED
-    const mockResult = makeToolLoopResult({
-      status: 'STOPPED' as const,
-      stopReason: 'TOOL_EXECUTION_FAILED',
-      callIds: ['p1'],
+    // Discovery Tool Loop STOPPED due to MAX_TURNS_EXCEEDED
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'STOPPED' as const,
+        stopReason: 'MAX_TURNS_EXCEEDED',
+        finalText: null,
+        auditTrail: [
+          { turn: 1, toolCallId: 'd1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+          { turn: 2, toolCallId: 'd2', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+          { turn: 3, toolCallId: 'd3', toolName: 'grep', status: 'EXECUTED', resultOk: false, errorReason: 'SCAN_LIMIT_EXCEEDED' },
+        ] as ToolLoopAuditRecord[],
+        summary: {
+          ...makeToolLoopResult().summary,
+          changedFiles: [],
+          terminationReason: 'MAX_TURNS_EXCEEDED' as ToolLoopTerminationReason,
+          callIds: ['d1', 'd2', 'd3'],
+        },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    saveRunState(cwd2, state);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    expect(reloaded.done).toBe(true);
+    expect(reloaded.stopReason).toBe('ARBITRATION_FAILED');
+    // Stage Gate label differentiates STOPPED reason
+    expect(reloaded.stopDetail).toContain('STAGE_GATE_BLOCKED');
+    expect(reloaded.stopDetail).toContain('DISCOVERY_MAX_TURNS_EXCEEDED');
+
+    // Capsule carries precise outcome
+    const q = reloaded.arbitrationCapsule?.unresolvedQuestions?.join(' ') ?? '';
+    expect(q).toContain('DISCOVERY_STOPPED');
+    expect(q).toContain('MAX_TURNS_EXCEEDED');
+
+    // Discovery observation persisted with audit trail
+    const obs = reloaded.toolLoopObservations?.[0];
+    expect(obs).toBeTruthy();
+    expect(obs?.stage).toBe('DISCOVERY');
+    expect(obs?.writeToolCalls).toBe(0);
+    expect(obs?.auditTrail.length).toBe(3);
+  });
+
+  // ====================================================================
+  // P10-K: Discovery COMPLETED + 空 JSON → DISCOVERY_EMPTY（非 STRUCTURED_OUTPUT_MISSING）
+  // ====================================================================
+  it('P10-K: Discovery COMPLETED + 合法空 JSON → DISCOVERY_EMPTY', async () => {
+    const state = createRunState(cwd2, `run-p10k-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = [];
+    saveRunState(cwd2, state);
+
+    // Discovery COMPLETED + legitimate empty JSON
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'COMPLETED' as const,
+        stopReason: null,
+        finalText: '{"candidateFiles":[]}',
+        auditTrail: [
+          { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        ] as ToolLoopAuditRecord[],
+        summary: {
+          ...makeToolLoopResult().summary,
+          changedFiles: [],
+          callIds: ['d1'],
+          terminationReason: null as unknown as ToolLoopTerminationReason,
+        },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    saveRunState(cwd2, state);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    // Pro + empty → Arbitration, but label is DISCOVERY_EMPTY (distinct from STRUCTURED_OUTPUT_MISSING)
+    expect(reloaded.done).toBe(true);
+    expect(reloaded.stopReason).toBe('ARBITRATION_FAILED');
+    expect(reloaded.stopDetail).toContain('DISCOVERY_EMPTY');
+    expect(reloaded.stopDetail).not.toContain('STRUCTURED_OUTPUT_MISSING');
+
+    // Observation audit trail present (not "缺失")
+    const obs = reloaded.toolLoopObservations?.[0];
+    expect(obs).toBeTruthy();
+    expect(obs?.auditTrail.length).toBe(1);
+  });
+
+  // ====================================================================
+  // P10-L: Discovery observation 持久化——Stage Gate 提前 return 后 state 仍有 observation
+  // ====================================================================
+  it('P10-L: Discovery observation 在 Stage Gate 提前返回后持久化', async () => {
+    const state = createRunState(cwd2, `run-p10l-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 0;
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(cwd2, state);
+
+    // Discovery returns non-structured output
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'COMPLETED' as const,
+        stopReason: null,
+        finalText: '抱歉，我无法定位到相关文件。',
+        auditTrail: [
+          { turn: 1, toolCallId: 'd1', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+          { turn: 2, toolCallId: 'd2', toolName: 'glob', status: 'EXECUTED', resultOk: false, errorReason: 'SCAN_LIMIT_EXCEEDED' },
+        ] as ToolLoopAuditRecord[],
+        summary: {
+          ...makeToolLoopResult().summary,
+          changedFiles: [],
+          callIds: ['d1', 'd2'],
+          terminationReason: null as unknown as ToolLoopTerminationReason,
+        },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // Stage Gate returned early — Flash escalates, no writer ran
+    const reloaded = loadRunState(cwd2, state.runId);
+    expect(reloaded.currentPhase).toBe('REPAIR_1'); // escalation happened
+
+    // Discovery observation EXISTS despite early return
+    expect(reloaded.toolLoopObservations).toBeTruthy();
+    expect(reloaded.toolLoopObservations?.length).toBeGreaterThanOrEqual(1);
+
+    const obs = reloaded.toolLoopObservations![0];
+    expect(obs).toBeTruthy();
+    expect(obs.stage).toBe('DISCOVERY');
+    expect(obs.auditTrail).toBeTruthy();
+    expect(obs.auditTrail.length).toBeGreaterThan(0);
+    expect(obs.writeToolCalls).toBe(0);
+  });
+
+  // ====================================================================
+  // P10-M: 有 candidateFiles → 正常进入 Writer
+  // ====================================================================
+  it('P10-M: Discovery 有 candidateFiles → evaluateFileProposals → Writer', async () => {
+    const state = createRunState(cwd2, `run-p10m-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    state.changedFiles = ['src/radarView.spec.ts']; // pre-populate: computeRunChangedFiles returns empty for mock
+    saveRunState(cwd2, state);
+
+    // Discovery finds candidates
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/radarView.spec.ts"]}',
       auditTrail: [
-        { turn: 1, toolCallId: 'p1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
-        { turn: 2, toolCallId: 'p2', toolName: 'edit_file', status: 'EXECUTED', resultOk: false, errorReason: 'EDIT_TARGET_NOT_FOUND' },
+        { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
       ] as ToolLoopAuditRecord[],
-      summary: {
-        ...makeToolLoopResult().summary,
-        changedFiles: [],
-        terminationReason: 'TOOL_EXECUTION_FAILED' as ToolLoopTerminationReason,
-        callIds: ['p1', 'p2'],
-      },
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1'] },
     });
-    (runDeepSeekToolLoop as any).mockResolvedValue(mockResult);
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/radarView.spec.ts'], callIds: ['w1', 'w2'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    // Success: discovery → approvedFiles → writer → VERIFY
+    expect(reloaded.currentPhase).toBe('VERIFY');
+    expect(reloaded.done).toBe(false);
+
+    // Both discovery and writer observations persisted
+    expect(reloaded.toolLoopObservations).toBeTruthy();
+    expect(reloaded.toolLoopObservations?.length).toBeGreaterThanOrEqual(2);
+    const stages = reloaded.toolLoopObservations?.map((o) => o.stage);
+    expect(stages).toContain('DISCOVERY');
+    expect(stages).toContain('WRITER');
+  });
+  it('Regression E: Pro 无修改失败 → ArbitrationCapsule → STOP', async () => {
+    // Task with NO explicit file → discovery runs first, finds nothing
+    // Then explicitFiles=[] → Stage Gate blocks writer → Arbitration
+    const state = createRunState(cwd2, `run-p10e-${Date.now()}`, '优化某个抽象模块的验证逻辑', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = [];
+    saveRunState(cwd2, state);
+
+    // Discovery: no candidates → STAGE GATE blocks writer → ArbitrationCapsule
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'COMPLETED' as const,
+        stopReason: null,
+        finalText: '未找到任何相关候选文件',
+        auditTrail: [
+          { turn: 1, toolCallId: 'p1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        ] as ToolLoopAuditRecord[],
+        summary: {
+          ...makeToolLoopResult().summary,
+          changedFiles: [],
+          terminationReason: null as unknown as ToolLoopTerminationReason,
+          callIds: ['p1'],
+        },
+      }),
+    );
 
     const deps = routedOrchDeps(cwd2);
     const baseline = captureRunStartBaseline(cwd2);
@@ -1713,10 +2143,294 @@ describe('P10 Partial Progress → VERIFY', () => {
     expect(reloaded.arbitrationCapsule).toBeTruthy();
     expect(reloaded.arbitrationCapsule?.changedFiles).toEqual([]);
 
-    // Observation should NOT have partialProgress
+    // Discovery observation persists, no Writer ran
     const obs = reloaded.toolLoopObservations?.[0];
     expect(obs).toBeTruthy();
+    expect(obs?.stage).toBe('DISCOVERY');
+    expect(obs?.writeToolCalls).toBe(0);
     expect(obs?.partialProgress).toBeFalsy();
-    expect(obs?.noEffectReason).toBeTruthy();
+    // Discovery with empty result: obs.noEffectReason is not applicable
+    // (writeToolCalls=0 for discovery is normal, NOT a "no effect" signal)
+  });
+
+  // ====================================================================
+  // P10-N: Discovery execution window — maxTurns=5, maxToolCallsPerTurn=4
+  // ====================================================================
+  it('P10-N: Discovery Tool Loop receives maxTurns=5 + maxToolCallsPerTurn=4', async () => {
+    const state = createRunState(cwd2, `run-p10n-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(cwd2, state);
+
+    // Discovery finds candidates
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/radar.test.ts"]}',
+      callIds: ['d1', 'd2'],
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 1, toolCallId: 'd2', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1', 'd2'] },
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/radar.test.ts'], callIds: ['w1', 'w2'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // Verify discovery Tool Loop parameters
+    const discoveryCallOpts = (runDeepSeekToolLoop as any).mock.calls[0][0];
+    expect(discoveryCallOpts.maxTurns).toBe(5);
+    expect(discoveryCallOpts.maxToolCallsPerTurn).toBe(4);
+    expect(discoveryCallOpts.maxTotalToolCalls).toBe(8);
+    expect(discoveryCallOpts.maxTotalReadBytes).toBe(2 * 1024 * 1024);
+  });
+
+  // ====================================================================
+  // P10-O: 4 read-only tools in one turn allowed
+  // ====================================================================
+  it('P10-O: 单 turn 4 个只读工具调用合法（不再 MAX_TOOL_CALLS_PER_TURN_EXCEEDED）', async () => {
+    const state = createRunState(cwd2, `run-p10o-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    state.changedFiles = ['src/radar.test.ts']; // pre-seed for happy path → VERIFY
+    saveRunState(cwd2, state);
+
+    // Discovery returns 4 tools in turn 1 — the new maxToolCallsPerTurn=4 allows this
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/radar.test.ts"]}',
+      callIds: ['d1', 'd2', 'd3', 'd4'],
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 1, toolCallId: 'd2', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 1, toolCallId: 'd3', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 1, toolCallId: 'd4', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1', 'd2', 'd3', 'd4'] },
+      totalToolCalls: 4,
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/radar.test.ts'], callIds: ['w1', 'w2'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    // Discovery with 4 tools should succeed → writer runs → VERIFY
+    expect(reloaded.currentPhase).toBe('VERIFY');
+
+    // Verify discovery allowed 4 per turn
+    const discoveryCallOpts = (runDeepSeekToolLoop as any).mock.calls[0][0];
+    expect(discoveryCallOpts.maxToolCallsPerTurn).toBe(4);
+  });
+
+  // ====================================================================
+  // P10-P: Turn 4 tool → turn 5 final response (COMPLETED)
+  // ====================================================================
+  it('P10-P: 第 4 turn 使用工具后第 5 turn 返回 final candidateFiles → COMPLETED', async () => {
+    const state = createRunState(cwd2, `run-p10p-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    state.changedFiles = ['src/example.ts']; // pre-seed for happy path → VERIFY
+    saveRunState(cwd2, state);
+
+    // Simulate: 4 turns of tool use, turn 5 returns final text
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/example.ts"]}',
+      turns: 5,
+      callIds: ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7'],
+      totalToolCalls: 7,
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 1, toolCallId: 'd2', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'd3', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 3, toolCallId: 'd4', toolName: 'read_file', status: 'EXECUTED', resultOk: false, errorReason: 'FILE_NOT_FOUND' },
+        { turn: 3, toolCallId: 'd5', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 4, toolCallId: 'd6', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 4, toolCallId: 'd7', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: {
+        ...makeToolLoopResult().summary,
+        turns: 5, toolCallCount: 7,
+        changedFiles: [], callIds: ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7'],
+        terminationReason: null as unknown as ToolLoopTerminationReason,
+      },
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/example.ts'], callIds: ['w1', 'w2'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    // With 5 turns allowed, 4-turn tool exploration + turn 5 final IS accepted
+    expect(reloaded.currentPhase).toBe('VERIFY');
+    expect(reloaded.stopReason).toBeFalsy();
+
+    // Discovery observation shows 5 turns, not MAX_TURNS_EXCEEDED
+    const discoveryObs = reloaded.toolLoopObservations?.find(o => o.stage === 'DISCOVERY');
+    expect(discoveryObs).toBeTruthy();
+    expect(discoveryObs?.turns).toBe(5);
+  });
+
+  // ====================================================================
+  // P10-Q: Flash discovery executionRole === FAST_EXECUTOR
+  // ====================================================================
+  it('P10-Q: Flash discovery executionRole === FAST_EXECUTOR for correct cost attribution', async () => {
+    const state = createRunState(cwd2, `run-p10q-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    state.repairCycles = 0;
+    state.nextRoutedRole = undefined;
+    saveRunState(cwd2, state);
+
+    // Flash discovery mock
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'COMPLETED' as const,
+        stopReason: null,
+        finalText: '找不到相关文件',
+        callIds: ['f1', 'f2'],
+        auditTrail: [
+          { turn: 1, toolCallId: 'f1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+          { turn: 1, toolCallId: 'f2', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+        ] as ToolLoopAuditRecord[],
+        summary: {
+          ...makeToolLoopResult().summary, changedFiles: [],
+          callIds: ['f1', 'f2'],
+          terminationReason: null as unknown as ToolLoopTerminationReason,
+        },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // Flash discovery gets FAST_EXECUTOR
+    const discoveryCallOpts = (runDeepSeekToolLoop as any).mock.calls[0][0];
+    expect(discoveryCallOpts.executorContext.executionRole).toBe('FAST_EXECUTOR');
+  });
+
+  // ====================================================================
+  // P10-R: Pro discovery executionRole === STRONG_EXECUTOR
+  // ====================================================================
+  it('P10-R: Pro discovery executionRole === STRONG_EXECUTOR for correct cost attribution', async () => {
+    const state = createRunState(cwd2, `run-p10r-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    saveRunState(cwd2, state);
+
+    // Pro discovery mock
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'COMPLETED' as const,
+        stopReason: null,
+        finalText: '找不到相关候选文件',
+        callIds: ['p1'],
+        auditTrail: [
+          { turn: 1, toolCallId: 'p1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        ] as ToolLoopAuditRecord[],
+        summary: {
+          ...makeToolLoopResult().summary, changedFiles: [],
+          callIds: ['p1'],
+          terminationReason: null as unknown as ToolLoopTerminationReason,
+        },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    // Pro discovery gets STRONG_EXECUTOR
+    const discoveryCallOpts = (runDeepSeekToolLoop as any).mock.calls[0][0];
+    expect(discoveryCallOpts.executorContext.executionRole).toBe('STRONG_EXECUTOR');
+  });
+
+  // ====================================================================
+  // P10-S: Flash discovery Stage Gate → escalatedFromCallId linkage
+  // ====================================================================
+  it('P10-S: Flash discovery 失败后 Pro 升级的 escalatedFromCallId 来自 discovery 最后 callId', async () => {
+    const state = createRunState(cwd2, `run-p10s-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 0;
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(cwd2, state);
+
+    // Flash discovery STOPPED with real callIds
+    (runDeepSeekToolLoop as any).mockResolvedValue(
+      makeToolLoopResult({
+        status: 'STOPPED' as const,
+        stopReason: 'MAX_TURNS_EXCEEDED',
+        finalText: null,
+        callIds: ['f1', 'f2', 'f3', 'f4', 'f5'],
+        auditTrail: [
+          { turn: 1, toolCallId: 'f1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+          { turn: 2, toolCallId: 'f2', toolName: 'grep', status: 'EXECUTED', resultOk: true, errorReason: null },
+          { turn: 3, toolCallId: 'f3', toolName: 'read_file', status: 'EXECUTED', resultOk: false, errorReason: 'FILE_NOT_FOUND' },
+          { turn: 3, toolCallId: 'f4', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+          { turn: 4, toolCallId: 'f5', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+        ] as ToolLoopAuditRecord[],
+        summary: {
+          ...makeToolLoopResult().summary,
+          changedFiles: [],
+          terminationReason: 'MAX_TURNS_EXCEEDED' as ToolLoopTerminationReason,
+          callIds: ['f1', 'f2', 'f3', 'f4', 'f5'],
+        },
+      }),
+    );
+
+    const deps = routedOrchDeps(cwd2);
+    const baseline = captureRunStartBaseline(cwd2);
+    await driveRoutedImplement(deps, state, [], baseline);
+
+    const reloaded = loadRunState(cwd2, state.runId);
+    // Flash→Pro escalation with flashLastCallId from discovery
+    expect(reloaded.currentPhase).toBe('REPAIR_1');
+    expect(reloaded.nextRoutedRole).toBe('STRONG_EXECUTOR');
+    // flashLastCallId is the LAST callId from discovery (f5)
+    expect(reloaded.flashLastCallId).toBe('f5');
   });
 });

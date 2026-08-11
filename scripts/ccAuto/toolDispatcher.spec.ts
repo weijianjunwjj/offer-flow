@@ -151,6 +151,44 @@ describe('dispatchDeepSeekTool', () => {
     if (!nested.ok) expect(nested.error.reason).toBe('DISPATCH_REENTRY');
   });
 
+  // grep: non-existent directory → FILE_NOT_FOUND (not IO_ERROR)
+  it('grep with non-existent root directory returns FILE_NOT_FOUND', async () => {
+    setupLease();
+    const tc = rawCall('grep', { query: 'hello', roots: ['src/nonexistent-dir'] });
+    const envelope = await dispatchDeepSeekTool(dispatchOpts(tc));
+    expect(envelope.ok).toBe(false);
+    if (!envelope.ok) expect(envelope.error.reason).toBe('FILE_NOT_FOUND');
+  });
+
+  // glob: non-existent directory → FILE_NOT_FOUND (not IO_ERROR)
+  it('glob with non-existent root directory returns FILE_NOT_FOUND', async () => {
+    setupLease();
+    const tc = rawCall('glob', { pattern: '*.txt', roots: ['src/nonexistent-dir'] });
+    const envelope = await dispatchDeepSeekTool(dispatchOpts(tc));
+    expect(envelope.ok).toBe(false);
+    if (!envelope.ok) expect(envelope.error.reason).toBe('FILE_NOT_FOUND');
+  });
+
+  // grep: SCAN_LIMIT_EXCEEDED preserved (not IO_ERROR)
+  it('grep SCAN_LIMIT_EXCEEDED is preserved as-is', async () => {
+    setupLease();
+    vi.spyOn(workspaceRead, 'safeGrep').mockReturnValue({ ok: false, reason: 'SCAN_LIMIT_EXCEEDED', message: 'too many files' });
+    const tc = rawCall('grep', { query: 'anything' });
+    const envelope = await dispatchDeepSeekTool(dispatchOpts(tc));
+    expect(envelope.ok).toBe(false);
+    if (!envelope.ok) expect(envelope.error.reason).toBe('SCAN_LIMIT_EXCEEDED');
+  });
+
+  // glob: SCAN_LIMIT_EXCEEDED preserved (not IO_ERROR)
+  it('glob SCAN_LIMIT_EXCEEDED is preserved as-is', async () => {
+    setupLease();
+    vi.spyOn(workspaceRead, 'safeGlob').mockReturnValue({ ok: false, reason: 'SCAN_LIMIT_EXCEEDED', message: 'too many entries' });
+    const tc = rawCall('glob', { pattern: '*.txt' });
+    const envelope = await dispatchDeepSeekTool(dispatchOpts(tc));
+    expect(envelope.ok).toBe(false);
+    if (!envelope.ok) expect(envelope.error.reason).toBe('SCAN_LIMIT_EXCEEDED');
+  });
+
   // 71. error result does not contain stack trace
   it('error result has no stack trace', async () => {
     setupLease();
