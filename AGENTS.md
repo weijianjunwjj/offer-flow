@@ -617,6 +617,7 @@ AI 不得因为“判断明显”而绕过确认。
 * 每个实施单元完成后更新 Traceability；
 * 用户可见页面必须有真实截图和产品文案验收；
 * 技术完成不得替代产品验收。
+* Spec-Kit 人类可读产物（spec.md、plan.md、tasks.md、checklists/*.md、research.md、data-model.md、quickstart.md，以及 clarify/analyze 产生的人类可读说明）默认使用简体中文。技术标识符、代码、类型名、表名、字段名、枚举、API 路径、CLI 命令和 Git 分支名保持英文。
 
 ### 9.3 权限边界
 
