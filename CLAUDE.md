@@ -21,6 +21,17 @@ AGENTS.md
 
 本文件不复制完整产品和工程规则。
 
+## Cross-project permanent memory
+
+跨项目永久记忆的完整规则只维护在 `AGENTS.md`，本文件不复制第二份。
+
+任务开始前先读取：
+
+`D:/VSCode/obsidian-ai-memory/00-System/AGENT_MEMORY.md`
+
+然后读取并遵守本项目 `AGENTS.md` 中的完整规则。
+
+
 ---
 
 ## 1. 执行前必读
