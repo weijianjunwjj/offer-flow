@@ -10,6 +10,7 @@ import {
 } from '../../../src/domain/job-memory/testFixtures';
 import { openDb } from '../../db';
 import { initSchema } from '../../schema';
+import { LATEST_SCHEMA_VERSION } from '../../migrations';
 import { JobRepository } from '../../repositories/jobRepository';
 import { exportSnapshotToDirectory } from '../../sync/exportSnapshot';
 import { ApplicationRepository } from '../applicationRepository';
@@ -336,13 +337,14 @@ describe('增量架构生产 verifier（v2 底座 + 纯增量升级）', () => {
     }
   });
 
-  it('拒绝未知未来版本 v9', () => {
-    const target = fixtureAt(8);
+  it('拒绝未知未来版本', () => {
+    const target = fixtureAt(LATEST_SCHEMA_VERSION);
     const db = openDb(target.databasePath);
     try {
       db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
-        .run(9, '009_unknown_future', 1);
-      db.prepare("UPDATE app_meta SET value = '9' WHERE key = 'schema_version'").run();
+        .run(LATEST_SCHEMA_VERSION + 1, `${LATEST_SCHEMA_VERSION + 1}_unknown_future`, 1);
+      db.prepare("UPDATE app_meta SET value = ? WHERE key = 'schema_version'")
+        .run(String(LATEST_SCHEMA_VERSION + 1));
     } finally {
       db.close();
     }

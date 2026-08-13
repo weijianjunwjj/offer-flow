@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { openDb } from '../../db';
 import { JobRepository } from '../../repositories/jobRepository';
 import { initSchema } from '../../schema';
+import { LATEST_SCHEMA_VERSION } from '../../migrations';
 import { exportSnapshotToDirectory } from '../../sync/exportSnapshot';
 import { captureCurrentProductionState } from './currentVerification';
 import {
@@ -167,12 +168,13 @@ describe('R0.1 pre-sync 一致性备份', () => {
       expected: RegExp | string;
     }> = [
       {
-        name: '未知未来版本 v9',
-        version: 8,
+        name: '未知未来版本',
+        version: LATEST_SCHEMA_VERSION,
         mutate: (db) => {
           db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)')
-            .run(9, '009_unknown_future', 1);
-          db.prepare("UPDATE app_meta SET value = '9' WHERE key = 'schema_version'").run();
+            .run(LATEST_SCHEMA_VERSION + 1, `${LATEST_SCHEMA_VERSION + 1}_unknown_future`, 1);
+          db.prepare("UPDATE app_meta SET value = ? WHERE key = 'schema_version'")
+            .run(String(LATEST_SCHEMA_VERSION + 1));
         },
         expected: /newer than this application supports/u,
       },
