@@ -1,14 +1,15 @@
 # OfferFlow v0.9 API Contracts
 
 > **Source**: `specs/001-daily-job-hunter/plan.md`  
-> **版本：** 1.0  
+> **版本：** 2.0  
 > **创建日期：** 2026-08-11  
+> **最后修订：** 2026-08-11（Plan Amendment：SearchPlan providerKey 更新，DailyJobBrief 新增 discoveryItems，SourceRun 更新）
 
 本文档记录 v0.9 新增 API 的契约定义。所有路径遵循现有 `/api/*` 约定，沿用 Fastify + loopback + Origin 保护。
 
 ---
 
-## 1. SearchPlan
+## 1. SearchPlan（providerKey 更新）
 
 ### `POST /api/daily-search-plans`
 
@@ -25,14 +26,13 @@
   "roleDirections": ["前端开发", "全栈开发"],
   "baseKeywords": ["React", "TypeScript"],
   "sourceConfigs": [
-    { "providerKey": "jooble", "enabled": true }
+    { "providerKey": "tavily", "searchDepth": "basic", "country": "china", "enabled": true }
   ],
   "schedule": {
     "dailyAt": "09:00"
   },
   "scanBudget": {
-    "maxPagesPerTask": 1,
-    "maxTotalPages": 20
+    "maxQueriesPerRun": 30
   },
   "analysisBudget": {
     "maxAnalysesPerRun": 5
@@ -45,130 +45,17 @@
 }
 ```
 
-**Response** (201):
-```json
-{
-  "plan": {
-    "id": "dsp_abc123",
-    "name": "每日前端岗位",
-    "status": "active",
-    "activeVersionId": "dspv_v1_abc",
-    "createdAt": 1755014400000
-  },
-  "version": {
-    "id": "dspv_v1_abc",
-    "searchPlanId": "dsp_abc123",
-    "version": 1,
-    "cities": [...],
-    "roleDirections": [...],
-    "baseKeywords": [...],
-    "sourceConfigs": [...],
-    "schedule": { "dailyAt": "09:00" },
-    "scanBudget": {...},
-    "analysisBudget": {...},
-    "notificationPolicy": {...},
-    "latestCatchUpTime": "12:00",
-    "createdAt": 1755014400000
-  }
-}
-```
+**Response** (201): 同旧 Plan。
 
-### `GET /api/daily-search-plans`
-
-列出所有 SearchPlan。
-
-**Response** (200):
-```json
-{
-  "plans": [
-    {
-      "id": "dsp_abc123",
-      "name": "每日前端岗位",
-      "status": "active",
-      "activeVersionId": "dspv_v1_abc",
-      "createdAt": 1755014400000,
-      "updatedAt": 1755014400000,
-      "nextScheduledRun": "2026-08-12T09:00:00+08:00"
-    }
-  ]
-}
-```
-
-### `GET /api/daily-search-plans/:id`
-
-获取单个 SearchPlan 详情。
-
-**Response** (200): 包含 plan + active version 完整信息。
-
-### `POST /api/daily-search-plans/:id/versions`
-
-创建新 Version（修改计划）。
-
-**Request Body**: 同创建时的 Version 字段，全部可选（提供则更新）。
-
-**Response** (201): 新 Version 对象。
-
-### `POST /api/daily-search-plans/:id/activate`
-
-激活指定 Version。
-
-**Request Body**:
-```json
-{
-  "versionId": "dspv_v2_def"
-}
-```
-
-**Response** (200): 更新后的 Plan。
-
-### `POST /api/daily-search-plans/:id/pause`
-
-暂停 Plan。此后不再自动执行调度。
-
-**Response** (200): Plan status 变为 `paused`。
-
-### `POST /api/daily-search-plans/:id/resume`
-
-恢复已暂停的 Plan。
-
-**Response** (200): Plan status 变为 `active`。
-
-### `POST /api/daily-search-plans/:id/run-now`
-
-手动触发一次运行。
-
-**Response** (202):
-```json
-{
-  "sourceRun": {
-    "id": "sr_xyz789",
-    "triggerType": "MANUAL",
-    "status": "PENDING",
-    "scheduledFor": 1755014500000
-  }
-}
-```
-
-### `POST /api/daily-search-plans/:id/skip-today`
-
-跳过今天的调度/补偿。已有运行不受影响。
-
-**Response** (200): 确认。
+**其他 SearchPlan 端点**（GET、versions、activate、pause、resume、run-now、skip-today）：同旧 Plan。主要变化：`sourceConfigs` 的 `providerKey` 现在是 `'tavily'`。
 
 ---
 
-## 2. SourceRun
+## 2. SourceRun（Provider-neutral 更新）
 
 ### `GET /api/source-runs`
 
 列出 SourceRun，支持过滤。
-
-**Query Parameters**:
-- `planId` (optional)
-- `status` (optional)
-- `triggerType` (optional)
-- `limit` (default 20)
-- `offset` (default 0)
 
 **Response** (200):
 ```json
@@ -177,7 +64,7 @@
     {
       "id": "sr_xyz789",
       "searchPlanVersionId": "dspv_v1_abc",
-      "sourceKey": "jooble",
+      "sourceKey": "tavily",
       "sourceVersion": "1.0.0",
       "triggerType": "SCHEDULED",
       "status": "SUCCEEDED",
@@ -185,20 +72,29 @@
       "scheduledFor": 1755014400000,
       "startedAt": 1755014401000,
       "finishedAt": 1755014450000,
-      "scannedCount": 42,
-      "ingestedCount": 15,
-      "newCount": 8,
-      "changedCount": 2,
-      "duplicateCount": 5,
+      "queriesAttempted": 24,
+      "queriesSucceeded": 22,
+      "queriesFailed": 2,
+      "resultsDiscovered": 85,
+      "relevantResults": 60,
+      "searchEvidencePersisted": 45,
+      "manualReviewRequired": 20,
+      "fullEvidenceCount": 15,
       "analysisRequestedCount": 10,
       "analysisSucceededCount": 10,
       "selectedCount": 5,
+      "estimatedSearchCredits": 24,
+      "actualSearchCredits": 22,
       "coverageSummary": {
-        "completedTasks": 4,
-        "failedTasks": 0
+        "completedQueries": 22,
+        "failedQueries": 2,
+        "failedScopes": [
+          { "queryKey": "苏州×AI前端", "errorCode": "VALID_EMPTY" }
+        ]
       },
       "costSummary": {
-        "totalRequests": 4,
+        "estimatedSearchCredits": 24,
+        "actualSearchCredits": 22,
         "analysisRequests": 10,
         "model": "deepseek-chat"
       }
@@ -208,45 +104,17 @@
 }
 ```
 
-### `GET /api/source-runs/:id`
+### `GET /api/source-runs/:id` 和操作端点
 
-获取单个 SourceRun 详情。
-
-**Response** (200): 包含完整 coverage、cost 和 error 信息。
-
-### `POST /api/source-runs/:id/retry`
-
-对失败/中断的 Run 创建 RETRY Run。
-
-**Response** (202):
-```json
-{
-  "retryRun": {
-    "id": "sr_retry_abc",
-    "triggerType": "RETRY",
-    "retryOfRunId": "sr_xyz789",
-    "status": "PENDING"
-  }
-}
-```
-
-### `POST /api/source-runs/:id/cancel`
-
-取消 PENDING/RUNNING 的 Run。
-
-**Response** (200): Run status 变为 `CANCELLED`。
+同旧 Plan。响应格式为 Provider-neutral 结构。
 
 ---
 
-## 3. DailyJobBrief
+## 3. DailyJobBrief（新增 discoveryItems）
 
 ### `GET /api/daily-job-briefs`
 
 列出 DailyJobBrief，按日期降序。
-
-**Query Parameters**:
-- `limit` (default 30)
-- `offset` (default 0)
 
 **Response** (200):
 ```json
@@ -269,21 +137,32 @@
 }
 ```
 
-### `GET /api/daily-job-briefs/today`
-
-获取今天的 DailyJobBrief（或最近一份未完成的）。
-
-**Response** (200): brief 对象（可能为 null）。
-
 ### `GET /api/daily-job-briefs/:id`
 
-获取单份 Brief 详情。包含审批进度。
+获取单份 Brief 详情。包含审批进度和发现条目。
 
 **Response** (200):
 ```json
 {
   "brief": { ... },
   "recommendationBatch": { ... },
+  "discoveryItems": [
+    {
+      "candidateId": "rc_006",
+      "candidateVersionId": "rcv_006_v1",
+      "evidenceLevel": "MANUAL_REVIEW_REQUIRED",
+      "sourcePolicy": "SEARCH_ONLY",
+      "title": "高级前端开发工程师",
+      "company": "某科技有限公司",
+      "sourceUrl": "https://www.zhipin.com/job_detail/xxx.html",
+      "sourceDomain": "zhipin.com",
+      "provider": "tavily",
+      "query": "苏州 前端工程师 招聘",
+      "snippet": "负责Web前端开发...",
+      "searchedAt": 1755014400000,
+      "recommendation": "需人工核实的发现——点击原链接确认后可通过 Manual Capture 升级为完整分析"
+    }
+  ],
   "reviewProgress": {
     "total": 5,
     "judged": 3,
@@ -302,389 +181,84 @@
 }
 ```
 
-### `POST /api/daily-job-briefs/:id/complete`
+**关键约束：**
+- `discoveryItems` 是 supplementary 发现条目（SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED）——不是第二套推荐
+- `recommendationBatch` 仍是唯一正式推荐集合（FULL_EVIDENCE 候选，0-8）
+- `discoveryItems` 不经过 MatchAnalysis（无 `analysisRecordId`、无 `recommendation`、`evidenceRefs` 等）
+- `reviewProgress` 只对 recommendationBatch 中的候选进行统计
 
-标记 Brief 为完成。
+### `GET /api/daily-job-briefs/today` 和 `POST .../complete`
 
-**Response** (200): Brief status 变为 `COMPLETED`。
+同旧 Plan。
 
 ---
 
-## 4. JobJudgment
+## 4. JobJudgment（保持，新增 evidenceLevel context）
 
 ### `POST /api/daily-job-briefs/:briefId/items/:candidateId/judgment`
 
-创建四档判断。
+创建四档判断。**请求**同旧 Plan。**响应**新增 evidenceLevel context：
 
-**Request Body**:
-```json
-{
-  "judgment": "VERY_SUITABLE",
-  "reason": {
-    "source": "USER_SELECTED",
-    "reasonCode": "role_direction_match",
-    "reasonText": "React前端主导，方向很匹配"
-  }
-}
-```
-
-**Response** (201):
 ```json
 {
   "judgment": {
     "id": "jj_001",
-    "dailyBriefId": "djb_20260811",
-    "radarCandidateId": "rc_001",
-    "candidateVersionId": "rcv_001_v1",
-    "judgment": "VERY_SUITABLE",
-    "systemRecommendation": "apply_now",
-    "systemConfidence": "high",
-    "judgedAt": 1755014600000,
-    "supersedesJudgmentId": null
-  },
-  "reason": {
-    "id": "jr_001",
-    "judgmentId": "jj_001",
-    "reasonCode": "role_direction_match",
-    "reasonText": "React前端主导，方向很匹配",
-    "polarity": "positive",
-    "source": "USER_SELECTED"
+    "...": "...",
+    "candidateEvidenceLevel": "FULL_EVIDENCE"
   }
 }
 ```
 
-### `PATCH /api/job-judgments/:id`
+`candidateEvidenceLevel` 用于前端区分：FULL_EVIDENCE → 正常审批；SEARCH_EVIDENCE → 提示"信息不足"但仍可判断。
 
-修改已有判断（创建新版本，旧版本保留）。
+### `PATCH /api/job-judgments/:id`、`DELETE /api/job-judgments/:id`、`POST .../reason`
 
-**Request Body**: 同创建。
-
-**Response** (200): 新 judgment + 旧 judgment 被 supersedes。
-
-### `DELETE /api/job-judgments/:id`
-
-撤销判断。关联 Signal 失效，Rule 重算。
-
-**Response** (200):
-```json
-{
-  "reverted": {
-    "id": "jj_001",
-    "revertedAt": 1755014700000
-  },
-  "affectedRules": ["pr_rule_001"]
-}
-```
-
-### `POST /api/job-judgments/:id/reason`
-
-补充/修改理由。
-
-**Request Body**: 同创建时的 reason 字段。
-
-**Response** (200): 新 reason 对象。
+同旧 Plan。
 
 ---
 
-## 5. Preference
+## 5. Preference（保持）
 
-### `GET /api/preference-signals`
-
-列出 PreferenceSignal。
-
-**Query Parameters**:
-- `direction` (optional: `positive` | `negative`)
-- `activeOnly` (default true)
-
-**Response** (200):
-```json
-{
-  "signals": [
-    {
-      "id": "ps_001",
-      "judgmentId": "jj_001",
-      "featureKey": "company_type",
-      "featureValue": { "value": "self_research_team" },
-      "direction": "positive",
-      "strength": "strong",
-      "createdAt": 1755014600000,
-      "invalidatedAt": null
-    }
-  ]
-}
-```
-
-### `GET /api/preference-rules`
-
-列出 PreferenceRule。
-
-**Query Parameters**:
-- `status` (optional: `PROPOSED` | `ACTIVE` | `DISABLED`)
-- `ruleType` (optional)
-
-**Response** (200):
-```json
-{
-  "rules": [
-    {
-      "id": "pr_001",
-      "ruleType": "RANK_BOOST",
-      "featureKey": "company_type",
-      "condition": { "value": "self_research_team" },
-      "effect": { "boost": 2 },
-      "status": "ACTIVE",
-      "explanation": "用户多次认为自研团队岗位非常合适",
-      "activationMode": "THRESHOLD_AUTO",
-      "signalCount": 2,
-      "createdAt": 1755014700000
-    }
-  ]
-}
-```
-
-### `PATCH /api/preference-rules/:id`
-
-更新 PreferenceRule（启用/停用）。
-
-**Request Body**:
-```json
-{
-  "status": "DISABLED"
-}
-```
-
-**Response** (200): 更新后的 rule。
-
-### `DELETE /api/preference-rules/:id`
-
-删除 PreferenceRule。
-
-**Response** (200): Rule status 变为 `DELETED`。
+同旧 Plan。API 响应中新增 `evidenceLevel` context 在必要时展示。
 
 ---
 
-## 6. Notification
+## 6. Notification（保持）
 
-### `GET /api/notification-channels`
-
-列出通知渠道。
-
-**Response** (200):
-```json
-{
-  "channels": [
-    {
-      "id": "nc_email_001",
-      "channelType": "QQ_SMTP_EMAIL",
-      "displayName": "我的QQ邮箱",
-      "status": "ACTIVE",
-      "senderAddress": "xxx@qq.com",
-      "recipientAddress": "xxx@qq.com",
-      "secretRef": "***",
-      "lastTestedAt": 1755014000000,
-      "lastSuccessAt": 1755014500000
-    }
-  ]
-}
-```
-
-### `POST /api/notification-channels/email`
-
-创建/配置 QQ 邮箱渠道。
-
-**Request Body**:
-```json
-{
-  "displayName": "我的QQ邮箱",
-  "senderAddress": "xxx@qq.com",
-  "recipientAddress": "xxx@qq.com",
-  "secret": "你的QQ邮箱SMTP授权码",
-  "config": {
-    "smtpHost": "smtp.qq.com",
-    "smtpPort": 465,
-    "tls": true,
-    "highPriorityEnabled": true,
-    "dailyBriefEnabled": true,
-    "dailyBriefTime": "10:00",
-    "failureNoticeEnabled": true,
-    "quietHours": {
-      "start": "22:00",
-      "end": "08:00"
-    }
-  }
-}
-```
-
-**Response** (201): 创建的 channel 对象（`secretRef` 为 `"***"`）。
-
-### `PATCH /api/notification-channels/:id`
-
-更新渠道配置（可更新 Secret）。
-
-**Response** (200): 更新后的 channel。
-
-### `DELETE /api/notification-channels/:id`
-
-删除渠道。同时删除关联 Secret。
-
-**Response** (200): 确认。
-
-### `POST /api/notification-channels/:id/test`
-
-发送测试邮件。
-
-**Response** (200):
-```json
-{
-  "status": "SENT",
-  "sentAt": 1755014800000
-}
-```
-
-### `GET /api/notifications`
-
-列出通知 Outbox 条目。
-
-**Query Parameters**:
-- `status` (optional)
-- `notificationType` (optional)
-- `limit` (default 50)
-- `offset` (default 0)
-
-**Response** (200):
-```json
-{
-  "notifications": [
-    {
-      "id": "no_001",
-      "notificationType": "DAILY_BRIEF",
-      "status": "SENT",
-      "subject": "【OfferFlow 日报】2026-08-11",
-      "attemptCount": 1,
-      "sentAt": 1755014500000,
-      "linkedEntities": [
-        { "entityType": "DAILY_JOB_BRIEF", "entityId": "djb_20260811" }
-      ]
-    }
-  ]
-}
-```
-
-### `POST /api/notifications/:id/retry`
-
-重试失败的 Outbox 条目。
-
-**Response** (202): 新 status 和 next_retry_at。
+同旧 Plan。Secret 引用 `TAVILY_API_KEY`（替换 `OFFERFLOW_JOOLE_API_KEY`）。
 
 ---
 
-## 7. Local Service / Scheduler
+## 7. Local Service / Scheduler（保持）
 
-### `GET /api/local-service/status`
-
-获取本地服务状态。
-
-**Response** (200):
-```json
-{
-  "online": true,
-  "uptime": 3600000,
-  "autostartEnabled": true,
-  "scheduler": {
-    "status": "RUNNING",
-    "activePlans": 1,
-    "nextScheduledRun": "2026-08-12T09:00:00+08:00",
-    "missedSchedules": []
-  },
-  "outbox": {
-    "pending": 0,
-    "sending": 0,
-    "failedRetryable": 0,
-    "failedFinal": 0
-  }
-}
-```
-
-### `GET /api/scheduler/status`
-
-获取 Scheduler 详细信息。
-
-**Response** (200):
-```json
-{
-  "scheduler": {
-    "status": "RUNNING",
-    "activePlans": [
-      {
-        "planId": "dsp_abc123",
-        "planName": "每日前端岗位",
-        "nextRun": "2026-08-12T09:00:00+08:00",
-        "todayStatus": "COMPLETED"
-      }
-    ]
-  }
-}
-```
-
-### `POST /api/local-service/autostart/enable`
-
-启用开机自启动。
-
-**Response** (200):
-```json
-{
-  "autostartEnabled": true
-}
-```
-
-### `POST /api/local-service/autostart/disable`
-
-禁用开机自启动。
-
-**Response** (200):
-```json
-{
-  "autostartEnabled": false
-}
-```
+同旧 Plan。
 
 ---
 
 ## 8. 安全与错误约定
 
-### 通用错误响应格式
-
-```json
-{
-  "error": {
-    "code": "PLAN_NOT_FOUND",
-    "message": "找岗计划不存在",
-    "requestId": "req_abc123"
-  }
-}
-```
-
-### HTTP Status Codes
-
-| Status | 含义 |
-|--------|------|
-| 200 | 成功（读取） |
-| 201 | 创建成功 |
-| 202 | 已接受（异步任务已创建） |
-| 400 | 请求校验失败 |
-| 404 | 资源不存在 |
-| 409 | 冲突（并发运行、幂等冲突） |
-| 422 | 业务逻辑拒绝（如已暂停的 Plan 不可运行） |
-| 500 | 服务端错误 |
-
-### 安全 Header
-
-- 所有 Radar API 继续受 `assertCaptureRequestAllowed` 保护（loopback + Host + Origin + `x-offerflow-capture-client` header）
-- 公开路由（`/health`）无需鉴权
-- Notification Channel 创建/更新时，`secret` 字段只接受明文（首次配置），API 响应中 `secretRef` 始终返回 `"***"` 掩码
+同旧 Plan。新增：
+- 禁止在 API 响应中暴露 `TAVILY_API_KEY`
+- 禁止在 API 响应中暴露 Tavily raw response metadata（`providerMetadata` 只在内部使用，API 不对外）
+- SourceRun coverage 中 `failedScopes` 不暴露 Provider error detail（仅 errorCode）
+- `discoveryItems[].sourceUrl` 通过 HTTP/HTTPS 白名单校验后返回
 
 ### 不定义的路由
 
-以下明确不提供：
-- `POST /api/local-service/start` — 已停止进程无法 HTTP 自举
-- `GET /source-runs/:id/snapshots` — Snapshot 通过 Radar 事实关系追踪
+保持旧 Plan + 新增：
+- `GET /api/discovery-items` — discovery items 通过 DailyBrief API 获取，不独立暴露
+- `POST /api/content-acquisition/...` — Content Acquisition 是 Pipeline 内部步骤，不暴露独立 API
+
+---
+
+## 9. API 字段新增汇总
+
+| Endpoint | 新增字段 | 说明 |
+|----------|---------|------|
+| `GET /api/daily-job-briefs/:id` | `discoveryItems[]` | SEARCH_EVIDENCE/MANUAL_REVIEW_REQUIRED 发现条目 |
+| `GET /api/daily-job-briefs/:id` | `discoveryItems[].evidenceLevel` | SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED |
+| `GET /api/daily-job-briefs/:id` | `discoveryItems[].sourcePolicy` | SEARCH_ONLY / SEARCH_AND_FETCH / CONDITIONAL_FETCH |
+| `GET /api/source-runs` | `queriesAttempted` 等 | 替换 Jooble-specific 字段 |
+| `GET /api/source-runs` | `estimatedSearchCredits` / `actualSearchCredits` | Cost visibility |
+| `GET /api/source-runs` | `searchEvidencePersisted` / `manualReviewRequired` / `fullEvidenceCount` | Evidence breakdown |
+| POST judgment response | `candidateEvidenceLevel` | 前端区分信息完整度 |

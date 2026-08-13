@@ -15,6 +15,42 @@
 - Q: P0 Active SearchProvider 的来源安全边界：专业招聘平台是否允许作为网页爬虫 Active SearchProvider？ → A: 专业招聘平台（BOSS直聘、拉勾、猎聘、智联招聘、前程无忧等）禁止作为网页爬虫或浏览器自动化 Active SearchProvider。主动 Crawler 仅用于公开公司招聘官网、公开技术社区及允许公开读取的 Open Web 来源。Provider 分为 ApiSearchProvider（官方授权 API）、CompanyCareerProvider（公司官网/公开 ATS）、OpenWebJobProvider（GitHub/掘金/技术社区/公开招聘内容）。专业招聘平台仅通过 Browser Manual Capture 进入 Radar。
 - Q: v0.9 P0 Active SearchProvider 的具体实现方向？ → A: P0 = Jooble REST API（ApiSearchProvider）。认证方式为 API Key（不进 Git、不进日志、Secret 管理）。无需用户招聘平台登录、无需浏览器 Session、无需爬虫。搜索输入映射：keywords、location、salary（来源支持时）、page。搜索输出消费：title、company、location、salary、snippet、source、link、updated、id。缺失字段进入现有 Radar 数据质量机制。分页与预算原则冻结（有限分页、有限 Scan Budget、Provider-specific rate limit），具体实现参数留到 Plan。仅 API 请求成功 + 响应结构有效 + jobs=[] 才属于 valid empty result；API Key 无效/HTTP error/rate limit/timeout/malformed response/provider unavailable 均进入 Coverage Gap/FAILED/ACTION_REQUIRED。P0 验收：连续至少 3 个自然日真实运行，验证 Scheduler 自动触发、Jooble API 返回真实岗位、搜索结果进入统一 Radar Ingestion、重复岗位不重复创建 Candidate、岗位变化进入 CandidateVersion 事实链、Provider 失败不伪装 0 岗位、Coverage 完整可追踪、无无限 retry、无招聘平台网页自动化、至少形成一次真实 MatchAnalysis、一次真实 RecommendationBatch、一次真实 DailyJobBrief。后续 Provider 优先级：Company Career Provider（Next）→ GitHub/掘金/技术社区（Later）。
 
+### Session 2026-08-11 — Amendment: Active Discovery Source Strategy
+
+本 Amendment 是 Jooble 公开市场 Pre-validation 失败后的正式 Specification 变更，撤销 Jooble P0 决策并重新定义 Active Discovery Source Strategy。
+
+- **Jooble Pre-validation: FAIL** — 最初选择 Jooble REST API 作为 P0 Active SearchProvider，但在公开市场 Pre-validation 中，Jooble 对中国大陆目标岗位（苏州、无锡、上海、杭州；前端/AI应用/Full-stack 等技术岗位）覆盖密度不足，分类存在明显噪声，实际岗位价值不足以支撑 v0.9 Daily Job Hunter 的产品目标。这是 **Product Suitability Failure**，不是 Technical Integration Failure。不要因为有 API 就继续保留其 P0 身份。
+
+- **Jooble 当前状态：REJECTED_AFTER_PREVALIDATION** — Jooble 不被删除（保留完整历史记录，包括"为什么当初选、为什么后来撤"），但不再作为 P0 Active SearchProvider，其 Adapter/Secret/Scheduler integration 全部撤销。Jooble 淘汰不推翻 Provider-independent 架构（Shared Radar Ingestion Core、DailySearchPlan、SourceRun、Scheduler 等通用设计保持不变）。
+
+- **撤销 Jooble ≠ 撤销 Active Discovery** — v0.9 的核心能力"用户不需要事先知道目标公司，也不需要每天手工访问所有招聘来源；OfferFlow 根据 SearchPlan 主动在互联网中发现相关岗位机会"仍然是 P0。不得降级成"只处理用户 Manual Capture 的岗位"，否则 v0.9 产品价值发生实质性缩水。
+
+- **新的 P0 Provider 类型：Open Web Search Provider** — 职责：根据 SearchPlan 在整个公开 Web 搜索与用户求职目标相关的招聘信息和岗位页面。典型查询维度：城市 × 岗位方向 × 关键词 × 扩展关键词。搜索结果不得因为来源是专业招聘平台而直接排除。允许被发现的来源包括 BOSS直聘、猎聘、智联招聘、拉勾、前程无忧、公司官网、公开 ATS、GitHub、掘金、技术论坛、开源社区、公开博客、招聘文章、招聘专题页及其他公开 Web 页面。
+
+- **具体 Open Web Search Provider Vendor：Tavily Search API** — Pre-validation 结果：TAVILY_PASS。Tavily Search API（search endpoint only）是 v0.9 P0 Search Discovery Provider。配置：`search_depth=basic`、`country=china`、`include_answer=false`、`include_raw_content=false`。认证方式为 API Key（Bearer token，不进 Git、不进日志、Secret 管理）。P0 只用 Tavily Search——Tavily Crawl/Extract/Map 不在 P0 范围（Content Acquisition 由 Source Policy 决定）。Tavily 官方 ToS 不禁止本地持久化搜索结果，官方 SDK 内置将搜索结果保存到本地数据库的功能。OfferFlow 产品架构天然满足 Tavily 的 human oversight 要求（AI 做发现+分析，用户做最终判断）。Brave Search API 评估结果：BRAVE_FAIL — 基础 Search 计划不授予存储权，获取存储权需要 Enterprise 自定义定价销售流程，不适用于本地优先单用户产品。Google Programmable Search 为 SECONDARY_CANDIDATE（不做 P0）。Bing Search API 为 REJECTED_NOT_AVAILABLE（API 已退役）。Tavily Free tier（1,000 次/月、无需信用卡）足以支持 v0.9 P0 Daily Search Plan。扩展路径明确（Project $25/mo 年付）。Provider 可替换——Search Evidence 模型基于 Tavily/Brave 共同最小语义设计，不绑定 Tavily DTO。
+
+- **核心原则：全网主动发现，按来源权限采集（Discovery != Content Acquisition）** — 两个阶段必须明确分开。Stage 1 — Search Discovery：Open Web Search Provider 可以搜索整个公开互联网，不得在 Search Provider 层建立 zhipin.com、liepin.com、zhaopin.com、lagou.com、51job.com 的硬 denylist——仅仅因为某条搜索结果来自招聘平台不得丢弃。Stage 2 — Content Acquisition：由 Source Policy 决定对某个搜索结果可以自动做到哪一步。
+
+- **Source Policy（产品级）** — 不存在 TypeScript enum/class 级别的定义（留到设计阶段）。产品语义至少包含三种能力级别：
+  - **Policy A — SEARCH_ONLY**：BOSS直聘、猎聘、智联、拉勾、前程无忧等专业招聘平台。允许：Search Discovery、保存搜索证据（title/snippet/url/domain/source/publishedAt/search score）、显示 URL、用户人工访问 → Manual Capture。禁止：自动 Fetch 完整 JD、后台批量抓岗位页面、自动翻页、模拟用户点击、使用用户 Cookie/Token 扫描、绕 CAPTCHA/风控、无限 retry。
+  - **Policy B — SEARCH_AND_FETCH**：满足规则的公司官网 careers、公开 ATS、GitHub、允许自动读取的 Open Web。允许：Search + 有限公开内容 Fetch + 结构化岗位事实。前提：公开可访问、网站规则允许、robots/Terms/usage policy 允许、有限频率、有限 Scan Budget、只读、无需绕登录、无需绕 CAPTCHA。
+  - **Policy C — CONDITIONAL_FETCH**：技术论坛、社区、博客等来源。是否 Fetch 取决于该来源的访问规则、公开程度、robots、Terms 和技术限制。无法确认时默认不自动 Fetch。
+
+- **Evidence Model（产品级）** — 一个岗位被发现 ≠ OfferFlow 已拥有完整 JD。至少存在三种证据等级：
+  - **SEARCH_EVIDENCE**：只有搜索结果 title/snippet/url/source/domain/搜索时间。可以进入发现池、初筛、显示给用户、进入 Daily Brief。但不能假装拥有完整岗位事实。典型场景：BOSS 搜索结果。
+  - **FULL_EVIDENCE**：来源允许自动读取（Policy B），或用户完成 Manual Capture 后，OfferFlow 获得足够岗位事实。可以进入 Radar Precheck、MatchAnalysis、Recommendation reasoning。
+  - **MANUAL_REVIEW_REQUIRED**：Search Evidence 看起来值得看但来源禁止自动 Fetch（Policy A），应明确标记提示用户"打开原岗位确认"，而不是丢掉这个岗位。
+
+- **DailyJobBrief 必须允许混合证据等级** — 每日汇报未来可以同时出现 FULL_EVIDENCE、SEARCH_EVIDENCE 和 MANUAL_REVIEW_REQUIRED 三种状态的岗位。
+
+- **Browser Manual Capture 的角色保持** — 现有 Browser Capture 不删除、不弱化。它现在承担将 SEARCH_ONLY 来源从搜索级证据升级为完整 Radar Evidence 的重要角色（Search API → 发现 BOSS 岗位 → SEARCH_EVIDENCE → 用户打开 BOSS → Manual Capture → FULL_EVIDENCE → Radar/MatchAnalysis）。不要把 Browser Capture 改造成自动招聘平台爬虫。
+
+- **Search Provider 职责边界** — Search Provider 的职责只是搜索、发现 URL、返回 Search Evidence。不是万能 Search + Crawl + Parse Provider。Content Acquisition 是后续独立能力。这样未来 Tavily、Brave 或其他 Search API 都可以替换，而不会改变来源 Fetch Policy。
+
+- **Company Career Provider 的新定位** — 从 P0 主入口降级为 Follow-up Provider / Deep Source。可能来源于 Open Web Search 发现某公司 Careers → Source Quality 高 → 未来持续 Follow。当前 v0.9 P0 不要求用户提前维护目标公司名单。
+
+- **完整的 Active Discovery 概念链**：DailySearchPlan → Open Web Search Provider → Search Result / Search Evidence → Source Policy（SEARCH_ONLY → 初始 Ingestion 产生 SEARCH_EVIDENCE 或 MANUAL_REVIEW_REQUIRED 版本 → Manual Review / Manual Capture；SEARCH_AND_FETCH → 初始 Ingestion 产生 SEARCH_EVIDENCE 版本 → Content Acquisition → 证据验证 → Evidence Upgrade 产生新 FULL_EVIDENCE 版本；CONDITIONAL_FETCH → Policy Decision）→ Data Quality Gate → Analysis → Recommendation → DailyJobBrief（T040）。
+
 ## 用户场景与测试 *(必填)*
 
 ### User Story 1 - 配置每日找岗计划 (Priority: P1)
@@ -35,21 +71,23 @@
 
 ---
 
-### User Story 2 - 通过 SearchProvider 主动发现岗位 (Priority: P1)
+### User Story 2 - 通过 Open Web Search Provider 主动发现岗位 (Priority: P1)
 
-系统根据用户计划主动搜索岗位，发现真实的职位列表，无需用户手动查找或粘贴每个岗位。
+系统根据用户计划主动搜索整个公开互联网，发现真实的职位列表，无需用户手动查找或粘贴每个岗位。
 
-**Why this priority**：这是 v0.9 的核心价值主张——从手动找岗位转变为自动发现。没有可工作的 SearchProvider，每日流水线就没有输入。
+**Why this priority**：这是 v0.9 的核心价值主张——从手动找岗位转变为自动发现。没有可工作的 Search Provider，每日流水线就没有输入。
 
-**Independent Test**：可通过以下方式独立测试：配置带有真实 P0 SearchProvider 的计划，触发一次手动运行，验证 Provider 返回了包含来源 URL、原始文本和结构化字段的真实职位列表。
+**Independent Test**：可通过以下方式独立测试：配置带有真实 P0 Open Web Search Provider 的计划，触发一次手动运行，验证 Provider 返回了包含来源 URL、Search Evidence（title/snippet/url/source/domain）的真实搜索结果列表。
 
 **Acceptance Scenarios**：
 
-1. **Given** 一个带有已配置 SearchProvider 的活跃 DailySearchPlan，**When** 触发 SourceRun（调度或手动），**Then** SearchProvider Adapter 执行搜索，返回 SearchResult 条目，每个条目包含：Provider 身份、岗位 URL、原始文本、结构化字段和采集时间戳。
-2. **Given** 来自 Provider 的 SearchResult 条目，**When** 它们被接收，**Then** 它们进入共享的 RadarIngestionService（与浏览器采集的岗位相同），并产生 captureSessionId=null 的 RadarCaptureSnapshot 条目。
-3. **Given** 一个遇到登录失败的 SearchProvider，**When** 尝试搜索，**Then** SourceRun 记录 WAITING_FOR_USER 状态并带有明确的错误码（而非泛化的"未找到岗位"）。
-4. **Given** 一个受平台频率限制约束的 SearchProvider，**When** 分发搜索任务，**Then** Provider 遵守频率限制，不绕过平台限制。
-5. **[已澄清]** P0 SearchProvider = Jooble REST API（ApiSearchProvider），API Key 认证，无需用户平台登录，无需浏览器 Session，无需爬虫。Provider 可替换——Jooble 仅为首条 Provider，不绑定 Radar/Analysis/Recommendation 核心领域。
+1. **Given** 一个带有已配置 Search Provider 的活跃 DailySearchPlan，**When** 触发 SourceRun（调度或手动），**Then** Search Provider Adapter 执行全网搜索，返回 SearchResult 条目，每个条目包含：Provider 身份、岗位 URL、Search Evidence（title、snippet、source、domain）和采集时间戳。
+2. **Given** 来自 Search Provider 的 SearchResult 条目，**When** 它们被接收，**Then** 根据 Source Policy 决定后续处理：SEARCH_ONLY 来源（专业招聘平台）保存搜索证据并标记 MANUAL_REVIEW_REQUIRED；SEARCH_AND_FETCH 来源（公司官网/公开 ATS/Open Web）在允许时执行 Content Acquisition 后进入 Radar Ingestion；CONDITIONAL_FETCH 来源在无法确认 Fetch 权限时默认不 Fetch。
+3. **Given** 一个遇到登录失败的 Source（Content Acquisition 阶段），**When** 尝试 Fetch，**Then** SourceRun 记录 WAITING_FOR_USER 状态并带有明确的错误码（而非泛化的"未找到岗位"）。
+4. **Given** 一个受频率限制约束的 Search Provider，**When** 分发搜索任务，**Then** Provider 遵守频率限制，不绕过平台限制。
+5. **[已澄清]** P0 Provider 类型 = Open Web Search Provider（根据 SearchPlan 在整个公开 Web 搜索相关招聘信息和岗位页面）。典型查询维度：城市 × 岗位方向 × 关键词 × 扩展关键词。搜索结果不得因为来源是专业招聘平台而直接排除。具体 P0 Vendor 仍为 NEEDS CLARIFICATION（候选：Tavily、Brave Search API 等）。Provider 可替换——Open Web Search Provider 不绑定 Radar/Analysis/Recommendation 核心领域。
+6. **[已澄清]** 专业招聘平台（BOSS直聘、猎聘、智联、拉勾、前程无忧等）的岗位链接允许出现在 Search Discovery 结果中。禁止在 Search Provider 层建立 zhipin.com/liepin.com 等硬 denylist。这些来源的发现采用 Policy A（SEARCH_ONLY）——保存 Search Evidence、显示 URL、用户人工访问和 Manual Capture，禁止自动 Fetch 完整 JD。
+7. **[已澄清]** Jooble REST API 状态为 REJECTED_AFTER_PREVALIDATION。原因：中国大陆技术岗位覆盖不足、苏州/无锡等核心城市有效前端岗位密度不足、搜索结果存在明显职位分类噪声、API 易接入不能弥补数据价值不足。Jooble 历史记录保留，但不再作为 P0 Provider。
 
 ---
 
@@ -290,8 +328,13 @@
 ### 边缘情况
 
 - **后端服务未运行**：无调度运行执行。UI 显示"OfferFlow 本地服务未运行。定时找岗不会执行。"不显示"从网页启动服务"按钮（一个已停止的进程无法通过 HTTP 启动自身）。
-- **SearchProvider 验证码/安全验证触发**：Provider 记录明确的 CAPTCHA_DETECTED / SECURITY_CHECK_REQUIRED 错误码。不绕过验证。不无限重试。SourceRun 转为 WAITING_FOR_USER。**Note**: Jooble API Provider 无浏览器交互，此场景主要适用于未来 Crawler 类型 Provider 访问公开 Web 时遭遇防护。专业招聘平台（BOSS等）不通过 Crawler 访问，此类风险只存在于 Browser Manual Capture 场景，由用户人工完成验证后继续。
-- **API Provider 对所有任务组合返回零结果**：仅当 API 请求成功 + 响应结构有效 + jobs=[] 时，才属于 valid empty result。覆盖报告显示 scanned=0。DailyBrief 以 emptyReason="所有搜索范围均未返回职位列表"生成。以下均不得记为"今天没有岗位"：API Key 无效、HTTP error、rate limit、timeout、response malformed、provider unavailable——这些必须进入 Coverage Gap / FAILED / ACTION_REQUIRED 中的适当状态。
+- **Search API 返回 BOSS/猎聘/智联等专业招聘平台岗位（Source Policy A — SEARCH_ONLY）**：保存 Search Evidence（title、snippet、url、source、domain、搜索时间），标记为 MANUAL_REVIEW_REQUIRED。**不自动 Fetch BOSS/猎聘/智联等页面**。不将 snippet 当完整 JD 处理。允许用户点击原岗位链接打开确认。用户可通过 Manual Capture 将 SEARCH_EVIDENCE 升级为 FULL_EVIDENCE 后进入正式 MatchAnalysis。
+- **Search API 返回公司官网/公开 ATS 岗位（Source Policy B — SEARCH_AND_FETCH）**：在满足公开可访问、robots/Terms 允许、有限频率、只读、无需绕登录/CAPTCHA 等前提后，可自动 Fetch 并结构化岗位事实。岗位先经 Initial Discovery Ingestion 落为 SEARCH_EVIDENCE 的 CandidateVersion（Content Acquisition 本身不写 DB、不产生 FULL_EVIDENCE）；随后 Content Acquisition 的 Fetch 结果经 JD 完整性/证据验证，仅当验证通过并经显式 evidence_upgrade 后才创建新的 FULL_EVIDENCE 的 CandidateVersion（升级是版本事件，不原地覆写原 SEARCH_EVIDENCE 版本），进而 Analysis eligible。Fetch 成功本身不等于 FULL_EVIDENCE。
+- **Search API 返回来源未知网站（Source Policy C — CONDITIONAL_FETCH）**：无法确认自动 Fetch 是否允许时 → 默认不 Fetch → 保留 Search Evidence → 标记 MANUAL_REVIEW_REQUIRED（或后续 Policy Decision 更新）。
+- **Search Evidence 很匹配但信息不足**：保留 Candidate + SEARCH_EVIDENCE。标记 MANUAL_REVIEW_REQUIRED 并提示用户"打开原岗位确认"。**不得丢弃**。
+- **Search API 搜到同一岗位多个来源**：进入现有 Radar Identity / Relation 机制。不因为来源不同建立 Shadow Candidate。
+- **Content Acquisition 阶段遭遇验证码/安全验证**：Provider 记录明确的 CAPTCHA_DETECTED / SECURITY_CHECK_REQUIRED 错误码。不绕过验证。不无限重试。SourceRun 转为 WAITING_FOR_USER。注意：Open Web Search Provider（Search Discovery 阶段）本身不触发验证码——此场景适用于 Content Acquisition 阶段对 Policy B/C 来源做 Fetch 时遭遇防护。专业招聘平台（BOSS等）不通过 Crawler 做 Content Acquisition，此类风险主要存在于 Browser Manual Capture 场景（由用户人工完成验证后继续）。
+- **Search Provider 对所有任务组合返回零结果**：仅当 API 请求成功 + 响应结构有效 + 实际返回空结果列表时，才属于 valid empty result。覆盖报告显示 scanned=0。DailyBrief 以 emptyReason="所有搜索范围均未返回职位列表"生成。以下均不得记为"今天没有岗位"：API Key 无效、HTTP error、rate limit、timeout、response malformed、provider unavailable——这些必须进入 Coverage Gap / FAILED / ACTION_REQUIRED 中的适当状态。
 - **多个关键词命中同一外部岗位**：该岗位的 Candidate 只创建一次（通过规范化来源 URL 身份）。SourceRecord 和 CandidateVersion 反映一个岗位，而非重复项。Snapshot 记录哪些关键词命中。无重复分析或通知。
 - **服务进程在 SourceRun 中途崩溃**：重启时，中断的运行被标记为 INTERRUPTED。可创建新的 RETRY SourceRun。由于摄入和分析均幂等，不创建重复事实。
 - **SMTP 服务器返回临时失败**：Outbox 条目转为 FAILED_RETRYABLE 并进行有限退避。SourceRun、Candidate、Analysis、RecommendationBatch 和 DailyJobBrief 不回滚。
@@ -302,7 +345,7 @@
 - **手动触发与调度运行并发**：以明确消息拒绝——每个计划同时最多一个活跃运行。
 - **用户 QQ 邮箱已满或拒收邮件**：Outbox 记录 FAILED_FINAL 及 SMTP 错误。DailyBrief 和 Judgment 数据不受影响。
 - **岗位在发现后被来源删除**：该岗位已有的 CandidateVersion 和分析保留在 OfferFlow 中。未来重新检查可能检测到岗位不可用，但这记录在 SourceRecord 元数据中——Candidate 不被删除。
-- **Crawler 命中爬虫防护或频率限制**：Provider 记录明确的 RATE_LIMITED 错误码。不绕过防护，进入有限退避。连续触发时 SourceRun 转为 WAITING_FOR_USER。
+- **Content Acquisition 命中爬虫防护或频率限制**：Provider 记录明确的 RATE_LIMITED 错误码。不绕过防护，进入有限退避。连续触发时 SourceRun 转为 WAITING_FOR_USER。
 - **OpenWebJobProvider 检测到内容不是招聘信息**：匹配结果标记为 low_confidence 或 false_positive。不强行创建 Candidate。SourceRun coverage 中记录 matched_but_rejected 计数。
 - **公司官网招聘页面结构发生实质性变化**：与专业招聘平台的 DOM 变化类似——解析失败显式标记为 PROVIDER_STRUCTURE_CHANGED，不静默返回 0 结果。已成功解析的岗位不受影响。
 
@@ -323,13 +366,13 @@
 
 #### 主动发现
 
-- **FR-009**：系统必须支持 P0 Active SearchProvider = Jooble REST API（ApiSearchProvider）。认证方式：API Key（不进 Git、不进日志、使用 Secret 管理；无效 Key 必须显式失败）。认证不需要用户招聘平台登录、不需要浏览器 Session、不需要爬虫。搜索输入映射：keywords、location、salary（来源支持时）、page。搜索输出消费 Provider 实际提供的：title、company、location、salary、snippet、source、link、updated、id。缺失字段进入现有 Radar 数据质量机制，不伪造。Provider 返回的 source 字段必须保存用于来源追踪。分页与 Scan Budget 原则冻结（有限分页、有限 Scan Budget、Provider-specific rate limit；达到预算即停止）；具体默认值留到 Plan。Provider 类型分为：ApiSearchProvider（官方授权 API，如 Jooble）、CompanyCareerProvider（公司官网/公开 ATS，待后续实现）、OpenWebJobProvider（GitHub/掘金/技术社区/公开招聘内容，待后续实现）。专业招聘平台（BOSS直聘、拉勾、猎聘、智联招聘、前程无忧等）禁止作为网页爬虫或浏览器自动化 Active SearchProvider 接入；主动 Crawler 仅用于公开公司招聘官网、公开技术社区及其他允许公开读取的 Open Web 招聘来源。专业招聘平台的岗位只通过现有 Browser Manual Capture 进入 Radar。
-- **FR-010**：SearchProviderAdapter 必须返回 SearchResult 条目，包含：Provider 身份、来源 URL、原始文本/可见内容、Provider 结构化字段、采集时间戳和抓取元数据——而非 Candidate 领域实体。
+- **FR-009**：系统必须支持 P0 Active Search Provider = Open Web Search Provider。P0 Vendor = Tavily Search API（Pre-validation 结果：TAVILY_PASS；Brave Search API 因持久化权限在基础计划不授予而 FAIL；Google Programmable Search 为 Secondary Candidate；Bing Search API 为 REJECTED_NOT_AVAILABLE——API 已退役）。Tavily Search 配置：`search_depth=basic`（1 credit/search）、`country=china`、`topic=general`、`include_answer=false`、`include_raw_content=false`。认证方式为 Bearer Token API Key（不进 Git、不进日志、使用 Secret 管理；无效 Key 必须显式失败）。P0 只用 Tavily Search endpoint——Tavily Crawl/Extract/Map 不在 P0 范围（Content Acquisition 由 Source Policy 决定）。Tavily Free tier：1,000 次/月免费、无需信用卡（足以支持 v0.9 P0 Daily Search Plan，预计 ~720 次/月）。扩展路径：Project $25/mo 年付（4,000 次/月）。付费扩展不绑定 Tavily DTO——Search Evidence 模型基于 Tavily/Brave 共同最小语义设计，Provider 可替换。Tavily 的 human oversight ToS 要求天然满足（OfferFlow AI 做发现+分析，用户做最终判断，不产生自动化就业决策）。搜索结果持久化权利已确认（Tavily Platform Terms 不禁止本地持久化 Output，官方 SDK 内置本地数据库存储功能）。
+- **FR-010**：SearchProviderAdapter 必须返回 SearchResult 条目，包含：Provider 身份、Source Policy（SEARCH_ONLY/SEARCH_AND_FETCH/CONDITIONAL_FETCH）、Search Evidence（title、snippet、url、domain、source、publishedAt 如存在、search score/rank 如存在）、采集时间戳和抓取元数据——而非 Candidate 领域实体。Search Provider 的职责只是搜索、发现 URL、返回 Search Evidence。Content Acquisition 是后续独立能力。
 - **FR-011**：系统必须将所有 SearchResult 条目通过共享的 RadarIngestionService 进入，该服务处理：快照创建、身份识别（规范化 URL）、指纹计算、实质性变化检测、Candidate/CandidateVersion 创建和 SourceRecord 管理——无论来源是主动搜索还是浏览器采集。
 - **FR-012**：系统必须允许主动搜索来源的 Snapshot 的 captureSessionId 为 null，无需创建第二种 Snapshot 变体或表。
-- **FR-013**：浏览器扩展必须仅作为 Manual Capture Source——不得通过添加后台扫描能力将其扩展为 Active SearchProvider。专业招聘平台（BOSS直聘、拉勾、猎聘、智联招聘、前程无忧等）禁止作为网页爬虫或浏览器自动化 Active SearchProvider。这些平台仅通过用户人工浏览 → Browser Manual Capture → Radar 链入系统。
-- **FR-013a**：主动 Crawler 仅允许用于：公司官方招聘网站（公开 careers 页面/ATS）、公开技术社区（GitHub、掘金、开源社区招聘板块、公开 Issue/Discussion/Post 中的招聘内容）及其他允许公开读取的 Open Web 招聘来源。Crawler 必须遵守 robots/网站公开规则、有限频率、有限 Scan Budget，不得绕登录、绕验证码或攻击风控。
-- **FR-013b**：如果未来某专业招聘平台提供明确授权的官方 API，可作为独立 Provider Proposal 重新评估，通过 ApiSearchProvider 接入。API 接入不属于网页爬虫。
+- **FR-013**：浏览器扩展必须仅作为 Manual Capture Source——不得通过添加后台扫描能力将其扩展为 Active SearchProvider。专业招聘平台（BOSS直聘、拉勾、猎聘、智联招聘、前程无忧等）禁止作为网页爬虫或浏览器自动化 Content Acquisition 目标。这些平台仅通过以下链进入系统：Search Discovery（Open Web Search Provider 发现 → 保存 Search Evidence + URL）→ 用户人工浏览 → Browser Manual Capture → Radar（FULL_EVIDENCE）。
+- **FR-013a**：Content Acquisition（自动 Fetch 岗位内容）仅允许用于 Policy B（SEARCH_AND_FETCH）来源：公司官方招聘网站（公开 careers 页面/ATS）、公开技术社区（GitHub、掘金、开源社区招聘板块、公开 Issue/Discussion/Post 中的招聘内容）及其他允许公开读取的 Open Web 招聘来源。必须满足以下所有前提：公开可访问、网站规则允许、robots/Terms/usage policy 允许、有限频率、有限 Scan Budget、只读、无需绕登录、无需绕 CAPTCHA。Policy C（CONDITIONAL_FETCH）来源无法确认 Fetch 权限时默认不自动 Fetch。
+- **FR-013b**：如果未来某专业招聘平台提供明确授权的官方 API（不是网页爬虫），可作为独立 Provider Proposal 重新评估，通过特定的 Api Provider 接入。API 接入不属于网页爬虫。但 v0.9 P0 不依赖此假设——当前专业招聘平台的所有入口均为 Search Discovery + Manual Capture。
 
 #### 覆盖与汇报
 
@@ -411,14 +454,33 @@
 - **FR-059**：SearchProvider 必须在请求之间实现频率限制。外部岗位页面必须视为不可信输入。
 - **FR-060**：SMTP 授权码必须加密存储，不入 Git、不入明文日志、不入普通数据库备份，API 响应不得返回明文 Secret。
 
+#### Source Policy 与 Evidence Model（v0.9 Spec Amendment 新增）
+
+- **FR-061**：系统必须实现 Source Policy 机制，在 Search Discovery 之后、Content Acquisition 之前决定对某个来源可以自动做到哪一步。Source Policy 至少包含三种能力级别：Policy A（SEARCH_ONLY——仅搜索发现，不自动 Fetch）、Policy B（SEARCH_AND_FETCH——搜索 + 公开内容自动 Fetch）、Policy C（CONDITIONAL_FETCH——根据来源规则决定是否 Fetch，默认不 Fetch）。
+- **FR-062**：Policy A（SEARCH_ONLY）必须应用于专业招聘平台（BOSS直聘、猎聘、智联、拉勾、前程无忧等）。允许：保存 Search Evidence（title、snippet、url、source、domain、搜索时间）、显示 URL、用户人工访问 → Manual Capture。禁止：自动 Fetch 完整 JD、后台批量抓岗位页面、自动翻页、模拟用户点击、使用登录 Session 批量发现、绕 CAPTCHA/风控、无限重试。
+- **FR-063**：系统禁止在 Search Provider 层建立 zhipin.com、liepin.com、zhaopin.com、lagou.com、51job.com 等专业招聘平台域名的硬 denylist。Search Discovery 的结果不得因为来源是专业招聘平台而直接丢弃——仅根据 Source Policy 决定后续 Content Acquisition 行为。
+- **FR-064**：Policy B（SEARCH_AND_FETCH）可应用于公司官网 careers、公开 ATS、GitHub 以及允许自动读取的 Open Web 招聘来源。前提必须满足：公开可访问、网站规则允许（robots/Terms/usage policy）、有限频率、有限 Scan Budget、只读、无需绕登录、无需绕 CAPTCHA。
+- **FR-065**：Policy C（CONDITIONAL_FETCH）必须用于无法确认 Fetch 权限的来源（技术论坛、社区、博客等）。默认行为是不自动 Fetch，保留 Search Evidence。仅在后续 Source Policy Decision 明确允许后才可 Fetch。
+- **FR-066**：系统必须区分三种 Evidence Level：SEARCH_EVIDENCE（只有搜索结果 title/snippet/url/source/domain/搜索时间，不可用于正式 MatchAnalysis）、FULL_EVIDENCE（完整岗位事实，可用于 MatchAnalysis/Recommendation reasoning）、MANUAL_REVIEW_REQUIRED（Search Evidence 值得查看但来源禁止自动 Fetch，提示用户打开原岗位确认，不得丢弃）。
+- **FR-067**：DailyJobBrief 必须能够同时呈现不同 Evidence Level 的岗位（FULL_EVIDENCE → 已做正式分析；SEARCH_EVIDENCE → 搜索发现，有限初筛；MANUAL_REVIEW_REQUIRED → 值得查看，需用户打开原站确认）。
+- **FR-068**：Search Provider 的职责仅限于搜索、发现 URL、返回 Search Evidence——不得定义为万能 Search + Crawl + Parse Provider。Content Acquisition 是后续独立能力，由 Source Policy 和 Content Fetcher（非 Search Provider）负责。这保证未来 Tavily、Brave 或其他 Search API 均可替换而不改变来源 Fetch Policy。
+- **FR-069**：系统不得将 Company Career Provider（公司官网监控）设为 Active Discovery 的主入口——因为产品不能要求用户先维护 5～10 家目标公司名单才能主动找岗位。用户只需维护城市、岗位方向、关键词和基础过滤条件。OfferFlow 自己发现"哪个公司正在招"。Company Career 降级为 Follow-up Provider / Deep Source（未来由 Open Web Search 发现某公司 Careers → Source Quality 高 → Follow）。
+- **FR-070**：系统必须保留现有 Browser Manual Capture 能力，不删除、不弱化。Browser Manual Capture 现在承担将 SEARCH_ONLY 来源（专业招聘平台）从 SEARCH_EVIDENCE 升级为 FULL_EVIDENCE 的关键角色（Search API → 发现 BOSS 岗位 → SEARCH_EVIDENCE → 用户打开 BOSS → Manual Capture → FULL_EVIDENCE → Radar/MatchAnalysis）。Browser Capture 不得被改造成自动招聘平台爬虫。
+- **FR-071**：P0 Open Web Search Provider 的具体 Vendor 当前为 NEEDS CLARIFICATION。候选包括 Tavily、Brave Search API、Bing、Google 及其他正式 Search API。下一次 Provider 选择的验收标准顺序冻结为：（1）苏州/无锡/上海/杭州真实岗位发现能力 →（2）前端/AI应用/Full-stack 技术岗位相关性 →（3）全网覆盖能力 →（4）能否发现专业招聘平台岗位链接 →（5）能否发现公司官网/GitHub/Open Web 岗位 →（6）Search result 质量 →（7）时效性 →（8）API 稳定性 →（9）合规与使用边界 →（10）成本 →（11）API/SDK 易用程度。必须首先拿真实查询做 Pre-validation 才允许进入正式 Provider Implementation。
+
+#### Data Quality Gate（保持，补充 Evidence 上下文）
+
+- **FR-072**：Data Quality Gate 继续保留：Discovery eligible ≠ Analysis eligible。SEARCH_EVIDENCE 岗位（如 BOSS 搜索结果 title + snippet + URL）可以 Discovery Eligible = YES，但 Analysis Eligible = NO——这完全正常。AI 不得根据 snippet 编造完整 JD。只有当 Source Policy 允许 Auto Fetch 且 Content Acquisition 成功并通过 JD 完整性验证（经显式 evidence_upgrade），或用户完成 Manual Capture 后，岗位才获得 FULL_EVIDENCE 并可进入正式 MatchAnalysis。
+
 ### 关键实体
 
 - **DailySearchPlan**：用户的找岗配置——城市、岗位方向、关键词、约束、来源配置、调度、预算、通知策略。拥有不可变的 DailySearchPlanVersion。
 - **DailySearchPlanVersion**：计划配置在某一时点的不可变快照。每个 SourceRun 引用一个特定版本。
 - **SourceRun**：一次发现流水线的执行——触发类型（SCHEDULED/CATCH_UP/MANUAL/RETRY）、状态、阶段、覆盖计数、成本摘要、错误。引用一个 PlanVersion。
-- **SearchProviderAdapter**：主动岗位来源的接口。返回 SearchResult 条目（Provider 身份、URL、原始文本、结构化字段），但不拥有 Candidate 语义。Provider 产品级分类：ApiSearchProvider（官方授权 API）、CompanyCareerProvider（公司官网/公开 ATS）、OpenWebJobProvider（GitHub/掘金/技术社区/公开招聘内容）。专业招聘平台不通过 Crawler 接入，只通过 Browser Manual Capture 进入 Radar。
-- **SearchResult**：来自 SearchProvider 的原始输出——Provider 与 RadarIngestionService 之间的中间层。
-- **RadarIngestionService**：将来自主动搜索和浏览器采集两方面的岗位摄入现有 Radar 领域链的共享服务。
+- **SearchProviderAdapter**：主动岗位来源的接口。P0 = Open Web Search Provider = Tavily Search API（search endpoint only，`search_depth=basic`、`country=china`；Tavily Crawl/Extract/Map 不在 P0 范围）。返回 SearchResult 条目（Search Evidence：title、url、content/snippet、score、domain/source），但不拥有 Candidate 语义。不负责 Content Acquisition。Provider 产品级分类：OpenWebSearchProvider（全网搜索，P0 = Tavily）、CompanyCareerProvider（公司官网/公开 ATS，Follow-up）、OpenWebJobProvider（GitHub/掘金/技术社区/公开招聘内容，Later）。Jooble REST API 状态为 REJECTED_AFTER_PREVALIDATION（Product Suitability Failure）。Brave Search API 状态为 BRAVE_FAIL（基础计划无存储权，Enterprise 需自定义定价）。专业招聘平台的 Search Discovery 是合法且期望的，但 Content Acquisition 受 Policy A（SEARCH_ONLY）限制。
+- **SearchResult**：来自 SearchProvider 的原始输出——Search Evidence 的容器（不假定包含完整 JD 文本）。后续由 Source Policy 决定是否可以进入 Content Acquisition。
+- **SourcePolicy**：产品级策略，决定某个 Search Result 被发现后可以对这个来源自动做到哪一步。三种级别：SEARCH_ONLY（仅搜索发现）、SEARCH_AND_FETCH（搜索 + 公开内容 Fetch）、CONDITIONAL_FETCH（根据规则决定）。
+- **RadarIngestionService**：将来自主动搜索（Content Acquisition 成功后）和浏览器采集两方面的岗位摄入现有 Radar 领域链的共享服务。SEARCH_EVIDENCE 岗位在升级为 FULL_EVIDENCE 之前不进入正式 Analysis。
 - **DailyJobBrief**：每日执行结果、覆盖、推荐引用、邮件状态和审批进度的容器。引用（不复制）RecommendationBatch。
 - **JobJudgment**：用户对推荐岗位的四档评估——绑定 CandidateVersion、MatchAnalysis、DailyBrief 和原始系统建议。
 - **JudgmentReason**：用户对判断的陈述理由——明确标记为 USER_SELECTED、USER_TEXT 或 AI_EXTRACTED。AI 派生理由不得与用户陈述混淆。
@@ -431,7 +493,7 @@
 
 ### 可测量结果
 
-- **SC-001**：系统连续至少 3 个自然日真实运行 Jooble API，Scheduler 自动触发、Provider 返回真实岗位、搜索结果进入统一 Radar Ingestion、重复岗位不重复创建 Candidate、岗位变化进入 CandidateVersion 事实链、Provider 失败不伪装 0 岗位、Coverage 完整可追踪、至少形成一次真实 MatchAnalysis、一次真实 RecommendationBatch、一次真实 DailyJobBrief。
+- **SC-001**：系统连续至少 3 个自然日真实运行 P0 Open Web Search Provider，Scheduler 自动触发、Provider 返回真实岗位搜索结果、搜索结果进入统一 Radar Ingestion（SEARCH_EVIDENCE 岗位保存为 Discovery Candidate；FULL_EVIDENCE 岗位进入正式 CandidateVersion 事实链）、重复岗位不重复创建 Candidate、岗位变化进入 CandidateVersion 事实链、Provider 失败不伪装 0 岗位、Coverage 完整可追踪、至少形成一次真实 MatchAnalysis（来自 FULL_EVIDENCE 岗位）、一次真实 RecommendationBatch、一次真实 DailyJobBrief（可包含混合 Evidence Level）。
 - **SC-002**：每日推荐岗位审查的中位时间不超过 15 分钟。
 - **SC-003**：无追问判断平均每个岗位不超过 3 秒。
 - **SC-004**：平均自动追问次数保持在每个岗位 0.35 次或以下。
@@ -452,7 +514,7 @@
 - 用户电脑将 OfferFlow 后端服务作为长期进程运行（Windows 支持操作系统自启动）。
 - QQ SMTP 可用，用户能够获取 SMTP 授权码。
 - v0.8 已在 RadarRuleAssessment.category 枚举中预留 'preference' 类别，可以无需 schema migration 即可激活，或为 'preference' 类别做最小 migration 也是可接受的。
-- P0 SearchProvider（Jooble REST API）已在 V9-0 澄清阶段冻结。API Key 认证，无需用户平台登录或浏览器 Session。
+- P0 SearchProvider 类型（Open Web Search Provider）已在 V9-0 澄清阶段冻结。P0 Vendor = Tavily Search API（Pre-validation：TAVILY_PASS）。配置：`search_depth=basic`、`country=china`、`include_answer=false`、`include_raw_content=false`。Brave Search API = BRAVE_FAIL（持久化权在基础计划不授予）。Google Programmable Search = Secondary Candidate。Bing Search API = REJECTED_NOT_AVAILABLE（API 已退役）。API Key 认证，无需用户平台登录或浏览器 Session。Tavily Free tier（1,000 次/月、无信用卡）足以支持 P0。Discovery != Content Acquisition——Tavily Search 只负责搜索发现，Tavily Crawl/Extract/Map 不在 P0 范围，Content Acquisition 由 Source Policy 决定。
 - DeepSeek 仍为活跃的 AI 分析 Provider；PreferenceSignal 提取和追问生成可使用同一 Provider 或轻量模型。
 - v0.9 新增表（daily_search_plans、daily_search_plan_versions、source_runs、daily_job_briefs、job_judgments、judgment_reasons、preference_signals、preference_rules、notification_channels、notification_outbox、notification_links）将通过显式的、经过测试的 migration 在新的 schema 版本（v9 或 v10）上创建，不修改 v8 表。
 - 邮件内容为纯文本或安全的 HTML（无原始 JD HTML 注入）。
@@ -461,7 +523,7 @@
 ## 不在范围内
 
 - 自动投递、自动打招呼、自动上传简历或自动添加 HR
-- 专业招聘平台（BOSS直聘、拉勾、猎聘、智联招聘、前程无忧等）的网页爬虫、浏览器自动化、自动翻页或后台批量抓取
+- 专业招聘平台（BOSS直聘、拉勾、猎聘、智联招聘、前程无忧等）的**后台自动网页爬取**——禁止：后台批量抓岗位页面、自动翻页、使用招聘平台登录 Session 批量采集、自动绕 CAPTCHA/风控。注意：专业招聘平台的岗位链接**允许**出现在 Search Discovery 结果中，仅自动 Content Acquisition 被禁止——不得写成"BOSS/猎聘/智联等不得出现在搜索结果中"
 - 绕过验证码、登录校验、安全验证或平台风控机制
 - iOS App
 - 手机端正式岗位审批和判断
