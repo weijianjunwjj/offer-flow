@@ -47,6 +47,7 @@ const V6 = '006_v0_7_strategy_window_schema';
 const V7 = '007_v0_8_radar_domain_schema';
 const V8 = '008_v0_8_radar_candidate_relations_schema';
 const V10 = '010_v0_9_daily_search_plan_schema';
+const V11 = '011_v0_9_source_run_schema';
 
 export const OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY: readonly OfferFlowTableRegistryEntry[] = [
   { name: 'analysis_tasks', migrationVersion: 7, migrationName: V7, classification: 'runtime-task-state', primaryModules: ['server/radar/analysisTaskRepository', 'server/radar/analysis'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '持久化任务状态同时保存不可替代的 input snapshot 与分析 input_hash 关联，恢复后仍需可靠重试和 revision 审计。' },
@@ -85,6 +86,7 @@ export const OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY: readonly OfferFlowTableRegistry
   { name: 'radar_source_records', migrationVersion: 7, migrationName: V7, classification: 'authoritative-business', primaryModules: ['server/radar/sourceRecordRepository', 'server/radar/commitService'], foreignKeys: ['radar_capture_snapshots'], includedInHostSnapshotV3: true, reason: '来源身份与最后不可变快照指针。' },
   { name: 'resume_versions', migrationVersion: 2, migrationName: V2, classification: 'authoritative-business', primaryModules: ['server/job-memory/resumeVersionRepository'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '正式简历不可变版本。' },
   { name: 'schema_migrations', migrationVersion: 0, migrationName: 'migration-runner-metadata', classification: 'migration-meta', primaryModules: ['server/migrations'], foreignKeys: [], includedInHostSnapshotV3: false, reason: '候选库由当前受信 migration bootstrap 确定性重建；不得从数据快照覆盖 migration 事实。' },
+  { name: 'source_runs', migrationVersion: 11, migrationName: V11, classification: 'runtime-task-state', primaryModules: ['server/source-run'], foreignKeys: ['daily_search_plan_versions', 'source_runs'], includedInHostSnapshotV3: true, reason: '一次主动发现运行的身份与覆盖/计数 provenance，DailyJobBrief 的 sourceRunIds 来源链。' },
   { name: 'strategy_meta', migrationVersion: 6, migrationName: V6, classification: 'authoritative-business', primaryModules: ['server/strategy-window'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '策略 active version 权威指针。' },
   { name: 'strategy_proposals', migrationVersion: 6, migrationName: V6, classification: 'authoritative-business', primaryModules: ['server/strategy-window'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '策略提案与人工裁决历史。' },
   { name: 'strategy_receipts', migrationVersion: 6, migrationName: V6, classification: 'temporary-audit', primaryModules: ['server/strategy-window/repository'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '策略命令幂等权威回执。' },
