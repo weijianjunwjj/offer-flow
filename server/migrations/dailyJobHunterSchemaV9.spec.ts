@@ -7,7 +7,6 @@ import type Database from 'better-sqlite3';
 import { openDb } from '../db';
 import {
   DAILY_JOB_HUNTER_SCHEMA_VERSION,
-  LATEST_SCHEMA_VERSION,
   SCHEMA_MIGRATIONS,
   runMigrations,
 } from '../migrations';
@@ -91,9 +90,9 @@ function migrationRecords(db: Database.Database): Array<{ version: number; name:
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('v9 Migration: dailyJobHunterSchemaV9', () => {
-  it('fresh DB creates all v1-v9 schemas and reaches LATEST_SCHEMA_VERSION', () => {
+  it('fresh DB creates all v1-v9 schemas', () => {
     withTempDatabase((db) => {
-      const result = runMigrations(db, { targetVersion: LATEST_SCHEMA_VERSION });
+      const result = runMigrations(db, { targetVersion: DAILY_JOB_HUNTER_SCHEMA_VERSION });
       assert.equal(result.currentVersion, 9);
       assert.ok(result.newlyAppliedVersions.includes(9));
 

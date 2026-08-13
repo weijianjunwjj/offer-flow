@@ -7,6 +7,7 @@ import { createStrategyWindowSchemaV6 } from './migrations/strategyWindowSchemaV
 import { createRadarDomainSchemaV7 } from './migrations/radarDomainSchemaV7';
 import { createRadarCandidateRelationsSchemaV8 } from './migrations/radarCandidateRelationsSchemaV8';
 import { createDailyJobHunterSchemaV9 } from './migrations/dailyJobHunterSchemaV9';
+import { createDailySearchPlanSchemaV10 } from './migrations/dailySearchPlanSchemaV10';
 
 export interface SchemaMigration {
   version: number;
@@ -32,8 +33,8 @@ export const PRODUCTION_SCHEMA_VERSION = 2;
 // G5 求职策略窗口新增 v6、v0.8 V8-1 雷达领域新增 v7、V8-3 候选关系新增 v8；
 // LATEST 与 PRODUCTION 有意区分，v3~v7 均为纯新增表，v8 新增候选关系表并最小扩展
 // radar_actions 的 action_type CHECK（不改行数据），不改动 v2 生产语义。
-// v5/v6/v7/v8 仅限沙箱/临时库使用，真实生产库不得自动升级。
-export const LATEST_SCHEMA_VERSION = 9;
+// v5/v6/v7/v8/v9 仅限沙箱/临时库使用，真实生产库不得自动升级。
+export const LATEST_SCHEMA_VERSION = 10;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 // G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
 export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
@@ -51,6 +52,8 @@ export const RADAR_DOMAIN_SCHEMA_VERSION = 7;
 export const RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION = 8;
 // v0.9 Phase 1 每日岗位猎手 schema 扩展所需的最低 schema 版本（v9），仅限沙箱/演练库使用。
 export const DAILY_JOB_HUNTER_SCHEMA_VERSION = 9;
+// v0.9 Phase 3（T021）每日搜索计划表所需的最低 schema 版本（v10），仅限沙箱/演练库使用。
+export const DAILY_SEARCH_PLAN_SCHEMA_VERSION = 10;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -138,6 +141,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 9,
     name: '009_v0_9_daily_job_hunter_schema',
     up: createDailyJobHunterSchemaV9,
+  },
+  {
+    version: 10,
+    name: '010_v0_9_daily_search_plan_schema',
+    up: createDailySearchPlanSchemaV10,
   },
 ];
 
