@@ -32,7 +32,7 @@ function captureDeps() {
 function setup(): { db: SqliteDatabase; service: RecommendationBatchService } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-rec-batch-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   seedActiveResumeAndProfile(db, 1_700_000_000);
   let clock = 1_800_000_000;
   const service = new RecommendationBatchService({

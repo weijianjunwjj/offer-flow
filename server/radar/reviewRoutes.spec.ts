@@ -22,7 +22,7 @@ beforeEach(() => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-review-'));
   const dbPath = path.join(tempDir, 'test.sqlite3');
   db = openDb(dbPath);
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   let counter = 0;
   let now = 2_000_000;
   const deps = { now: () => (now += 1000), createId: () => `rv-${(counter += 1)}` };
@@ -244,7 +244,7 @@ describe('V8-3 review routes: feature gate', () => {
   it('is unreachable when radar capability is disabled', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-off-'));
     const offDb = openDb(path.join(tempDir, 'off.sqlite3'));
-    initSchema(offDb, { targetVersion: 8 });
+    initSchema(offDb, { targetVersion: 9 });
     const offApp = buildServer({ db: offDb, radar: { enabled: false } });
     const res = await offApp.inject({ method: 'GET', url: '/radar/review/relations', headers: headers() });
     expect(res.statusCode).toBe(404);

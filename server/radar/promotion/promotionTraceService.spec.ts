@@ -33,7 +33,7 @@ interface Kit {
 function setup(): Kit {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-promotion-trace-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   let clock = 1_800_000_000;
   const deps = { now: () => (clock += 1), createId: () => `trace-id-${(seq += 1)}` };
   const promotions = new PromotionService({ db, ...deps });

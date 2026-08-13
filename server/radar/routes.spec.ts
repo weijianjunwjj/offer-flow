@@ -5,7 +5,6 @@ import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb, type SqliteDatabase } from '../db';
 import { buildServer } from '../index';
-import { RADAR_DOMAIN_SCHEMA_VERSION } from '../migrations';
 import { initSchema } from '../schema';
 
 const CAPTURE_CLIENT_HEADER = 'x-offerflow-capture-client';
@@ -26,7 +25,7 @@ function createHarness(): Harness {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-api-'));
   const dbPath = path.join(tempDir, 'test.sqlite3');
   const db = openDb(dbPath);
-  initSchema(db, { targetVersion: RADAR_DOMAIN_SCHEMA_VERSION });
+  initSchema(db, { targetVersion: 9 });
   let counter = 0;
   let now = 1_000_000;
   const app = buildServer({
@@ -498,7 +497,7 @@ describe('Radar capture routes (V8-2)', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-api-expiry-'));
     const dbPath = path.join(tempDir, 'test.sqlite3');
     const db = openDb(dbPath);
-    initSchema(db, { targetVersion: RADAR_DOMAIN_SCHEMA_VERSION });
+    initSchema(db, { targetVersion: 9 });
     let now = 0;
     const app = buildServer({
       db,
@@ -729,7 +728,7 @@ describe('Radar capture routes (V8-2)', () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-api-ttl-'));
       const dbPath = path.join(tempDir, 'test.sqlite3');
       const db = openDb(dbPath);
-      initSchema(db, { targetVersion: RADAR_DOMAIN_SCHEMA_VERSION });
+      initSchema(db, { targetVersion: 9 });
       let now = 0;
       const app = buildServer({
         db,

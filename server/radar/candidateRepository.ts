@@ -23,8 +23,8 @@ const CANDIDATE_COLUMNS = `
 
 const VERSION_COLUMNS = `
   id, candidate_id, version_no, normalized_json, quality_issues_json,
-  source_snapshot_ids_json, content_hash, origin_type, correction_note,
-  supersedes_version_id, created_at
+  source_snapshot_ids_json, content_hash, origin_type, evidence_level,
+  correction_note, supersedes_version_id, created_at
 `;
 
 /**
@@ -94,12 +94,12 @@ export class RadarCandidateRepository {
     this.db.prepare(`
       INSERT INTO radar_candidate_versions (
         id, candidate_id, version_no, normalized_json, quality_issues_json,
-        source_snapshot_ids_json, content_hash, origin_type, correction_note,
-        supersedes_version_id, created_at
+        source_snapshot_ids_json, content_hash, origin_type, evidence_level,
+        correction_note, supersedes_version_id, created_at
       ) VALUES (
         @id, @candidateId, @versionNo, @normalizedJson, @qualityIssuesJson,
-        @sourceSnapshotIdsJson, @contentHash, @originType, @correctionNote,
-        @supersedesVersionId, @createdAt
+        @sourceSnapshotIdsJson, @contentHash, @originType, @evidenceLevel,
+        @correctionNote, @supersedesVersionId, @createdAt
       )
     `).run(radarCandidateVersionToParams(version));
   }

@@ -20,7 +20,7 @@ afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 
 let seq = 0;
 
-function setup(targetVersion = 8): { app: FastifyInstance; db: SqliteDatabase } {
+function setup(targetVersion = 9): { app: FastifyInstance; db: SqliteDatabase } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-trace-routes-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
   initSchema(db, { targetVersion });

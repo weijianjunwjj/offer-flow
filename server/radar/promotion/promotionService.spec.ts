@@ -23,7 +23,7 @@ let seq = 0;
 function setup(): { db: SqliteDatabase; service: PromotionService } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-promotion-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   let clock = 1_800_000_000;
   const service = new PromotionService({
     db,
@@ -418,7 +418,7 @@ describe('V8-6 晋升服务 · 原子性', () => {
   it('Promotion 落库失败时，已写的 Job/Application/事件全部回滚', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-promotion-atomic-'));
     const db = openDb(path.join(tempDir, 'test.sqlite3'));
-    initSchema(db, { targetVersion: 8 });
+    initSchema(db, { targetVersion: 9 });
     cleanups.push(() => { db.close(); fs.rmSync(tempDir, { recursive: true, force: true }); });
 
     let clock = 1_800_000_000;

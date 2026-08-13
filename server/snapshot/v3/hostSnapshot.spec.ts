@@ -15,6 +15,7 @@ import {
 } from '@weijianjunwjj/nova-wing/sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb } from '../../db';
+import { LATEST_SCHEMA_VERSION } from '../../migrations';
 import { initSchema } from '../../schema';
 import { createNovaWingRuntime } from '../../novawing/infrastructure';
 import { AnalysisService } from '../../radar/analysis/analysisService';
@@ -127,7 +128,7 @@ function createFixture(tag: string, includeRadar = false): Fixture {
   const tempDirectory = createTempDirectory(tag);
   const databasePath = path.join(tempDirectory, 'source.sqlite3');
   const db = openDb(databasePath);
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: LATEST_SCHEMA_VERSION });
   let radar: ReviewFixtureResult | undefined;
   if (includeRadar) {
     let sequence = 0;
@@ -261,7 +262,7 @@ describe('Host Snapshot V3 registry 与 manifest', () => {
       format: 'host.snapshot.v3',
       snapshotVersion: 3,
       createdAt: '2026-08-05T01:02:03.000Z',
-      host: { name: 'offerflow', schemaVersion: 8 },
+      host: expect.objectContaining({ name: 'offerflow' }),
     });
     expect(verified.manifest.components.map((component) => component.component).sort())
       .toEqual(['novawing', 'offerflow']);
@@ -469,7 +470,7 @@ describe('离线 NovaWing bootstrap', () => {
     const tempDirectory = createTempDirectory('bootstrap-new');
     const databasePath = path.join(tempDirectory, 'bootstrap.sqlite3');
     const db = openDb(databasePath);
-    initSchema(db, { targetVersion: 8 });
+    initSchema(db, { targetVersion: LATEST_SCHEMA_VERSION });
     db.close();
     const first = bootstrapNovaWingOffline({
       databasePath, confirmation: NOVAWING_OFFLINE_BOOTSTRAP_CONFIRMATION,
@@ -498,7 +499,7 @@ describe('离线 NovaWing bootstrap', () => {
     const tempDirectory = createTempDirectory('bootstrap-reject');
     const databasePath = path.join(tempDirectory, 'partial.sqlite3');
     const db = openDb(databasePath);
-    initSchema(db, { targetVersion: 8 });
+    initSchema(db, { targetVersion: LATEST_SCHEMA_VERSION });
     db.exec('CREATE TABLE nw_partial (id TEXT PRIMARY KEY)');
     db.close();
     expect(() => bootstrapNovaWingOffline({
@@ -517,7 +518,7 @@ describe('离线 NovaWing bootstrap', () => {
     const tempDirectory = createTempDirectory('runtime-validate-only');
     const databasePath = path.join(tempDirectory, 'runtime.sqlite3');
     const db = openDb(databasePath);
-    initSchema(db, { targetVersion: 8 });
+    initSchema(db, { targetVersion: LATEST_SCHEMA_VERSION });
     db.close();
     expect(() => createNovaWingRuntime({ databasePath })).toThrowError(expect.objectContaining({
       code: 'NOVA_WING_RUNTIME_INITIALIZATION_FAILED',

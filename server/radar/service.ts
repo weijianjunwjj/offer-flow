@@ -321,6 +321,8 @@ export class RadarCaptureService {
       nextNormalized: norm.normalized,
       ambiguousFields: norm.ambiguousFields,
       snapshotId: snapshot.id,
+      // v0.9 Phase 2：Browser Capture 默认 FULL_EVIDENCE，保持原 v0.8 行为
+      evidenceLevel: 'FULL_EVIDENCE',
     });
     const decisionType = decided.summary.decisionType;
 
@@ -445,6 +447,8 @@ export class RadarCaptureService {
       sourceSnapshotIds,
       contentHash,
       originType,
+      // v0.9 Phase 1：Browser Capture 默认产生 FULL_EVIDENCE
+      evidenceLevel: 'FULL_EVIDENCE',
       correctionNote: null,
       supersedesVersionId: candidate.activeVersionId,
       createdAt: now,

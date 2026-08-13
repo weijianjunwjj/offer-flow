@@ -50,7 +50,7 @@ function service(fake?: FakeNovaWingHostAdapter, enabled = false): AnalysisServi
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-nova-wing-context-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   clock = 1_800_000_000;
 });
 

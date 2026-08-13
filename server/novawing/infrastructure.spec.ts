@@ -41,7 +41,7 @@ function createOfferFlowDatabase(tag: string): {
   cleanupPaths.push(tempDir);
   const databasePath = path.join(tempDir, 'shared.sqlite3');
   const db = openDb(databasePath);
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   return { db, databasePath, tempDir };
 }
 

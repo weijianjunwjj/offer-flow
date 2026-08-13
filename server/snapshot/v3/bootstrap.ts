@@ -6,7 +6,7 @@ import {
   createInjectedSqliteNovaWingStore,
   inspectNovaWingMigration,
 } from '@weijianjunwjj/nova-wing/sqlite';
-import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION } from '../../migrations';
+import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION, RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION } from '../../migrations';
 import { HostSnapshotV3Error, hostSnapshotError } from './errors';
 import { validateExistingInputFile } from './pathSafety';
 
@@ -35,8 +35,12 @@ function assertOfferFlowSchema(databasePath: string): void {
   const db = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
     db.pragma('query_only = ON');
-    if (getDatabaseSchemaVersion(db) !== LATEST_SCHEMA_VERSION) {
-      throw hostSnapshotError('HOST_SNAPSHOT_V3_SCHEMA_MISMATCH', 'NovaWing bootstrap 只接受 OfferFlow schema v8');
+    const version = getDatabaseSchemaVersion(db);
+    if (version < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
+      throw hostSnapshotError(
+        'HOST_SNAPSHOT_V3_SCHEMA_MISMATCH',
+        `NovaWing bootstrap 要求 OfferFlow schema >= v${RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION}，实际 v${version}`,
+      );
     }
   } finally {
     db.close();

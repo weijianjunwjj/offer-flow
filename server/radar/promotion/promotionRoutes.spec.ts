@@ -23,7 +23,7 @@ function headers(extra: Record<string, string> = {}) {
 
 let seq = 0;
 
-function setup(targetVersion = 8): { app: FastifyInstance; db: SqliteDatabase } {
+function setup(targetVersion = 9): { app: FastifyInstance; db: SqliteDatabase } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-promo-routes-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
   initSchema(db, { targetVersion });
@@ -286,10 +286,12 @@ describe('晋升 HTTP — 错误码映射与安全', () => {
   });
 
   it('schema < v8 时不注册晋升路由', async () => {
-    const { app, db } = setup(7);
-    const { versionId } = seedCandidate(db, 'e5');
-
-    const res = await post(app, `/radar/candidate-versions/${versionId}/promotions`, {
+    // V9 schema 引入了 evidence_level 列，因此 seedCandidate 在 v7 schema 无法使用。
+    // 此测试通过在 v7 DB 上构建 server 并直接发起请求验证路由不注册，不注入 candidate。
+    const { app } = setup(7);
+    // 使用不存在的 versionId 发起请求——如果路由门禁生效，应返回 404（路由不存在）。
+    // 如果路由绕过 schema 门禁注册，会返回领域层的 CANDIDATE_VERSION_NOT_FOUND。
+    const res = await post(app, '/radar/candidate-versions/non-existent-id/promotions', {
       trigger: 'hr_replied', requestedDepth: 'feedback',
     });
 

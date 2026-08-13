@@ -44,7 +44,7 @@ function seedCandidate(database: SqliteDatabase): string {
 beforeEach(() => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-action-routes-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   candidateId = seedCandidate(db);
   let counter = 0;
   let now = 2_000_000;

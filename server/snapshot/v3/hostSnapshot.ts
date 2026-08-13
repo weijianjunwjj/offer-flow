@@ -16,7 +16,7 @@ import {
   validateNovaWingSnapshotManifest,
   verifyNovaWingBeforeSnapshotExport,
 } from '@weijianjunwjj/nova-wing/sqlite';
-import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION } from '../../migrations';
+import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION, RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION } from '../../migrations';
 import { readAppVersion } from '../../sync/appVersion';
 import { atomicWriteJson } from '../../sync/hash';
 import { HostSnapshotV3Error, hostSnapshotError } from './errors';
@@ -165,8 +165,12 @@ function buildSnapshotInConsistencyBoundary(
   try {
     stage = 'offerflow-journal';
     assertDeleteJournalBetter(offerFlow);
-    if (getDatabaseSchemaVersion(offerFlow) !== LATEST_SCHEMA_VERSION) {
-      throw hostSnapshotError('HOST_SNAPSHOT_V3_SCHEMA_MISMATCH', 'Host Snapshot V3 只接受 OfferFlow schema v8');
+    const version = getDatabaseSchemaVersion(offerFlow);
+    if (version < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
+      throw hostSnapshotError(
+        'HOST_SNAPSHOT_V3_SCHEMA_MISMATCH',
+        `Host Snapshot V3 要求 OfferFlow schema >= v${RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION}，实际 v${version}`,
+      );
     }
     try {
       stage = 'consistency-lock';

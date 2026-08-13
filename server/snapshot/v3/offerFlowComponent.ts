@@ -8,7 +8,7 @@ import {
   type JsonValue,
   type SnapshotComponent,
 } from '@weijianjunwjj/nova-wing/host-snapshot';
-import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION } from '../../migrations';
+import { getDatabaseSchemaVersion, LATEST_SCHEMA_VERSION, RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION } from '../../migrations';
 import { getPrimaryKeyColumns, getTableColumns, quoteIdent } from '../../sync/tables';
 import { hostSnapshotError } from './errors';
 import {
@@ -121,8 +121,12 @@ function readTable(db: Database.Database, name: string): SnapshotTableData {
 }
 
 export function readOfferFlowComponentData(db: Database.Database): SnapshotComponentData {
-  if (getDatabaseSchemaVersion(db) !== LATEST_SCHEMA_VERSION) {
-    throw hostSnapshotError('HOST_SNAPSHOT_V3_SCHEMA_MISMATCH', 'Host Snapshot V3 只接受 OfferFlow schema v8');
+  const version = getDatabaseSchemaVersion(db);
+  if (version < RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION) {
+    throw hostSnapshotError(
+      'HOST_SNAPSHOT_V3_SCHEMA_MISMATCH',
+      `Host Snapshot V3 要求 OfferFlow schema >= v${RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION}，实际 v${version}`,
+    );
   }
   return {
     component: OFFERFLOW_COMPONENT_NAME,

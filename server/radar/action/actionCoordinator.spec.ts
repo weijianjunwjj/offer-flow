@@ -31,7 +31,7 @@ let seq = 0;
 function setup(): { db: SqliteDatabase; coordinator: RadarActionCoordinator; snapshotById: Map<string, string> } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-action-coord-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   seedActiveResumeAndProfile(db, 1_700_000_000);
   let t = 4_000_000;
   // 路由注入的快照解析器：这里用显式 map 模拟 review.getCandidateDecisionDetail(...).latestSnapshotId。

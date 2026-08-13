@@ -12,6 +12,9 @@ export const RADAR_CAPTURE_METHODS = [
   'pasted_text',
   'shared_link_and_text',
   'json_import',
+  // v0.9 Phase 1：Search Discovery + Open Web Content Acquisition
+  'search_discovery',
+  'open_web_fetch',
 ] as const;
 export type RadarCaptureMethod = (typeof RADAR_CAPTURE_METHODS)[number];
 
@@ -26,6 +29,8 @@ export const RADAR_CANDIDATE_VERSION_ORIGIN_TYPES = [
   'manual_correction',
   'source_change',
   'merge_resolution',
+  // v0.9 Phase 1：Search Evidence → FULL_EVIDENCE upgrade
+  'evidence_upgrade',
 ] as const;
 export type RadarCandidateVersionOriginType = (typeof RADAR_CANDIDATE_VERSION_ORIGIN_TYPES)[number];
 
@@ -107,6 +112,10 @@ export type RadarCandidateRelationStatus = (typeof RADAR_CANDIDATE_RELATION_STAT
 
 export const RADAR_PROMOTION_TYPES = ['job_only', 'application', 'feedback'] as const;
 export type RadarPromotionType = (typeof RADAR_PROMOTION_TYPES)[number];
+
+/** v0.9 Phase 1：岗位证据等级（Source Policy / Evidence Model 判定产出）。 */
+export const RADAR_EVIDENCE_LEVELS = ['SEARCH_EVIDENCE', 'FULL_EVIDENCE', 'MANUAL_REVIEW_REQUIRED'] as const;
+export type RadarEvidenceLevel = (typeof RADAR_EVIDENCE_LEVELS)[number];
 
 /** TD §5.1 标准字段；由 V8-3 标准化流程填充，V8-1 仅落地存储结构。 */
 export interface RadarCandidateNormalized {
@@ -197,6 +206,8 @@ export interface RadarCandidateVersion {
   sourceSnapshotIds: string[];
   contentHash: string;
   originType: RadarCandidateVersionOriginType;
+  /** v0.9 Phase 1：证据等级。v0.8 旧数据默认 'FULL_EVIDENCE'。 */
+  evidenceLevel: RadarEvidenceLevel;
   correctionNote: string | null;
   supersedesVersionId: string | null;
   createdAt: number;

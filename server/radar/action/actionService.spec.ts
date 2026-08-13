@@ -24,7 +24,7 @@ let seq = 0;
 function setup(): { db: SqliteDatabase; service: RadarActionService; clock: () => number } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-action-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   let t = 3_000_000;
   const service = new RadarActionService(db, { now: () => (t += 1000), createId: () => `act-${(seq += 1)}` });
   cleanups.push(() => { db.close(); fs.rmSync(tempDir, { recursive: true, force: true }); });

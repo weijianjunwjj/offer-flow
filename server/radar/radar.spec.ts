@@ -31,7 +31,7 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
   // V8-3：radar 领域 repository 测试运行在 v8（含 evidence_json 与候选关系表）。
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
 });
 
 afterEach(() => {
@@ -147,7 +147,7 @@ describe('RadarCandidateRepository', () => {
       repo.insertVersion({
         id: 'ver-1', candidateId: 'cand-1', versionNo: 1, normalized: normalizedFixture(),
         qualityIssues: [], sourceSnapshotIds: [], contentHash: 'hash-1', originType: 'captured',
-        correctionNote: null, supersedesVersionId: null, createdAt: 100,
+        evidenceLevel: 'FULL_EVIDENCE', correctionNote: null, supersedesVersionId: null, createdAt: 100,
       });
       repo.setActiveVersionId('cand-1', 'ver-1', 100);
     });
@@ -184,7 +184,8 @@ describe('RadarCandidateRepository', () => {
       repo.insertVersion({
         id: 'ver-2a', candidateId: 'cand-2', versionNo: repo.nextVersionNo('cand-2'),
         normalized: normalizedFixture(), qualityIssues: [], sourceSnapshotIds: [],
-        contentHash: 'hash-a', originType: 'captured', correctionNote: null,
+        contentHash: 'hash-a', originType: 'captured', evidenceLevel: 'FULL_EVIDENCE',
+        correctionNote: null,
         supersedesVersionId: null, createdAt: 100,
       });
       repo.setActiveVersionId('cand-2', 'ver-2a', 100);
@@ -194,7 +195,7 @@ describe('RadarCandidateRepository', () => {
     repo.insertVersion({
       id: 'ver-2b', candidateId: 'cand-2', versionNo: 2, normalized: normalizedFixture(),
       qualityIssues: [], sourceSnapshotIds: [], contentHash: 'hash-b', originType: 'manual_correction',
-      correctionNote: 'fixed salary', supersedesVersionId: 'ver-2a', createdAt: 200,
+      evidenceLevel: 'FULL_EVIDENCE', correctionNote: 'fixed salary', supersedesVersionId: 'ver-2a', createdAt: 200,
     });
     expect(repo.listVersionsByCandidate('cand-2').map((v) => v.id)).toEqual(['ver-2b', 'ver-2a']);
     expect(repo.findVersionByContentHash('cand-2', 'hash-a')?.id).toBe('ver-2a');
@@ -213,7 +214,7 @@ function insertCandidateWithVersion(db: SqliteDatabase, candidateId: string, ver
     repo.insertVersion({
       id: versionId, candidateId, versionNo: 1, normalized: normalizedFixture(),
       qualityIssues: [], sourceSnapshotIds: [], contentHash: `hash-${versionId}`,
-      originType: 'captured', correctionNote: null, supersedesVersionId: null, createdAt: 100,
+      originType: 'captured', evidenceLevel: 'FULL_EVIDENCE', correctionNote: null, supersedesVersionId: null, createdAt: 100,
     });
     repo.setActiveVersionId(candidateId, versionId, 100);
   })();

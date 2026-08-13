@@ -69,7 +69,7 @@ function setup(
 ): Harness {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-analysis-routes-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 7 });
+  initSchema(db, { targetVersion: 9 });
   const { candidateId, versionId } = seedCandidate(db);
   if (opts.seedResumeProfile !== false) seedActiveResumeAndProfile(db, 1_700_000_000);
   let recSeq = 0;
@@ -210,7 +210,7 @@ describe('NovaWing context DI / errors', () => {
 });
 
 describe('执行 / 查询', () => {
-  it('run drives a queued task to succeeded (schema v7)', async () => {
+  it('run drives a queued task to succeeded (schema v9)', async () => {
     const provider = deterministicSuccessProvider();
     const h = setup(provider);
     const task = await createTask(h);

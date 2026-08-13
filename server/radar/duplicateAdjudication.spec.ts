@@ -18,7 +18,7 @@ let clock = 2_000_000;
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-w4-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   counter = 0;
   clock = 2_000_000;
 });

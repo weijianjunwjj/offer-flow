@@ -47,7 +47,7 @@ function makeService(provider: CountingProvider): { service: AnalysisService; pr
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-analysis-service-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   clock = 1_700_000_000;
 });
 

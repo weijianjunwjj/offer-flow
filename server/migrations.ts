@@ -6,6 +6,7 @@ import { createMarketPositionSchemaV5 } from './migrations/marketPositionSchemaV
 import { createStrategyWindowSchemaV6 } from './migrations/strategyWindowSchemaV6';
 import { createRadarDomainSchemaV7 } from './migrations/radarDomainSchemaV7';
 import { createRadarCandidateRelationsSchemaV8 } from './migrations/radarCandidateRelationsSchemaV8';
+import { createDailyJobHunterSchemaV9 } from './migrations/dailyJobHunterSchemaV9';
 
 export interface SchemaMigration {
   version: number;
@@ -32,7 +33,7 @@ export const PRODUCTION_SCHEMA_VERSION = 2;
 // LATEST 与 PRODUCTION 有意区分，v3~v7 均为纯新增表，v8 新增候选关系表并最小扩展
 // radar_actions 的 action_type CHECK（不改行数据），不改动 v2 生产语义。
 // v5/v6/v7/v8 仅限沙箱/临时库使用，真实生产库不得自动升级。
-export const LATEST_SCHEMA_VERSION = 8;
+export const LATEST_SCHEMA_VERSION = 9;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 // G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
 export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
@@ -48,6 +49,8 @@ export const STRATEGY_WINDOW_SCHEMA_VERSION = 6;
 export const RADAR_DOMAIN_SCHEMA_VERSION = 7;
 // v0.8 V8-3 候选关系与重复裁决单独所需的最低 schema 版本（v8），仅限沙箱/演练库使用。
 export const RADAR_CANDIDATE_RELATIONS_SCHEMA_VERSION = 8;
+// v0.9 Phase 1 每日岗位猎手 schema 扩展所需的最低 schema 版本（v9），仅限沙箱/演练库使用。
+export const DAILY_JOB_HUNTER_SCHEMA_VERSION = 9;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -130,6 +133,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 8,
     name: '008_v0_8_radar_candidate_relations_schema',
     up: createRadarCandidateRelationsSchemaV8,
+  },
+  {
+    version: 9,
+    name: '009_v0_9_daily_job_hunter_schema',
+    up: createDailyJobHunterSchemaV9,
   },
 ];
 

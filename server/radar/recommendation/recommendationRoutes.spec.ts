@@ -30,7 +30,7 @@ function captureDeps() {
 function setup(opts: { analysisEnabled?: boolean } = {}): { app: FastifyInstance; db: SqliteDatabase } {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-rec-routes-'));
   const db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   seedActiveResumeAndProfile(db, 1_700_000_000);
   let clock = 1_800_000_000;
   const app = buildServer({

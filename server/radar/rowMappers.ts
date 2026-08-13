@@ -21,11 +21,13 @@ import {
   type RadarCandidateVersion,
   type RadarCaptureSession,
   type RadarCaptureSnapshot,
+  type RadarEvidenceLevel,
   type RadarPromotion,
   type RadarRecommendationBatch,
   type RadarRuleAssessment,
   type RadarSourceRecord,
 } from '../../src/domain/radar';
+import { RADAR_EVIDENCE_LEVELS } from '../../src/domain/radar';
 import { parseJsonColumn, RadarStorageCorruptionError } from './errors';
 
 function parseStored<T>(label: string, build: () => T): T {
@@ -193,11 +195,24 @@ export function radarCandidateToParams(candidate: RadarCandidate): Record<string
 export interface RadarCandidateVersionRow {
   id: unknown; candidate_id: unknown; version_no: unknown;
   normalized_json: unknown; quality_issues_json: unknown; source_snapshot_ids_json: unknown;
-  content_hash: unknown; origin_type: unknown; correction_note: unknown;
+  content_hash: unknown; origin_type: unknown; evidence_level?: unknown;
+  correction_note: unknown;
   supersedes_version_id: unknown; created_at: unknown;
 }
 
 export function rowToRadarCandidateVersion(row: RadarCandidateVersionRow): RadarCandidateVersion {
+  // evidence_level 可能不在 SELECT 列中（旧查询）或为 NULL（v0.8 旧数据）：
+  // 一律映射为 'FULL_EVIDENCE'，与 schema DEFAULT 和 v0.8 语义一致。
+  const evidenceLevel: RadarEvidenceLevel = (() => {
+    const raw = row.evidence_level;
+    if (raw === undefined || raw === null) return 'FULL_EVIDENCE';
+    const val = String(raw);
+    if ((RADAR_EVIDENCE_LEVELS as readonly string[]).includes(val)) {
+      return val as RadarEvidenceLevel;
+    }
+    return 'FULL_EVIDENCE';
+  })();
+
   return parseStored('RadarCandidateVersion', () => RadarCandidateVersionSchema.parse({
     id: row.id,
     candidateId: row.candidate_id,
@@ -209,6 +224,7 @@ export function rowToRadarCandidateVersion(row: RadarCandidateVersionRow): Radar
     ),
     contentHash: row.content_hash,
     originType: row.origin_type,
+    evidenceLevel,
     correctionNote: row.correction_note,
     supersedesVersionId: row.supersedes_version_id,
     createdAt: row.created_at,
@@ -226,6 +242,7 @@ export function radarCandidateVersionToParams(version: RadarCandidateVersion): R
     sourceSnapshotIdsJson: JSON.stringify(record.sourceSnapshotIds),
     contentHash: record.contentHash,
     originType: record.originType,
+    evidenceLevel: record.evidenceLevel,
     correctionNote: record.correctionNote,
     supersedesVersionId: record.supersedesVersionId,
     createdAt: record.createdAt,
