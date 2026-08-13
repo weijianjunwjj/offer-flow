@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type SqliteDatabase } from '../../db';
 import { initSchema } from '../../schema';
 import { RadarCandidateRepository } from '../candidateRepository';
+import type { RadarCandidateNormalized } from '../../../src/domain/radar';
 import { RadarCaptureService } from '../service';
 import { seedReviewFixture } from '../reviewFixture';
 import { seedActiveResumeAndProfile } from './analysisInputFixture';
@@ -33,10 +34,43 @@ function setup(): { versionId: string; fixture: ReturnType<typeof seedReviewFixt
   return { versionId: fixture.evidenceVersionId, fixture };
 }
 
+/** 构造 core facts 全空（除 overrides）的 normalized，用于锁定 hasCoreFacts 的充分性边界。 */
+function emptyNormalized(overrides: Partial<RadarCandidateNormalized> = {}): RadarCandidateNormalized {
+  return {
+    company: null, role: null, city: null, district: null,
+    salaryMinK: null, salaryMaxK: null, salaryPeriod: null,
+    experienceRequirement: null, educationRequirement: null,
+    companySize: null, industry: null, jobNature: null, workMode: null,
+    technicalStack: [], responsibilities: [], requirements: [],
+    publishedAt: null, rawDescription: '',
+    ...overrides,
+  };
+}
+
+/** 直接经 Repository 写入一个 active 候选 + 正式版本（指定 normalized），返回版本 ID。 */
+function seedCandidateWithNormalized(normalized: RadarCandidateNormalized, suffix: string): string {
+  const candidates = new RadarCandidateRepository(db);
+  const candidateId = `cand-${suffix}`;
+  const versionId = `ver-${suffix}`;
+  candidates.insertCandidate({
+    id: candidateId, primarySourceRecordId: null, activeVersionId: null,
+    lifecycleStatus: 'active', mergedIntoCandidateId: null,
+    createdAt: 1_700_000_000, updatedAt: 1_700_000_000,
+  });
+  candidates.insertVersion({
+    id: versionId, candidateId, versionNo: 1, normalized,
+    qualityIssues: [], sourceSnapshotIds: [], contentHash: `content-hash-${suffix}`,
+    originType: 'captured', evidenceLevel: 'FULL_EVIDENCE',
+    correctionNote: null, supersedesVersionId: null, createdAt: 1_700_000_000,
+  });
+  candidates.setActiveVersionId(candidateId, versionId, 1_700_000_000);
+  return versionId;
+}
+
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-analysis-input-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
 });
 
 afterEach(() => {
@@ -121,24 +155,53 @@ describe('buildJobMatchAnalysisInputSnapshot', () => {
       expect((error as AnalysisInputError).code).toBe('ACTIVE_RESUME_REQUIRED');
     }
   });
+
+  it('rejects INPUT_NOT_READY when a FULL_EVIDENCE candidate has no core facts', () => {
+    // Evidence Eligibility 已通过（evidenceLevel=FULL_EVIDENCE），但第二层 Input Readiness 仍应阻断：
+    // candidate/version 存在且匹配、active、正式简历/画像齐全，仅 role/company/描述/职责/要求/技术栈全空。
+    const versionId = seedCandidateWithNormalized(emptyNormalized(), 'no-core-facts');
+    seedActiveResumeAndProfile(db, 1_700_000_000);
+    const stored = new RadarCandidateRepository(db).getVersion(versionId)!;
+    expect(stored.evidenceLevel).toBe('FULL_EVIDENCE'); // 明确前提：不是 SEARCH_EVIDENCE 触发的阻断。
+    try {
+      buildJobMatchAnalysisInputSnapshot(db, versionId, OPTIONS);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AnalysisInputError);
+      expect((error as AnalysisInputError).code).toBe('INPUT_NOT_READY');
+      // 只断言稳定语义，不对易变的整段中文 message 做全文匹配。
+      expect((error as AnalysisInputError).message).toMatch(/不足以支撑分析/);
+    }
+  });
+
+  it('treats a single core fact (role only) as sufficient — hasCoreFacts is not all-fields-required', () => {
+    const versionId = seedCandidateWithNormalized(emptyNormalized({ role: '后端工程师' }), 'role-only');
+    seedActiveResumeAndProfile(db, 1_700_000_000);
+    const result = buildJobMatchAnalysisInputSnapshot(db, versionId, OPTIONS);
+    expect(result.snapshot.contractVersion).toBe(1);
+    expect(result.snapshot.candidate.normalizedFacts.role).toBe('后端工程师');
+  });
 });
 
-describe('schema v7 compatibility (radar_rule_assessments without evidence_json column)', () => {
-  let v7Dir: string;
-  let v7Db: SqliteDatabase;
+describe('evidence_json column backward-compat (radar_rule_assessments no evidence_json)', () => {
+  let compatDir: string;
+  let compatDb: SqliteDatabase;
 
   beforeEach(() => {
-    v7Dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-analysis-v7-'));
-    v7Db = openDb(path.join(v7Dir, 'test.sqlite3'));
-    initSchema(v7Db, { targetVersion: 7 });
+    compatDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-analysis-compat-'));
+    compatDb = openDb(path.join(compatDir, 'test.sqlite3'));
+    // V9 schema has evidence_level on radar_candidate_versions but still no evidence_json
+    // on radar_rule_assessments — this test validates backward-compat of the
+    // legacy_scalar read path.
+    initSchema(compatDb, { targetVersion: 9 });
   });
   afterEach(() => {
-    v7Db.close();
-    fs.rmSync(v7Dir, { recursive: true, force: true });
+    compatDb.close();
+    fs.rmSync(compatDir, { recursive: true, force: true });
   });
 
-  it('reads assessments via column-detection and marks them legacy_scalar (no crash on missing column)', () => {
-    const capture = new RadarCaptureService(v7Db, deterministicDeps());
+  it('reads assessments via column-detection and marks them legacy_scalar (no crash on missing evidence_json column)', () => {
+    const capture = new RadarCaptureService(compatDb, deterministicDeps());
     const session = capture.createSession({ sourceType: 'browser' });
     capture.addItem(session.session.id, {
       captureMethod: 'boss_current_page', providerKey: 'boss', providerVersion: null,
@@ -151,15 +214,16 @@ describe('schema v7 compatibility (radar_rule_assessments without evidence_json 
       extractionMetadata: null, capturedAt: null,
     });
     const outcome = capture.commitSession(session.session.id, { confirmedIndexes: [0], corrections: [] }).outcomes[0]!;
-    // v7 无 evidence_json 列：直接以 v7 列集插入一条评估。
-    v7Db.prepare(
+    // radar_rule_assessments 无 evidence_json 列（v9 migration 未加该列）：
+    // 直接用不含 evidence_json 的 v7 列集插入评估。
+    compatDb.prepare(
       `INSERT INTO radar_rule_assessments
        (id, candidate_id, candidate_version_id, rule_version, rule_key, category, severity, result, matched_text, source_path, explanation, created_at)
        VALUES (@id, @cid, @vid, 'rules-v1', 'salary_floor', 'hard_constraint', 'blocking', 'hit', '20K', 'salaryMinK', '命中', 1700000000)`,
     ).run({ id: 'v7-assess-1', cid: outcome.candidateId, vid: outcome.candidateVersionId });
-    seedActiveResumeAndProfile(v7Db, 1_700_000_000);
+    seedActiveResumeAndProfile(compatDb, 1_700_000_000);
 
-    const result = buildJobMatchAnalysisInputSnapshot(v7Db, outcome.candidateVersionId!, OPTIONS);
+    const result = buildJobMatchAnalysisInputSnapshot(compatDb, outcome.candidateVersionId!, OPTIONS);
     expect(result.snapshot.ruleProjection.assessments).toHaveLength(1);
     expect(result.snapshot.ruleProjection.assessments[0]!.evidenceState).toBe('legacy_scalar');
   });

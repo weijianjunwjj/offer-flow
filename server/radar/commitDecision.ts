@@ -8,7 +8,8 @@
  *
  * 该模块只做确定性判定，不写库；落库由 service.ts 的事务协调器按 decisionType 执行。
  */
-import type { RadarCandidateNormalized } from '../../src/domain/radar';
+
+import type { RadarCandidateNormalized, RadarEvidenceLevel } from '../../src/domain/radar';
 import type { IdentityDecision } from './identityResolution';
 import { classifyMaterialChange, type FieldChange } from './materialChange';
 import {
@@ -18,6 +19,41 @@ import {
   type FieldChangeEntry,
   type FieldChangeClassification,
 } from './candidateChangeSet';
+
+// ── Data Quality Gate（v0.9 Phase 4A: T034/T036）───────────────────────────────
+
+/**
+ * 判断给定 evidenceLevel 是否允许进入 MatchAnalysis。
+ *
+ *   只有 FULL_EVIDENCE 才返回 true。
+ *   SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED 返回 false。
+ *
+ * 这是 decideCommit 内部 evidence gate 的唯一可信源——decideCommit 复用此函数，
+ * 不在内部建立第二套可漂移的判定。
+ */
+export function canEnterAnalysis(evidenceLevel: RadarEvidenceLevel): boolean {
+  return evidenceLevel === 'FULL_EVIDENCE';
+}
+
+/**
+ * 返回给定 evidenceLevel 的分析阻断原因（可读字符串）。
+ *
+ *   FULL_EVIDENCE → null（无阻断）
+ *   SEARCH_EVIDENCE → insufficient_evidence 原因
+ *   MANUAL_REVIEW_REQUIRED → manual_review_required 原因
+ */
+export function evidenceGateReason(evidenceLevel: RadarEvidenceLevel): string | null {
+  switch (evidenceLevel) {
+    case 'FULL_EVIDENCE':
+      return null;
+    case 'SEARCH_EVIDENCE':
+      return 'insufficient_evidence: SEARCH_EVIDENCE cannot enter MatchAnalysis — full job facts not yet acquired';
+    case 'MANUAL_REVIEW_REQUIRED':
+      return 'manual_review_required: user must confirm before analysis — source policy prohibits auto-fetch';
+  }
+}
+
+// ── CommitDecision types ────────────────────────────────────────────────────────
 
 export interface CommitDecisionInput {
   identity: IdentityDecision;
@@ -29,6 +65,12 @@ export interface CommitDecisionInput {
   ambiguousFields: string[];
   /** 本次快照 ID，用于 changedFields 溯源。 */
   snapshotId: string;
+  /**
+   * v0.9：证据等级。
+   *   canEnterAnalysis() 是唯一 gate 源；decideCommit 复用该函数。
+   *   未提供时默认 FULL_EVIDENCE（Browser Capture 兼容）。
+   */
+  evidenceLevel?: RadarEvidenceLevel;
 }
 
 export interface CommitDecision {
@@ -67,11 +109,21 @@ function toEntries(changes: FieldChange[], snapshotId: string): FieldChangeEntry
 }
 
 /**
- * 计算 commit 决策。决策优先级：identity_conflict > ambiguous_change > (材料变化分类)。
+ * 计算 commit 决策。决策优先级：
+ *   0) evidenceLevel gate（最高优先——在任何 analysisEligible=true 之前先检查）：
+ *      复用 canEnterAnalysis() 作为唯一 gate 源；
+ *      SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED → analysisEligible = false
+ *      FULL_EVIDENCE（默认）→ 走原 v0.8 逻辑
+ *   1) identity_conflict > ambiguous_change > (材料变化分类)
  */
 export function decideCommit(input: CommitDecisionInput): CommitDecision {
   const material = classifyMaterialChange(input.previousNormalized, input.nextNormalized);
   const fingerprint = material.fingerprint;
+
+  // 0) evidenceLevel gate — SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED 绝不能进入分析。
+  //    复用 canEnterAnalysis() 作为唯一 gate 源，避免与外部调用形成两套可漂移逻辑。
+  const effectiveLevel = input.evidenceLevel ?? 'FULL_EVIDENCE';
+  const evidenceGateBlocks = !canEnterAnalysis(effectiveLevel);
 
   // 1) 身份冲突最高优先：不建候选、不建版本、阻断分析。
   if (input.identity.kind === 'identity_conflict') {
@@ -89,11 +141,11 @@ export function decideCommit(input: CommitDecisionInput): CommitDecision {
     };
   }
 
-  // 2) 新身份：建候选 + 首版。
+  // 2) 新身份：建候选 + 首版。analysisEligible 受 evidenceLevel gate 控制。
   if (input.identity.kind === 'new_source' || input.previousNormalized === null) {
     return {
       fingerprint,
-      summary: summary('new_identity', [], true, input.ambiguousFields),
+      summary: summary('new_identity', [], !evidenceGateBlocks, input.ambiguousFields),
     };
   }
 
@@ -125,7 +177,8 @@ export function decideCommit(input: CommitDecisionInput): CommitDecision {
   }
 
   // material_change：ambiguous 已在前面拦截，此处为确定的实质变化。
-  return { fingerprint, summary: summary('material_change', entries, true, []) };
+  // analysisEligible 受 evidenceLevel gate 控制。
+  return { fingerprint, summary: summary('material_change', entries, !evidenceGateBlocks, []) };
 }
 
 function summary(

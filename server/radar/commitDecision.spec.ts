@@ -7,6 +7,9 @@ import { initSchema } from '../schema';
 import { RadarCaptureService } from './service';
 import { RadarCandidateRepository } from './candidateRepository';
 import { RadarSourceRecordRepository } from './sourceRecordRepository';
+import { canEnterAnalysis, evidenceGateReason, decideCommit } from './commitDecision';
+import type { CommitDecisionInput } from './commitDecision';
+import type { RadarCandidateNormalized, RadarEvidenceLevel } from '../../src/domain/radar';
 
 let db: SqliteDatabase;
 let tempDir: string;
@@ -20,7 +23,7 @@ function makeService(): RadarCaptureService {
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-radar-w3-'));
   db = openDb(path.join(tempDir, 'test.sqlite3'));
-  initSchema(db, { targetVersion: 8 });
+  initSchema(db, { targetVersion: 9 });
   counter = 0;
   clock = 1_000_000;
 });
@@ -201,5 +204,113 @@ describe('Wave3 array set semantics via full flow', () => {
     expect(reordered.outcome.decisionType).toBe('no_change');
     const candRepo = new RadarCandidateRepository(db);
     expect(candRepo.listVersionsByCandidate(first.outcome.candidateId!)).toHaveLength(1);
+  });
+});
+
+// ── v0.9 Phase 4A: Data Quality Gate（T034 / T036）────────────────────────────
+
+describe('Data Quality Gate — canEnterAnalysis', () => {
+  it('FULL_EVIDENCE → true', () => {
+    expect(canEnterAnalysis('FULL_EVIDENCE')).toBe(true);
+  });
+
+  it('SEARCH_EVIDENCE → false', () => {
+    expect(canEnterAnalysis('SEARCH_EVIDENCE')).toBe(false);
+  });
+
+  it('MANUAL_REVIEW_REQUIRED → false', () => {
+    expect(canEnterAnalysis('MANUAL_REVIEW_REQUIRED')).toBe(false);
+  });
+});
+
+describe('Data Quality Gate — evidenceGateReason', () => {
+  it('FULL_EVIDENCE → null (no block)', () => {
+    expect(evidenceGateReason('FULL_EVIDENCE')).toBeNull();
+  });
+
+  it('SEARCH_EVIDENCE → contains "insufficient_evidence"', () => {
+    const reason = evidenceGateReason('SEARCH_EVIDENCE');
+    expect(reason).not.toBeNull();
+    expect(reason).toContain('insufficient_evidence');
+    expect(reason).toContain('SEARCH_EVIDENCE');
+    expect(reason).toContain('MatchAnalysis');
+  });
+
+  it('MANUAL_REVIEW_REQUIRED → contains "manual_review_required"', () => {
+    const reason = evidenceGateReason('MANUAL_REVIEW_REQUIRED');
+    expect(reason).not.toBeNull();
+    expect(reason).toContain('manual_review_required');
+    expect(reason).toContain('user must confirm');
+  });
+});
+
+describe('Data Quality Gate — consistency with decideCommit evidence gate', () => {
+  const nullNormalized: RadarCandidateNormalized = {
+    company: null, role: null, city: null, district: null,
+    salaryMinK: null, salaryMaxK: null, salaryPeriod: null,
+    experienceRequirement: null, educationRequirement: null,
+    companySize: null, industry: null, jobNature: null, workMode: null,
+    technicalStack: [], responsibilities: [], requirements: [],
+    publishedAt: null, rawDescription: '',
+  };
+
+  function input(level: RadarEvidenceLevel): CommitDecisionInput {
+    return {
+      identity: { kind: 'new_source', matched: null, canonicalSourceUrl: null,
+        matchTier: 'tier1_exact', reason: null },
+      previousNormalized: null,
+      nextNormalized: nullNormalized,
+      ambiguousFields: [],
+      snapshotId: 'snap-test',
+      evidenceLevel: level,
+    };
+  }
+
+  it('FULL_EVIDENCE + new_identity → analysisEligible=true (matches canEnterAnalysis)', () => {
+    const d = decideCommit(input('FULL_EVIDENCE'));
+    expect(canEnterAnalysis('FULL_EVIDENCE')).toBe(true);
+    expect(d.summary.analysisEligible).toBe(true);
+  });
+
+  it('SEARCH_EVIDENCE + new_identity → analysisEligible=false (matches canEnterAnalysis)', () => {
+    const d = decideCommit(input('SEARCH_EVIDENCE'));
+    expect(canEnterAnalysis('SEARCH_EVIDENCE')).toBe(false);
+    expect(d.summary.analysisEligible).toBe(false);
+  });
+
+  it('MANUAL_REVIEW_REQUIRED + new_identity → analysisEligible=false (matches canEnterAnalysis)', () => {
+    const d = decideCommit(input('MANUAL_REVIEW_REQUIRED'));
+    expect(canEnterAnalysis('MANUAL_REVIEW_REQUIRED')).toBe(false);
+    expect(d.summary.analysisEligible).toBe(false);
+  });
+
+  it('undefined evidenceLevel defaults to FULL_EVIDENCE → analysisEligible=true', () => {
+    const i = { ...input('FULL_EVIDENCE'), evidenceLevel: undefined };
+    const d = decideCommit(i);
+    expect(d.summary.analysisEligible).toBe(true);
+  });
+});
+
+describe('Data Quality Gate — Source Policy integration (zhiye before fetch)', () => {
+  it('jobs.zhiye.com initialEvidenceLevel=SEARCH_EVIDENCE → canEnterAnalysis=false', () => {
+    // SEARCH_AND_FETCH 来源在 fetch 前的证据等级是 SEARCH_EVIDENCE —— 不是 FULL_EVIDENCE。
+    expect(canEnterAnalysis('SEARCH_EVIDENCE')).toBe(false);
+  });
+
+  it('only explicit FULL_EVIDENCE → canEnterAnalysis=true', () => {
+    // 唯一能进入分析的路径是显式传入 FULL_EVIDENCE。
+    expect(canEnterAnalysis('FULL_EVIDENCE')).toBe(true);
+    expect(canEnterAnalysis('SEARCH_EVIDENCE')).toBe(false);
+    expect(canEnterAnalysis('MANUAL_REVIEW_REQUIRED')).toBe(false);
+  });
+
+  it('zhipin/liepin/zhaopin/lagou/51job → MANUAL_REVIEW_REQUIRED → canEnterAnalysis=false', () => {
+    for (const _ of ['zhipin', 'liepin', 'zhaopin', 'lagou', '51job']) {
+      expect(canEnterAnalysis('MANUAL_REVIEW_REQUIRED')).toBe(false);
+    }
+  });
+
+  it('unknown domain → MANUAL_REVIEW_REQUIRED → canEnterAnalysis=false', () => {
+    expect(canEnterAnalysis('MANUAL_REVIEW_REQUIRED')).toBe(false);
   });
 });
