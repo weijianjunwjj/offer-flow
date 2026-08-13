@@ -777,6 +777,8 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 6. Failure Isolation：item-level failure 不中断其它 items；仅 run-level fatal 终止
 7. 测试覆盖：完整 Pipeline 成功、部分 Task 失败、空结果、SEARCH_EVIDENCE → 内存 discovery 分类、FULL_EVIDENCE → batch、item 失败隔离
 
+**Phase 5B 实施状态（2026-08-13，实现完成待人工 Gate）：** `DailyPipeline`（`server/pipeline/DailyPipeline.ts` + `types.ts` + `DailyPipeline.spec.ts`）已实现并验证。Canonical Flow 与本节一致：`DISCOVER → INITIAL_INGEST → per-item evidence resolve（getVersion 精确读取 evidenceLevel）→ optional CONTENT_ACQUISITION → optional EVIDENCE_UPGRADE → QUALITY_GATE → ANALYSIS → RECOMMENDATION（每次 run 至多一次 createBatch）`。32 个 contract tests 通过；回归 229 通过；typecheck delta 0（baseline 10 errors / 3 files 不变）。Existing FULL fast path 与 repeat-run 幂等已覆盖。停在本子阶段，不进入 T040 / DailyJobBrief。
+
 **从 T037 移除：** BUILDING_BRIEF / DailyJobBrief（归属 T040 / downstream，not implemented by T037）。
 
 ---
