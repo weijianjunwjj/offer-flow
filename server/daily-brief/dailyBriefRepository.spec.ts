@@ -43,6 +43,21 @@ function setupPlanVersion(db: Database.Database): void {
   `).run();
 }
 
+/** 插入第二个 plan version（用于 different-provenance 共存测试）。 */
+function setupSecondPlanVersion(db: Database.Database): void {
+  db.prepare(`
+    INSERT INTO daily_search_plan_versions (
+      id, search_plan_id, version, cities_json, role_directions_json, base_keywords_json,
+      expanded_keywords_json, hard_constraints_json, source_configs_json, schedule_json,
+      scan_budget_json, analysis_budget_json, brief_policy_json, exploration_policy_json,
+      notification_policy_json, latest_catch_up_time, created_at, activated_at, supersedes_version_id
+    ) VALUES (
+      'version-2', 'plan-1', 2, '[]', '[]', '[]', '[]', '[]',
+      '[{"providerKey":"tavily"}]', '{}', '{}', '{}', '{}', '{}', '{}', '09:00', 100, null, null
+    )
+  `).run();
+}
+
 /** 造一个最小合法 radar_recommendation_batches 行（daily_job_briefs 的 FK 目标）。 */
 function setupRecommendationBatch(db: Database.Database, id: string, candidateVersionIds: string[]): void {
   db.prepare(`
@@ -193,6 +208,69 @@ describe('DailyBriefRepository（T040）', () => {
       const briefs = repo.findByDate('2026-08-13');
       assert.equal(briefs.length, 1);
       assert.equal(briefs[0].id, 'brief-1');
+    });
+  });
+
+  it('v13 唯一索引存在：(brief_date, search_plan_version_id) 持久化唯一性约束', () => {
+    withRepo((_repo, db) => {
+      const indexes = db
+        .prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND name = 'daily_job_briefs_logical_identity_idx'")
+        .all() as Array<{ name: string }>;
+      assert.equal(indexes.length, 1);
+    });
+  });
+
+  it('same logical brief + different id → 仍不能产生两条（唯一索引拒绝，非主键拒绝）', () => {
+    withRepo((repo, db) => {
+      setupRecommendationBatch(db, 'batch-1', []);
+      repo.insert(makeBrief({ id: 'brief-1', sourceRunIds: ['run-1'] }));
+      assert.throws(() => {
+        // 相同 (brief_date, search_plan_version_id)，仅 id 与 sourceRunIds 不同
+        repo.insert(makeBrief({ id: 'brief-2', sourceRunIds: ['run-2'] }));
+      }, /UNIQUE constraint failed/);
+      const count = (db.prepare('SELECT COUNT(*) AS c FROM daily_job_briefs').get() as { c: number }).c;
+      assert.equal(count, 1);
+    });
+  });
+
+  it('different logical provenance 可共存：同日期不同 search_plan_version_id 各一份', () => {
+    withRepo((repo, db) => {
+      setupSecondPlanVersion(db);
+      setupRecommendationBatch(db, 'batch-1', []);
+      setupRecommendationBatch(db, 'batch-2', []);
+      repo.insert(makeBrief({ id: 'brief-v1', searchPlanVersionId: 'version-1', recommendationBatchId: 'batch-1' }));
+      repo.insert(makeBrief({ id: 'brief-v2', searchPlanVersionId: 'version-2', recommendationBatchId: 'batch-2' }));
+      const count = (db.prepare('SELECT COUNT(*) AS c FROM daily_job_briefs').get() as { c: number }).c;
+      assert.equal(count, 2);
+      assert.equal(repo.findByLogicalIdentity('2026-08-13', 'version-1')?.id, 'brief-v1');
+      assert.equal(repo.findByLogicalIdentity('2026-08-13', 'version-2')?.id, 'brief-v2');
+    });
+  });
+
+  it('source_run_ids 不属于 identity：仅 sourceRunIds 顺序不同仍冲突（identity = B 而非 C）', () => {
+    withRepo((repo, db) => {
+      setupRecommendationBatch(db, 'batch-1', []);
+      repo.insert(makeBrief({ id: 'brief-1', sourceRunIds: ['a', 'b'] }));
+      assert.throws(() => {
+        // 相同 (brief_date, search_plan_version_id)，sourceRunIds 反转 → 仍被唯一索引拒绝
+        repo.insert(makeBrief({ id: 'brief-2', sourceRunIds: ['b', 'a'] }));
+      }, /UNIQUE constraint failed/);
+      const count = (db.prepare('SELECT COUNT(*) AS c FROM daily_job_briefs').get() as { c: number }).c;
+      assert.equal(count, 1);
+    });
+  });
+
+  it('findByLogicalIdentity 返回唯一 logical brief；重复 write 后 row count 恒为 1', () => {
+    withRepo((repo, db) => {
+      setupRecommendationBatch(db, 'batch-1', []);
+      assert.equal(repo.findByLogicalIdentity('2026-08-13', 'version-1'), null);
+      repo.insert(makeBrief({ id: 'brief-1' }));
+      const found = repo.findByLogicalIdentity('2026-08-13', 'version-1');
+      assert.ok(found !== null);
+      assert.equal(found.id, 'brief-1');
+      assert.throws(() => repo.insert(makeBrief({ id: 'brief-2' })), /UNIQUE constraint failed/);
+      const count = (db.prepare('SELECT COUNT(*) AS c FROM daily_job_briefs').get() as { c: number }).c;
+      assert.equal(count, 1);
     });
   });
 

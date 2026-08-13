@@ -27,6 +27,14 @@ function expectCode(run: () => unknown, code: string): void {
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
+    // Windows 上，单次 fs.rmSync(recursive) 无法可靠删除"指向同目录内子目录的 junction"
+    // （如 linked.json → linked-target），会确定性抛 ENOTEMPTY。先显式移除 symlink/junction
+    // 条目，再递归删除剩余内容；删除失败仍会抛错，不吞异常。
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) {
+        fs.rmSync(path.join(directory, entry.name), { force: true });
+      }
+    }
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

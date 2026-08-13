@@ -12,8 +12,12 @@ import type { CostSummary, DailyJobBrief, DailyJobBriefStatus } from './types';
  *   - 不调用 AnalysisService / EvidenceUpgradeService / ContentFetcher / SearchProvider；
  *   - 不实现 CostSummary 计算（T043）。
  *
- * 幂等：brief 身份契约 = (brief_date, search_plan_version_id, source_run_ids)。
- * 本 Repository 提供 findByDate 供上层服务做确定性去重；insert 对相同 id 由主键约束拒绝。
+ * 幂等：brief 的 authoritative identity = (brief_date, search_plan_version_id)。
+ *   source_run_ids 是可增长的可变列表（SCHEDULED/CATCH_UP/MANUAL/RETRY 都会追加 run id），
+ *   不属于 stable identity。
+ * 持久化层幂等由 v13 唯一索引 (brief_date, search_plan_version_id) 强制执行：
+ *   两个独立调用即使 brief.id 不同，只要 identity 相同，第二次 insert 必然被 UNIQUE 拒绝。
+ * findByLogicalIdentity 供上层读侧精确查询同一 logical brief；insert 对相同 identity 由唯一索引拒绝。
  */
 
 const COLUMNS = `
@@ -119,7 +123,19 @@ export class DailyBriefRepository {
     return row === undefined ? null : rowToBrief(row);
   }
 
-  /** 按日期查询（幂等去重：上层服务据此判断同一 logical daily run 是否已建 brief）。 */
+  /** 按 logical identity (brief_date, search_plan_version_id) 精确查询同一逻辑 brief。 */
+  findByLogicalIdentity(briefDate: string, searchPlanVersionId: string): DailyJobBrief | null {
+    const row = this.db
+      .prepare(
+        `SELECT ${COLUMNS} FROM daily_job_briefs
+         WHERE brief_date = ? AND search_plan_version_id = ?
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(briefDate, searchPlanVersionId) as DailyJobBriefRow | undefined;
+    return row === undefined ? null : rowToBrief(row);
+  }
+
+  /** 按日期列出该自然日全部 brief（可能含不同 plan version 的多份，不是幂等键）。 */
   findByDate(briefDate: string): DailyJobBrief[] {
     const rows = this.db
       .prepare(`SELECT ${COLUMNS} FROM daily_job_briefs WHERE brief_date = ? ORDER BY created_at DESC, id DESC`)
