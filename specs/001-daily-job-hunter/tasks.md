@@ -785,11 +785,15 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ### T038 [P] Analysis 复用——主动 Discovery 触发分析
 
+> **实施状态（2026-08-13）：absorbed/completed by Phase 5B。** `DailyPipeline`（`server/pipeline/DailyPipeline.ts`）已通过 `deps.createTask(finalVersionId)` + `deps.runTask(task.id)` 编排复用现有 `AnalysisService`，证据门（SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED → `analysisEligible=false` → 不调用 `createTask()`）与输入就绪门（`INPUT_NOT_READY`）已落实。无独立实现代码，后续 task traversal 不得再识别为未完成。
+
 **目标：** 确保主动 Discovery Pipeline 通过现有 `AnalysisService.createTask()` 触发分析。同旧 Plan T030（无变化）。
 
 ---
 
 ### T039 [P] Recommendation 复用——Preference 扩展推荐排序
+
+> **实施状态（2026-08-13）：absorbed/completed by Phase 5B。** `DailyPipeline` 每次 run 至多调用一次 `deps.createBatch(recommendationScope)` 复用现有 `RecommendationBatchService`；`recommendationScope` 只含 `analysisCompleted` 的 FULL_EVIDENCE 最终版本，SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED 候选不进入 batch。无独立实现代码，后续 task traversal 不得再识别为未完成。
 
 **目标：** 同旧 Plan T031。关键约束：FULL_EVIDENCE 候选 ≠ SEARCH_EVIDENCE 候选。SEARCH_EVIDENCE 候选经 DataQualityGate 后 `analysisEligible=false`，因此 `createTask()` 不被调用 → `no_current_analysis` → `blockReasonFor()` 阻止进入 batch。
 
