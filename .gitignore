@@ -102,5 +102,8 @@ browser-extension/src/content/batchCapture.js
 browser-extension/src/background/background.js
 browser-extension/e2e/.profiles/
 
+# Provider Validation 输出（可能含 API Key metadata，不入库）
+scripts/provider-validation/output/
+
 # Graphify generated artifacts
 graphify-out/
