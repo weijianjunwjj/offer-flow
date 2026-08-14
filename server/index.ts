@@ -23,6 +23,7 @@ import { registerJobMemoryRoutes } from './job-memory/routes';
 import { registerSearchPlanRoutes } from './search-plan/searchPlanRoutes';
 import { SearchPlanRepository } from './search-plan/searchPlanRepository';
 import { SkipRepository } from './search-plan/skipRepository';
+import { registerDailyJobBriefRoutes } from './daily-brief/dailyBriefRoutes';
 import { createDailyRunCoordinator } from './daily-run/runtime';
 import { DailyJobScheduler } from './scheduler/DailyJobScheduler';
 import {
@@ -304,6 +305,9 @@ export function buildServer(
           control: { coordinator, skipRepo: new SkipRepository(db) },
         });
       }
+      // T041 DailyJobBrief 只读 API：复用 dailySearchPlan/dailyJobScheduler 的 v15 门禁
+      // （简报由 DailyRunCoordinator 产出，与计划控制/调度共享同一 capability 层，不新增开关）。
+      registerDailyJobBriefRoutes(app);
       if (dailyJobSchedulerEnabled) {
         const scheduler = new DailyJobScheduler({
           planRepo: new SearchPlanRepository(db),
