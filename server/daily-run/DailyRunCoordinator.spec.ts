@@ -137,6 +137,34 @@ function pipelineResultWithBatch(batchId: string, scope: string[]): DailyPipelin
   };
 }
 
+/** 构造一个含 discovery 条目（manualReview 结果）的 Pipeline 结果；sourceVersionId 即 discovery item ids。 */
+function pipelineResultWithDiscovery(versionIds: string[]): DailyPipelineResult {
+  return {
+    items: versionIds.map((id) => ({
+      index: 0,
+      itemUrl: `https://example.com/${id}`,
+      candidateId: `cand-${id}`,
+      sourceVersionId: id,
+      finalVersionId: id,
+      finalOutcome: 'manualReview' as const,
+      reasonCode: null,
+      milestones: {
+        ingested: true, fetchAttempted: false, upgraded: false, alreadyUpgraded: false,
+        analysisTaskCreated: false, analysisCompleted: false, inRecommendationScope: false,
+      },
+      summary: 'manual review',
+    })),
+    recommendationScope: [],
+    recommendationBatchId: null,
+    summary: {
+      total: versionIds.length, analysisCompleted: 0, analysisFailed: 0, analysisBlocked: 0,
+      analysisAlreadyRunning: 0, analysisCancelled: 0, manualReview: versionIds.length, discoveryOnly: 0,
+      fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0,
+      ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
+    },
+  };
+}
+
 describe('DailyRunCoordinator（T028 闭环核心）', () => {
   it('Pipeline 前创建 SourceRun；Pipeline success → SourceRun SUCCEEDED', async () => {
     await withCoordinator(async ({ coordinator, sourceRunRepo, pipelineRun }) => {
@@ -376,6 +404,116 @@ describe('DailyRunCoordinator — DailyBrief recommendation reconciliation（MON
       const second = await coordinator.run(input);
       assert.equal(first.outcome, 'completed');
       assert.equal(second.outcome, 'skipped');
+    });
+  });
+});
+
+describe('DailyRunCoordinator — DailyBrief discovery reconciliation（day-level monotonic union）', () => {
+  const manualInput = () => ({
+    searchPlanVersionId: 'version-1',
+    triggerType: 'MANUAL' as const,
+    scheduledFor: Date.UTC(2026, 7, 14, 2, 0),
+    scheduledDay: null,
+  });
+
+  it('discovery [a] → incoming [] → 保留 [a]（禁止清空）', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-a']));
+      await coordinator.run(manualInput());
+      await coordinator.run(manualInput()); // 第二次默认 emptyResult（无 discovery）
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, ['d-a']);
+    });
+  });
+
+  it('discovery [a] → [b] → 合并为 [a,b]', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-a']));
+      await coordinator.run(manualInput());
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-b']));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, ['d-a', 'd-b']);
+    });
+  });
+
+  it('discovery [a,b] → [b,c] → 合并为 [a,b,c]（既有顺序优先 + 去重）', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-a', 'd-b']));
+      await coordinator.run(manualInput());
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-b', 'd-c']));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, ['d-a', 'd-b', 'd-c']);
+    });
+  });
+
+  it('同一 discovery 重复 run → 不产生重复 ids', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-a']));
+      await coordinator.run(manualInput());
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-a']));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, ['d-a']);
+    });
+  });
+
+  it('recommendation 非空 + 后续空 discovery → recommendation 不受影响，discovery 保留', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, db, pipelineRun }) => {
+      insertBatch(db, 'batch-nonempty-1', ['v1']);
+      pipelineRun.mockImplementationOnce(async () => ({
+        ...pipelineResultWithBatch('batch-nonempty-1', ['v1']),
+        items: pipelineResultWithDiscovery(['d-a']).items,
+      }));
+      await coordinator.run(manualInput());
+      // 后续空结果（无推荐 scope、无 discovery）。
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.equal(brief.recommendationBatchId, 'batch-nonempty-1');
+      assert.deepEqual(brief.discoveryItemIds, ['d-a']);
+      assert.equal(brief.emptyReason, null);
+    });
+  });
+
+  it('既有 discovery + 后续空 run → emptyReason 不误判为「今日无发现」', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-a']));
+      await coordinator.run(manualInput());
+      await coordinator.run(manualInput()); // 空结果
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, ['d-a']);
+      assert.equal(brief.emptyReason, null);
+    });
+  });
+
+  it('多 run 合并后 logical brief row 仍为 1，sourceRunIds 去重 merge 正确', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-a']));
+      const first = await coordinator.run(manualInput());
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithDiscovery(['d-b']));
+      const second = await coordinator.run(manualInput());
+
+      assert.equal(first.outcome, 'completed');
+      assert.equal(second.outcome, 'completed');
+      if (first.outcome === 'completed' && second.outcome === 'completed') {
+        const briefs = briefRepo.listRecent(10).filter((b) => b.searchPlanVersionId === 'version-1');
+        assert.equal(briefs.length, 1);
+        assert.deepEqual(briefs[0]?.sourceRunIds, [first.sourceRunId, second.sourceRunId]);
+        assert.deepEqual(briefs[0]?.discoveryItemIds, ['d-a', 'd-b']);
+      }
     });
   });
 });

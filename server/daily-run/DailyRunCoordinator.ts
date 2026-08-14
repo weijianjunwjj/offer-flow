@@ -189,7 +189,7 @@ export class DailyRunCoordinator {
     const schedule = parseDailySearchSchedule(version?.schedule ?? {});
     const briefDate = scheduledDay ?? todayInTimeZone(this.deps.now(), schedule.timezone);
 
-    const discoveryItemIds = pipelineResult.items
+    const incomingDiscoveryItemIds = pipelineResult.items
       .filter((item) => item.finalOutcome === 'manualReview' || item.finalOutcome === 'discoveryOnly')
       .map((item) => item.sourceVersionId)
       .filter((id): id is string => id !== null);
@@ -208,12 +208,19 @@ export class DailyRunCoordinator {
       const selectedBatchId = existingNonEmpty && !incomingNonEmpty
         ? existing.recommendationBatchId
         : incomingBatchId;
+      // discovery 采用 day-level monotonic union（DailyBrief 是日级 projection）：
+      //   既有顺序优先 + 本次新增的 ids 追加，去重且稳定排序；
+      //   本次空结果不删除既有发现，也不让 emptyReason 误判为「今日无发现」。
+      const mergedDiscoveryItemIds = [...new Set([
+        ...existing.discoveryItemIds,
+        ...incomingDiscoveryItemIds,
+      ])];
       briefRepo.updateProjection(existing.id, {
         sourceRunIds: [...new Set([...existing.sourceRunIds, runId])],
         coverage: EMPTY_COVERAGE,
         recommendationBatchId: selectedBatchId,
-        discoveryItemIds,
-        emptyReason: this.emptyReasonFor(selectedBatchId, discoveryItemIds),
+        discoveryItemIds: mergedDiscoveryItemIds,
+        emptyReason: this.emptyReasonFor(selectedBatchId, mergedDiscoveryItemIds),
       });
       return existing.id;
     }
@@ -224,11 +231,11 @@ export class DailyRunCoordinator {
       searchPlanVersionId: versionId,
       sourceRunIds: [runId],
       recommendationBatchId: incomingBatchId,
-      discoveryItemIds,
+      discoveryItemIds: incomingDiscoveryItemIds,
       status: 'READY',
       coverage: EMPTY_COVERAGE,
       costSummaryJson: null,
-      emptyReason: this.emptyReasonFor(incomingBatchId, discoveryItemIds),
+      emptyReason: this.emptyReasonFor(incomingBatchId, incomingDiscoveryItemIds),
       generatedAt: this.deps.now(),
       completedAt: null,
       createdAt: this.deps.now(),

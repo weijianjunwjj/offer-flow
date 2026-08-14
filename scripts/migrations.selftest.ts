@@ -367,7 +367,10 @@ try {
   assert.equal(CURRENT_SCHEMA_VERSION, PRODUCTION_SCHEMA_VERSION);
   // G2 能力基线新增 v3、G3 历史补录与漏斗新增 v4、G4 市场位置画像新增 v5、G5 求职策略窗口新增 v6、
   // v0.8 V8-1 雷达领域新增 v7、V8-3 候选关系新增 v8；LATEST 与 PRODUCTION 有意区分。
-  assert.equal(LATEST_SCHEMA_VERSION, 8);
+  // LATEST 不再硬编码具体数值（会随每次 migration 过期）；其未来安全契约是：
+  //   LATEST > PRODUCTION（有意区分），且下方「SCHEMA_MIGRATIONS 末项版本 / 数量 === LATEST」
+  //   保证 LATEST 始终同步迁移注册表。
+  assert.ok(LATEST_SCHEMA_VERSION > PRODUCTION_SCHEMA_VERSION);
   assert.equal(MARKET_POSITION_SCHEMA_VERSION, 5);
   assert.equal(STRATEGY_WINDOW_SCHEMA_VERSION, 6);
   assert.equal(RADAR_DOMAIN_SCHEMA_VERSION, 7);
@@ -1954,8 +1957,9 @@ try {
   });
 
   // 5.4 旧迁移仍可从新库依次执行（回归：FK 改动不破坏纯新增迁移链）。
+  //     覆盖到 LATEST_SCHEMA_VERSION（而非硬编码旧值），使每次新增 migration 自动纳入回归。
   withTempDatabase((db) => {
-    for (let v = 1; v <= 8; v += 1) {
+    for (let v = 1; v <= LATEST_SCHEMA_VERSION; v += 1) {
       const r = initSchema(db, { targetVersion: v });
       assert.equal(schemaVersion(db), v);
       if (v > 1) assert.deepEqual(r.newlyAppliedVersions, [v]);

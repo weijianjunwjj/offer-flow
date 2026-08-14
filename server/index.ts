@@ -344,6 +344,23 @@ export function resolveDailyJobSchedulerCapability(
   return readBackendFlag(env.OFFERFLOW_DAILY_JOB_SCHEDULER) ? { enabled: true } : undefined;
 }
 
+/**
+ * 从环境变量解析 v0.9 每日找岗计划 API 能力开关（默认关闭）。
+ *
+ * OFFERFLOW_DAILY_SEARCH_PLAN 与 OFFERFLOW_RADAR / OFFERFLOW_DAILY_JOB_SCHEDULER
+ * 采用同一套 readBackendFlag 约定：
+ *   - absent / '' / 非 'true' → undefined（不注册 CRUD / Run Now / Pause / Resume / Skip Today）；
+ *   - 'true' → { enabled: true }（buildServer 注册控制 API，但不启动后台 timer）。
+ *
+ * 与 dailyJobScheduler 解耦：API 开启 ≠ 调度开启；允许 DAILY_SEARCH_PLAN=true 且
+ * DAILY_JOB_SCHEDULER=false（有控制 API、无 timer），也允许二者同时 true（控制 API + 自动调度）。
+ */
+export function resolveDailySearchPlanCapability(
+  env: NodeJS.ProcessEnv = process.env,
+): DailySearchPlanCapability | undefined {
+  return readBackendFlag(env.OFFERFLOW_DAILY_SEARCH_PLAN) ? { enabled: true } : undefined;
+}
+
 /** 启动日志用：把绝对 DB 路径脱敏为 <repo-root> 相对形式，不泄露机器绝对路径。 */
 function desensitizeDbPath(dbPath: string): string {
   const root = process.cwd();
@@ -381,6 +398,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // v0.9 每日主动求职调度：默认关闭，与 dailySearchPlan API 解耦；需 schema ≥ v15（含 skip 表）。
   // 真实生产库 schema 低于 v15 时 buildServer 会拒绝启动（allowAutoMigrate=false），不会静默升级真实库。
   const dailyJobSchedulerCapability = resolveDailyJobSchedulerCapability(process.env);
+  // v0.9 每日找岗计划 API（CRUD + Run Now / Pause / Resume / Skip Today）：默认关闭，独立于 scheduler。
+  // 同样需 schema ≥ v15（控制端点依赖 daily_search_plan_skips），由 buildServer 的 requiredVersion 门禁统一拒绝。
+  const dailySearchPlanCapability = resolveDailySearchPlanCapability(process.env);
   const realDbPath = getDbPath();
   const realSchemaVersion = probeSchemaVersion(realDbPath);
   // schema < v8 时禁止启用雷达：评审/晋升/动作/推荐均依赖 v8 候选关系表，
@@ -403,6 +423,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     `[startup] db=${desensitizeDbPath(realDbPath)} schema=v${realSchemaVersion} `
     + `radar=${radarEnabled ? 'ENABLED' : 'DISABLED'} analysis=${radarAnalysisEnabled ? 'ENABLED' : 'DISABLED'} `
     + `novaWingContext=${novaWingAnalysisContextEnabled ? 'ENABLED' : 'DISABLED'} `
+    + `dailySearchPlan=${dailySearchPlanCapability ? 'ENABLED' : 'DISABLED'} `
     + `dailyJobScheduler=${dailyJobSchedulerCapability ? 'ENABLED' : 'DISABLED'}`,
   );
   let loadedNovaWing: LoadedNovaWingRuntime | undefined;
@@ -427,6 +448,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           : undefined,
         novaWingRuntime: loadedNovaWing.ownedRuntime,
       } : undefined,
+      dailySearchPlan: dailySearchPlanCapability,
       dailyJobScheduler: dailyJobSchedulerCapability,
     });
   } catch (error) {

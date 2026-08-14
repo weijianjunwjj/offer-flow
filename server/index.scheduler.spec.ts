@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb } from './db';
-import { buildServer, resolveDailyJobSchedulerCapability } from './index';
+import { buildServer, resolveDailyJobSchedulerCapability, resolveDailySearchPlanCapability } from './index';
 import { DailyJobScheduler } from './scheduler/DailyJobScheduler';
 import { initSchema } from './schema';
 import { DAILY_JOB_SCHEDULER_SCHEMA_VERSION } from './migrations';
@@ -43,6 +43,23 @@ describe('resolveDailyJobSchedulerCapability（OFFERFLOW_DAILY_JOB_SCHEDULER 开
     expect(resolveDailyJobSchedulerCapability({ OFFERFLOW_DAILY_JOB_SCHEDULER: 'true' }))
       .toEqual({ enabled: true });
     expect(resolveDailyJobSchedulerCapability({ OFFERFLOW_DAILY_JOB_SCHEDULER: ' TRUE ' }))
+      .toEqual({ enabled: true });
+  });
+});
+
+describe('resolveDailySearchPlanCapability（OFFERFLOW_DAILY_SEARCH_PLAN 开关契约）', () => {
+  it('absent / 空串 / 非 true → undefined（默认关闭，不注册控制 API）', () => {
+    expect(resolveDailySearchPlanCapability({})).toBeUndefined();
+    expect(resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: '' })).toBeUndefined();
+    expect(resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: 'false' })).toBeUndefined();
+    expect(resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: '0' })).toBeUndefined();
+    expect(resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: '1' })).toBeUndefined();
+  });
+
+  it('true（大小写/空白容忍）→ { enabled: true }', () => {
+    expect(resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: 'true' }))
+      .toEqual({ enabled: true });
+    expect(resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: ' TRUE ' }))
       .toEqual({ enabled: true });
   });
 });
@@ -130,6 +147,102 @@ describe('buildServer dailyJobScheduler 生命周期（production-entry-level）
       await app.ready();
       await closeOnce();
       expect(startSpy).not.toHaveBeenCalled();
+    } finally {
+      await closeOnce();
+    }
+  });
+
+  it('dailySearchPlan ON + scheduler OFF → 控制 API 可用，timer 不启动', async () => {
+    const { db, tempDir } = makeSchedulerDb();
+    const startSpy = vi.spyOn(DailyJobScheduler.prototype, 'start');
+
+    const app = buildServer({
+      db,
+      dailySearchPlan: resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: 'true' }),
+      // 刻意不传 dailyJobScheduler：API 与调度解耦。
+    });
+
+    let closed = false;
+    const closeOnce = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await app.close();
+      db.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    };
+    cleanups.push(closeOnce);
+
+    try {
+      const res = await app.inject({ method: 'GET', url: '/daily-search-plans' });
+      expect(res.statusCode).toBe(200);
+      await closeOnce();
+      expect(startSpy).not.toHaveBeenCalled();
+    } finally {
+      await closeOnce();
+    }
+  });
+
+  it('dailySearchPlan OFF + scheduler ON → timer 独立运行，控制 API 不注册', async () => {
+    const { db, tempDir } = makeSchedulerDb();
+    const startSpy = vi.spyOn(DailyJobScheduler.prototype, 'start');
+    const stopSpy = vi.spyOn(DailyJobScheduler.prototype, 'stop');
+
+    const app = buildServer({
+      db,
+      dailyJobScheduler: resolveDailyJobSchedulerCapability({ OFFERFLOW_DAILY_JOB_SCHEDULER: 'true' }),
+      // 刻意不传 dailySearchPlan：调度独立运行。
+    });
+
+    let closed = false;
+    const closeOnce = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await app.close();
+      db.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    };
+    cleanups.push(closeOnce);
+
+    try {
+      const res = await app.inject({ method: 'GET', url: '/daily-search-plans' });
+      expect(res.statusCode).toBe(404);
+      await app.ready();
+      expect(startSpy).toHaveBeenCalledTimes(1);
+      await closeOnce();
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await closeOnce();
+    }
+  });
+
+  it('两者 ON → 控制 API 可用 且 timer 启动', async () => {
+    const { db, tempDir } = makeSchedulerDb();
+    const startSpy = vi.spyOn(DailyJobScheduler.prototype, 'start');
+    const stopSpy = vi.spyOn(DailyJobScheduler.prototype, 'stop');
+
+    const app = buildServer({
+      db,
+      dailySearchPlan: resolveDailySearchPlanCapability({ OFFERFLOW_DAILY_SEARCH_PLAN: 'true' }),
+      dailyJobScheduler: resolveDailyJobSchedulerCapability({ OFFERFLOW_DAILY_JOB_SCHEDULER: 'true' }),
+    });
+
+    let closed = false;
+    const closeOnce = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      await app.close();
+      db.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    };
+    cleanups.push(closeOnce);
+
+    try {
+      const res = await app.inject({ method: 'GET', url: '/daily-search-plans' });
+      expect(res.statusCode).toBe(200);
+      await app.ready();
+      expect(startSpy).toHaveBeenCalledTimes(1);
+      await closeOnce();
+      expect(stopSpy).toHaveBeenCalledTimes(1);
     } finally {
       await closeOnce();
     }
