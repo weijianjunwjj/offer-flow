@@ -496,6 +496,8 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 
 ### T024 [P] SearchProviderAdapter 接口定义与 Provider-neutral 类型
 
+> **实施状态（2026-08-14）：absorbed/completed by Phase 3。** `server/search-provider/` 已实现 `SearchProviderAdapter` 接口、Provider-neutral 类型（`SearchQuery` / `SearchEvidenceItem` / `SearchProviderResult` / `SearchCoverage` / `SearchProviderErrorCode`）与 9 种错误码（`errors.ts`）。契约与 `contracts/search-provider.md` v2.0 一致，Tavily DTO 仅存在于 `tavily/` 子模块。
+
 **目标：** 定义 `SearchProviderAdapter` 接口和所有 Provider-neutral 类型。Tavily DTO 只在 Adapter section。
 
 **文件范围（新增）：**
@@ -513,6 +515,8 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 
 ### T025 [P] SecretStore 抽象与实现
 
+> **实施状态（2026-08-14）：absorbed/completed by Phase 3。** `SecretStore` 接口 + `EnvSecretStore` + `MemorySecretStore`（测试用）+ `SecretStore.spec.ts` 已实现。`WindowsDpapiSecretStore`（DPAPI 加密存储）按 `SecretStore.ts` 注释明确延后（"future, not in T025"），非本轮缺口。
+
 **目标：** 实现 `SecretStore` 抽象。同旧 Plan T020（无变化）。
 
 **文件范围（新增/修改）：**
@@ -524,6 +528,8 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 ---
 
 ### T026 Tavily Search Provider 实现
+
+> **实施状态（2026-08-14）：absorbed/completed by Phase 3。** `TavilySearchProvider` + `tavilyFieldMapping` + `tavilyRateLimiter` + `TavilySearchProvider.spec.ts` 已实现。覆盖 P0 `/search` endpoint、Bearer 认证、Token Bucket、超时/取消、9 种错误分类、`include_raw_content=false`、`auto_parameters` 禁用；Tavily DTO 仅存于 Adapter boundary。
 
 **目标：** 实现 P0 `SearchProviderAdapter`：Tavily Search API（`/search` endpoint only）。
 
