@@ -158,6 +158,18 @@ export class SearchPlanRepository {
     return rows.map(rowToPlan);
   }
 
+  /** 返回 status='active' 且有 activeVersionId 的计划（Scheduler 触发用）。 */
+  listActivePlans(): DailySearchPlan[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ${PLAN_COLUMNS} FROM daily_search_plans
+         WHERE status = 'active' AND active_version_id IS NOT NULL
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all() as DailySearchPlanRow[];
+    return rows.map(rowToPlan);
+  }
+
   /** 部分更新（name/status/activeVersionId/deletedAt）。updated_at 由本方法置为当前时间。 */
   updatePlan(id: string, patch: DailySearchPlanPatch): void {
     const existing = this.getPlan(id);

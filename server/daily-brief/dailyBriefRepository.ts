@@ -151,6 +151,40 @@ export class DailyBriefRepository {
   }
 
   /**
+   * 更新 projection（sourceRunIds / coverage / recommendationBatchId / discoveryItemIds /
+   * emptyReason）。不改 brief_date / searchPlanVersionId / status（identity 与生命周期不变）。
+   * 用于 CATCH_UP / RETRY / MANUAL 等同一 logical brief 的 provenance 合并。
+   */
+  updateProjection(id: string, patch: {
+    sourceRunIds: string[];
+    coverage: SearchCoverage;
+    recommendationBatchId: string;
+    discoveryItemIds: string[];
+    emptyReason: string | null;
+  }): void {
+    const existing = this.getById(id);
+    if (existing === null) return;
+    this.db.prepare(`
+      UPDATE daily_job_briefs
+      SET source_run_ids_json = @sourceRunIdsJson,
+          coverage_json = @coverageJson,
+          recommendation_batch_id = @recommendationBatchId,
+          discovery_item_ids_json = @discoveryItemIdsJson,
+          empty_reason = @emptyReason,
+          updated_at = @updatedAt
+      WHERE id = @id
+    `).run({
+      id,
+      sourceRunIdsJson: JSON.stringify(patch.sourceRunIds),
+      coverageJson: JSON.stringify(patch.coverage),
+      recommendationBatchId: patch.recommendationBatchId,
+      discoveryItemIdsJson: JSON.stringify(patch.discoveryItemIds),
+      emptyReason: patch.emptyReason,
+      updatedAt: Date.now(),
+    });
+  }
+
+  /**
    * 状态转移：终态不可再转移；进入终态自动补 completed_at。
    * 相同状态重复转移为幂等 no-op。
    */

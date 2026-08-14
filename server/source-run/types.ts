@@ -80,7 +80,11 @@ export const SOURCE_RUN_TERMINAL_STATUSES: readonly SourceRunStatus[] = [
  */
 export interface SourceRun {
   id: string;
+  /** 冗余 plan identity provenance（FR-007「同一计划」并发防重的持久化键）。 */
+  searchPlanId: string;
   searchPlanVersionId: string;
+  /** 该 occurrence 在 PlanVersion.schedule.timezone 下的本地自然日 YYYY-MM-DD（SCHEDULED/CATCH_UP 必填，其余 null）。 */
+  scheduledDay: string | null;
   sourceKey: string;
   sourceVersion: string;
   triggerType: SourceRunTriggerType;

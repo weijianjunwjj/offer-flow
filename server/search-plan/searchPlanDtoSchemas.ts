@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidIanaTimeZone } from '../daily-run/schedule';
 
 /**
  * OfferFlow v0.9 — DailySearchPlan API DTO schemas。
@@ -27,6 +28,19 @@ export const SearchSourceConfigSchema = z
   .object({ providerKey: trimmedString })
   .catchall(z.unknown());
 
+/** schedule 输入：dailyAt 严格 HH:mm；timezone 可选（缺省由 normalize 补 Asia/Shanghai）。 */
+const DailySearchScheduleInputSchema = z
+  .object({
+    dailyAt: z.string().trim().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).optional(),
+    timezone: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((value) => isValidIanaTimeZone(value), { message: '非法 IANA timezone' })
+      .optional(),
+  })
+  .default({});
+
 const searchPlanConfigShape = {
   cities: z.array(SearchPlanCitySchema).default([]),
   roleDirections: z.array(trimmedString).default([]),
@@ -34,7 +48,7 @@ const searchPlanConfigShape = {
   expandedKeywords: z.array(trimmedString).default([]),
   hardConstraints: z.array(z.record(z.string(), z.unknown())).default([]),
   sourceConfigs: z.array(SearchSourceConfigSchema).default([]),
-  schedule: z.record(z.string(), z.unknown()).default({}),
+  schedule: DailySearchScheduleInputSchema,
   scanBudget: z.record(z.string(), z.unknown()).default({}),
   analysisBudget: z.record(z.string(), z.unknown()).default({}),
   briefPolicy: z.record(z.string(), z.unknown()).default({}),

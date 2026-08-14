@@ -576,6 +576,8 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 
 ### T028 Scheduler 核心实现
 
+> **实施状态（2026-08-14）：completed（T028 + DailyRunCoordinator 闭环）。** `server/scheduler/DailyJobScheduler.ts`（WHEN，Fastify 进程内 setTimeout 链 + startup CATCH_UP）+ `server/daily-run/DailyRunCoordinator.ts`（ONE RUN LIFECYCLE）+ `server/daily-run/runtime.ts`（composition root 组装真实 Tavily/Ingestion/Fetch/Upgrade/Analysis/Recommendation）。schedule contract = `{ dailyAt, timezone }`（v0.9 默认 `Asia/Shanghai`）；`scheduledFor` = 绝对 occurrence instant；`scheduledDay` = plan timezone 自然日 YYYY-MM-DD；v14 迁移补 source_runs `search_plan_id`/`scheduled_day` + occurrence/active 去重 partial UNIQUE（FR-005/FR-007）。
+
 **目标：** 同旧 Plan T023。Fastify 进程内 Scheduler。无变化（Provider 无关组件）。
 
 ---

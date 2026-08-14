@@ -21,8 +21,12 @@ import { registerMarketPositionRoutes } from './market-position/routes';
 import { registerStrategyWindowRoutes } from './strategy-window/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
 import { registerSearchPlanRoutes } from './search-plan/searchPlanRoutes';
+import { SearchPlanRepository } from './search-plan/searchPlanRepository';
+import { createDailyRunCoordinator } from './daily-run/runtime';
+import { DailyJobScheduler } from './scheduler/DailyJobScheduler';
 import {
   CAPABILITY_BASELINE_SCHEMA_VERSION,
+  DAILY_JOB_SCHEDULER_SCHEMA_VERSION,
   DAILY_SEARCH_PLAN_SCHEMA_VERSION,
   getDatabaseSchemaVersion,
   HISTORY_IMPORT_SCHEMA_VERSION,
@@ -109,6 +113,11 @@ export interface DailySearchPlanCapability {
   enabled?: boolean;
 }
 
+/** v0.9 每日主动求职调度能力：默认关闭（需 schema ≥ v14），与 dailySearchPlan API 解耦——API 开启 ≠ 自动任务开启。 */
+export interface DailyJobSchedulerCapability {
+  enabled?: boolean;
+}
+
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
@@ -121,6 +130,7 @@ export interface BuildServerOptions {
   strategyWindow?: StrategyWindowCapability;
   radar?: RadarCapability;
   dailySearchPlan?: DailySearchPlanCapability;
+  dailyJobScheduler?: DailyJobSchedulerCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -155,6 +165,8 @@ export function buildServer(
   const radarEnabled = options.radar?.enabled ?? false;
   // v0.9 每日找岗计划 API：默认关闭（需 schema v10 沙箱表），仅显式开启时才注册路由与抬高所需版本。
   const dailySearchPlanEnabled = options.dailySearchPlan?.enabled ?? false;
+  // v0.9 每日主动求职调度：默认关闭（需 schema v14），独立于 dailySearchPlan API。
+  const dailyJobSchedulerEnabled = options.dailyJobScheduler?.enabled ?? false;
   const novaWingAnalysisContextEnabled = options.radar?.novaWingAnalysisContextEnabled ?? false;
   const injectedNovaWingAdapter = options.radar?.novaWingHostAdapter;
   const ownedNovaWingRuntime = novaWingAnalysisContextEnabled && injectedNovaWingAdapter === undefined
@@ -175,19 +187,21 @@ export function buildServer(
   if (jobMemoryV2.enabled) {
     // 每个能力只升级到自己需要的最低 schema 版本，不因为 v4 存在就顺带把只开了
     // 能力基线（G2）的场景也拉到 v4——两者的 requiredVersion 相互独立。
-    const requiredVersion = dailySearchPlanEnabled
-      ? DAILY_SEARCH_PLAN_SCHEMA_VERSION
-      : radarEnabled
-        ? RADAR_DOMAIN_SCHEMA_VERSION
-        : strategyWindowEnabled
-          ? STRATEGY_WINDOW_SCHEMA_VERSION
-          : marketPositionEnabled
-            ? MARKET_POSITION_SCHEMA_VERSION
-            : historyImportEnabled
-              ? HISTORY_IMPORT_SCHEMA_VERSION
-              : capabilityBaselineEnabled
-                ? CAPABILITY_BASELINE_SCHEMA_VERSION
-                : PRODUCTION_SCHEMA_VERSION;
+    const requiredVersion = dailyJobSchedulerEnabled
+      ? DAILY_JOB_SCHEDULER_SCHEMA_VERSION
+      : dailySearchPlanEnabled
+        ? DAILY_SEARCH_PLAN_SCHEMA_VERSION
+        : radarEnabled
+          ? RADAR_DOMAIN_SCHEMA_VERSION
+          : strategyWindowEnabled
+            ? STRATEGY_WINDOW_SCHEMA_VERSION
+            : marketPositionEnabled
+              ? MARKET_POSITION_SCHEMA_VERSION
+              : historyImportEnabled
+                ? HISTORY_IMPORT_SCHEMA_VERSION
+                : capabilityBaselineEnabled
+                  ? CAPABILITY_BASELINE_SCHEMA_VERSION
+                  : PRODUCTION_SCHEMA_VERSION;
     // 真实生产库（data/offerflow.sqlite3）禁止在服务启动时自动迁移；
     // 仅临时文件库 / 注入的测试库 / 内存库允许自动初始化到所需 schema。
     const isRealProductionDb = ownsDb && dbPath === getDbPath();
@@ -282,6 +296,19 @@ export function buildServer(
     }
     if (dailySearchPlanEnabled) {
       registerSearchPlanRoutes(app);
+    }
+    if (dailyJobSchedulerEnabled) {
+      const scheduler = new DailyJobScheduler({
+        planRepo: new SearchPlanRepository(db),
+        coordinator: createDailyRunCoordinator({ db }),
+      });
+      // 生命周期跟随 Fastify：onReady 启动，onClose 停止；不产生顶层 timer side effect。
+      app.addHook('onReady', async () => {
+        scheduler.start();
+      });
+      app.addHook('onClose', async () => {
+        scheduler.stop();
+      });
     }
   }
   return app;

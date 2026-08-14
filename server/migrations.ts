@@ -11,6 +11,7 @@ import { createDailySearchPlanSchemaV10 } from './migrations/dailySearchPlanSche
 import { createSourceRunSchemaV11 } from './migrations/sourceRunSchemaV11';
 import { createDailyJobBriefSchemaV12 } from './migrations/dailyJobBriefSchemaV12';
 import { createDailyJobBriefIdempotencySchemaV13 } from './migrations/dailyJobBriefIdempotencySchemaV13';
+import { createDailyJobSchedulerSchemaV14 } from './migrations/dailyJobSchedulerSchemaV14';
 
 export interface SchemaMigration {
   version: number;
@@ -37,7 +38,7 @@ export const PRODUCTION_SCHEMA_VERSION = 2;
 // LATEST 与 PRODUCTION 有意区分，v3~v7 均为纯新增表，v8 新增候选关系表并最小扩展
 // radar_actions 的 action_type CHECK（不改行数据），不改动 v2 生产语义。
 // v5/v6/v7/v8/v9/v10/v11 仅限沙箱/临时库使用，真实生产库不得自动升级。
-export const LATEST_SCHEMA_VERSION = 13;
+export const LATEST_SCHEMA_VERSION = 14;
 export const CURRENT_SCHEMA_VERSION = PRODUCTION_SCHEMA_VERSION;
 // G2 能力基线单独所需的最低 schema 版本（v3），供只开启该能力时使用。
 export const CAPABILITY_BASELINE_SCHEMA_VERSION = 3;
@@ -63,6 +64,9 @@ export const SOURCE_RUN_SCHEMA_VERSION = 11;
 // 仅限沙箱/演练库使用。v13 在 v12 基础上追加 daily_job_briefs 的
 // (brief_date, search_plan_version_id) 唯一索引，构成持久化层幂等约束。
 export const DAILY_JOB_BRIEF_SCHEMA_VERSION = 13;
+// v0.9 Phase 3（T028）DailyJobScheduler 所需的最低 schema 版本（v14），仅限沙箱/演练库使用。
+// v14 在 v13 基础上为 source_runs 追加 scheduled_day / search_plan_id 与 occurrence/active 去重索引。
+export const DAILY_JOB_SCHEDULER_SCHEMA_VERSION = 14;
 
 const BASELINE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -170,6 +174,11 @@ export const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     version: 13,
     name: '013_v0_9_daily_job_brief_idempotency_schema',
     up: createDailyJobBriefIdempotencySchemaV13,
+  },
+  {
+    version: 14,
+    name: '014_v0_9_daily_job_scheduler_schema',
+    up: createDailyJobSchedulerSchemaV14,
   },
 ];
 

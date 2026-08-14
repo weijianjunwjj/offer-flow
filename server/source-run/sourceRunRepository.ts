@@ -13,7 +13,7 @@ import type { SourceRun, SourceRunPhase, SourceRunStatus } from './types';
  */
 
 const COLUMNS = `
-  id, search_plan_version_id, source_key, source_version, trigger_type,
+  id, search_plan_id, search_plan_version_id, scheduled_day, source_key, source_version, trigger_type,
   retry_of_run_id, status, phase, scheduled_for, started_at, finished_at,
   queries_attempted, queries_succeeded, queries_failed, results_discovered,
   relevant_results, new_count, changed_count, duplicate_count, conflict_count,
@@ -25,7 +25,8 @@ const COLUMNS = `
 `;
 
 interface SourceRunRow {
-  id: unknown; search_plan_version_id: unknown; source_key: unknown; source_version: unknown;
+  id: unknown; search_plan_id: unknown; search_plan_version_id: unknown; scheduled_day: unknown;
+  source_key: unknown; source_version: unknown;
   trigger_type: unknown; retry_of_run_id: unknown; status: unknown; phase: unknown;
   scheduled_for: unknown; started_at: unknown; finished_at: unknown;
   queries_attempted: unknown; queries_succeeded: unknown; queries_failed: unknown;
@@ -59,7 +60,9 @@ function asNullableNumber(value: unknown): number | null {
 function rowToSourceRun(row: SourceRunRow): SourceRun {
   return {
     id: row.id as string,
+    searchPlanId: row.search_plan_id as string,
     searchPlanVersionId: row.search_plan_version_id as string,
+    scheduledDay: asNullableString(row.scheduled_day),
     sourceKey: row.source_key as string,
     sourceVersion: row.source_version as string,
     triggerType: row.trigger_type as SourceRun['triggerType'],
@@ -103,7 +106,9 @@ function rowToSourceRun(row: SourceRunRow): SourceRun {
 function sourceRunToParams(run: SourceRun): Record<string, unknown> {
   return {
     id: run.id,
+    searchPlanId: run.searchPlanId,
     searchPlanVersionId: run.searchPlanVersionId,
+    scheduledDay: run.scheduledDay,
     sourceKey: run.sourceKey,
     sourceVersion: run.sourceVersion,
     triggerType: run.triggerType,
@@ -211,7 +216,7 @@ export class SourceRunRepository {
   insert(run: SourceRun): void {
     this.db.prepare(`
       INSERT INTO source_runs (
-        id, search_plan_version_id, source_key, source_version, trigger_type,
+        id, search_plan_id, search_plan_version_id, scheduled_day, source_key, source_version, trigger_type,
         retry_of_run_id, status, phase, scheduled_for, started_at, finished_at,
         queries_attempted, queries_succeeded, queries_failed, results_discovered,
         relevant_results, new_count, changed_count, duplicate_count, conflict_count,
@@ -221,7 +226,7 @@ export class SourceRunRepository {
         estimated_search_credits, actual_search_credits, coverage_json, progress_json,
         cost_summary_json, error_code, error_message, created_at, updated_at
       ) VALUES (
-        @id, @searchPlanVersionId, @sourceKey, @sourceVersion, @triggerType,
+        @id, @searchPlanId, @searchPlanVersionId, @scheduledDay, @sourceKey, @sourceVersion, @triggerType,
         @retryOfRunId, @status, @phase, @scheduledFor, @startedAt, @finishedAt,
         @queriesAttempted, @queriesSucceeded, @queriesFailed, @resultsDiscovered,
         @relevantResults, @newCount, @changedCount, @duplicateCount, @conflictCount,

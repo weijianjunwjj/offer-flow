@@ -8,6 +8,7 @@ import {
   IdParamsSchema,
   type SearchPlanConfigInput,
 } from './searchPlanDtoSchemas';
+import { normalizeScheduleInput } from '../daily-run/schedule';
 
 /**
  * OfferFlow v0.9 — DailySearchPlan API 路由（T022）。
@@ -72,7 +73,7 @@ function buildVersion(
     expandedKeywords: config.expandedKeywords,
     hardConstraints: config.hardConstraints,
     sourceConfigs: config.sourceConfigs,
-    schedule: config.schedule,
+    schedule: normalizeScheduleInput(config.schedule),
     scanBudget: config.scanBudget,
     analysisBudget: config.analysisBudget,
     briefPolicy: config.briefPolicy,

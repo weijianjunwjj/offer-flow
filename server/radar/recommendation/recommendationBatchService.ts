@@ -124,6 +124,32 @@ export class RecommendationBatchService {
     }
   }
 
+  /**
+   * 空 scope 的空批次（供 DailyRunCoordinator 在 Pipeline 无推荐 scope 时引用）。
+   * 幂等：空 scope 恒定 emptyReason → 确定性 batchKey → 复用同一空批次，不插第二份。
+   */
+  createEmptyBatch(): CreateBatchResult {
+    const emptySet: RecommendationSetV1 = {
+      contractVersion: RECOMMENDATION_CONTRACT_VERSION,
+      recommendations: [],
+      blocked: [],
+      emptyReason: 'no_candidates_in_scope',
+    };
+    const batchKey = this.computeBatchKey([], emptySet);
+    const existing = this.batches.findByBatchKey(batchKey);
+    if (existing !== null) return { batch: existing, created: false };
+
+    const batch = this.assembleBatch(batchKey, [], [], emptySet);
+    try {
+      this.batches.insert(batch);
+      return { batch, created: true };
+    } catch (error) {
+      const raced = this.batches.findByBatchKey(batchKey);
+      if (raced === null) throw error;
+      return { batch: raced, created: false };
+    }
+  }
+
   getBatch(id: string): RadarRecommendationBatch | null {
     return this.batches.getById(id);
   }

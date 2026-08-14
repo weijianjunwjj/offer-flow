@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb } from '../db';
-import { SOURCE_RUN_SCHEMA_VERSION, runMigrations } from '../migrations';
+import { DAILY_JOB_SCHEDULER_SCHEMA_VERSION, runMigrations } from '../migrations';
 import { SourceRunRepository } from './sourceRunRepository';
 import type { SourceRun } from './types';
 
@@ -17,7 +17,7 @@ function withRepo(run: (repo: SourceRunRepository, db: Database.Database) => voi
   const dbPath = path.join(tempDir, `scenario-${databaseSequence}.sqlite3`);
   const db = openDb(dbPath);
   try {
-    runMigrations(db, { targetVersion: SOURCE_RUN_SCHEMA_VERSION });
+    runMigrations(db, { targetVersion: DAILY_JOB_SCHEDULER_SCHEMA_VERSION });
     setupPlanVersion(db);
     run(new SourceRunRepository(db), db);
   } finally {
@@ -48,7 +48,9 @@ function setupPlanVersion(db: Database.Database): void {
 function makeRun(overrides: Partial<SourceRun> = {}): SourceRun {
   return {
     id: 'run-1',
+    searchPlanId: 'plan-1',
     searchPlanVersionId: 'version-1',
+    scheduledDay: null,
     sourceKey: 'tavily',
     sourceVersion: '1.0.0',
     triggerType: 'SCHEDULED',
@@ -192,7 +194,8 @@ describe('SourceRunRepository（T029）', () => {
 
   it('重试链：retry_of_run_id 关联前一次 run 可追溯', () => {
     withRepo((repo) => {
-      repo.insert(makeRun());
+      // 原 run 终态（FAILED 不在 active 唯一索引内），RETRY 新建 active run 不冲突。
+      repo.insert(makeRun({ status: 'FAILED' }));
       repo.insert(makeRun({ id: 'run-2', triggerType: 'RETRY', retryOfRunId: 'run-1' }));
       const retry = repo.getById('run-2');
       assert.ok(retry !== null);
@@ -203,8 +206,8 @@ describe('SourceRunRepository（T029）', () => {
 
   it('listByPlanVersion 按创建时间降序返回', () => {
     withRepo((repo) => {
-      repo.insert(makeRun({ id: 'run-a', createdAt: 100, updatedAt: 100 }));
-      repo.insert(makeRun({ id: 'run-b', createdAt: 200, updatedAt: 200 }));
+      repo.insert(makeRun({ id: 'run-a', createdAt: 100, updatedAt: 100, scheduledFor: 100, status: 'SUCCEEDED' }));
+      repo.insert(makeRun({ id: 'run-b', createdAt: 200, updatedAt: 200, scheduledFor: 200, status: 'FAILED' }));
       const runs = repo.listByPlanVersion('version-1');
       assert.deepEqual(runs.map((r) => r.id), ['run-b', 'run-a']);
     });
@@ -213,14 +216,11 @@ describe('SourceRunRepository（T029）', () => {
   it('纯持久化：insert 不触发 DailyPipeline / DailyBrief / Scheduler（无额外副作用）', () => {
     withRepo((repo, db) => {
       repo.insert(makeRun());
-      // 只写入 source_runs 一行。
+      // 只写入 source_runs 一行，不写入 daily_job_briefs。
       const runCount = (db.prepare('SELECT COUNT(*) AS c FROM source_runs').get() as { c: number }).c;
       assert.equal(runCount, 1);
-      // daily_job_briefs 表在 v11 尚未创建（T040 属于后续 task），本 Repository 不触碰它。
-      const tables = (db.prepare(
-        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-      ).all() as Array<{ name: string }>).map((row) => row.name);
-      assert.ok(!tables.includes('daily_job_briefs'), '不应出现 daily_job_briefs 表');
+      const briefCount = (db.prepare('SELECT COUNT(*) AS c FROM daily_job_briefs').get() as { c: number }).c;
+      assert.equal(briefCount, 0);
     });
   });
 

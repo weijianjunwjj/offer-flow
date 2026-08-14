@@ -171,3 +171,40 @@ describe('DailySearchPlan API 生产注册（真实 app 非 404）', () => {
     }
   });
 });
+
+describe('DailySearchPlan schedule timezone normalization（T028 contract）', () => {
+  it('timezone omitted → 持久化 Asia/Shanghai', async () => {
+    const { app } = createHarness();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/daily-search-plans',
+      payload: { name: '计划', schedule: { dailyAt: '09:00' } },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { version: { schedule: { dailyAt: string; timezone: string } } };
+    expect(body.version.schedule).toEqual({ dailyAt: '09:00', timezone: 'Asia/Shanghai' });
+  });
+
+  it('显式 IANA timezone → round trip', async () => {
+    const { app } = createHarness();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/daily-search-plans',
+      payload: { name: '计划', schedule: { dailyAt: '08:30', timezone: 'Asia/Singapore' } },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { version: { schedule: { dailyAt: string; timezone: string } } };
+    expect(body.version.schedule).toEqual({ dailyAt: '08:30', timezone: 'Asia/Singapore' });
+  });
+
+  it('非法 IANA timezone → 422', async () => {
+    const { app } = createHarness();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/daily-search-plans',
+      payload: { name: '计划', schedule: { dailyAt: '09:00', timezone: 'Not/AZone' } },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+});
