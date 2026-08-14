@@ -210,4 +210,91 @@ describe('SearchEvidenceIngestionService', () => {
     expect(source!.externalRecordId).toBe(item.url);
     expect(source!.sourceStatus).toBe('active');
   });
+
+  describe('Historical Version Reactivation（Bug A）', () => {
+  const url = 'https://www.zhipin.com/job_detail/reactivation-test.html';
+
+  it('active=A → incoming=A → no_change，不创建新版本', () => {
+    const itemA = makeItem({ url, title: '前端开发工程师' });
+    const first = service.ingest(itemA, 'SEARCH_EVIDENCE');
+    const second = service.ingest(itemA, 'SEARCH_EVIDENCE');
+
+    expect(second.decisionType).toBe('no_change');
+    expect(second.candidateVersionId).toBe(first.candidateVersionId);
+
+    const repo = new RadarCandidateRepository(db);
+    expect(repo.listVersionsByCandidate(first.candidateId!)).toHaveLength(1);
+  });
+
+  it('active=A → incoming=B（历史无 B）→ 创建 B，active=B', () => {
+    const itemA = makeItem({ url, title: '前端开发工程师' });
+    const itemB = makeItem({ url, title: '后端开发工程师' });
+    const a = service.ingest(itemA, 'SEARCH_EVIDENCE');
+    const b = service.ingest(itemB, 'SEARCH_EVIDENCE');
+
+    expect(b.decisionType).toBe('material_change');
+    expect(b.candidateVersionId).not.toBe(a.candidateVersionId);
+
+    const repo = new RadarCandidateRepository(db);
+    expect(repo.listVersionsByCandidate(a.candidateId!)).toHaveLength(2);
+    expect(repo.getCandidate(a.candidateId!)!.activeVersionId).toBe(b.candidateVersionId);
+  });
+
+  it('history=A, active=B → incoming=A → 复用历史 A，active=A，不创建重复版本', () => {
+    const itemA = makeItem({ url, title: '前端开发工程师' });
+    const itemB = makeItem({ url, title: '后端开发工程师' });
+    const a = service.ingest(itemA, 'SEARCH_EVIDENCE');
+    service.ingest(itemB, 'SEARCH_EVIDENCE');
+    const aAgain = service.ingest(itemA, 'SEARCH_EVIDENCE');
+
+    // active 从 B 变回 A：是 material_change，不是 no_change。
+    expect(aAgain.decisionType).toBe('material_change');
+    // 复用历史 A，而不是新建第三个版本。
+    expect(aAgain.candidateVersionId).toBe(a.candidateVersionId);
+
+    const repo = new RadarCandidateRepository(db);
+    const versions = repo.listVersionsByCandidate(a.candidateId!);
+    expect(versions).toHaveLength(2);
+    expect(repo.getCandidate(a.candidateId!)!.activeVersionId).toBe(a.candidateVersionId);
+  });
+
+  it('A→B→A→B→A 反复震荡只保留 A、B 两个 unique content hash', () => {
+    const itemA = makeItem({ url, title: '前端开发工程师' });
+    const itemB = makeItem({ url, title: '后端开发工程师' });
+
+    service.ingest(itemA, 'SEARCH_EVIDENCE'); // A
+    service.ingest(itemB, 'SEARCH_EVIDENCE'); // B
+    const third = service.ingest(itemA, 'SEARCH_EVIDENCE'); // A（复用）
+    service.ingest(itemB, 'SEARCH_EVIDENCE'); // B（复用）
+    const fifth = service.ingest(itemA, 'SEARCH_EVIDENCE'); // A（复用）
+
+    const repo = new RadarCandidateRepository(db);
+    const versions = repo.listVersionsByCandidate(third.candidateId!);
+    expect(versions).toHaveLength(2);
+    expect(new Set(versions.map((v) => v.contentHash)).size).toBe(2);
+    expect(repo.getCandidate(third.candidateId!)!.activeVersionId).toBe(fifth.candidateVersionId);
+  });
+
+  it('历史回退不触发 UNIQUE(candidate_id, content_hash)，摄入正常返回', () => {
+    const itemA = makeItem({ url, title: '前端开发工程师' });
+    const itemB = makeItem({ url, title: '后端开发工程师' });
+    service.ingest(itemA, 'SEARCH_EVIDENCE');
+    service.ingest(itemB, 'SEARCH_EVIDENCE');
+
+    // 第三次回到 A：不应抛 SQLITE_CONSTRAINT_UNIQUE。
+    expect(() => service.ingest(itemA, 'SEARCH_EVIDENCE')).not.toThrow();
+  });
+
+  it('回退时当前 observation snapshot 仍正常持久化', () => {
+    const itemA = makeItem({ url, title: '前端开发工程师' });
+    const itemB = makeItem({ url, title: '后端开发工程师' });
+    service.ingest(itemA, 'SEARCH_EVIDENCE');
+    service.ingest(itemB, 'SEARCH_EVIDENCE');
+    const aAgain = service.ingest(itemA, 'SEARCH_EVIDENCE');
+
+    const snapshot = new RadarCaptureRepository(db).getSnapshot(aAgain.snapshotId);
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.captureMethod).toBe('search_discovery');
+  });
+  });
 });

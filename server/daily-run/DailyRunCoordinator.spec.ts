@@ -688,3 +688,103 @@ describe('DailyRunCoordinator — coverage / terminal status（FR-015 / SC-012 �
     });
   });
 });
+
+describe('DailyRunCoordinator — Discovery Preservation Across Enrichment Failure（Bug B）', () => {
+  const manualInput = () => ({
+    searchPlanVersionId: 'version-1',
+    triggerType: 'MANUAL' as const,
+    scheduledFor: Date.UTC(2026, 7, 14, 2, 0),
+    scheduledDay: null,
+  });
+
+  function enrichmentItem(
+    finalOutcome: DailyPipelineResult['items'][number]['finalOutcome'],
+    versionId: string,
+  ): DailyPipelineResult['items'][number] {
+    return {
+      index: 0,
+      itemUrl: `https://example.com/${versionId}`,
+      candidateId: `cand-${versionId}`,
+      sourceVersionId: versionId,
+      finalVersionId: null,
+      finalOutcome,
+      reasonCode: 'x',
+      milestones: {
+        ingested: true, fetchAttempted: true, upgraded: false, alreadyUpgraded: false,
+        analysisTaskCreated: false, analysisCompleted: false, inRecommendationScope: false,
+      },
+      summary: finalOutcome,
+    };
+  }
+
+  it.each(['fetchFailed', 'validationFailed', 'upgradeBlocked', 'upgradeFailed'] as const)(
+    '%s → 仍进入 discoveryItemIds（initial ingestion PASS 后 enrichment 失败不丢发现）',
+    async (finalOutcome) => {
+      await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+        pipelineRun.mockImplementationOnce(async () =>
+          pipelineResultWithCoverage(coverage(1), [enrichmentItem(finalOutcome, 'v-1')]));
+        await coordinator.run(manualInput());
+
+        const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+        assert.ok(brief !== null);
+        assert.deepEqual(brief.discoveryItemIds, ['v-1']);
+      });
+    },
+  );
+
+  it('initial ingestion FAIL（ingestFailed, sourceVersionId=null）→ 不产生 fake discoveryItemId', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      const item: DailyPipelineResult['items'][number] = {
+        index: 0, itemUrl: 'https://example.com/x', candidateId: null,
+        sourceVersionId: null, finalVersionId: null, finalOutcome: 'ingestFailed', reasonCode: 'boom',
+        milestones: {
+          ingested: false, fetchAttempted: false, upgraded: false, alreadyUpgraded: false,
+          analysisTaskCreated: false, analysisCompleted: false, inRecommendationScope: false,
+        },
+        summary: 'ingestFailed',
+      };
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(coverage(1), [item]));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, []);
+    });
+  });
+
+  it('同 CandidateVersion 多个 query 命中 → Brief 仍只出现一次（stable union dedupe）', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      const items: DailyPipelineResult['items'] = ['v-1', 'v-1'].map((id, i) => ({
+        index: i, itemUrl: `https://example.com/${i}`, candidateId: `cand-${id}`,
+        sourceVersionId: id, finalVersionId: null, finalOutcome: 'fetchFailed', reasonCode: 'FETCH_FAILED',
+        milestones: {
+          ingested: true, fetchAttempted: true, upgraded: false, alreadyUpgraded: false,
+          analysisTaskCreated: false, analysisCompleted: false, inRecommendationScope: false,
+        },
+        summary: 'fetchFailed',
+      }));
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(coverage(2), items));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, ['v-1']);
+    });
+  });
+
+  it('历史 empty Brief → 后续 fetchFailed discovery → monotonic upgrade 正常', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      // run-1：空（无 discovery）。
+      await coordinator.run(manualInput());
+      // run-2：fetchFailed 仍产生 discovery。
+      pipelineRun.mockImplementationOnce(async () =>
+        pipelineResultWithCoverage(coverage(1), [enrichmentItem('fetchFailed', 'v-1')]));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.deepEqual(brief.discoveryItemIds, ['v-1']);
+      assert.equal(brief.emptyReason, null);
+    });
+  });
+});

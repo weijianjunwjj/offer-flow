@@ -227,10 +227,24 @@ export class DailyRunCoordinator {
     const schedule = parseDailySearchSchedule(version?.schedule ?? {});
     const briefDate = scheduledDay ?? todayInTimeZone(this.deps.now(), schedule.timezone);
 
-    const incomingDiscoveryItemIds = pipelineResult.items
-      .filter((item) => item.finalOutcome === 'manualReview' || item.finalOutcome === 'discoveryOnly')
-      .map((item) => item.sourceVersionId)
-      .filter((id): id is string => id !== null);
+    // Discovery 成立于 Initial Ingestion 成功（sourceVersionId 非空）。
+    // 因此除 manualReview / discoveryOnly 外，enrichment 失败的终态
+    // （fetchFailed / validationFailed / upgradeBlocked / upgradeFailed）也必须保留其
+    // SEARCH_EVIDENCE discovery，不得因 fetch/validation/upgrade 失败反向抹掉「发现过该岗位」。
+    // 同 CandidateVersion 可能被多个 query 命中，按 identity 去重，保证 Brief 内只出现一次。
+    const incomingDiscoveryItemIds = [...new Set(
+      pipelineResult.items
+        .filter((item) => (
+          item.finalOutcome === 'manualReview'
+          || item.finalOutcome === 'discoveryOnly'
+          || item.finalOutcome === 'fetchFailed'
+          || item.finalOutcome === 'validationFailed'
+          || item.finalOutcome === 'upgradeBlocked'
+          || item.finalOutcome === 'upgradeFailed'
+        ))
+        .map((item) => item.sourceVersionId)
+        .filter((id): id is string => id !== null),
+    )];
 
     // Pipeline 无推荐 scope → 幂等空批次；否则用本次真实 batch。
     const incomingBatchId = pipelineResult.recommendationBatchId ?? this.deps.createEmptyBatch();

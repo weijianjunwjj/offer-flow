@@ -27,6 +27,7 @@ import { normalizeCandidateFields } from './fieldNormalization';
 import { resolveIdentity } from './identityResolution';
 import { decideCommit } from './commitDecision';
 import type { CommitDecisionSummary, CommitDecisionType } from './candidateChangeSet';
+import { isUniqueConstraintViolation } from './uniqueViolation';
 import {
   AddCaptureItemRequestSchema,
   CancelCaptureSessionRequestSchema,
@@ -438,6 +439,14 @@ export class RadarCaptureService {
     now: number,
     originType: 'captured' | 'source_change',
   ): RadarCandidateVersion {
+    // Historical version reactivation：material change 提交前先查 (candidate_id, content_hash)。
+    // 若历史已存在同 hash 版本（如 A→B→A 回退），复用并切回 active，绝不 INSERT 重复版本。
+    const historical = this.candidates.findVersionByContentHash(candidate.id, contentHash);
+    if (historical !== null) {
+      this.candidates.setActiveVersionId(candidate.id, historical.id, now);
+      return historical;
+    }
+
     const version: RadarCandidateVersion = {
       id: this.deps.createId(),
       candidateId: candidate.id,
@@ -453,7 +462,20 @@ export class RadarCaptureService {
       supersedesVersionId: candidate.activeVersionId,
       createdAt: now,
     };
-    this.candidates.insertVersion(version);
+    try {
+      this.candidates.insertVersion(version);
+    } catch (error) {
+      // 并发兜底：仅当 UNIQUE(candidate_id, content_hash) 竞争时复用已存在版本；
+      // 其它约束 / DB 错误继续向上抛出。
+      if (isUniqueConstraintViolation(error)) {
+        const existing = this.candidates.findVersionByContentHash(candidate.id, contentHash);
+        if (existing !== null) {
+          this.candidates.setActiveVersionId(candidate.id, existing.id, now);
+          return existing;
+        }
+      }
+      throw error;
+    }
     this.candidates.setActiveVersionId(candidate.id, version.id, now);
     return version;
   }
