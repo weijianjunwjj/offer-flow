@@ -25,7 +25,6 @@ import { SearchEvidenceIngestionService } from './SearchEvidenceIngestionService
 import type { SearchProviderResult, SearchEvidenceItem as ProviderSearchEvidenceItem } from '../../search-provider/types';
 import { RadarCandidateRepository } from '../candidateRepository';
 import { RadarCaptureRepository } from '../captureRepository';
-import { RadarSourceRecordRepository } from '../sourceRecordRepository';
 import {
   DAILY_JOB_HUNTER_SCHEMA_VERSION,
   runMigrations,
@@ -324,10 +323,6 @@ describe('Discovery Ingestion Bridge — domain resolution from URL', () => {
   });
 
   it('extracts domain from URL when item.domain is missing', async () => {
-    const providerItem = makeProviderItem({
-      domain: undefined as unknown as string,
-      url: 'https://www.zhipin.com/job_detail/789',
-    });
     // Reconstruct with explicit undefined domain
     const item: ProviderSearchEvidenceItem = {
       ...makeProviderItem(),
@@ -378,12 +373,11 @@ describe('Discovery Ingestion Bridge — provider evidenceLevel ignored', () => 
     service = createService(db);
   });
 
-  it('provider item with evidenceLevel=FULL_EVIDENCE still ingested as SEARCH_EVIDENCE (zhiye.com)', async () => {
-    // Provider 恶意/错误地标记为 FULL_EVIDENCE——Bridge 必须忽略。
+  it('provider item on zhiye.com → applied SEARCH_EVIDENCE, never FULL_EVIDENCE', async () => {
+    // 写入 ingestion 的 evidenceLevel 只来自 SourcePolicy，Provider 字段被完全忽略。
     const providerItem = makeProviderItem({
       domain: 'jobs.zhiye.com',
       url: 'https://jobs.zhiye.com/careers/123',
-      evidenceLevel: 'FULL_EVIDENCE' as const,
     });
     const result = makeProviderResult([providerItem]);
 
@@ -399,11 +393,10 @@ describe('Discovery Ingestion Bridge — provider evidenceLevel ignored', () => 
     expect(version!.evidenceLevel).not.toBe('FULL_EVIDENCE');
   });
 
-  it('provider item with evidenceLevel=FULL_EVIDENCE on recruitment platform → MANUAL_REVIEW_REQUIRED', async () => {
+  it('provider SEARCH_EVIDENCE on zhipin.com → applied MANUAL_REVIEW_REQUIRED (provider label overridden)', async () => {
     const providerItem = makeProviderItem({
       domain: 'zhipin.com',
       url: 'https://www.zhipin.com/job/999',
-      evidenceLevel: 'FULL_EVIDENCE' as const,
     });
     const result = makeProviderResult([providerItem]);
 
@@ -420,11 +413,11 @@ describe('Discovery Ingestion Bridge — provider evidenceLevel ignored', () => 
   it('NO item calls ingest with FULL_EVIDENCE (invariant)', async () => {
     // 构造混合结果：包含招聘平台、SEARCH_AND_FETCH、unknown
     const items: ProviderSearchEvidenceItem[] = [
-      makeProviderItem({ domain: 'zhipin.com', url: 'https://www.zhipin.com/job/1', evidenceLevel: 'FULL_EVIDENCE' as const }),
-      makeProviderItem({ domain: 'jobs.zhiye.com', url: 'https://jobs.zhiye.com/job/2', evidenceLevel: 'FULL_EVIDENCE' as const }),
-      makeProviderItem({ domain: 'github.com', url: 'https://github.com/job/3', evidenceLevel: 'SEARCH_EVIDENCE' }),
-      makeProviderItem({ domain: 'juejin.cn', url: 'https://juejin.cn/job/4', evidenceLevel: 'SEARCH_EVIDENCE' }),
-      makeProviderItem({ domain: 'unknown.example', url: 'https://unknown.example/job/5', evidenceLevel: 'FULL_EVIDENCE' as const }),
+      makeProviderItem({ domain: 'zhipin.com', url: 'https://www.zhipin.com/job/1' }),
+      makeProviderItem({ domain: 'jobs.zhiye.com', url: 'https://jobs.zhiye.com/job/2' }),
+      makeProviderItem({ domain: 'github.com', url: 'https://github.com/job/3' }),
+      makeProviderItem({ domain: 'juejin.cn', url: 'https://juejin.cn/job/4' }),
+      makeProviderItem({ domain: 'unknown.example', url: 'https://unknown.example/job/5' }),
     ];
     const result = makeProviderResult(items);
 

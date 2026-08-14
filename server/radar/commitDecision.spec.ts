@@ -257,7 +257,7 @@ describe('Data Quality Gate — consistency with decideCommit evidence gate', ()
   function input(level: RadarEvidenceLevel): CommitDecisionInput {
     return {
       identity: { kind: 'new_source', matched: null, canonicalSourceUrl: null,
-        matchTier: 'tier1_exact', reason: null },
+        reason: 'tier1_miss_new_source' },
       previousNormalized: null,
       nextNormalized: nullNormalized,
       ambiguousFields: [],

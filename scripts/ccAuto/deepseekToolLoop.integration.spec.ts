@@ -967,7 +967,7 @@ describe('integration: identity mismatch', () => {
 // ============================================================================
 
 describe('integration: repeated tool error', () => {
-  it('same tool + same args + same permanent error stops by repeat detection', async () => {
+  it('same tool + same args + same recoverable read error stops by repeat detection', async () => {
     writeApprovedFile(TEST_CWD, 'src/example.ts', 'hello\n');
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-repeat', 'repeat error', 'custom').runId;
@@ -998,10 +998,10 @@ describe('integration: repeated tool error', () => {
       maxTurns: 3, maxToolCallsPerTurn: 4, maxTotalToolCalls: 8,
     });
 
-    // The tool fails (read_file on nonexistent file), so immediate TOOL_EXECUTION_FAILED
-    // REPEATED_TOOL_CALL only fires when identical successful tool calls repeat across turns
+    // read_file 读不存在的文件返回 FILE_NOT_REGULAR_FILE（可恢复失败）→ 本 turn 不 fail-fast，
+    // 进入下一 Provider turn；第二次相同调用在解析阶段命中 repeat detection → REPEATED_TOOL_CALL。
     expect(result.status).toBe('STOPPED');
-    expect(result.stopReason).toBe('TOOL_EXECUTION_FAILED');
+    expect(result.stopReason).toBe('REPEATED_TOOL_CALL');
   });
 });
 

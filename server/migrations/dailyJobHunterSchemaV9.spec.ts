@@ -7,7 +7,6 @@ import type Database from 'better-sqlite3';
 import { openDb } from '../db';
 import {
   DAILY_JOB_HUNTER_SCHEMA_VERSION,
-  SCHEMA_MIGRATIONS,
   runMigrations,
 } from '../migrations';
 
@@ -24,18 +23,6 @@ function withTempDatabase(run: (db: Database.Database, dbPath: string) => void):
   } finally {
     db.close();
   }
-}
-
-function tableNames(db: Database.Database): string[] {
-  return (
-    db
-      .prepare(
-        `SELECT name FROM sqlite_schema
-         WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-         ORDER BY name`,
-      )
-      .all() as Array<{ name: string }>
-  ).map((row) => row.name);
 }
 
 function columnNames(db: Database.Database, table: string): string[] {
