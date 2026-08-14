@@ -827,6 +827,8 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ### T041 [P] [US7] [US8] DailyJobBrief API 路由
 
+> **实施状态（2026-08-14）：completed。** `server/daily-brief/dailyBriefRoutes.ts` + `dailyBriefRepository.ts` 已实现只读 API：`GET /daily-job-briefs`（列表，按日期降序）、`GET /daily-job-briefs/today`（今日简报）、`GET /daily-job-briefs/:id`（含 recommendationBatch + discoveryItems 展开）。`today` 的 product-day 按 `DEFAULT_TIMEZONE = Asia/Shanghai` 计算（复用 `todayInTimeZone(now, DEFAULT_TIMEZONE)`），不按各 PlanVersion timezone 动态解析——v0.9 Scheduler officially supported timezone 收敛为 Asia/Shanghai，多 IANA timezone 是未来扩展 contract。`discoveryItems` 从 `discoveryItemIds`（CandidateVersion IDs）展开最小安全视图，不暴露内部 hash/原始行。
+
 **目标：** 同旧 Plan T033。新增 discoveryItems 在 response 中。
 
 ---

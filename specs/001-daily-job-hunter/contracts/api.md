@@ -191,6 +191,8 @@
 
 同旧 Plan。
 
+> **`/today` product-day timezone（v0.9 口径）：** 「today」按 **Asia/Shanghai** 计算（`todayInTimeZone(now, DEFAULT_TIMEZONE)`），响应回显 `briefDate`。v0.9 Scheduler 的 officially supported timezone 收敛为 Asia/Shanghai；`DailySearchPlanVersion.schedule.timezone` 仍保存显式 IANA 值作为未来扩展 contract，但 `/today` 当前**不**按各 PlanVersion timezone 动态解析、也不承诺完整多 IANA timezone 支持。此口径已与 T041 实现一致，无需架构裁决。
+
 ---
 
 ## 4. JobJudgment（保持，新增 evidenceLevel context）

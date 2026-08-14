@@ -14,6 +14,7 @@ import MarketPositionPage from '../pages/MarketPositionPage.vue';
 import StrategyWindowPage from '../pages/StrategyWindowPage.vue';
 import RadarImportPage from '../pages/RadarImportPage.vue';
 import RadarReviewPage from '../pages/RadarReviewPage.vue';
+import DailySearchPlanPage from '../pages/DailySearchPlanPage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -34,6 +35,7 @@ export interface RouterFeatureOptions {
   marketPositionEnabled?: boolean;
   strategyWindowEnabled?: boolean;
   radarEnabled?: boolean;
+  dailySearchPlanEnabled?: boolean;
 }
 
 export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
@@ -83,6 +85,13 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
         name: 'radar-review-disabled',
         redirect: { name: 'jobs', query: { feature: 'radar-review-disabled' } },
       },
+    options.dailySearchPlanEnabled
+      ? { path: '/daily-search-plans', name: 'daily-search-plans', component: DailySearchPlanPage }
+      : {
+        path: '/daily-search-plans',
+        name: 'daily-search-plans-disabled',
+        redirect: { name: 'jobs', query: { feature: 'daily-search-plans-disabled' } },
+      },
     options.jobMemoryV2Enabled
       ? {
         path: '/profile-versions',
@@ -114,6 +123,7 @@ export function createOfferFlowRouter(
     marketPositionEnabled: features.marketPositionEnabled || features.g4SandboxEnabled || features.g6RehearsalEnabled,
     strategyWindowEnabled: features.strategyWindowEnabled || features.g5SandboxEnabled || features.g6RehearsalEnabled,
     radarEnabled: features.radarEnabled,
+    dailySearchPlanEnabled: features.dailySearchPlanEnabled,
   },
 ): Router {
   return createRouter({ history, routes: createRoutes(options) });

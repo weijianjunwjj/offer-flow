@@ -164,4 +164,28 @@ describe('OfferFlow Router', () => {
     await router.isReady();
     expect(router.currentRoute.value.name).toBe('radar-review');
   });
+
+  it('每日求职计划（T023）默认关闭时深链接安全重定向到岗位台账', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      dailySearchPlanEnabled: false,
+    });
+    await router.push('/daily-search-plans');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('jobs');
+    expect(router.currentRoute.value.query.feature).toBe('daily-search-plans-disabled');
+    const disabledRecord = router.getRoutes().find((route) => route.path === '/daily-search-plans');
+    expect(disabledRecord?.components).toBeUndefined();
+    expect(disabledRecord?.redirect).toBeDefined();
+  });
+
+  it('显式开启时注册 /daily-search-plans', async () => {
+    const router = createOfferFlowRouter(createMemoryHistory(), {
+      jobMemoryV2Enabled: true,
+      dailySearchPlanEnabled: true,
+    });
+    await router.push('/daily-search-plans');
+    await router.isReady();
+    expect(router.currentRoute.value.name).toBe('daily-search-plans');
+  });
 });
