@@ -1,6 +1,6 @@
 import type { SqliteDatabase } from '../db';
 import type { SearchCoverage } from '../search-provider/types';
-import type { SourceRun, SourceRunPhase, SourceRunStatus } from './types';
+import type { SourceRun, SourceRunPhase, SourceRunStatus, SourceRunTriggerType } from './types';
 
 /**
  * OfferFlow v0.9 — SourceRun Repository。
@@ -210,6 +210,20 @@ export interface SourceRunProgressPatch {
   errorMessage?: string | null;
 }
 
+/** observability 列表过滤（READ-only，T030）。字段缺失 = 不过滤该维度。 */
+export interface SourceRunListFilter {
+  planId?: string;
+  status?: SourceRunStatus;
+  triggerType?: SourceRunTriggerType;
+  /** scheduled_day 精确匹配（YYYY-MM-DD），用于「某一天实际跑了什么」。 */
+  day?: string;
+  limit?: number;
+}
+
+/** 默认列表上限（observability 列表不需要 dump 全部历史）。 */
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 100;
+
 export class SourceRunRepository {
   constructor(private readonly db: SqliteDatabase) {}
 
@@ -260,6 +274,34 @@ export class SourceRunRepository {
     const rows = this.db
       .prepare(`SELECT ${COLUMNS} FROM source_runs ORDER BY created_at DESC, id DESC LIMIT ?`)
       .all(Math.max(1, Math.min(limit, 100))) as SourceRunRow[];
+    return rows.map(rowToSourceRun);
+  }
+
+  /** observability 列表：按可选维度过滤，始终有界（默认 50、上限 100）。 */
+  list(filter: SourceRunListFilter = {}): SourceRun[] {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filter.planId !== undefined) {
+      clauses.push('search_plan_id = ?');
+      params.push(filter.planId);
+    }
+    if (filter.status !== undefined) {
+      clauses.push('status = ?');
+      params.push(filter.status);
+    }
+    if (filter.triggerType !== undefined) {
+      clauses.push('trigger_type = ?');
+      params.push(filter.triggerType);
+    }
+    if (filter.day !== undefined) {
+      clauses.push('scheduled_day = ?');
+      params.push(filter.day);
+    }
+    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
+    const limit = Math.max(1, Math.min(filter.limit ?? DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT));
+    const rows = this.db
+      .prepare(`SELECT ${COLUMNS} FROM source_runs ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
+      .all(...params, limit) as SourceRunRow[];
     return rows.map(rowToSourceRun);
   }
 

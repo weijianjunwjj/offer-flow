@@ -151,6 +151,24 @@ export class DailyBriefRepository {
   }
 
   /**
+   * 按 runId 反向查找包含该 run 的 brief（SourceRun detail 关联用）。
+   * 用 json_each 对 source_run_ids_json 做精确元素匹配（value 对 text 元素返回原始字符串），
+   * 避免 LIKE 子串误命中（如 run-1 命中 run-10）。
+   */
+  findByRunId(runId: string): DailyJobBrief | null {
+    const row = this.db
+      .prepare(
+        `SELECT ${COLUMNS} FROM daily_job_briefs
+         WHERE EXISTS (
+           SELECT 1 FROM json_each(daily_job_briefs.source_run_ids_json) WHERE json_each.value = ?
+         )
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(runId) as DailyJobBriefRow | undefined;
+    return row === undefined ? null : rowToBrief(row);
+  }
+
+  /**
    * 更新 projection（sourceRunIds / coverage / recommendationBatchId / discoveryItemIds /
    * emptyReason）。不改 brief_date / searchPlanVersionId / status（identity 与生命周期不变）。
    * 用于 CATCH_UP / RETRY / MANUAL 等同一 logical brief 的 provenance 合并。
