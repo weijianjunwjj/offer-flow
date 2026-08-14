@@ -60,6 +60,7 @@ describe('T028 integration smoke（Scheduler → Coordinator → Pipeline → So
         fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0,
         ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
       },
+      coverage: { queriesCompleted: 1, queriesFailed: 0, failedScopes: [], queryResults: [] },
     };
     const pipelineRun = vi.fn(async () => emptyResult);
     const pipeline = { run: pipelineRun } as unknown as DailyPipeline;

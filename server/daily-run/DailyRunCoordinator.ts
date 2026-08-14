@@ -1,5 +1,5 @@
 import type { SearchProviderConfig, SearchCoverage } from '../search-provider/types';
-import type { SourceRun } from '../source-run/types';
+import type { SourceRun, SourceRunStatus } from '../source-run/types';
 import type { DailyJobBrief } from '../daily-brief/types';
 import type { DailyPipelineResult } from '../pipeline/types';
 import { expandQueries } from '../pipeline/taskExpansion';
@@ -156,11 +156,28 @@ export class DailyRunCoordinator {
       return { outcome: 'completed', sourceRunId: runId, status: 'FAILED', briefId: null };
     }
 
-    // 4) 从 pipeline summary 近似投影 SourceRun 计数（query 级 coverage 由 pipeline 内部消费不暴露）。
+    // 4) 从真实 provider coverage 投影 query 计数（不再用 queries.length 近似、不再丢失 coverage）。
     const summary = pipelineResult.summary;
+    const coverage = pipelineResult.coverage;
+    const queriesSucceeded = coverage.queriesCompleted;
+    const queriesFailed = coverage.queriesFailed;
+    const queriesAttempted = queriesSucceeded + queriesFailed;
+
+    // 终态语义（FR-015 / SC-012 / User Story 5）：
+    //   all queries failed → FAILED（绝不 SUCCEEDED，绝不伪装业务 empty）
+    //   partial（部分成功部分失败）→ PARTIALLY_SUCCEEDED
+    //   无失败 → SUCCEEDED（含合法 VALID_EMPTY 空结果）
+    const terminalStatus: SourceRunStatus =
+      queriesFailed > 0
+        ? (queriesSucceeded > 0 ? 'PARTIALLY_SUCCEEDED' : 'FAILED')
+        : 'SUCCEEDED';
+
     sourceRunRepo.updateProgress(runId, {
       phase: 'BUILDING_BRIEF',
-      queriesAttempted: queries.length,
+      queriesAttempted,
+      queriesSucceeded,
+      queriesFailed,
+      coverage,
       resultsDiscovered: summary.total,
       searchEvidencePersisted: summary.discoveryOnly + summary.manualReview,
       manualReviewRequired: summary.manualReview,
@@ -170,12 +187,33 @@ export class DailyRunCoordinator {
       selectedCount: pipelineResult.recommendationScope.length,
       failedCount: summary.fetchFailed + summary.validationFailed + summary.upgradeFailed + summary.ingestFailed,
     });
-    sourceRunRepo.transitionStatus(runId, { toStatus: 'SUCCEEDED' });
+
+    // 全部查询失败 → 明确失败终态 + 来源失败错误码；绝不生成业务意义上的空 Brief。
+    if (terminalStatus === 'FAILED') {
+      sourceRunRepo.transitionStatus(runId, {
+        toStatus: 'FAILED',
+        errorCode: 'ALL_QUERIES_FAILED',
+        errorMessage: this.failureSummary(coverage),
+      });
+      return { outcome: 'completed', sourceRunId: runId, status: 'FAILED', briefId: null };
+    }
+
+    sourceRunRepo.transitionStatus(runId, { toStatus: terminalStatus });
 
     // 5) DailyJobBrief 投影（identity = brief_date + search_plan_version_id，v13 唯一约束）。
     const briefId = this.persistBrief(runId, version.id, input.scheduledDay, pipelineResult);
 
-    return { outcome: 'completed', sourceRunId: runId, status: 'SUCCEEDED', briefId };
+    return { outcome: 'completed', sourceRunId: runId, status: terminalStatus, briefId };
+  }
+
+  /** 来源失败摘要：只取 failedScopes 的 queryKey + errorCode（绝不落 raw body / secret）。 */
+  private failureSummary(coverage: SearchCoverage): string {
+    const parts = coverage.failedScopes
+      .slice(0, 5)
+      .map((f) => `${f.queryKey}:${f.errorCode}`);
+    const extra = coverage.failedScopes.length - parts.length;
+    const suffix = extra > 0 ? ` +${extra}` : '';
+    return `来源搜索失败: ${parts.join(', ')}${suffix}`;
   }
 
   private persistBrief(

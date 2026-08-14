@@ -12,6 +12,7 @@
  */
 
 import type {
+  SearchCoverage,
   SearchProviderConfig,
   SearchProviderRequest,
   SearchProviderResult,
@@ -122,4 +123,10 @@ export interface DailyPipelineResult {
   recommendationScope: string[];
   recommendationBatchId: string | null;
   summary: DailyPipelineSummary;
+  /**
+   * 真实 provider coverage（query 级计数 + failedScopes）。
+   * 由 SearchProviderAdapter.search() 返回，Pipeline 原样向上透传，
+   * 供 DailyRunCoordinator 持久化 SourceRun 计数/终态——禁止在此丢失。
+   */
+  coverage: SearchCoverage;
 }

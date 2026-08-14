@@ -803,4 +803,30 @@ describe('DailyPipeline', () => {
     expect(deps.search).toHaveBeenCalledTimes(1);
     expect(deps.search).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
   });
+
+  it('propagates provider coverage into result.coverage（不丢失来源失败信息）', async () => {
+    const searchResult = {
+      ...makeSearchResult([makeSearchItem('https://jobs.zhiye.com/a')]),
+      coverage: {
+        queriesCompleted: 1,
+        queriesFailed: 1,
+        failedScopes: [{ queryKey: '苏州×前端开发×前端', errorCode: 'TIMEOUT' as const, message: 'timeout' }],
+        queryResults: [],
+      },
+    };
+    const deps = makeDeps({
+      search: vi.fn(async () => searchResult),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1' })],
+        summary: { total: 1, ingested: 1, skipped: 0, byEvidenceLevel: {}, bySourcePolicy: {}, fetchEligibleCount: 1 },
+      })),
+      getVersion: vi.fn(() => makeVersion('v1', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.coverage).toEqual(searchResult.coverage);
+    expect(result.coverage.queriesFailed).toBe(1);
+    expect(result.coverage.failedScopes[0].errorCode).toBe('TIMEOUT');
+  });
 });

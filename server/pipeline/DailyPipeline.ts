@@ -160,6 +160,7 @@ export class DailyPipeline {
       recommendationScope,
       recommendationBatchId,
       summary: buildSummary(items, recommendationBatchId, recommendationBatchCreated),
+      coverage: searchResult.coverage,
     };
   }
 

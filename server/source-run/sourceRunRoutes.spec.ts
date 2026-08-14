@@ -335,6 +335,40 @@ describe('SourceRun 只读观测 API（T030）', () => {
     expect(JSON.stringify(coverage)).not.toContain('secret');
   });
 
+  it('成功空结果（SUCCEEDED）与来源失败（FAILED）在 API 中可明确区分', async () => {
+    const { app, db } = createHarness();
+    seedPlanVersion(db, 'plan-1', '每日前端岗位', 'version-1');
+    const repo = new SourceRunRepository(db);
+    // 合法空结果：query 正常完成、0 结果。
+    repo.insert(makeRun({
+      id: 'run-empty', status: 'SUCCEEDED', scheduledFor: 1000,
+      queriesAttempted: 1, queriesSucceeded: 1, queriesFailed: 0,
+      coverage: { queriesCompleted: 1, queriesFailed: 0, failedScopes: [], queryResults: [] },
+    }));
+    // 来源失败：全部 query 失败。
+    repo.insert(makeRun({
+      id: 'run-failed', status: 'FAILED', scheduledFor: 2000,
+      queriesAttempted: 1, queriesSucceeded: 0, queriesFailed: 1,
+      errorCode: 'ALL_QUERIES_FAILED',
+      coverage: {
+        queriesCompleted: 0, queriesFailed: 1,
+        failedScopes: [{ queryKey: '苏州×前端', errorCode: 'AUTH_ERROR', message: 'x' }],
+        queryResults: [],
+      },
+    }));
+
+    const empty = (await app.inject({ method: 'GET', url: '/source-runs/run-empty' })).json().run;
+    const failed = (await app.inject({ method: 'GET', url: '/source-runs/run-failed' })).json().run;
+
+    expect(empty.status).toBe('SUCCEEDED');
+    expect(empty.coverage.queriesFailed).toBe(0);
+    expect(empty.errorCode).toBeNull();
+    expect(failed.status).toBe('FAILED');
+    expect(failed.coverage.queriesFailed).toBe(1);
+    expect(failed.coverage.failedScopes).toEqual([{ queryKey: '苏州×前端', errorCode: 'AUTH_ERROR' }]);
+    expect(failed.errorCode).toBe('ALL_QUERIES_FAILED');
+  });
+
   it('validation：非法 status / triggerType / day / limit 返回 422', async () => {
     const { app } = createHarness();
     const badStatus = await app.inject({ method: 'GET', url: '/source-runs?status=BOGUS' });

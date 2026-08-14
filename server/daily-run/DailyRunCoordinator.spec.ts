@@ -12,9 +12,38 @@ import { DailyBriefRepository } from '../daily-brief/dailyBriefRepository';
 import { DailyRunCoordinator } from './DailyRunCoordinator';
 import type { DailyPipelineResult } from '../pipeline/types';
 import type { DailyPipeline } from '../pipeline/DailyPipeline';
+import type { SearchCoverage } from '../search-provider/types';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-coordinator-'));
 let seq = 0;
+
+/** 构造一个 SearchCoverage（query 级计数 + failedScopes）。 */
+function coverage(
+  queriesCompleted: number,
+  queriesFailed = 0,
+  failedScopes: SearchCoverage['failedScopes'] = [],
+): SearchCoverage {
+  return { queriesCompleted, queriesFailed, failedScopes, queryResults: [] };
+}
+
+/** 构造一个指定 coverage / items 的 Pipeline 结果（summary 与 items 数量对齐）。 */
+function pipelineResultWithCoverage(
+  cov: SearchCoverage,
+  items: DailyPipelineResult['items'] = [],
+): DailyPipelineResult {
+  return {
+    items,
+    recommendationScope: [],
+    recommendationBatchId: null,
+    summary: {
+      total: items.length, analysisCompleted: 0, analysisFailed: 0, analysisBlocked: 0,
+      analysisAlreadyRunning: 0, analysisCancelled: 0, manualReview: 0, discoveryOnly: 0,
+      fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0,
+      ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
+    },
+    coverage: cov,
+  };
+}
 
 function withCoordinator(run: (ctx: {
   coordinator: DailyRunCoordinator;
@@ -70,6 +99,7 @@ function withCoordinator(run: (ctx: {
         fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0,
         ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
       },
+      coverage: coverage(1),
     });
 
     const pipelineRun = vi.fn(async () => emptyResult());
@@ -134,6 +164,7 @@ function pipelineResultWithBatch(batchId: string, scope: string[]): DailyPipelin
       fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0,
       ingestFailed: 0, aborted: 0, recommendationBatchId: batchId, recommendationBatchCreated: true,
     },
+    coverage: coverage(1),
   };
 }
 
@@ -162,6 +193,7 @@ function pipelineResultWithDiscovery(versionIds: string[]): DailyPipelineResult 
       fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0,
       ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
     },
+    coverage: coverage(versionIds.length),
   };
 }
 
@@ -171,7 +203,7 @@ describe('DailyRunCoordinator（T028 闭环核心）', () => {
       const order: string[] = [];
       pipelineRun.mockImplementationOnce(async () => {
         order.push('pipeline');
-        return { items: [], recommendationScope: [], recommendationBatchId: null, summary: { total: 0, analysisCompleted: 0, analysisFailed: 0, analysisBlocked: 0, analysisAlreadyRunning: 0, analysisCancelled: 0, manualReview: 0, discoveryOnly: 0, fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0, ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false } };
+        return { items: [], recommendationScope: [], recommendationBatchId: null, summary: { total: 0, analysisCompleted: 0, analysisFailed: 0, analysisBlocked: 0, analysisAlreadyRunning: 0, analysisCancelled: 0, manualReview: 0, discoveryOnly: 0, fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0, ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false }, coverage: coverage(1) };
       });
       const result = await coordinator.run({
         searchPlanVersionId: 'version-1', triggerType: 'SCHEDULED',
@@ -514,6 +546,145 @@ describe('DailyRunCoordinator — DailyBrief discovery reconciliation（day-leve
         assert.deepEqual(briefs[0]?.sourceRunIds, [first.sourceRunId, second.sourceRunId]);
         assert.deepEqual(briefs[0]?.discoveryItemIds, ['d-a', 'd-b']);
       }
+    });
+  });
+});
+
+describe('DailyRunCoordinator — coverage / terminal status（FR-015 / SC-012 来源失败不伪装业务空结果）', () => {
+  const manualInput = () => ({
+    searchPlanVersionId: 'version-1',
+    triggerType: 'MANUAL' as const,
+    scheduledFor: Date.UTC(2026, 7, 14, 2, 0),
+    scheduledDay: null,
+  });
+
+  it('1 query success + 0 results → succeeded=1 failed=0，SUCCEEDED（合法空，非失败）', async () => {
+    await withCoordinator(async ({ coordinator, sourceRunRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(coverage(1)));
+      const result = await coordinator.run(manualInput());
+      assert.equal(result.outcome, 'completed');
+      if (result.outcome === 'completed') {
+        assert.equal(result.status, 'SUCCEEDED');
+        const run = sourceRunRepo.getById(result.sourceRunId);
+        assert.equal(run?.queriesAttempted, 1);
+        assert.equal(run?.queriesSucceeded, 1);
+        assert.equal(run?.queriesFailed, 0);
+        assert.equal(run?.coverage.queriesCompleted, 1);
+        assert.equal(run?.coverage.queriesFailed, 0);
+        assert.equal(run?.queriesAttempted, (run?.queriesSucceeded ?? 0) + (run?.queriesFailed ?? 0));
+      }
+    });
+  });
+
+  it('1 query success + N results → coverage 持久化到 SourceRun', async () => {
+    await withCoordinator(async ({ coordinator, sourceRunRepo, pipelineRun }) => {
+      const item = {
+        index: 0, itemUrl: 'https://example.com/a', candidateId: 'cand-a',
+        sourceVersionId: 'v-a', finalVersionId: 'v-a',
+        finalOutcome: 'manualReview' as const, reasonCode: null,
+        milestones: {
+          ingested: true, fetchAttempted: false, upgraded: false, alreadyUpgraded: false,
+          analysisTaskCreated: false, analysisCompleted: false, inRecommendationScope: false,
+        },
+        summary: 'manual review',
+      };
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(coverage(1), [item]));
+      const result = await coordinator.run(manualInput());
+      assert.equal(result.outcome, 'completed');
+      if (result.outcome === 'completed') {
+        const run = sourceRunRepo.getById(result.sourceRunId);
+        assert.equal(run?.status, 'SUCCEEDED');
+        assert.equal(run?.coverage.queriesCompleted, 1);
+        assert.equal(run?.coverage.queriesFailed, 0);
+      }
+    });
+  });
+
+  it('all queries provider failure → FAILED（绝不 SUCCEEDED），且不生成业务空 Brief', async () => {
+    await withCoordinator(async ({ coordinator, sourceRunRepo, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(
+        coverage(0, 1, [{ queryKey: '苏州×前端开发×React', errorCode: 'AUTH_ERROR', message: 'Tavily API Key 无效' }]),
+      ));
+      const result = await coordinator.run(manualInput());
+      assert.equal(result.outcome, 'completed');
+      if (result.outcome === 'completed') {
+        assert.equal(result.status, 'FAILED');
+        assert.equal(result.briefId, null);
+        const run = sourceRunRepo.getById(result.sourceRunId);
+        assert.equal(run?.status, 'FAILED');
+        assert.equal(run?.errorCode, 'ALL_QUERIES_FAILED');
+        assert.equal(run?.queriesAttempted, 1);
+        assert.equal(run?.queriesSucceeded, 0);
+        assert.equal(run?.queriesFailed, 1);
+        assert.equal(run?.queriesAttempted, (run?.queriesSucceeded ?? 0) + (run?.queriesFailed ?? 0));
+      }
+      // 不得产生「今日未发现值得处理的新岗位」业务空 Brief。
+      expect(briefRepo.findByLogicalIdentity('2026-08-14', 'version-1')).toBeNull();
+    });
+  });
+
+  it('all queries failure → coverage 只落 queryKey+errorCode+message，不落 raw body/secret', async () => {
+    await withCoordinator(async ({ coordinator, sourceRunRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(
+        coverage(0, 1, [{ queryKey: '苏州×前端开发×React', errorCode: 'AUTH_ERROR', message: 'Tavily API Key 无效' }]),
+      ));
+      const result = await coordinator.run(manualInput());
+      assert.equal(result.outcome, 'completed');
+      if (result.outcome === 'completed') {
+        const run = sourceRunRepo.getById(result.sourceRunId);
+        assert.ok(run !== null);
+        assert.equal(run.status, 'FAILED');
+        assert.equal(run.coverage.failedScopes.length, 1);
+        assert.deepEqual(run.coverage.failedScopes[0], {
+          queryKey: '苏州×前端开发×React', errorCode: 'AUTH_ERROR', message: 'Tavily API Key 无效',
+        });
+        // 只透出 queryKey + errorCode，绝不落 provider raw body / secret。
+        expect(JSON.stringify(run.coverage)).not.toContain('tvly-');
+        expect(JSON.stringify(run.coverage)).not.toContain('raw');
+        expect(run.errorMessage).toContain('AUTH_ERROR');
+      }
+    });
+  });
+
+  it('partial success/failure → PARTIALLY_SUCCEEDED，attempted = succeeded + failed', async () => {
+    await withCoordinator(async ({ coordinator, sourceRunRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(
+        coverage(1, 1, [{ queryKey: '上海×前端开发×React', errorCode: 'TIMEOUT', message: 'timeout' }]),
+      ));
+      const result = await coordinator.run(manualInput());
+      assert.equal(result.outcome, 'completed');
+      if (result.outcome === 'completed') {
+        assert.equal(result.status, 'PARTIALLY_SUCCEEDED');
+        const run = sourceRunRepo.getById(result.sourceRunId);
+        assert.equal(run?.queriesAttempted, 2);
+        assert.equal(run?.queriesSucceeded, 1);
+        assert.equal(run?.queriesFailed, 1);
+        assert.equal(run?.queriesAttempted, (run?.queriesSucceeded ?? 0) + (run?.queriesFailed ?? 0));
+      }
+    });
+  });
+
+  it('all-failure 不阻断后续 successful rerun 创建/升级 Brief（reconciliation）', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, db, pipelineRun }) => {
+      // run-1：全部失败 → 无 brief。
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(
+        coverage(0, 1, [{ queryKey: '苏州×前端开发×React', errorCode: 'AUTH_ERROR', message: 'x' }]),
+      ));
+      const first = await coordinator.run(manualInput());
+      assert.equal(first.outcome, 'completed');
+      if (first.outcome === 'completed') assert.equal(first.status, 'FAILED');
+
+      // run-2：成功且产生非空批次。
+      insertBatch(db, 'batch-nonempty-1', ['v1']);
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithBatch('batch-nonempty-1', ['v1']));
+      const second = await coordinator.run(manualInput());
+      assert.equal(second.outcome, 'completed');
+      if (second.outcome === 'completed') assert.equal(second.status, 'SUCCEEDED');
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.equal(brief.recommendationBatchId, 'batch-nonempty-1');
+      assert.equal(brief.emptyReason, null);
     });
   });
 });
