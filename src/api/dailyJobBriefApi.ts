@@ -7,7 +7,13 @@
  * /daily-job-briefs/today 返回的 briefDate 为准，不用浏览器 local date 重算。
  */
 import { apiGet, type ReadOptions } from './client';
-import type { RecommendationBatchView } from './radarRecommendationApi';
+import type {
+  RecommendationBatchView,
+  RecommendationCondition,
+  RecommendationConfidence,
+  RecommendationEvidenceRef,
+  RecommendationKind,
+} from './radarRecommendationApi';
 
 const base = '/daily-job-briefs';
 
@@ -47,11 +53,19 @@ export interface CostSummary {
   actualCost?: number;
 }
 
+/** 简报所属 SearchPlan 的最小身份（用于 selector 显示 plan name，而非 UUID）。 */
+export interface DailyJobBriefSearchPlan {
+  id: string;
+  name: string;
+  versionId: string;
+}
+
 /** 简报安全视图（不含内部 hash / 原始行）。 */
 export interface DailyJobBrief {
   id: string;
   briefDate: string;
   searchPlanVersionId: string;
+  searchPlan: DailyJobBriefSearchPlan | null;
   sourceRunIds: string[];
   recommendationBatchId: string;
   discoveryItemIds: string[];
@@ -78,6 +92,25 @@ export interface DailyJobBriefDiscoveryItem {
   provider: string | null;
 }
 
+/** 正式推荐条目：岗位身份（按 candidateVersionId 精确展开）+ 推荐结论。 */
+export interface DailyJobBriefRecommendationItem {
+  candidateId: string;
+  candidateVersionId: string;
+  evidenceLevel: string;
+  title: string | null;
+  company: string | null;
+  city: string | null;
+  sourceUrl: string | null;
+  sourceDomain: string | null;
+  provider: string | null;
+  kind: RecommendationKind;
+  priority: number;
+  confidence: RecommendationConfidence;
+  rationale: string;
+  conditions: RecommendationCondition[];
+  evidenceRefs: RecommendationEvidenceRef[];
+}
+
 export interface DailyJobBriefListResponse {
   briefs: DailyJobBrief[];
   total: number;
@@ -92,6 +125,7 @@ export interface DailyJobBriefTodayResponse {
 export interface DailyJobBriefDetailResponse {
   brief: DailyJobBrief;
   recommendationBatch: RecommendationBatchView | null;
+  recommendationItems: DailyJobBriefRecommendationItem[];
   discoveryItems: DailyJobBriefDiscoveryItem[];
 }
 

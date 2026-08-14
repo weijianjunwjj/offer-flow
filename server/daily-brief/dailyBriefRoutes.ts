@@ -20,14 +20,25 @@ import { RadarCandidateRepository } from '../radar/candidateRepository';
 import { RadarCaptureRepository } from '../radar/captureRepository';
 import { RadarRecommendationBatchRepository } from '../radar/recommendationBatchRepository';
 import { toRecommendationBatchView } from '../radar/recommendation/recommendationDtoSchemas';
+import type { RecommendationItem } from '../radar/recommendation/recommendationContract';
+import { SearchPlanRepository } from '../search-plan/searchPlanRepository';
 import { IdParamsSchema } from '../radar/dtoSchemas';
 import { DEFAULT_TIMEZONE, todayInTimeZone } from '../daily-run/schedule';
+
+/** 简报所属 SearchPlan 的最小身份视图（用于前端 selector 显示 plan name，而非 UUID）。 */
+export interface DailyJobBriefSearchPlanView {
+  id: string;
+  name: string;
+  versionId: string;
+}
 
 /** 列表/详情共用的简报安全视图：不含任何内部 hash / 原始 SQL 行。 */
 export interface DailyJobBriefView {
   id: string;
   briefDate: string;
   searchPlanVersionId: string;
+  /** 由 searchPlanVersionId 精确解析出的 plan 身份；版本/计划缺失时为 null（历史版本仍可解析）。 */
+  searchPlan: DailyJobBriefSearchPlanView | null;
   sourceRunIds: string[];
   recommendationBatchId: string;
   discoveryItemIds: string[];
@@ -54,6 +65,25 @@ export interface DailyJobBriefDiscoveryItemView {
   provider: string | null;
 }
 
+/** 正式推荐条目：岗位身份（按 Recommendation.candidateVersionId 精确展开）+ 推荐结论。 */
+export interface DailyJobBriefRecommendationItemView {
+  candidateId: string;
+  candidateVersionId: string;
+  evidenceLevel: string;
+  title: string | null;
+  company: string | null;
+  city: string | null;
+  sourceUrl: string | null;
+  sourceDomain: string | null;
+  provider: string | null;
+  kind: RecommendationItem['kind'];
+  priority: number;
+  confidence: RecommendationItem['confidence'];
+  rationale: string;
+  conditions: RecommendationItem['conditions'];
+  evidenceRefs: RecommendationItem['evidenceRefs'];
+}
+
 export interface DailyJobBriefRouteDeps {
   now?: () => number;
 }
@@ -73,11 +103,12 @@ function invalidId(message: string): DailyJobBriefApiError {
   return new DailyJobBriefApiError(422, { code: 'VALIDATION_ERROR', message });
 }
 
-function toBriefView(brief: DailyJobBrief): DailyJobBriefView {
+function toBriefView(brief: DailyJobBrief, searchPlan: DailyJobBriefSearchPlanView | null): DailyJobBriefView {
   return {
     id: brief.id,
     briefDate: brief.briefDate,
     searchPlanVersionId: brief.searchPlanVersionId,
+    searchPlan,
     sourceRunIds: brief.sourceRunIds,
     recommendationBatchId: brief.recommendationBatchId,
     discoveryItemIds: brief.discoveryItemIds,
@@ -103,6 +134,7 @@ export function registerDailyJobBriefRoutes(
     const candidateRepo = new RadarCandidateRepository(scoped.db);
     const captureRepo = new RadarCaptureRepository(scoped.db);
     const batchRepo = new RadarRecommendationBatchRepository(scoped.db);
+    const searchPlanRepo = new SearchPlanRepository(scoped.db);
 
     scoped.setErrorHandler((error, _request, reply) => {
       if (error instanceof DailyJobBriefApiError) {
@@ -138,16 +170,57 @@ export function registerDailyJobBriefRoutes(
       };
     };
 
+    /**
+     * 展开单条正式推荐：岗位身份按 Recommendation.candidateVersionId 精确读取
+     * （禁止 find latest / activeVersionId 猜测，展示内容与被分析证据版本一致）。
+     * 缺失版本返回 null（调用方过滤），evidenceRefs 等结论字段原样透出。
+     */
+    const expandRecommendationItem = (rec: RecommendationItem): DailyJobBriefRecommendationItemView | null => {
+      const version = candidateRepo.getVersion(rec.candidateVersionId);
+      if (version === null) return null;
+      const snapshotId = version.sourceSnapshotIds[0];
+      const snapshot = snapshotId === undefined ? null : captureRepo.getSnapshot(snapshotId);
+      return {
+        candidateId: rec.candidateId,
+        candidateVersionId: rec.candidateVersionId,
+        evidenceLevel: version.evidenceLevel,
+        title: version.normalized.role,
+        company: version.normalized.company,
+        city: version.normalized.city,
+        sourceUrl: snapshot?.sourceUrl ?? null,
+        sourceDomain: snapshot?.sourceDomain ?? null,
+        provider: snapshot?.providerKey ?? null,
+        kind: rec.kind,
+        priority: rec.priority,
+        confidence: rec.confidence,
+        rationale: rec.rationale,
+        conditions: rec.conditions,
+        evidenceRefs: rec.evidenceRefs,
+      };
+    };
+
+    /**
+     * 由 brief.searchPlanVersionId → Version.searchPlanId → Plan.name 精确解析 plan 身份。
+     * 历史旧 PlanVersion 仍可解析（不依赖当前 activeVersionId）；版本或计划缺失返回 null。
+     */
+    const resolveSearchPlan = (brief: DailyJobBrief): DailyJobBriefSearchPlanView | null => {
+      const version = searchPlanRepo.getVersion(brief.searchPlanVersionId);
+      if (version === null) return null;
+      const plan = searchPlanRepo.getPlan(version.searchPlanId);
+      if (plan === null) return null;
+      return { id: plan.id, name: plan.name, versionId: brief.searchPlanVersionId };
+    };
+
     scoped.get('/daily-job-briefs', async () => {
       const briefs = briefRepo.listRecent(50);
-      return { briefs: briefs.map(toBriefView), total: briefs.length };
+      return { briefs: briefs.map((brief) => toBriefView(brief, resolveSearchPlan(brief))), total: briefs.length };
     });
 
     // 「today」必须在「:id」之前注册，避免被参数路由捕获。
     scoped.get('/daily-job-briefs/today', async () => {
       const briefDate = todayInTimeZone(now(), DEFAULT_TIMEZONE);
       const briefs = briefRepo.findByDate(briefDate);
-      return { briefDate, briefs: briefs.map(toBriefView), total: briefs.length };
+      return { briefDate, briefs: briefs.map((brief) => toBriefView(brief, resolveSearchPlan(brief))), total: briefs.length };
     });
 
     scoped.get('/daily-job-briefs/:id', async (request) => {
@@ -156,13 +229,20 @@ export function registerDailyJobBriefRoutes(
       if (brief === null) throw notFound(`daily job brief 不存在: ${id}`);
 
       const batch = batchRepo.getById(brief.recommendationBatchId);
+      const batchView = batch === null ? null : toRecommendationBatchView(batch);
+      const recommendationItems = batchView === null
+        ? []
+        : batchView.recommendationSet.recommendations
+          .map(expandRecommendationItem)
+          .filter((item): item is DailyJobBriefRecommendationItemView => item !== null);
       const discoveryItems = brief.discoveryItemIds
         .map(expandDiscoveryItem)
         .filter((item): item is DailyJobBriefDiscoveryItemView => item !== null);
 
       return {
-        brief: toBriefView(brief),
-        recommendationBatch: batch === null ? null : toRecommendationBatchView(batch),
+        brief: toBriefView(brief, resolveSearchPlan(brief)),
+        recommendationBatch: batchView,
+        recommendationItems,
         discoveryItems,
       };
     });

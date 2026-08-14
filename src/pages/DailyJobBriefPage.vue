@@ -8,8 +8,9 @@ import {
   dailyJobBriefApi,
   type DailyJobBrief,
   type DailyJobBriefDiscoveryItem,
+  type DailyJobBriefRecommendationItem,
 } from '../api/dailyJobBriefApi';
-import type { RecommendationBatchView, RecommendationItem } from '../api/radarRecommendationApi';
+import type { RecommendationBatchView } from '../api/radarRecommendationApi';
 
 /**
  * OfferFlow v0.9 — 每日求职简报页（T042）。
@@ -22,16 +23,39 @@ import type { RecommendationBatchView, RecommendationItem } from '../api/radarRe
  */
 
 const briefDate = ref('');
-const todayBrief = ref<DailyJobBrief | null>(null);
-const detail = ref<{ recommendationBatch: RecommendationBatchView | null; discoveryItems: DailyJobBriefDiscoveryItem[] } | null>(null);
+const briefs = ref<DailyJobBrief[]>([]);
+const selectedBriefId = ref<string | null>(null);
+const detail = ref<{
+  recommendationBatch: RecommendationBatchView | null;
+  recommendationItems: DailyJobBriefRecommendationItem[];
+  discoveryItems: DailyJobBriefDiscoveryItem[];
+} | null>(null);
 const loading = ref(true);
 const errorText = ref('');
 const capabilityUnavailable = ref(false);
 
-/** 今日存在多份简报（多计划版本）时，优先取一份可用的 projection，否则取第一份。 */
-function pickPrimaryBrief(briefs: DailyJobBrief[]): DailyJobBrief | null {
-  if (briefs.length === 0) return null;
-  return briefs.find((brief) => brief.status !== 'GENERATING' && brief.status !== 'FAILED') ?? briefs[0]!;
+/** 当前选中的简报（多简报时由 selector 决定，默认取第一份）。 */
+const todayBrief = computed<DailyJobBrief | null>(() => (
+  briefs.value.find((brief) => brief.id === selectedBriefId.value) ?? null
+));
+const multipleBriefs = computed(() => briefs.value.length > 1);
+
+function briefPlanLabel(brief: DailyJobBrief): string {
+  return brief.searchPlan?.name ?? '未命名计划';
+}
+
+async function loadDetail(): Promise<void> {
+  const id = selectedBriefId.value;
+  if (id === null) {
+    detail.value = null;
+    return;
+  }
+  const result = await dailyJobBriefApi.get(id);
+  detail.value = {
+    recommendationBatch: result.recommendationBatch,
+    recommendationItems: result.recommendationItems,
+    discoveryItems: result.discoveryItems,
+  };
 }
 
 async function load(): Promise<void> {
@@ -41,16 +65,12 @@ async function load(): Promise<void> {
   try {
     const today = await dailyJobBriefApi.today();
     briefDate.value = today.briefDate;
-    const primary = pickPrimaryBrief(today.briefs);
-    todayBrief.value = primary;
-    if (primary === null) {
-      detail.value = null;
-      return;
-    }
-    const result = await dailyJobBriefApi.get(primary.id);
-    detail.value = { recommendationBatch: result.recommendationBatch, discoveryItems: result.discoveryItems };
+    briefs.value = today.briefs;
+    selectedBriefId.value = today.briefs[0]?.id ?? null;
+    await loadDetail();
   } catch (error) {
-    todayBrief.value = null;
+    briefs.value = [];
+    selectedBriefId.value = null;
     detail.value = null;
     if (error instanceof ApiError && error.status === 404) {
       capabilityUnavailable.value = true;
@@ -63,12 +83,25 @@ async function load(): Promise<void> {
   }
 }
 
+/** 切换简报：加载该简报自己的详情，不跨简报混合推荐/discovery。 */
+async function selectBrief(id: string): Promise<void> {
+  if (selectedBriefId.value === id) return;
+  selectedBriefId.value = id;
+  try {
+    errorText.value = '';
+    await loadDetail();
+  } catch (error) {
+    detail.value = null;
+    errorText.value = error instanceof ApiError ? error.message : '加载简报详情失败';
+  }
+}
+
 onMounted(() => {
   void load();
 });
 
-const recommendations = computed<RecommendationItem[]>(() => {
-  const items = detail.value?.recommendationBatch?.recommendationSet.recommendations ?? [];
+const recommendations = computed<DailyJobBriefRecommendationItem[]>(() => {
+  const items = detail.value?.recommendationItems ?? [];
   return [...items].sort((a, b) => a.priority - b.priority);
 });
 const blocked = computed(() => detail.value?.recommendationBatch?.recommendationSet.blocked ?? []);
@@ -191,6 +224,21 @@ function formatTime(ms: number): string {
           </n-space>
         </n-card>
 
+        <!-- 多简报 selector：同一 product day 有多份简报（多计划版本）时提供可见切换 -->
+        <div v-if="multipleBriefs" class="block" data-testid="brief-selector">
+          <n-text depth="3" class="selector-label">今日有多份简报，选择要查看的计划：</n-text>
+          <div class="brief-tabs">
+            <n-button
+              v-for="b in briefs"
+              :key="b.id"
+              size="small"
+              :type="b.id === selectedBriefId ? 'primary' : 'default'"
+              :data-testid="`brief-selector-${b.id}`"
+              @click="selectBrief(b.id)"
+            >{{ briefPlanLabel(b) }}</n-button>
+          </div>
+        </div>
+
         <!-- 搜索覆盖情况 -->
         <n-card size="small" class="block" title="今日搜索覆盖" data-testid="coverage">
           <n-text depth="3">
@@ -216,9 +264,18 @@ function formatTime(ms: number): string {
             >
               <div class="rec-head">
                 <span class="priority" data-testid="recommendation-priority">#{{ rec.priority }}</span>
+                <n-text strong class="rec-title" data-testid="recommendation-title">{{ rec.title ?? '未命名岗位' }}</n-text>
                 <n-tag size="small" :type="kindTagType(rec.kind)" data-testid="recommendation-kind">{{ kindLabel(rec.kind) }}</n-tag>
                 <n-tag size="small" data-testid="recommendation-confidence">置信度：{{ confidenceLabel(rec.confidence) }}</n-tag>
+                <n-tag size="small" :type="evidenceLevelTagType(rec.evidenceLevel)" data-testid="recommendation-evidence-level">
+                  {{ evidenceLevelLabel(rec.evidenceLevel) }}
+                </n-tag>
               </div>
+              <p class="rationale">
+                <n-text depth="2" data-testid="recommendation-company">{{ rec.company ?? '未知公司' }}</n-text>
+                <template v-if="rec.city"> · <n-text depth="2">{{ rec.city }}</n-text></template>
+                <template v-if="rec.sourceDomain"> · <n-text depth="3">{{ rec.sourceDomain }}</n-text></template>
+              </p>
               <p class="rationale" data-testid="recommendation-rationale">{{ rec.rationale }}</p>
               <div v-if="rec.conditions.length > 0" class="conditions" data-testid="recommendation-conditions">
                 <n-text depth="3">适用条件：</n-text>
@@ -234,6 +291,14 @@ function formatTime(ms: number): string {
                   :data-testid="`recommendation-evidence-${ref.polarity}`"
                 >{{ ref.polarity === 'support' ? '＋' : '－' }} {{ ref.evidenceKey }}</code>
               </details>
+              <p v-if="rec.sourceUrl" class="source-url">
+                <a
+                  :href="rec.sourceUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-testid="recommendation-source-link"
+                >查看岗位来源</a>
+              </p>
             </div>
 
             <!-- 被排除候选：确定性阻断原因 -->
@@ -307,6 +372,8 @@ function formatTime(ms: number): string {
 .block { margin-top: 16px; }
 .count { display: block; margin-bottom: 8px; }
 .coverage-meta { display: block; margin-top: 2px; }
+.selector-label { display: block; margin-bottom: 8px; }
+.brief-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .rec-item { padding: 14px 16px; margin-bottom: 10px; border: 1px solid var(--of-line, rgba(15, 23, 42, 0.08)); border-radius: 10px; }
 .rec-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .priority { font-weight: 600; color: var(--of-brand, #2563eb); }

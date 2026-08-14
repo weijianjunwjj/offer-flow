@@ -410,4 +410,168 @@ describe('DailyJobBrief 只读 API（T041）', () => {
     expect(analysisTaskCountAfter).toBe(analysisTaskCountBefore);
     expect(briefCountAfter).toBe(briefCountBefore);
   });
+
+  // ── T041 identity hardening：推荐岗位身份 + plan label + 多 Brief ─────────────
+
+  it('recommendation item 展开岗位身份（role/company/city/evidenceLevel）', async () => {
+    const { app, db } = createHarness();
+    seedPlanVersion(db);
+    seedSnapshot(db, 'snap-1', { sourceUrl: 'https://www.zhipin.com/job/42', sourceDomain: 'zhipin.com', providerKey: 'boss' });
+    seedCandidateVersion(db, 'ver-1', {
+      candidateId: 'cand-1', evidenceLevel: 'FULL_EVIDENCE', snapshotId: 'snap-1',
+      normalized: { role: '前端工程师', company: '某科技', city: '苏州' },
+    });
+    const item: RecommendationItem = {
+      candidateId: 'cand-1', candidateVersionId: 'ver-1', analysisRecordId: 'analysis-1',
+      kind: 'apply_now', priority: 1, confidence: 'high', rationale: '合适',
+      evidenceRefs: [{ evidenceKey: 'skill_match', polarity: 'support' }], conditions: ['verify_before_apply'],
+    };
+    seedBatch(db, 'batch-1', { recommendation: item });
+    seedBrief(db, { recommendationBatchId: 'batch-1' });
+    const res = await app.inject({ method: 'GET', url: '/daily-job-briefs/brief-1' });
+    const body = res.json() as {
+      recommendationItems: Array<{
+        candidateId: string; candidateVersionId: string; evidenceLevel: string;
+        title: string | null; company: string | null; city: string | null;
+        sourceUrl: string | null; sourceDomain: string | null; provider: string | null;
+        kind: string; priority: number; confidence: string; rationale: string;
+      }>;
+    };
+    expect(body.recommendationItems).toHaveLength(1);
+    expect(body.recommendationItems[0]).toMatchObject({
+      candidateId: 'cand-1',
+      candidateVersionId: 'ver-1',
+      evidenceLevel: 'FULL_EVIDENCE',
+      title: '前端工程师',
+      company: '某科技',
+      city: '苏州',
+      sourceUrl: 'https://www.zhipin.com/job/42',
+      sourceDomain: 'zhipin.com',
+      provider: 'boss',
+      kind: 'apply_now',
+      priority: 1,
+      confidence: 'high',
+      rationale: '合适',
+    });
+  });
+
+  it('recommendation item 按 candidateVersionId 精确展开（不用 active/latest 版本）', async () => {
+    const { app, db } = createHarness();
+    seedPlanVersion(db);
+    // 同一候选 cand-1 有两个版本：ver-old（旧 active）、ver-2（被推荐精确引用）。
+    const repo = new RadarCandidateRepository(db);
+    repo.insertCandidate({
+      id: 'cand-1', primarySourceRecordId: null, activeVersionId: null,
+      lifecycleStatus: 'active', mergedIntoCandidateId: null, createdAt: 1, updatedAt: 1,
+    });
+    repo.insertVersion({
+      id: 'ver-old', candidateId: 'cand-1', versionNo: 1,
+      normalized: normalized({ role: '旧岗位', company: '旧公司', city: '旧城' }),
+      qualityIssues: [], sourceSnapshotIds: [], contentHash: 'hash-ver-old',
+      originType: 'captured', evidenceLevel: 'FULL_EVIDENCE', correctionNote: null,
+      supersedesVersionId: null, createdAt: 1,
+    });
+    repo.insertVersion({
+      id: 'ver-2', candidateId: 'cand-1', versionNo: 2,
+      normalized: normalized({ role: '新岗位', company: '新公司', city: '苏州' }),
+      qualityIssues: [], sourceSnapshotIds: [], contentHash: 'hash-ver-2',
+      originType: 'source_change', evidenceLevel: 'FULL_EVIDENCE', correctionNote: null,
+      supersedesVersionId: 'ver-old', createdAt: 2,
+    });
+    // 把 active 指向 ver-old：证明展示身份不是猜 active/latest，而是精确按 candidateVersionId。
+    repo.setActiveVersionId('cand-1', 'ver-old', 2);
+    const item: RecommendationItem = {
+      candidateId: 'cand-1', candidateVersionId: 'ver-2', analysisRecordId: 'analysis-2',
+      kind: 'stretch', priority: 1, confidence: 'medium', rationale: '冲刺',
+      evidenceRefs: [], conditions: [],
+    };
+    seedBatch(db, 'batch-1', { recommendation: item });
+    seedBrief(db, { recommendationBatchId: 'batch-1' });
+    const res = await app.inject({ method: 'GET', url: '/daily-job-briefs/brief-1' });
+    const body = res.json() as { recommendationItems: Array<{ candidateVersionId: string; title: string | null; company: string | null }> };
+    expect(body.recommendationItems).toHaveLength(1);
+    // 精确命中被推荐分析的 ver-2，而不是 activeVersionId 指向的 ver-old。
+    expect(body.recommendationItems[0].candidateVersionId).toBe('ver-2');
+    expect(body.recommendationItems[0].title).toBe('新岗位');
+    expect(body.recommendationItems[0].company).toBe('新公司');
+  });
+
+  it('显式空批次 → recommendationItems = []（不破坏空批语义）', async () => {
+    const { app, db } = createHarness();
+    seedPlanVersion(db);
+    seedBatch(db, 'batch-1', 'empty');
+    seedBrief(db);
+    const res = await app.inject({ method: 'GET', url: '/daily-job-briefs/brief-1' });
+    const body = res.json() as { recommendationItems: unknown[] };
+    expect(body.recommendationItems).toEqual([]);
+  });
+
+  it('多简报（多计划版本）each 带 plan label（searchPlan.name 而非 UUID）', async () => {
+    const { app, db } = createHarness();
+    seedPlanVersion(db);
+    // 第二个 plan + version
+    const planRepo = new SearchPlanRepository(db);
+    planRepo.insertPlan({
+      id: 'plan-2', name: '后端岗位计划', status: 'active', activeVersionId: null,
+      createdAt: 2, updatedAt: 2, deletedAt: null,
+    });
+    planRepo.insertVersion({
+      id: 'version-2', searchPlanId: 'plan-2', version: 1,
+      cities: [], roleDirections: [], baseKeywords: [], expandedKeywords: [],
+      hardConstraints: [], sourceConfigs: [],
+      schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' },
+      scanBudget: {}, analysisBudget: {}, briefPolicy: {}, explorationPolicy: {},
+      notificationPolicy: {}, latestCatchUpTime: '12:00',
+      createdAt: 2, activatedAt: 2, supersedesVersionId: null,
+    });
+    seedBatch(db, 'batch-1', 'empty');
+    seedBatch(db, 'batch-2', 'empty');
+    seedBrief(db, { id: 'brief-1', searchPlanVersionId: 'version-1', recommendationBatchId: 'batch-1' });
+    seedBrief(db, { id: 'brief-2', searchPlanVersionId: 'version-2', recommendationBatchId: 'batch-2' });
+
+    const today = await app.inject({ method: 'GET', url: '/daily-job-briefs/today' });
+    const body = today.json() as {
+      total: number;
+      briefs: Array<{ id: string; searchPlanVersionId: string; searchPlan: { id: string; name: string; versionId: string } | null }>;
+    };
+    expect(body.total).toBe(2);
+    const byId = new Map(body.briefs.map((b) => [b.id, b]));
+    expect(byId.get('brief-1')?.searchPlan).toEqual({ id: 'plan-1', name: '每日前端岗位', versionId: 'version-1' });
+    expect(byId.get('brief-2')?.searchPlan).toEqual({ id: 'plan-2', name: '后端岗位计划', versionId: 'version-2' });
+  });
+
+  it('historical 旧 PlanVersion 正确解析 plan（不依赖当前 activeVersionId）', async () => {
+    const { app, db } = createHarness();
+    const planRepo = new SearchPlanRepository(db);
+    planRepo.insertPlan({
+      id: 'plan-1', name: '每日前端岗位', status: 'active', activeVersionId: null,
+      createdAt: 1, updatedAt: 1, deletedAt: null,
+    });
+    planRepo.insertVersion({
+      id: 'version-1', searchPlanId: 'plan-1', version: 1,
+      cities: [], roleDirections: [], baseKeywords: [], expandedKeywords: [],
+      hardConstraints: [], sourceConfigs: [],
+      schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' },
+      scanBudget: {}, analysisBudget: {}, briefPolicy: {}, explorationPolicy: {},
+      notificationPolicy: {}, latestCatchUpTime: '12:00',
+      createdAt: 1, activatedAt: 1, supersedesVersionId: null,
+    });
+    planRepo.insertVersion({
+      id: 'version-2', searchPlanId: 'plan-1', version: 2,
+      cities: [], roleDirections: [], baseKeywords: [], expandedKeywords: [],
+      hardConstraints: [], sourceConfigs: [],
+      schedule: { dailyAt: '09:30', timezone: 'Asia/Shanghai' },
+      scanBudget: {}, analysisBudget: {}, briefPolicy: {}, explorationPolicy: {},
+      notificationPolicy: {}, latestCatchUpTime: '12:00',
+      createdAt: 2, activatedAt: 2, supersedesVersionId: 'version-1',
+    });
+    planRepo.setActiveVersion('plan-1', 'version-2'); // 当前 active 是 version-2
+    seedBatch(db, 'batch-1', 'empty');
+    seedBrief(db, { searchPlanVersionId: 'version-1' }); // brief 引用旧 version-1
+    const res = await app.inject({ method: 'GET', url: '/daily-job-briefs/brief-1' });
+    const body = res.json() as { brief: { searchPlanVersionId: string; searchPlan: { id: string; name: string; versionId: string } | null } };
+    // 通过 version-1.searchPlanId 精确解析，而不是 plan.activeVersionId(version-2)。
+    expect(body.brief.searchPlanVersionId).toBe('version-1');
+    expect(body.brief.searchPlan).toEqual({ id: 'plan-1', name: '每日前端岗位', versionId: 'version-1' });
+  });
 });
