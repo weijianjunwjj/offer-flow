@@ -226,4 +226,21 @@ describe('DailyRunCoordinator（T028 闭环核心）', () => {
       assert.equal(second.outcome, 'skipped');
     });
   });
+
+  it('Pipeline 空推荐 scope → Brief 引用 createEmptyBatch 的空批次（OPTION A，非 null）', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo }) => {
+      // 默认 pipeline 返回 emptyResult（recommendationScope=[]、recommendationBatchId=null）。
+      const result = await coordinator.run({
+        searchPlanVersionId: 'version-1', triggerType: 'SCHEDULED',
+        scheduledFor: Date.UTC(2026, 7, 14, 1, 0), scheduledDay: '2026-08-14',
+      });
+      assert.equal(result.outcome, 'completed');
+      if (result.outcome === 'completed') {
+        const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+        assert.ok(brief !== null);
+        // OPTION A：空 scope 也落一个正式空批次引用，绝不落 null（满足 NOT NULL + FK 领域语义）。
+        assert.ok(brief.recommendationBatchId.startsWith('batch-empty-'));
+      }
+    });
+  });
 });
