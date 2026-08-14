@@ -23,6 +23,8 @@ const strategyWindowNavigationEnabled = computed(() => router.hasRoute('strategy
 const radarNavigationEnabled = computed(() => router.hasRoute('radar-import'));
 // v0.9 每日求职计划入口：仅在 dailySearchPlanEnabled 注册了路由时出现（见 router/index.ts）。
 const dailySearchPlanNavigationEnabled = computed(() => router.hasRoute('daily-search-plans'));
+// v0.9 每日求职简报入口：与计划配置共享同一 capability 门禁（见 router/index.ts）。
+const dailyJobBriefNavigationEnabled = computed(() => router.hasRoute('daily-job-briefs'));
 const g3SandboxBannerVisible = computed(() => features.g3SandboxEnabled);
 // G5 沙箱会同时启用 G4 能力与数据，但只展示 G5 环境横幅，避免重复提示；
 // G6 演练环境启用 G1~G5，只展示 G6 演练横幅，抑制 G4/G5 沙箱横幅。
@@ -38,6 +40,7 @@ const activeSection = computed(() => {
   if (route.name === 'strategy-window') return 'strategy-window';
   if (route.name === 'radar-import' || route.name === 'radar-review') return 'radar';
   if (route.name === 'daily-search-plans') return 'daily-search-plans';
+  if (route.name === 'daily-job-briefs') return 'daily-job-briefs';
   if (route.name === 'profile' || route.name === 'profile-versions') return 'profile';
   return 'jobs';
 });
@@ -89,6 +92,10 @@ function goRadar(): void {
 
 function goDailySearchPlans(): void {
   void router.push({ name: 'daily-search-plans' });
+}
+
+function goDailyJobBriefs(): void {
+  void router.push({ name: 'daily-job-briefs' });
 }
 
 function goJobs(): void {
@@ -220,6 +227,16 @@ const contentStyle =
               @click="goDailySearchPlans"
             >
               每日求职计划
+            </n-button>
+            <n-button
+              v-if="dailyJobBriefNavigationEnabled"
+              :type="activeSection === 'daily-job-briefs' ? 'primary' : 'tertiary'"
+              :ghost="activeSection === 'daily-job-briefs'"
+              size="small"
+              data-testid="nav-daily-job-briefs"
+              @click="goDailyJobBriefs"
+            >
+              每日求职简报
             </n-button>
             <n-button
               :type="activeSection === 'jobs' ? 'primary' : 'tertiary'"

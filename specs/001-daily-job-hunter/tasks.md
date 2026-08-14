@@ -835,6 +835,8 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ### T042 [P] [US7] [US8] DailyJobBrief 前端页面
 
+> **实施状态（2026-08-14）：completed。** `src/api/dailyJobBriefApi.ts` + `src/pages/DailyJobBriefPage.vue` + `src/pages/DailyJobBriefPage.spec.ts` 已实现只读简报页：复用 `dailySearchPlanEnabled` 门禁注册 `/daily-job-briefs` 路由与导航；只调用 `/daily-job-briefs/today` + `/:id`，today 以后端 `briefDate` 为真源；推荐（kind/置信度/rationale/条件/证据）+ discovery（title/company/city/evidenceLevel/source）+ coverage + sourceRun 次数 + 4 态空批区分。不触发 Pipeline / 推荐生成 / 直连 DB。
+
 **目标：** 同旧 Plan T034。新增 discovery items section（supplementary——不是第二套推荐）。
 
 ---

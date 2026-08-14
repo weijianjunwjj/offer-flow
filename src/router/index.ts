@@ -15,6 +15,7 @@ import StrategyWindowPage from '../pages/StrategyWindowPage.vue';
 import RadarImportPage from '../pages/RadarImportPage.vue';
 import RadarReviewPage from '../pages/RadarReviewPage.vue';
 import DailySearchPlanPage from '../pages/DailySearchPlanPage.vue';
+import DailyJobBriefPage from '../pages/DailyJobBriefPage.vue';
 import JobListPage from '../pages/JobListPage.vue';
 import JobCreatePage from '../pages/JobCreatePage.vue';
 import JobDetailPage from '../pages/JobDetailPage.vue';
@@ -91,6 +92,13 @@ export function createRoutes(options: RouterFeatureOptions): RouteRecordRaw[] {
         path: '/daily-search-plans',
         name: 'daily-search-plans-disabled',
         redirect: { name: 'jobs', query: { feature: 'daily-search-plans-disabled' } },
+      },
+    options.dailySearchPlanEnabled
+      ? { path: '/daily-job-briefs', name: 'daily-job-briefs', component: DailyJobBriefPage }
+      : {
+        path: '/daily-job-briefs',
+        name: 'daily-job-briefs-disabled',
+        redirect: { name: 'jobs', query: { feature: 'daily-job-briefs-disabled' } },
       },
     options.jobMemoryV2Enabled
       ? {
