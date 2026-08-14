@@ -4,6 +4,7 @@ import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDb, type SqliteDatabase } from '../db';
+import { buildServer } from '../index';
 import { DAILY_SEARCH_PLAN_SCHEMA_VERSION, runMigrations } from '../migrations';
 import { registerSearchPlanRoutes } from './searchPlanRoutes';
 
@@ -143,5 +144,30 @@ describe('DailySearchPlan API（T022）', () => {
     expect(body.version.cities).toEqual([]);
     expect(body.version.sourceConfigs).toEqual([]);
     expect(body.version.latestCatchUpTime).toBe('12:00');
+  });
+});
+
+describe('DailySearchPlan API 生产注册（真实 app 非 404）', () => {
+  it('buildServer 开启 dailySearchPlan 后 POST /daily-search-plans 可达 contract', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-search-plan-prod-'));
+    const dbPath = path.join(tempDir, 'test.sqlite3');
+    const db = openDb(dbPath);
+    runMigrations(db, { targetVersion: DAILY_SEARCH_PLAN_SCHEMA_VERSION });
+    const app = buildServer({ db, dailySearchPlan: { enabled: true } });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/daily-search-plans',
+        payload: { name: '生产注册测试' },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = res.json() as { plan: { name: string }; version: { version: number } };
+      expect(body.plan.name).toBe('生产注册测试');
+      expect(body.version.version).toBe(1);
+    } finally {
+      await app.close();
+      db.close();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

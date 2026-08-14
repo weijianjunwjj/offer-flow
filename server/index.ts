@@ -20,8 +20,10 @@ import { registerFunnelRoutes } from './funnel/routes';
 import { registerMarketPositionRoutes } from './market-position/routes';
 import { registerStrategyWindowRoutes } from './strategy-window/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
+import { registerSearchPlanRoutes } from './search-plan/searchPlanRoutes';
 import {
   CAPABILITY_BASELINE_SCHEMA_VERSION,
+  DAILY_SEARCH_PLAN_SCHEMA_VERSION,
   getDatabaseSchemaVersion,
   HISTORY_IMPORT_SCHEMA_VERSION,
   LATEST_SCHEMA_VERSION,
@@ -102,6 +104,11 @@ export interface RadarCapability {
   promotionDeps?: RadarPromotionRouteDeps;
 }
 
+/** v0.9 每日找岗计划 API 能力：默认关闭（需 schema ≥ v10 的沙箱表），仅显式开启时才注册路由。 */
+export interface DailySearchPlanCapability {
+  enabled?: boolean;
+}
+
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
@@ -113,6 +120,7 @@ export interface BuildServerOptions {
   marketPosition?: MarketPositionCapability;
   strategyWindow?: StrategyWindowCapability;
   radar?: RadarCapability;
+  dailySearchPlan?: DailySearchPlanCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -145,6 +153,8 @@ export function buildServer(
   // 明确不启用（前后端 flag 默认 false），仅在显式注入 v7 库的开发/测试场景中开启，
   // 届时才把库升级到 v7；真实库升级与真实入口启用均需用户另行明确授权。
   const radarEnabled = options.radar?.enabled ?? false;
+  // v0.9 每日找岗计划 API：默认关闭（需 schema v10 沙箱表），仅显式开启时才注册路由与抬高所需版本。
+  const dailySearchPlanEnabled = options.dailySearchPlan?.enabled ?? false;
   const novaWingAnalysisContextEnabled = options.radar?.novaWingAnalysisContextEnabled ?? false;
   const injectedNovaWingAdapter = options.radar?.novaWingHostAdapter;
   const ownedNovaWingRuntime = novaWingAnalysisContextEnabled && injectedNovaWingAdapter === undefined
@@ -165,17 +175,19 @@ export function buildServer(
   if (jobMemoryV2.enabled) {
     // 每个能力只升级到自己需要的最低 schema 版本，不因为 v4 存在就顺带把只开了
     // 能力基线（G2）的场景也拉到 v4——两者的 requiredVersion 相互独立。
-    const requiredVersion = radarEnabled
-      ? RADAR_DOMAIN_SCHEMA_VERSION
-      : strategyWindowEnabled
-        ? STRATEGY_WINDOW_SCHEMA_VERSION
-        : marketPositionEnabled
-          ? MARKET_POSITION_SCHEMA_VERSION
-          : historyImportEnabled
-            ? HISTORY_IMPORT_SCHEMA_VERSION
-            : capabilityBaselineEnabled
-              ? CAPABILITY_BASELINE_SCHEMA_VERSION
-              : PRODUCTION_SCHEMA_VERSION;
+    const requiredVersion = dailySearchPlanEnabled
+      ? DAILY_SEARCH_PLAN_SCHEMA_VERSION
+      : radarEnabled
+        ? RADAR_DOMAIN_SCHEMA_VERSION
+        : strategyWindowEnabled
+          ? STRATEGY_WINDOW_SCHEMA_VERSION
+          : marketPositionEnabled
+            ? MARKET_POSITION_SCHEMA_VERSION
+            : historyImportEnabled
+              ? HISTORY_IMPORT_SCHEMA_VERSION
+              : capabilityBaselineEnabled
+                ? CAPABILITY_BASELINE_SCHEMA_VERSION
+                : PRODUCTION_SCHEMA_VERSION;
     // 真实生产库（data/offerflow.sqlite3）禁止在服务启动时自动迁移；
     // 仅临时文件库 / 注入的测试库 / 内存库允许自动初始化到所需 schema。
     const isRealProductionDb = ownsDb && dbPath === getDbPath();
@@ -267,6 +279,9 @@ export function buildServer(
         recommendationDeps: options.radar?.recommendationDeps,
         promotionDeps: options.radar?.promotionDeps,
       });
+    }
+    if (dailySearchPlanEnabled) {
+      registerSearchPlanRoutes(app);
     }
   }
   return app;
