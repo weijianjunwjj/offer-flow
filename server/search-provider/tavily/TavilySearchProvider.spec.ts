@@ -86,6 +86,17 @@ function mockNetworkError(message: string): typeof fetch {
   return vi.fn().mockRejectedValue(new Error(message)) as unknown as typeof fetch;
 }
 
+/** 构造 undici 风格的瞬时传输错误（cause.code 承载 taxonomy，与真实 fetch failed 一致）。 */
+function transientTransportError(code: string): Error {
+  return Object.assign(new TypeError('fetch failed'), { cause: { code } });
+}
+
+/** retry 测试注入 seam：禁用真实等待与抖动，避免测试真实 sleep。 */
+const retrySeams = {
+  sleep: async (): Promise<void> => {},
+  backoffDelayMs: (): number => 0,
+};
+
 const MOCK_API_KEY = 'tvly-test-key-123';
 
 // ── Success ──────────────────────────────────────────────────────────────────
@@ -463,5 +474,161 @@ describe('TavilySearchProvider — multiple queries', () => {
     expect(result.coverage.queriesCompleted).toBe(2); // query 1 (OK) + query 3 (VALID_EMPTY)
     expect(result.coverage.queriesFailed).toBe(1); // query 2 (AUTH_ERROR)
     expect(result.coverage.queryResults).toHaveLength(3);
+  });
+});
+
+// ── Transient transport retry ───────────────────────────────────────────────
+
+describe('TavilySearchProvider — transient transport retry', () => {
+  it('first attempt success → no retry', async () => {
+    const fakeFetch = mockFetch(200, TAVILY_OK_RESPONSE);
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      ...retrySeams,
+    });
+
+    const result = await provider.search(makeRequest());
+
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(result.providerMeta.retriesUsed).toBe(0);
+    expect(result.coverage.queriesCompleted).toBe(1);
+  });
+
+  it('first attempt UND_ERR_CONNECT_TIMEOUT, second success → logical success, no failedScopes', async () => {
+    const fakeFetch = vi.fn()
+      .mockRejectedValueOnce(transientTransportError('UND_ERR_CONNECT_TIMEOUT'))
+      .mockResolvedValueOnce({ status: 200, ok: true, json: async () => TAVILY_OK_RESPONSE }) as unknown as typeof fetch;
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      ...retrySeams,
+    });
+
+    const result = await provider.search(makeRequest());
+
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(result.coverage.queriesCompleted).toBe(1);
+    expect(result.coverage.queriesFailed).toBe(0);
+    expect(result.coverage.failedScopes).toHaveLength(0);
+    expect(result.items).toHaveLength(2);
+    expect(result.providerMeta.retriesUsed).toBe(1);
+  });
+
+  it('first attempt NETWORK_ERROR, second NETWORK_ERROR → logical failed, exactly 1 failedScope', async () => {
+    const fakeFetch = vi.fn()
+      .mockRejectedValueOnce(transientTransportError('UND_ERR_CONNECT_TIMEOUT'))
+      .mockRejectedValueOnce(transientTransportError('ECONNRESET')) as unknown as typeof fetch;
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      ...retrySeams,
+    });
+
+    const result = await provider.search(makeRequest());
+
+    expect(fakeFetch).toHaveBeenCalledTimes(2);
+    expect(result.coverage.queriesCompleted).toBe(0);
+    expect(result.coverage.queriesFailed).toBe(1);
+    expect(result.coverage.failedScopes).toHaveLength(1);
+    expect(result.coverage.failedScopes[0].errorCode).toBe('NETWORK_ERROR');
+    expect(result.providerMeta.retriesUsed).toBe(1);
+  });
+
+  it('AUTH_ERROR (401) → no retry, fetch called once', async () => {
+    const fakeFetch = mockFetch(401, { error: 'Unauthorized' });
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      ...retrySeams,
+    });
+
+    const result = await provider.search(makeRequest());
+
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(result.coverage.failedScopes[0].errorCode).toBe('AUTH_ERROR');
+    expect(result.providerMeta.retriesUsed).toBe(0);
+  });
+
+  it('invalid request (400) → no retry, fetch called once', async () => {
+    const fakeFetch = mockFetch(400, { error: 'Bad Request' });
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      ...retrySeams,
+    });
+
+    const result = await provider.search(makeRequest());
+
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(result.coverage.failedScopes[0].errorCode).toBe('NETWORK_ERROR');
+    expect(result.providerMeta.retriesUsed).toBe(0);
+  });
+
+  it('rate limit (429) → no retry, existing failure semantics preserved', async () => {
+    const fakeFetch = mockFetch(429, { error: 'Too Many Requests' });
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      ...retrySeams,
+    });
+
+    const result = await provider.search(makeRequest());
+
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(result.coverage.failedScopes[0].errorCode).toBe('RATE_LIMITED');
+    expect(result.providerMeta.retriesUsed).toBe(0);
+  });
+
+  it('30 logical queries with partial retry → logical count stays 30', async () => {
+    const ok = { status: 200, ok: true, json: async () => TAVILY_OK_RESPONSE };
+    const fakeFetch = vi.fn()
+      .mockRejectedValueOnce(transientTransportError('UND_ERR_CONNECT_TIMEOUT')) // q0 attempt1
+      .mockResolvedValueOnce(ok)                                                 // q0 attempt2 → success
+      .mockRejectedValueOnce(transientTransportError('UND_ERR_CONNECT_TIMEOUT')) // q1 attempt1
+      .mockRejectedValueOnce(transientTransportError('ECONNRESET'))              // q1 attempt2 → failed
+      .mockResolvedValue(ok) as unknown as typeof fetch;                         // q2..q29
+
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      rateLimiter: new TokenBucketRateLimiter({ maxTokens: 100, refillRate: 1, refillInterval: 1000 }),
+      ...retrySeams,
+    });
+
+    const queries = Array.from({ length: 30 }, (_, i) => makeQuery({ queryKey: `q${i}` }));
+    const result = await provider.search({
+      queries,
+      config: {},
+      signal: new AbortController().signal,
+    });
+
+    expect(result.coverage.queriesCompleted).toBe(29);
+    expect(result.coverage.queriesFailed).toBe(1);
+    expect(result.coverage.queriesCompleted + result.coverage.queriesFailed).toBe(30);
+    expect(result.coverage.failedScopes).toHaveLength(1);
+    expect(result.providerMeta.requestsMade).toBe(32);
+    expect(result.providerMeta.retriesUsed).toBe(2);
+  });
+
+  it('does not persist secret / authorization / raw transport detail', async () => {
+    const fakeFetch = vi.fn()
+      .mockRejectedValueOnce(transientTransportError('UND_ERR_CONNECT_TIMEOUT'))
+      .mockRejectedValueOnce(transientTransportError('ECONNRESET')) as unknown as typeof fetch;
+    const provider = new TavilySearchProvider({
+      apiKeyResolver: () => MOCK_API_KEY,
+      fetchImpl: fakeFetch,
+      ...retrySeams,
+    });
+
+    const result = await provider.search(makeRequest());
+
+    const message = result.coverage.failedScopes[0].message;
+    expect(message).not.toContain(MOCK_API_KEY);
+    expect(message).not.toContain('Authorization');
+    expect(message).not.toContain('Bearer');
+    expect(message).not.toContain('UND_ERR_CONNECT_TIMEOUT');
+    expect(message).not.toContain('ECONNRESET');
+    expect(result.coverage.failedScopes[0].errorCode).toBe('NETWORK_ERROR');
   });
 });

@@ -131,7 +131,10 @@ export interface FailedScope {
 // ── Provider meta ────────────────────────────────────────────────────────────
 
 export interface SearchProviderMeta {
+  /** 物理 HTTP 请求总数（含 retry 后的额外 attempt），与 logical query 计数分层。 */
   requestsMade: number;
+  /** 本次 provider 调用中发生的 retry 次数（物理 attempt 超出 logical query 的部分）。 */
+  retriesUsed?: number;
   creditsUsed?: number;
   rateLimitRemaining?: number;
   rateLimitReset?: number;

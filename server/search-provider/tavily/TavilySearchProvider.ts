@@ -45,12 +45,46 @@ export interface TavilyProviderConfig {
   rateLimiter?: TokenBucketRateLimiter;
   /** Fetch implementation (for testing). */
   fetchImpl?: typeof fetch;
+  /** Backoff 睡眠（测试可注入 no-op；默认真实 setTimeout）。 */
+  sleep?: (ms: number) => Promise<void>;
+  /** 单次 retry 前的退避延迟（测试可注入固定值；默认 800–1200ms 抖动）。 */
+  backoffDelayMs?: () => number;
 }
 
 const TAVILY_BASE_URL = 'https://api.tavily.com';
 const DEFAULT_TIMEOUT = 30_000;
 const DEFAULT_MAX_RESULTS = 10;
 const SEARCH_PATH = '/search';
+/** 每 logical query 最多 1 次原始请求 + 1 次 bounded retry（禁止第三次 attempt）。 */
+const MAX_ATTEMPTS_PER_QUERY = 2;
+const BACKOFF_MIN_MS = 800;
+const BACKOFF_MAX_MS = 1200;
+
+/**
+ * 有明确瞬时传输语义的 undici/Node 错误码（仅用于 retry 判定，不进入持久化）。
+ * 覆盖真实已出现的 UND_ERR_CONNECT_TIMEOUT 与 socket/connect/DNS 传输失败。
+ */
+const TRANSIENT_TRANSPORT_CODES: ReadonlySet<string> = new Set([
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+]);
+
+/**
+ * 识别瞬时传输错误：仅依据 Node/undici 的 `err.cause.code` taxonomy。
+ * 不做 message 模糊匹配，避免误伤语义不明的异常；AUTH/400/quota/429 均不在此列。
+ */
+function isTransientTransportError(err: unknown): boolean {
+  if (err === null || typeof err !== 'object') return false;
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause === null || typeof cause !== 'object') return false;
+  const code = (cause as { code?: unknown }).code;
+  return typeof code === 'string' && TRANSIENT_TRANSPORT_CODES.has(code);
+}
 
 // ── Provider ─────────────────────────────────────────────────────────────────
 
@@ -64,6 +98,8 @@ export class TavilySearchProvider implements SearchProviderAdapter {
   private readonly defaultMaxResults: number;
   private readonly rateLimiter: TokenBucketRateLimiter;
   private readonly fetchImpl: typeof fetch;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly backoffDelayMs: () => number;
 
   constructor(config: TavilyProviderConfig) {
     this.apiKeyResolver = config.apiKeyResolver;
@@ -76,6 +112,9 @@ export class TavilySearchProvider implements SearchProviderAdapter {
       refillInterval: 1000,
     });
     this.fetchImpl = config.fetchImpl ?? fetch;
+    this.sleep = config.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.backoffDelayMs = config.backoffDelayMs
+      ?? (() => BACKOFF_MIN_MS + Math.floor(Math.random() * (BACKOFF_MAX_MS - BACKOFF_MIN_MS)));
   }
 
   async search(request: SearchProviderRequest): Promise<SearchProviderResult> {
@@ -85,13 +124,19 @@ export class TavilySearchProvider implements SearchProviderAdapter {
     let queriesCompleted = 0;
     let queriesFailed = 0;
     let requestsMade = 0;
+    let retriesUsed = 0;
     let totalCreditsUsed = 0;
 
-    for (const sq of request.queries) {
+    for (let i = 0; i < request.queries.length; i++) {
       if (request.signal.aborted) break;
+      const sq = request.queries[i];
 
-      const result = await this.searchSingle(sq.query, request, requestsMade);
-      requestsMade++;
+      const { result, attempts } = await this.searchSingle(sq.query, request, i);
+      // 物理 HTTP attempt 与 logical query 分层：attempts 只计入 provider-local
+      // requestsMade / retriesUsed，不改变 logical query 计数
+      // （queriesCompleted / queriesFailed / failedScopes 仍按 query 统计）。
+      requestsMade += attempts;
+      retriesUsed += Math.max(0, attempts - 1);
 
       if (result.type === 'success') {
         queriesCompleted++;
@@ -139,6 +184,7 @@ export class TavilySearchProvider implements SearchProviderAdapter {
       },
       providerMeta: {
         requestsMade,
+        retriesUsed,
         creditsUsed: totalCreditsUsed > 0 ? totalCreditsUsed : undefined,
       },
     };
@@ -150,13 +196,16 @@ export class TavilySearchProvider implements SearchProviderAdapter {
     query: string,
     request: SearchProviderRequest,
     requestIndex: number,
-  ): Promise<SingleQueryResult> {
-    // Rate limit check
+  ): Promise<{ result: SingleQueryResult; attempts: number }> {
+    // 速率限制（每 logical query 消费一次，不因 retry 额外消费）。
     if (!this.rateLimiter.consume()) {
       return {
-        type: 'error',
-        errorCode: 'RATE_LIMITED',
-        errorMessage: `Tavily 频率限制：请求 ${requestIndex + 1} 被本地 Token Bucket 拒绝`,
+        result: {
+          type: 'error',
+          errorCode: 'RATE_LIMITED',
+          errorMessage: `Tavily 频率限制：请求 ${requestIndex + 1} 被本地 Token Bucket 拒绝`,
+        },
+        attempts: 0,
       };
     }
 
@@ -165,6 +214,35 @@ export class TavilySearchProvider implements SearchProviderAdapter {
     const apiKey = this.apiKeyResolver();
     const url = `${this.baseUrl}${SEARCH_PATH}`;
 
+    let attempts = 0;
+    while (attempts < MAX_ATTEMPTS_PER_QUERY) {
+      attempts++;
+      const outcome = await this.attemptOnce(url, apiKey, body, query, request);
+
+      if (outcome.type === 'success') {
+        return { result: outcome, attempts };
+      }
+      // 非瞬时传输错误 / 已耗尽全部 attempt → 直接返回；只有瞬时传输错误且仍有余量才 retry。
+      if (!outcome.transportRetryable || attempts >= MAX_ATTEMPTS_PER_QUERY) {
+        return { result: outcome, attempts };
+      }
+      await this.backoff();
+    }
+
+    // 理论不可达（循环至少执行一次）；防御性兜底，避免 TS 收窄报错。
+    return {
+      result: { type: 'error', errorCode: 'TIMEOUT', errorMessage: `Tavily 请求已取消: ${query}` },
+      attempts,
+    };
+  }
+
+  private async attemptOnce(
+    url: string,
+    apiKey: string,
+    body: Record<string, unknown>,
+    query: string,
+    request: SearchProviderRequest,
+  ): Promise<SingleQueryResult> {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), this.timeout);
     const combinedSignal =
@@ -205,11 +283,21 @@ export class TavilySearchProvider implements SearchProviderAdapter {
         };
       }
 
+      // 仅瞬时传输失败（undici cause.code）允许在 searchSingle 内做一次 bounded retry。
       return {
         type: 'error',
         errorCode: 'NETWORK_ERROR',
         errorMessage: `Tavily 网络错误: ${err instanceof Error ? err.message : String(err)}`,
+        transportRetryable: isTransientTransportError(err),
       };
+    }
+  }
+
+  /** 单次 bounded backoff（800–1200ms jitter），睡眠/延迟均可注入，避免测试真实等待。 */
+  private async backoff(): Promise<void> {
+    const delay = this.backoffDelayMs();
+    if (delay > 0) {
+      await this.sleep(delay);
     }
   }
 
@@ -306,4 +394,4 @@ function isTavilySearchResponse(body: unknown): body is TavilySearchResponse {
 
 type SingleQueryResult =
   | { type: 'success'; items: SearchEvidenceItem[]; creditsUsed?: number }
-  | { type: 'error'; errorCode: SearchProviderErrorCode; errorMessage: string };
+  | { type: 'error'; errorCode: SearchProviderErrorCode; errorMessage: string; transportRetryable?: boolean };
