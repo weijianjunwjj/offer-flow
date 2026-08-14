@@ -92,6 +92,13 @@ function withCoordinator(run: (ctx: {
         `).run(batchId, `key-${batchId}`);
         return batchId;
       },
+      getBatch: (id) => {
+        const row = db.prepare(
+          `SELECT selected_candidate_version_ids_json FROM radar_recommendation_batches WHERE id = ?`,
+        ).get(id) as { selected_candidate_version_ids_json: string } | undefined;
+        if (row === undefined) return null;
+        return { selectedCandidateVersionIds: JSON.parse(row.selected_candidate_version_ids_json) as string[] };
+      },
       createId: () => { idSeq += 1; return `run-${idSeq}`; },
       now: () => now,
     });
@@ -99,6 +106,35 @@ function withCoordinator(run: (ctx: {
     await run({ coordinator, db, planRepo, sourceRunRepo, briefRepo, pipelineRun, versionId: 'version-1', planId: 'plan-1' });
     db.close();
   })();
+}
+
+/** 插入一个指定 selected 内容的批次行（selected 非空 = 非空推荐批次，空 = 空批次）。 */
+function insertBatch(db: Database.Database, id: string, selected: string[]): void {
+  db.prepare(`
+    INSERT INTO radar_recommendation_batches (
+      id, batch_key, status, scope_json, candidate_version_ids_json,
+      selected_candidate_version_ids_json, profile_versions_json, rule_version,
+      recommendation_rule_version, analysis_policy_version, handled_state_hash,
+      diagnosis_status, generated_at, created_at
+    ) VALUES (?, ?, 'succeeded', '{}', ?, ?, '{}',
+      'radar-recommendation:v1', 'radar-recommendation:v1', 'analysis-policy:v1',
+      'hash', 'insufficient_evidence', 1, 1)
+  `).run(id, `key-${id}`, JSON.stringify(selected), JSON.stringify(selected));
+}
+
+/** 构造一个推荐非空（或指定 batch id）的 Pipeline 结果。 */
+function pipelineResultWithBatch(batchId: string, scope: string[]): DailyPipelineResult {
+  return {
+    items: [],
+    recommendationScope: scope,
+    recommendationBatchId: batchId,
+    summary: {
+      total: 0, analysisCompleted: 0, analysisFailed: 0, analysisBlocked: 0,
+      analysisAlreadyRunning: 0, analysisCancelled: 0, manualReview: 0, discoveryOnly: 0,
+      fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0,
+      ingestFailed: 0, aborted: 0, recommendationBatchId: batchId, recommendationBatchCreated: true,
+    },
+  };
 }
 
 describe('DailyRunCoordinator（T028 闭环核心）', () => {
@@ -241,6 +277,105 @@ describe('DailyRunCoordinator（T028 闭环核心）', () => {
         // OPTION A：空 scope 也落一个正式空批次引用，绝不落 null（满足 NOT NULL + FK 领域语义）。
         assert.ok(brief.recommendationBatchId.startsWith('batch-empty-'));
       }
+    });
+  });
+});
+
+describe('DailyRunCoordinator — DailyBrief recommendation reconciliation（MONOTONIC USEFULNESS）', () => {
+  const manualInput = () => ({
+    searchPlanVersionId: 'version-1',
+    triggerType: 'MANUAL' as const,
+    scheduledFor: Date.UTC(2026, 7, 14, 2, 0),
+    scheduledDay: null,
+  });
+
+  it('first run EMPTY → brief empty，emptyReason 填充', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo }) => {
+      await coordinator.run(manualInput());
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.ok(brief.recommendationBatchId.startsWith('batch-empty-'));
+      assert.equal(brief.emptyReason, '今日未发现值得处理的新岗位');
+    });
+  });
+
+  it('EMPTY → EMPTY → 同一 logical brief（row=1）保持 empty，sourceRunIds 去重 merge', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo }) => {
+      const first = await coordinator.run(manualInput());
+      const second = await coordinator.run(manualInput());
+      assert.equal(first.outcome, 'completed');
+      assert.equal(second.outcome, 'completed');
+      if (first.outcome === 'completed' && second.outcome === 'completed') {
+        const briefs = briefRepo.listRecent(10).filter((b) => b.searchPlanVersionId === 'version-1');
+        assert.equal(briefs.length, 1);
+        const brief = briefs[0]!;
+        assert.ok(brief.recommendationBatchId.startsWith('batch-empty-'));
+        assert.equal(brief.emptyReason, '今日未发现值得处理的新岗位');
+        // sourceRunIds 稳定去重 merge：两个不同 SourceRun 各自只出现一次。
+        assert.deepEqual(brief.sourceRunIds, [first.sourceRunId, second.sourceRunId]);
+      }
+    });
+  });
+
+  it('EMPTY → NON_EMPTY → brief 升级引用非空批次', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, db, pipelineRun }) => {
+      // run-1：默认 empty。
+      await coordinator.run(manualInput());
+      // run-2：产生非空批次。
+      insertBatch(db, 'batch-nonempty-1', ['v1']);
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithBatch('batch-nonempty-1', ['v1']));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.equal(brief.recommendationBatchId, 'batch-nonempty-1');
+      assert.equal(brief.emptyReason, null);
+    });
+  });
+
+  it('NON_EMPTY → EMPTY → brief 保留既有非空批次（禁止降级为空），emptyReason 仍 null', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, db, pipelineRun }) => {
+      insertBatch(db, 'batch-nonempty-1', ['v1']);
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithBatch('batch-nonempty-1', ['v1']));
+      // run-1：非空。
+      await coordinator.run(manualInput());
+      // run-2：默认 empty（recommendationBatchId=null → createEmptyBatch）。
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.equal(brief.recommendationBatchId, 'batch-nonempty-1');
+      assert.equal(brief.emptyReason, null);
+    });
+  });
+
+  it('NON_EMPTY A → NON_EMPTY B → brief 引用最新 B', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, db, pipelineRun }) => {
+      insertBatch(db, 'batch-a', ['v1']);
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithBatch('batch-a', ['v1']));
+      await coordinator.run(manualInput());
+
+      insertBatch(db, 'batch-b', ['v2']);
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithBatch('batch-b', ['v2']));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      assert.equal(brief.recommendationBatchId, 'batch-b');
+      assert.equal(brief.emptyReason, null);
+    });
+  });
+
+  it('same SCHEDULED occurrence 重复 run → skip（无 provenance 重复）', async () => {
+    await withCoordinator(async ({ coordinator }) => {
+      const input = {
+        searchPlanVersionId: 'version-1', triggerType: 'SCHEDULED' as const,
+        scheduledFor: Date.UTC(2026, 7, 14, 1, 0), scheduledDay: '2026-08-14',
+      };
+      const first = await coordinator.run(input);
+      const second = await coordinator.run(input);
+      assert.equal(first.outcome, 'completed');
+      assert.equal(second.outcome, 'skipped');
     });
   });
 });

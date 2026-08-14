@@ -34,6 +34,13 @@ export interface DailyRunCoordinatorDeps {
   providerVersion: string;
   /** 返回一个幂等空批次 id（Pipeline 无推荐 scope 时 brief 仍需引用 batch）。 */
   createEmptyBatch: () => string;
+  /**
+   * 读取一个推荐批次以判断 empty/non-empty（DailyBrief reconciliation 用）。
+   * 返回 null 表示批次不存在（视为 empty）。只暴露 selectedCandidateVersionIds 最小契约，
+   * 不把完整 RadarRecommendationBatch 耦合进 coordinator；是否含推荐以真实 domain data
+   * （selectedCandidateVersionIds 非空）为准，不猜 id 命名或 emptyReason 字符串。
+   */
+  getBatch: (id: string) => { selectedCandidateVersionIds: string[] } | null;
   createId: () => string;
   now: () => number;
 }

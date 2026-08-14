@@ -82,6 +82,13 @@ describe('T028 integration smoke（Scheduler → Coordinator → Pipeline → So
         `).run(batchId, `key-${batchId}`);
         return batchId;
       },
+      getBatch: (id) => {
+        const row = db.prepare(
+          `SELECT selected_candidate_version_ids_json FROM radar_recommendation_batches WHERE id = ?`,
+        ).get(id) as { selected_candidate_version_ids_json: string } | undefined;
+        if (row === undefined) return null;
+        return { selectedCandidateVersionIds: JSON.parse(row.selected_candidate_version_ids_json) as string[] };
+      },
       createId: () => { idSeq += 1; return `run-${idSeq}`; },
       now: () => Date.UTC(2026, 7, 14, 2, 0),
     });

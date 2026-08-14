@@ -73,6 +73,7 @@ export function createDailyRunCoordinator(deps: DailyRunRuntimeDeps): DailyRunCo
     providerKey: tavily.providerKey,
     providerVersion: tavily.providerVersion,
     createEmptyBatch: () => recommendationService.createEmptyBatch().batch.id,
+    getBatch: (id) => recommendationService.getBatch(id),
     createId,
     now,
   });

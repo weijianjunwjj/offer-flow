@@ -195,19 +195,25 @@ export class DailyRunCoordinator {
       .filter((id): id is string => id !== null);
 
     // Pipeline 无推荐 scope → 幂等空批次；否则用本次真实 batch。
-    const batchId = pipelineResult.recommendationBatchId ?? this.deps.createEmptyBatch();
-    const emptyReason = pipelineResult.recommendationScope.length === 0 && discoveryItemIds.length === 0
-      ? '今日未发现值得处理的新岗位'
-      : null;
+    const incomingBatchId = pipelineResult.recommendationBatchId ?? this.deps.createEmptyBatch();
 
     const existing = briefRepo.findByLogicalIdentity(briefDate, versionId);
     if (existing !== null) {
+      // MONOTONIC USEFULNESS reconciliation（v0.9 DailyBrief contract）：
+      //   空结果可被非空结果升级；非空结果不得被后续空结果降级。
+      //   仅当「已有非空 + 本次空」时保留已有非空批次；其余（空→空 / 空→非空 / 非空→非空）
+      //   都取本次批次（空→空 保持空、非空→非空 取最新成功非空）。
+      const existingNonEmpty = this.isNonEmptyBatch(existing.recommendationBatchId);
+      const incomingNonEmpty = this.isNonEmptyBatch(incomingBatchId);
+      const selectedBatchId = existingNonEmpty && !incomingNonEmpty
+        ? existing.recommendationBatchId
+        : incomingBatchId;
       briefRepo.updateProjection(existing.id, {
         sourceRunIds: [...new Set([...existing.sourceRunIds, runId])],
         coverage: EMPTY_COVERAGE,
-        recommendationBatchId: batchId,
+        recommendationBatchId: selectedBatchId,
         discoveryItemIds,
-        emptyReason,
+        emptyReason: this.emptyReasonFor(selectedBatchId, discoveryItemIds),
       });
       return existing.id;
     }
@@ -217,12 +223,12 @@ export class DailyRunCoordinator {
       briefDate,
       searchPlanVersionId: versionId,
       sourceRunIds: [runId],
-      recommendationBatchId: batchId,
+      recommendationBatchId: incomingBatchId,
       discoveryItemIds,
       status: 'READY',
       coverage: EMPTY_COVERAGE,
       costSummaryJson: null,
-      emptyReason,
+      emptyReason: this.emptyReasonFor(incomingBatchId, discoveryItemIds),
       generatedAt: this.deps.now(),
       completedAt: null,
       createdAt: this.deps.now(),
@@ -230,5 +236,17 @@ export class DailyRunCoordinator {
     };
     briefRepo.insert(brief);
     return brief.id;
+  }
+
+  /** 读真实批次判断是否含推荐（selectedCandidateVersionIds 非空），不猜 id/emptyReason。 */
+  private isNonEmptyBatch(batchId: string): boolean {
+    const batch = this.deps.getBatch(batchId);
+    return batch !== null && batch.selectedCandidateVersionIds.length > 0;
+  }
+
+  /** emptyReason 与最终 selected batch 保持一致：有推荐 → 永远 null（不得自相矛盾）。 */
+  private emptyReasonFor(batchId: string, discoveryItemIds: string[]): string | null {
+    if (this.isNonEmptyBatch(batchId)) return null;
+    return discoveryItemIds.length === 0 ? '今日未发现值得处理的新岗位' : null;
   }
 }
