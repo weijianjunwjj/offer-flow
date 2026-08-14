@@ -50,7 +50,7 @@ launcher 同时开启两个 non-secret flags（后台仍是同一份 backend pro
 
 ## 5. 凭据来源（已确认可靠）
 
-- `server/index.ts` 启动即调用 `loadProjectEnv()`，按 `.env` → `.env.local` 顺序加载项目根环境文件（真实 `process.env` 最高优先）。
+- `server/index.ts` 启动即调用 `loadProjectEnv()`，按仓库根 `.env` → `.env.local` 顺序加载环境文件（真实 `process.env` 最高优先）；真实 secret 推荐写入仓库根 `.env.local`，不读取 `server/.env`。
 - Tavily API Key（`TAVILY_API_KEY`）与 DeepSeek（`OFFERFLOW_LLM_API_KEY` / `DEEPSEEK_API_KEY` 等）均从 `process.env` 读取。
 - launcher 保留父进程已有 credential env，叠加 non-secret flags；**绝不把 secret 写入 Registry command / launcher source / 日志**。
 

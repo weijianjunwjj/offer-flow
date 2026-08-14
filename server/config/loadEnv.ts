@@ -61,13 +61,23 @@ export function applyEnvFile(envPath: string, fileLoadedKeys: Set<string>): numb
 }
 
 /**
- * 按 .env → .env.local 顺序加载项目根环境文件（.env.local 覆盖 .env，真实 process.env 最高优先）。
- * 两个文件均可缺失。仅服务端使用，只报告加载文件与新增/覆盖计数，绝不输出变量值。
+ * 计算项目根目录（仓库根，而非 server/）。
+ *
+ * 本文件物理路径为 <repo>/server/config/loadEnv.ts，从本文件向上两级即仓库根。
+ * 使用 import.meta.url 而非 process.cwd()，保证从任意 cwd 启动也能稳定定位仓库根。
  */
-export function loadProjectEnv(): void {
+export function resolveProjectRoot(): string {
   const __filename = fileURLToPath(import.meta.url);
-  const rootDir = path.dirname(path.dirname(__filename));
+  return path.resolve(path.dirname(__filename), '../..');
+}
 
+/**
+ * 按 .env → .env.local 顺序加载仓库根环境文件（.env.local 覆盖 .env，真实 process.env 最高优先）。
+ * 两个文件均可缺失。仅服务端使用，只报告加载文件与新增/覆盖计数，绝不输出变量值。
+ *
+ * @param rootDir 项目根目录（默认 resolveProjectRoot()）。测试用 fixture 可注入临时目录。
+ */
+export function loadProjectEnv(rootDir: string = resolveProjectRoot()): void {
   // 顺序即优先级：后者覆盖前者写入的同名键。
   const envFiles = [
     path.join(rootDir, '.env'),
