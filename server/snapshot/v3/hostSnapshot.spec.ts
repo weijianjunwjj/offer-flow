@@ -219,17 +219,17 @@ function snapshotRows(
 }
 
 describe('Host Snapshot V3 registry 与 manifest', () => {
-  it('审计 schema v12 全部 42 张表并明确选择 41 张 V3 表', () => {
+  it('审计 schema v15 全部 43 张表并明确选择 42 张 V3 表', () => {
     const fixture = createFixture('registry-audit');
     const db = new Database(fixture.databasePath, { readonly: true });
     const actual = (db.prepare(
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'nw_%' ORDER BY name",
     ).all() as Array<{ name: string }>).map((row) => row.name);
     db.close();
-    expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY).toHaveLength(42);
+    expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY).toHaveLength(43);
     expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.map((entry) => entry.name)).toEqual(actual);
-    expect(new Set(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.map((entry) => entry.name)).size).toBe(42);
-    expect(OFFERFLOW_HOST_SNAPSHOT_V3_TABLES).toHaveLength(41);
+    expect(new Set(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.map((entry) => entry.name)).size).toBe(43);
+    expect(OFFERFLOW_HOST_SNAPSHOT_V3_TABLES).toHaveLength(42);
     expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.filter((entry) => !entry.includedInHostSnapshotV3).map((entry) => entry.name))
       .toEqual(['schema_migrations']);
     expect(OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY.every((entry) => entry.reason.trim() !== '')).toBe(true);
@@ -257,7 +257,7 @@ describe('Host Snapshot V3 registry 与 manifest', () => {
     const fixture = createFixture('manifest');
     const report = exportFixture(fixture);
     const verified = readAndVerifyHostSnapshotV3(fixture.snapshotDirectory);
-    expect(report).toMatchObject({ status: 'exported', snapshotVersion: 3, componentCount: 2, tableCount: 44 });
+    expect(report).toMatchObject({ status: 'exported', snapshotVersion: 3, componentCount: 2, tableCount: 45 });
     expect(verified.manifest).toMatchObject({
       format: 'host.snapshot.v3',
       snapshotVersion: 3,

@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb } from '../db';
-import { DAILY_JOB_SCHEDULER_SCHEMA_VERSION, runMigrations } from '../migrations';
+import { DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION, runMigrations } from '../migrations';
 import { SearchPlanRepository } from '../search-plan/searchPlanRepository';
+import { SkipRepository } from '../search-plan/skipRepository';
 import { DailyJobScheduler } from './DailyJobScheduler';
 import type { DailyRunCoordinator } from '../daily-run/DailyRunCoordinator';
 
@@ -23,13 +24,15 @@ function withScheduler(run: (ctx: {
   coordinatorRun: ReturnType<typeof vi.fn>;
   timers: TimerEntry[];
   db: Database.Database;
+  skipRepo: SkipRepository;
   setNow: (ms: number) => void;
 }) => Promise<void>): Promise<void> {
   return (async () => {
     seq += 1;
     const db = openDb(path.join(tempDir, `scenario-${seq}.sqlite3`));
-    runMigrations(db, { targetVersion: DAILY_JOB_SCHEDULER_SCHEMA_VERSION });
+    runMigrations(db, { targetVersion: DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION });
     const planRepo = new SearchPlanRepository(db);
+    const skipRepo = new SkipRepository(db);
     const base = Date.UTC(2026, 7, 14, 0, 0);
     planRepo.insertPlan({
       id: 'plan-1', name: '每日前端岗位', status: 'active', activeVersionId: null,
@@ -54,13 +57,14 @@ function withScheduler(run: (ctx: {
     const scheduler = new DailyJobScheduler({
       planRepo,
       coordinator,
+      skipRepo,
       now: () => now,
       setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
       clearTimeout: vi.fn(),
     });
 
     await run({
-      scheduler, coordinatorRun, timers, db,
+      scheduler, coordinatorRun, timers, db, skipRepo,
       setNow: (ms) => { now = ms; },
     });
     db.close();
@@ -159,6 +163,45 @@ describe('DailyJobScheduler（T028）', () => {
       timer?.fn();
       await flush();
       expect(coordinatorRun).toHaveBeenCalledTimes(1); // 仅 catch-up 一次，无额外 tick run
+    });
+  });
+});
+
+describe('DailyJobScheduler（T032）— Skip Today', () => {
+  it('当日 skip → startup catch-up 不触发（CATCH_UP 也被跳过）', async () => {
+    await withScheduler(async ({ scheduler, coordinatorRun, skipRepo, setNow }) => {
+      skipRepo.skip('version-1', '2026-08-14', 'user_skipped_today', 1);
+      setNow(Date.UTC(2026, 7, 14, 2, 0)); // 10:00 → catch-up 窗口内
+      scheduler.start();
+      await flush();
+      expect(coordinatorRun).not.toHaveBeenCalled();
+    });
+  });
+
+  it('当日 skip → timer tick 到点也不 scheduled', async () => {
+    await withScheduler(async ({ scheduler, coordinatorRun, skipRepo, timers, setNow }) => {
+      skipRepo.skip('version-1', '2026-08-14', 'user_skipped_today', 1);
+      setNow(Date.UTC(2026, 7, 14, 0, 30)); // 08:30，未到 09:00 → 安排 timer，不 catch-up
+      scheduler.start();
+      await flush();
+      expect(coordinatorRun).not.toHaveBeenCalled();
+      expect(timers.length).toBe(1);
+      // 推进到 09:00 后触发 timer → tick 到点，但被 skip 拦住。
+      setNow(Date.UTC(2026, 7, 14, 1, 0)); // 09:00
+      timers.forEach((t) => t.fn());
+      await flush();
+      expect(coordinatorRun).not.toHaveBeenCalled();
+    });
+  });
+
+  it('下一自然日自动恢复（skip 不跨日继承）', async () => {
+    await withScheduler(async ({ scheduler, coordinatorRun, skipRepo, setNow }) => {
+      skipRepo.skip('version-1', '2026-08-14', 'user_skipped_today', 1);
+      setNow(Date.UTC(2026, 7, 15, 2, 0)); // 08-15 10:00 → 未 skip → catch-up 触发
+      scheduler.start();
+      await flush();
+      expect(coordinatorRun).toHaveBeenCalledTimes(1);
+      expect(coordinatorRun.mock.calls[0]?.[0].scheduledDay).toBe('2026-08-15');
     });
   });
 });

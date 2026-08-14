@@ -22,12 +22,12 @@ import { registerStrategyWindowRoutes } from './strategy-window/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
 import { registerSearchPlanRoutes } from './search-plan/searchPlanRoutes';
 import { SearchPlanRepository } from './search-plan/searchPlanRepository';
+import { SkipRepository } from './search-plan/skipRepository';
 import { createDailyRunCoordinator } from './daily-run/runtime';
 import { DailyJobScheduler } from './scheduler/DailyJobScheduler';
 import {
   CAPABILITY_BASELINE_SCHEMA_VERSION,
-  DAILY_JOB_SCHEDULER_SCHEMA_VERSION,
-  DAILY_SEARCH_PLAN_SCHEMA_VERSION,
+  DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION,
   getDatabaseSchemaVersion,
   HISTORY_IMPORT_SCHEMA_VERSION,
   LATEST_SCHEMA_VERSION,
@@ -187,21 +187,21 @@ export function buildServer(
   if (jobMemoryV2.enabled) {
     // 每个能力只升级到自己需要的最低 schema 版本，不因为 v4 存在就顺带把只开了
     // 能力基线（G2）的场景也拉到 v4——两者的 requiredVersion 相互独立。
-    const requiredVersion = dailyJobSchedulerEnabled
-      ? DAILY_JOB_SCHEDULER_SCHEMA_VERSION
-      : dailySearchPlanEnabled
-        ? DAILY_SEARCH_PLAN_SCHEMA_VERSION
-        : radarEnabled
-          ? RADAR_DOMAIN_SCHEMA_VERSION
-          : strategyWindowEnabled
-            ? STRATEGY_WINDOW_SCHEMA_VERSION
-            : marketPositionEnabled
-              ? MARKET_POSITION_SCHEMA_VERSION
-              : historyImportEnabled
-                ? HISTORY_IMPORT_SCHEMA_VERSION
-                : capabilityBaselineEnabled
-                  ? CAPABILITY_BASELINE_SCHEMA_VERSION
-                  : PRODUCTION_SCHEMA_VERSION;
+    // v0.9 dailySearchPlan（含 T032 控制端点 skip-today）与 dailyJobScheduler（含 skip 检查）
+    // 都需要 v15 的 daily_search_plan_skips 表，故二者统一上浮到控制 schema 版本。
+    const requiredVersion = dailyJobSchedulerEnabled || dailySearchPlanEnabled
+      ? DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION
+      : radarEnabled
+        ? RADAR_DOMAIN_SCHEMA_VERSION
+        : strategyWindowEnabled
+          ? STRATEGY_WINDOW_SCHEMA_VERSION
+          : marketPositionEnabled
+            ? MARKET_POSITION_SCHEMA_VERSION
+            : historyImportEnabled
+              ? HISTORY_IMPORT_SCHEMA_VERSION
+              : capabilityBaselineEnabled
+                ? CAPABILITY_BASELINE_SCHEMA_VERSION
+                : PRODUCTION_SCHEMA_VERSION;
     // 真实生产库（data/offerflow.sqlite3）禁止在服务启动时自动迁移；
     // 仅临时文件库 / 注入的测试库 / 内存库允许自动初始化到所需 schema。
     const isRealProductionDb = ownsDb && dbPath === getDbPath();
@@ -294,21 +294,30 @@ export function buildServer(
         promotionDeps: options.radar?.promotionDeps,
       });
     }
-    if (dailySearchPlanEnabled) {
-      registerSearchPlanRoutes(app);
-    }
-    if (dailyJobSchedulerEnabled) {
-      const scheduler = new DailyJobScheduler({
-        planRepo: new SearchPlanRepository(db),
-        coordinator: createDailyRunCoordinator({ db }),
-      });
-      // 生命周期跟随 Fastify：onReady 启动，onClose 停止；不产生顶层 timer side effect。
-      app.addHook('onReady', async () => {
-        scheduler.start();
-      });
-      app.addHook('onClose', async () => {
-        scheduler.stop();
-      });
+    if (dailySearchPlanEnabled || dailyJobSchedulerEnabled) {
+      // T032 Plan Control：dailySearchPlan（含控制端点）与 dailyJobScheduler（含 timer）共享同一
+      // DailyRun runtime/coordinator factory。Scheduler enabled → coordinator + timer；
+      // Plan Control API enabled → coordinator only（不因开 CRUD/控制 API 而自动开 timer）。
+      const coordinator = createDailyRunCoordinator({ db });
+      if (dailySearchPlanEnabled) {
+        registerSearchPlanRoutes(app, {
+          control: { coordinator, skipRepo: new SkipRepository(db) },
+        });
+      }
+      if (dailyJobSchedulerEnabled) {
+        const scheduler = new DailyJobScheduler({
+          planRepo: new SearchPlanRepository(db),
+          coordinator,
+          skipRepo: new SkipRepository(db),
+        });
+        // 生命周期跟随 Fastify：onReady 启动，onClose 停止；不产生顶层 timer side effect。
+        app.addHook('onReady', async () => {
+          scheduler.start();
+        });
+        app.addHook('onClose', async () => {
+          scheduler.stop();
+        });
+      }
     }
   }
   return app;
@@ -369,8 +378,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const radarEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR);
   const radarAnalysisEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR_ANALYSIS);
   const novaWingAnalysisContextEnabled = readBackendFlag(process.env.OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT);
-  // v0.9 每日主动求职调度：默认关闭，与 dailySearchPlan API 解耦；需 schema ≥ v14。
-  // 真实生产库 schema 低于 v14 时 buildServer 会拒绝启动（allowAutoMigrate=false），不会静默升级真实库。
+  // v0.9 每日主动求职调度：默认关闭，与 dailySearchPlan API 解耦；需 schema ≥ v15（含 skip 表）。
+  // 真实生产库 schema 低于 v15 时 buildServer 会拒绝启动（allowAutoMigrate=false），不会静默升级真实库。
   const dailyJobSchedulerCapability = resolveDailyJobSchedulerCapability(process.env);
   const realDbPath = getDbPath();
   const realSchemaVersion = probeSchemaVersion(realDbPath);

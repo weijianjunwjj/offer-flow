@@ -1,4 +1,5 @@
 import type { SearchPlanRepository } from '../search-plan/searchPlanRepository';
+import type { SkipRepository } from '../search-plan/skipRepository';
 import type { DailyRunCoordinator } from '../daily-run/DailyRunCoordinator';
 import { computeNextOccurrence, computeTodayOccurrence, parseDailySearchSchedule, type DailySearchSchedule } from '../daily-run/schedule';
 import type { DailySearchPlanVersion } from '../search-plan/types';
@@ -20,6 +21,7 @@ import type { DailySearchPlanVersion } from '../search-plan/types';
 export interface DailyJobSchedulerDeps {
   planRepo: SearchPlanRepository;
   coordinator: DailyRunCoordinator;
+  skipRepo: SkipRepository;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (handle: unknown) => void;
@@ -28,6 +30,7 @@ export interface DailyJobSchedulerDeps {
 export class DailyJobScheduler {
   private readonly planRepo: SearchPlanRepository;
   private readonly coordinator: DailyRunCoordinator;
+  private readonly skipRepo: SkipRepository;
   private readonly now: () => number;
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
   private readonly clearTimeoutFn: (handle: unknown) => void;
@@ -40,6 +43,7 @@ export class DailyJobScheduler {
   constructor(deps: DailyJobSchedulerDeps) {
     this.planRepo = deps.planRepo;
     this.coordinator = deps.coordinator;
+    this.skipRepo = deps.skipRepo;
     this.now = deps.now ?? Date.now;
     this.setTimeoutFn = deps.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimeoutFn = deps.clearTimeout ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
@@ -134,6 +138,9 @@ export class DailyJobScheduler {
     scheduledDay: string,
   ): Promise<void> {
     if (this.inFlight.has(version.id)) return; // in-memory fast path
+    // Skip Today：该 PlanVersion 该自然日被用户明确跳过 → 不 SCHEDULED / 不 CATCH_UP。
+    // 下一自然日自动恢复；MANUAL Run Now 不经过本路径（只跳过自动 occurrence）。
+    if (this.skipRepo.isSkipped(version.id, scheduledDay)) return;
     this.inFlight.add(version.id);
     try {
       await this.coordinator.run({

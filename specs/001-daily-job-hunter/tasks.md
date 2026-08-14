@@ -577,6 +577,8 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 ### T028 Scheduler 核心实现
 
 > **实施状态（2026-08-14）：completed（T028 + DailyRunCoordinator 闭环）。** `server/scheduler/DailyJobScheduler.ts`（WHEN，Fastify 进程内 setTimeout 链 + startup CATCH_UP）+ `server/daily-run/DailyRunCoordinator.ts`（ONE RUN LIFECYCLE）+ `server/daily-run/runtime.ts`（composition root 组装真实 Tavily/Ingestion/Fetch/Upgrade/Analysis/Recommendation）。schedule contract = `{ dailyAt, timezone }`（v0.9 默认 `Asia/Shanghai`）；`scheduledFor` = 绝对 occurrence instant；`scheduledDay` = plan timezone 自然日 YYYY-MM-DD；v14 迁移补 source_runs `search_plan_id`/`scheduled_day` + occurrence/active 去重 partial UNIQUE（FR-005/FR-007）。
+>
+> **DailyBrief Recommendation Reconciliation Hardening（2026-08-14，同 T028 闭环）。** `DailyRunCoordinator.persistBrief` 原实现无条件用本次 batch 覆盖既有 brief 的 `recommendationBatchId`，存在「run-1 非空推荐被 run-2 空结果降级为空」的语义缺口。已改为 MONOTONIC USEFULNESS reconciliation：空→空 保持空、空→非空 升级、非空→空 保留既有非空、非空→非空 取最新；是否含推荐以真实 batch `selectedCandidateVersionIds` 判断；`emptyReason` 与最终 selected batch 保持一致。新增 `getBatch` 依赖（接 `RecommendationBatchService.getBatch`）。
 
 **目标：** 同旧 Plan T023。Fastify 进程内 Scheduler。无变化（Provider 无关组件）。
 
@@ -614,6 +616,8 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 ---
 
 ### T032 Plan 控制端点（Run Now / Skip Today / Pause / Resume）
+
+> **实施状态（2026-08-14）：completed。** 复用 `DailySearchPlan.status`（`active`/`paused`/`deleted`）表达 Pause/Resume；新增 v15 迁移 `daily_search_plan_skips`（identity = `search_plan_version_id × scheduled_day`，PK 幂等）表达 Skip Today 持久化；`DailyJobScheduler.trigger` 在 SCHEDULED/CATCH_UP 前检查 skip（MANUAL Run Now 绕过 skip）；新增 `searchPlanRoutes` 控制端点 `POST /daily-search-plans/:id/{pause,resume,skip-today,run-now}`（run-now 复用 `DailyRunCoordinator.run`，triggerType=MANUAL，FR-007 并发冲突返回 409）。`dailySearchPlan` capability 开启时注册控制端点；与 `dailyJobScheduler` 共享同一 coordinator（API 开启 ≠ timer 开启）。
 
 **目标：** 同旧 Plan T027。无变化。
 

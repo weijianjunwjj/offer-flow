@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb } from '../db';
-import { DAILY_JOB_SCHEDULER_SCHEMA_VERSION, runMigrations } from '../migrations';
+import { DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION, runMigrations } from '../migrations';
 import { SearchPlanRepository } from '../search-plan/searchPlanRepository';
+import { SkipRepository } from '../search-plan/skipRepository';
 import { SourceRunRepository } from '../source-run/sourceRunRepository';
 import { DailyBriefRepository } from '../daily-brief/dailyBriefRepository';
 import { DailyRunCoordinator } from '../daily-run/DailyRunCoordinator';
@@ -29,7 +30,7 @@ describe('T028 integration smoke（Scheduler → Coordinator → Pipeline → So
   it('startup catch-up 触发完整闭环，落 SourceRun + DailyBrief', async () => {
     seq += 1;
     const db: Database.Database = openDb(path.join(tempDir, `smoke-${seq}.sqlite3`));
-    runMigrations(db, { targetVersion: DAILY_JOB_SCHEDULER_SCHEMA_VERSION });
+    runMigrations(db, { targetVersion: DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION });
     const planRepo = new SearchPlanRepository(db);
     const sourceRunRepo = new SourceRunRepository(db);
     const briefRepo = new DailyBriefRepository(db);
@@ -96,6 +97,7 @@ describe('T028 integration smoke（Scheduler → Coordinator → Pipeline → So
     const scheduler = new DailyJobScheduler({
       planRepo,
       coordinator,
+      skipRepo: new SkipRepository(db),
       now: () => Date.UTC(2026, 7, 14, 2, 0), // 10:00 Shanghai → catch-up
       setTimeout: () => undefined,
       clearTimeout: () => undefined,
