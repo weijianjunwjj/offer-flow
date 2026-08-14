@@ -21,6 +21,7 @@ import {
   resolveTsxCli,
   runBackend,
 } from './autostartCore.mjs';
+import type { RunBackendDeps, RunBackendResult } from './autostartCore.mjs';
 
 const LAUNCHER_URL = 'file:///D:/VSCode/offer-flow/scripts/autostart/offerflowAutostartLauncher.mjs';
 
@@ -245,5 +246,78 @@ describe('runBackend — 组合行为（fake spawn + fake 文件系统）', () =
     expect(result.exitCode).toBe(1);
     expect(result.spawnError).toBe('spawn failed');
     expect(written.join('')).toContain('spawn failed');
+  });
+});
+
+describe('offerflowAutostartLauncher — 模块导入与 main 执行（launcher-level）', () => {
+  // launcher 的 main 会写 process.exitCode；测试后恢复，避免污染其它用例。
+  async function withExitCodeRestored<T>(fn: () => T | Promise<T>): Promise<T> {
+    const saved = process.exitCode;
+    try {
+      return await fn();
+    } finally {
+      process.exitCode = saved;
+    }
+  }
+
+  it('launcher 文件可被 import（无 SyntaxError），导入时不自动 spawn backend', async () => {
+    // 关键回归：此前 function main() 内 await 导致 SyntaxError，import 直接抛错。
+    const mod = await import('./offerflowAutostartLauncher.mjs');
+    expect(typeof mod.main).toBe('function');
+  });
+
+  it('main 是 async execution path，正确 await runBackendImpl 的 Promise', async () => {
+    const { main } = await import('./offerflowAutostartLauncher.mjs');
+    let resolveBackend!: (r: RunBackendResult) => void;
+    const runBackendImpl = vi.fn(
+      (_deps: RunBackendDeps) => new Promise<RunBackendResult>((resolve) => { resolveBackend = resolve; }),
+    );
+    await withExitCodeRestored(async () => {
+      const promise = main({ runBackendImpl });
+      // runBackendImpl 已被调用，但其 Promise 尚未 resolve —— main 必须等待，不能提前返回。
+      expect(runBackendImpl).toHaveBeenCalledTimes(1);
+      resolveBackend({ exitCode: 7 });
+      const result = await promise;
+      expect(result.exitCode).toBe(7);
+    });
+  });
+
+  it('main 向 runBackendImpl 传入正式 backend contract（不含 secret）', async () => {
+    const { main } = await import('./offerflowAutostartLauncher.mjs');
+    const runBackendImpl = vi.fn(async (_deps: RunBackendDeps): Promise<RunBackendResult> => ({ exitCode: 0 }));
+    await withExitCodeRestored(() => main({ runBackendImpl }));
+    expect(runBackendImpl).toHaveBeenCalledTimes(1);
+    const deps = runBackendImpl.mock.calls[0][0];
+    expect(deps.repoRoot).toBe(resolveRepoRoot(LAUNCHER_URL));
+    expect(deps.nodeExecutable).toBe(process.execPath);
+    expect(deps.tsxCli).toBe(resolveTsxCli('D:\\VSCode\\offer-flow'));
+    expect(deps.backendEntry).toBe(resolveBackendEntry('D:\\VSCode\\offer-flow'));
+    expect(deps.flags).toEqual({
+      OFFERFLOW_DAILY_JOB_SCHEDULER: 'true',
+      OFFERFLOW_DAILY_SEARCH_PLAN: 'true',
+    });
+    expect(deps.logDir).toBe('D:\\VSCode\\offer-flow\\logs\\autostart');
+    // 按当前真实实现验证 contract 字段：不发明字段、不额外注入 secret 到 flags。
+    expect(Object.keys(deps).sort()).toEqual([
+      'backendEntry', 'chdirFn', 'existsSyncFn', 'flags', 'logDir', 'logFileName',
+      'mkdirSyncFn', 'nodeExecutable', 'parentEnv', 'repoRoot', 'spawnFn', 'tsxCli', 'writeLog',
+    ].sort());
+  });
+
+  it('runBackend failure（exitCode 1）→ launcher process.exitCode 非 0', async () => {
+    const { main } = await import('./offerflowAutostartLauncher.mjs');
+    const runBackendImpl = vi.fn(async (_deps: RunBackendDeps): Promise<RunBackendResult> => ({ exitCode: 1, spawnError: 'spawn failed' }));
+    await withExitCodeRestored(async () => {
+      await main({ runBackendImpl });
+      expect(process.exitCode).toBe(1);
+    });
+  });
+
+  it('main 通过 seam 注入 fake runBackendImpl，不触碰真实 spawn / backend', async () => {
+    // 所有 launcher-level 用例都注入 fake；这里明确确认默认实现可被替换，测试绝不真实 spawn。
+    const { main } = await import('./offerflowAutostartLauncher.mjs');
+    const runBackendImpl = vi.fn(async (_deps: RunBackendDeps): Promise<RunBackendResult> => ({ exitCode: 0 }));
+    await withExitCodeRestored(() => main({ runBackendImpl }));
+    expect(runBackendImpl).toHaveBeenCalledTimes(1);
   });
 });

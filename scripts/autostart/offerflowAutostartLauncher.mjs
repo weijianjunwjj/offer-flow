@@ -23,6 +23,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   buildRuntimeFlags,
   composeLogFileName,
@@ -32,13 +33,17 @@ import {
   runBackend,
 } from './autostartCore.mjs';
 
-function main() {
+/**
+ * launcher 主执行路径（async）。runBackendImpl 是测试 seam：
+ * 生产环境默认注入真实 runBackend，测试注入 fake 以避免真实 spawn backend。
+ */
+export async function main({ runBackendImpl = runBackend } = {}) {
   const repoRoot = resolveRepoRoot(import.meta.url);
   const flags = buildRuntimeFlags();
   const tsxCli = resolveTsxCli(repoRoot);
   const backendEntry = resolveBackendEntry(repoRoot);
 
-  const result = await runBackend({
+  const result = await runBackendImpl({
     repoRoot,
     nodeExecutable: process.execPath,
     tsxCli,
@@ -61,6 +66,13 @@ function main() {
   });
 
   process.exitCode = result.exitCode;
+  return result;
 }
 
-await main();
+// 仅作为直接入口执行时运行；被测试 import 时不自动 spawn backend。
+const isMain = process.argv[1]
+  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+
+if (isMain) {
+  await main();
+}
