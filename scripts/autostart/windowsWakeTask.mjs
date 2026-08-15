@@ -17,7 +17,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { resolveRepoRoot, runWakeTaskCommand } from './wakeCore.mjs';
+import { resolveRepoRoot } from './autostartCore.mjs';
+import { runWakeTaskCommand } from './wakeCore.mjs';
 
 /** 真实 schtasks.exe executor（spawnSync，不经过 shell）。 */
 function createSchtasksExecutor() {
