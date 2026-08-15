@@ -39,10 +39,15 @@ export const WAKE_TASK_NAME = 'OfferFlowDailyJobHunterWake';
 /** 唤醒提前量：wake trigger = dailyAt - 2 分钟（给 backend 留出恢复与 occurrence 创建的时间）。 */
 export const WAKE_LEAD_TIME_MINUTES = 2;
 
-/** 有界 hold 的 ping 次数：ping -n 301 ≈ 300 秒 ≈ 5 分钟。bounded，绝不无限运行。 */
+/**
+ * 有界 hold 的 ping 次数：ping /n 301 ≈ 300 秒 ≈ 5 分钟。bounded，绝不无限运行。
+ * 注意：Microsoft 文档只定义 /n <count> 为 echo request 数量，不承诺 count == seconds。
+ * 该等价关系已通过本机 wall-clock probe 实测验证（/n 6 → 约 5s，/n 11 → 约 10s），
+ * 故 /n 301 对应约 300 秒的 hold 窗口。绝不依赖未经验证的「count 必然等于秒数」推论。
+ */
 export const WAKE_HOLD_PING_COUNT = 301;
 
-/** 有界 hold 时长（5 分钟，供文档/验收口径，实际由 ping -n 次数控制）。 */
+/** 有界 hold 时长（5 分钟，供文档/验收口径，实际由 ping /n 次数控制）。 */
 export const WAKE_HOLD_DURATION_MS = 5 * 60 * 1000;
 
 /**
@@ -51,8 +56,12 @@ export const WAKE_HOLD_DURATION_MS = 5 * 60 * 1000;
  */
 export const TRUSTED_HOLD_EXECUTABLE = 'C:\\Windows\\System32\\ping.exe';
 
-/** 有界 hold 参数：ping 本机回环地址 301 次（约 5 分钟），仅让 task process 存活以保持机器 awake。 */
-export const TRUSTED_HOLD_ARGUMENTS = `127.0.0.1 -n ${WAKE_HOLD_PING_COUNT}`;
+/**
+ * 有界 hold 参数（官方参数形式）：ping /n 301 127.0.0.1，仅让 task process 存活以保持机器 awake。
+ * 采用 Microsoft 文档定义的 /n <count>（echo request 数量）形式，target 放在最后。
+ * 绝不使用未经验证的 -n 位置/语义变体，也绝不引入 shell 包装或额外解释层。
+ */
+export const TRUSTED_HOLD_ARGUMENTS = `/n ${WAKE_HOLD_PING_COUNT} 127.0.0.1`;
 
 /** Task Scheduler 执行时限（第二层保护，略大于 hold 窗口，绝不无限运行）。 */
 export const WAKE_TASK_EXECUTION_TIME_LIMIT = 'PT15M';
@@ -216,7 +225,7 @@ export function isTrustedSystem32Ping(command, systemRoot = 'C:\\Windows') {
   return norm(command) === norm(path.join(systemRoot, 'System32', 'ping.exe'));
 }
 
-/** 判定 task arguments 是否为有界 hold 参数（127.0.0.1 -n <bounded-count>，空白/大小写不敏感）。 */
+/** 判定 task arguments 是否为有界 hold 参数（/n <bounded-count> 127.0.0.1，空白/大小写不敏感）。 */
 export function isTrustedHoldArguments(argumentsText) {
   const norm = (s) => (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
   return norm(argumentsText) === norm(TRUSTED_HOLD_ARGUMENTS);
@@ -379,9 +388,13 @@ function readXmlTag(xml, tag) {
 }
 
 /**
- * 读取 XML boolean 元素。defaultValue 用于 Windows canonical XML 会省略默认 false 设置的场景：
- * 例如 StartWhenAvailable / DisallowStartIfOnBatteries / StopIfGoingOnBatteries 为 false（默认值）时，
- * schtasks /Query /XML 可能直接省略该元素，此时应视为 false 而非「缺失 → 误判 stale」。
+ * 读取 XML boolean 元素。defaultValue 必须按 Microsoft Task Scheduler schema 各自的默认值传入，
+ * 绝不把所有 missing boolean 统一解释成 false。冻结 schema default：
+ *   - StartWhenAvailable = false
+ *   - DisallowStartIfOnBatteries = true
+ *   - StopIfGoingOnBatteries = true
+ * schtasks /Query /XML 的 canonical readback 会省略等于默认值的元素；缺失时应还原为 schema 默认值，
+ * 而不是臆断为 false。因此 battery flags 缺失 → true → 与正式契约 false 不符 → BATTERY_POLICY_MISMATCH。
  */
 function readXmlBool(xml, tag, defaultValue = null) {
   const value = readXmlTag(xml, tag);
@@ -393,10 +406,18 @@ function readXmlBool(xml, tag, defaultValue = null) {
  * 解析 schtasks /Query /XML 的 stdout，返回结构化 task 状态。
  * 输出为空 / 无 <Task> 根节点 → null（表示任务不存在 / disabled）。
  *
- * 规范化要点（修复 stale 误判根因）：
- *   - Windows canonical XML 省略默认 false 设置（StartWhenAvailable / battery flags）→ 按 false 处理。
- *   - MultipleInstancesPolicy 缺省为 IgnoreNew（schema default）→ 按 IgnoreNew 处理。
+ * 规范化要点（冻结 Task Scheduler schema 默认值）：
+ *   - StartWhenAvailable 缺省 → false（schema default = false）。
+ *   - MultipleInstancesPolicy 缺省 → IgnoreNew（schema default = IgnoreNew）。
+ *   - DisallowStartIfOnBatteries 缺省 → true（schema default = true）。
+ *   - StopIfGoingOnBatteries 缺省 → true（schema default = true）。
  *   - RunLevel 可能被省略（Builtin Administrator 会忽略 RunLevel）→ 单独保留为 null，不参与 stale 判定。
+ *
+ * 历史 stale 根因澄清（不得再写成 battery flags）：
+ *   旧 task 的 canonical XML 显式包含 <DisallowStartIfOnBatteries>false</...> 与
+ *   <StopIfGoingOnBatteries>false</...>，battery flags 并未缺失。真正被省略的是 StartWhenAvailable，
+ *   旧 parser 将 missing → null，而期望是 false，从而误报 START_WHEN_AVAILABLE_MISMATCH。
+ *   正确根因 = START_WHEN_AVAILABLE_DEFAULT_FALSE_NOT_APPLIED。
  */
 export function parseWakeTaskQueryXml(stdout) {
   if (typeof stdout !== 'string' || stdout.trim() === '') return null;
@@ -417,8 +438,8 @@ export function parseWakeTaskQueryXml(stdout) {
     wakeToRun: readXmlBool(xml, 'WakeToRun'),
     startWhenAvailable: readXmlBool(xml, 'StartWhenAvailable', false),
     multipleInstancesPolicy: readXmlTag(xml, 'MultipleInstancesPolicy') ?? 'IgnoreNew',
-    disallowStartIfOnBatteries: readXmlBool(xml, 'DisallowStartIfOnBatteries', false),
-    stopIfGoingOnBatteries: readXmlBool(xml, 'StopIfGoingOnBatteries', false),
+    disallowStartIfOnBatteries: readXmlBool(xml, 'DisallowStartIfOnBatteries', true),
+    stopIfGoingOnBatteries: readXmlBool(xml, 'StopIfGoingOnBatteries', true),
   };
 }
 

@@ -189,13 +189,13 @@ describe('受信 action trust boundary（System32-only）', () => {
     expect(isTrustedSystem32Ping('C:\\Users\\Administrator\\ping.exe', SYSTEM_ROOT)).toBe(false);
   });
 
-  it('有界 hold 参数：127.0.0.1 -n 301，count 有界', () => {
+  it('有界 hold 参数：/n 301 127.0.0.1，count 有界', () => {
     expect(WAKE_HOLD_PING_COUNT).toBe(301);
     expect(WAKE_HOLD_DURATION_MS).toBe(5 * 60 * 1000);
-    expect(HOLD_ARGS).toBe('127.0.0.1 -n 301');
-    expect(isTrustedHoldArguments('127.0.0.1 -n 301')).toBe(true);
-    expect(isTrustedHoldArguments(' 127.0.0.1  -n  301 ')).toBe(true);
-    expect(isTrustedHoldArguments('127.0.0.1 -n 999999')).toBe(false);
+    expect(HOLD_ARGS).toBe('/n 301 127.0.0.1');
+    expect(isTrustedHoldArguments('/n 301 127.0.0.1')).toBe(true);
+    expect(isTrustedHoldArguments(' /n  301  127.0.0.1 ')).toBe(true);
+    expect(isTrustedHoldArguments('/n 999999 127.0.0.1')).toBe(false);
     expect(isTrustedHoldArguments('')).toBe(false);
   });
 });
@@ -331,18 +331,45 @@ describe('parseWakeTaskQueryXml / computeWakeTaskMismatches', () => {
     expect(parseWakeTaskQueryXml(null)).toBeNull();
   });
 
-  it('StartWhenAvailable XML 缺失 → 按 false 处理，不误判 stale（修复根因）', () => {
+  it('StartWhenAvailable XML 缺失 → 按 false 处理（schema default），不误判 stale', () => {
     const xml = stripTag(trustedXml(), 'StartWhenAvailable');
     const parsed = parseWakeTaskQueryXml(xml);
     expect(parsed!.startWhenAvailable).toBe(false);
     expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toEqual([]);
   });
 
-  it('battery flags 缺失（默认 false）→ 不误判 stale', () => {
+  it('MultipleInstancesPolicy XML 缺失 → 按 IgnoreNew 处理（schema default），不误判 stale', () => {
+    const xml = stripTag(trustedXml(), 'MultipleInstancesPolicy');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(parsed!.multipleInstancesPolicy).toBe('IgnoreNew');
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toEqual([]);
+  });
+
+  it('DisallowStartIfOnBatteries XML 缺失 → 按 true 处理（schema default）', () => {
+    const xml = stripTag(trustedXml(), 'DisallowStartIfOnBatteries');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(parsed!.disallowStartIfOnBatteries).toBe(true);
+  });
+
+  it('StopIfGoingOnBatteries XML 缺失 → 按 true 处理（schema default）', () => {
+    const xml = stripTag(trustedXml(), 'StopIfGoingOnBatteries');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(parsed!.stopIfGoingOnBatteries).toBe(true);
+  });
+
+  it('battery elements 显式 false → 按 false 处理（我们正式 task 的期望值）', () => {
+    const parsed = parseWakeTaskQueryXml(trustedXml());
+    expect(parsed!.disallowStartIfOnBatteries).toBe(false);
+    expect(parsed!.stopIfGoingOnBatteries).toBe(false);
+  });
+
+  it('battery flags 缺失（schema default true）→ BATTERY_POLICY_MISMATCH（正式契约 false vs 缺省 true），不吞 mismatch', () => {
     let xml = stripTag(trustedXml(), 'DisallowStartIfOnBatteries');
     xml = stripTag(xml, 'StopIfGoingOnBatteries');
     const parsed = parseWakeTaskQueryXml(xml);
-    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toEqual([]);
+    expect(parsed!.disallowStartIfOnBatteries).toBe(true);
+    expect(parsed!.stopIfGoingOnBatteries).toBe(true);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('BATTERY_POLICY_MISMATCH');
   });
 
   it('Builtin Administrator readback 缺失 RunLevel → 不造成错误 stale（PRINCIPAL 只比 LogonType）', () => {
@@ -359,7 +386,7 @@ describe('parseWakeTaskQueryXml / computeWakeTaskMismatches', () => {
   });
 
   it('arguments drift → ARGUMENTS_MISMATCH', () => {
-    const parsed = parseWakeTaskQueryXml(trustedXml({ args: '127.0.0.1 -n 999999' }));
+    const parsed = parseWakeTaskQueryXml(trustedXml({ args: '/n 999999 127.0.0.1' }));
     expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('ARGUMENTS_MISMATCH');
   });
 
