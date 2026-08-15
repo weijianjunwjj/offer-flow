@@ -24,6 +24,7 @@
  * 绝不把 secret 写入任何 command、XML、日志或 env 值。
  */
 
+import path from 'node:path';
 import { isWindowsPlatform } from './autostartCore.mjs';
 
 // ── 冻结常量 ─────────────────────────────────────────────────────────────────
@@ -71,6 +72,60 @@ export const WAKE_TASK_MUTATION_FROM_SERVER = 'FORBIDDEN';
 const WAKE_CONFIG_MARKER = 'offerflow-wake-config:';
 
 const DAILY_AT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+// ── Windows 提权检测（纯解析，无 side effect） ────────────────────────────────
+
+/** Windows integrity SID 常量（只按 SID 判定，绝不解析本地化组名 / "Administrator" 文本）。 */
+export const INTEGRITY_SID_HIGH = 'S-1-16-12288';   // High Mandatory Level
+export const INTEGRITY_SID_SYSTEM = 'S-1-16-16384'; // System Mandatory Level
+export const INTEGRITY_SID_MEDIUM = 'S-1-16-8192';  // Medium Mandatory Level
+
+/** 提权检测三态结果（check-failed 绝不默认 elevated）。 */
+export const ELEVATION_ELEVATED = 'elevated';
+export const ELEVATION_NOT_ELEVATED = 'not-elevated';
+export const ELEVATION_CHECK_FAILED = 'check-failed';
+
+/**
+ * 解析 `whoami.exe /groups /fo csv /nh` 的 stdout，只按 integrity SID 判定提权状态。
+ * 出现 High（S-1-16-12288）或更高（System S-1-16-16384）→ elevated；
+ * 出现 Medium（S-1-16-8192）→ not-elevated；
+ * 无任何 integrity SID / 空输出 → check-failed。
+ * 只依赖 ASCII SID，即使中文/乱码组名编码错乱仍可正确判定。
+ */
+export function parseElevationOutput(stdout) {
+  if (typeof stdout !== 'string' || stdout.trim() === '') return ELEVATION_CHECK_FAILED;
+  if (stdout.includes(INTEGRITY_SID_SYSTEM) || stdout.includes(INTEGRITY_SID_HIGH)) {
+    return ELEVATION_ELEVATED;
+  }
+  if (stdout.includes(INTEGRITY_SID_MEDIUM)) {
+    return ELEVATION_NOT_ELEVATED;
+  }
+  return ELEVATION_CHECK_FAILED;
+}
+
+/**
+ * 解析 Windows 原生 whoami.exe 的绝对路径（%SystemRoot%\System32\whoami.exe）。
+ * 绝不返回裸 'whoami.exe'，避免落到 Git Bash PATH 里的 GNU coreutils whoami（它不支持 /groups）。
+ */
+export function resolveWindowsWhoamiPath(systemRoot) {
+  return path.join(systemRoot || 'C:\\Windows', 'System32', 'whoami.exe');
+}
+
+/**
+ * 执行提权检测（spawnSyncFn 注入，真实实现为 node:child_process.spawnSync）。
+ * 用显式 System32 whoami.exe 路径 + `/groups /fo csv /nh`，shell=false，不经 shell。
+ * 任何 spawn error / non-zero exit / 无法解析 → check-failed，绝不默认 elevated。
+ */
+export function detectElevation({ whoamiPath, spawnSyncFn }) {
+  let result;
+  try {
+    result = spawnSyncFn(whoamiPath, ['/groups', '/fo', 'csv', '/nh'], { encoding: 'utf-8', shell: false });
+  } catch {
+    return ELEVATION_CHECK_FAILED;
+  }
+  if (!result || result.error || result.status !== 0) return ELEVATION_CHECK_FAILED;
+  return parseElevationOutput(result.stdout ?? '');
+}
 
 // ── Schedule / Wake trigger 计算 ────────────────────────────────────────────
 
@@ -366,10 +421,13 @@ export function detectScheduleDrift(parsed, activeDailyAt) {
  * 执行 wake-task 子命令（enable / disable / status），返回结构化结果。
  * 全部 side effect 通过 deps 注入：schtasksExecutor（真实实现调用 schtasks.exe）、
  * writeXmlFile / removeXmlFile（真实实现写/删临时 XML）、fetchJson（真实实现用 global fetch 读后端 active schedule）、
- * isElevated（真实实现用 whoami /groups 检测高完整性 token）。
+ * isElevated（真实实现用显式 System32 whoami.exe /groups 检测 integrity SID，返回三态）。
  *
- * 提权门禁：enable / disable 是 PRIVILEGED INSTALL / UNINSTALL，非 elevated 直接 ELEVATION_REQUIRED，
- * 绝不调用 schtasks /Create /Delete。status 是 READ ONLY，普通用户可运行。
+ * 提权门禁：enable / disable 是 PRIVILEGED INSTALL / UNINSTALL。三态：
+ *   - check-failed → ELEVATION_CHECK_FAILED（无法检测，绝不默认 elevated）
+ *   - not-elevated → ELEVATION_REQUIRED
+ *   - elevated → 才进入 schtasks /Create /Delete
+ * 绝不调用 schtasks mutation；status 是 READ ONLY，普通用户可运行。
  *
  * enable 必须从后端 active PlanVersion.schedule 取 dailyAt（绝不硬编码 09:00 作为产品常量），
  * 并把 configured schedule 持久化进 task description（供 status / bridge 做 drift 检测）。
@@ -394,7 +452,11 @@ export async function runWakeTaskCommand(argv, deps) {
   }
 
   if (subcommand === 'enable') {
-    if (!isElevated()) {
+    const elevation = isElevated();
+    if (elevation === ELEVATION_CHECK_FAILED) {
+      return { ok: false, code: 1, subcommand, reason: 'ELEVATION_CHECK_FAILED', taskName: WAKE_TASK_NAME };
+    }
+    if (elevation !== ELEVATION_ELEVATED) {
       return { ok: false, code: 1, subcommand, reason: 'ELEVATION_REQUIRED', taskName: WAKE_TASK_NAME };
     }
     const resolved = await resolveWakeScheduleFromBackend(fetchJson);
@@ -452,7 +514,11 @@ export async function runWakeTaskCommand(argv, deps) {
   }
 
   if (subcommand === 'disable') {
-    if (!isElevated()) {
+    const elevation = isElevated();
+    if (elevation === ELEVATION_CHECK_FAILED) {
+      return { ok: false, code: 1, subcommand, reason: 'ELEVATION_CHECK_FAILED', taskName: WAKE_TASK_NAME };
+    }
+    if (elevation !== ELEVATION_ELEVATED) {
       return { ok: false, code: 1, subcommand, reason: 'ELEVATION_REQUIRED', taskName: WAKE_TASK_NAME };
     }
     const deleteArgs = buildDeleteArgs({ taskName: WAKE_TASK_NAME });

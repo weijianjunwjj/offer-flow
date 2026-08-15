@@ -14,6 +14,27 @@ export const OCCURRENCE_POLL_INTERVAL_MS: number;
 export const SOURCE_RUN_TERMINAL_STATUSES: string[];
 export const WAKE_TASK_MUTATION_FROM_SERVER: string;
 
+export const INTEGRITY_SID_HIGH: string;
+export const INTEGRITY_SID_SYSTEM: string;
+export const INTEGRITY_SID_MEDIUM: string;
+
+export type ElevationStatus = 'elevated' | 'not-elevated' | 'check-failed';
+export const ELEVATION_ELEVATED: ElevationStatus;
+export const ELEVATION_NOT_ELEVATED: ElevationStatus;
+export const ELEVATION_CHECK_FAILED: ElevationStatus;
+
+export function parseElevationOutput(stdout: string | null | undefined): ElevationStatus;
+export function resolveWindowsWhoamiPath(systemRoot?: string): string;
+export function detectElevation(input: {
+  whoamiPath: string;
+  spawnSyncFn: (command: string, args: string[], options: Record<string, unknown>) => {
+    status: number | null;
+    stdout?: string | null;
+    stderr?: string | null;
+    error?: Error | null;
+  };
+}): ElevationStatus;
+
 export function isValidDailyAt(dailyAt: string): boolean;
 
 export interface WakeSchedule {
@@ -99,7 +120,7 @@ export interface SchtasksExecutorResult {
 }
 export type SchtasksExecutor = (args: string[]) => SchtasksExecutorResult;
 export type FetchJson = (path: string) => Promise<Record<string, unknown>>;
-export type IsElevated = () => boolean;
+export type IsElevated = () => ElevationStatus;
 
 export interface WakeTaskRunDeps {
   platform: string;

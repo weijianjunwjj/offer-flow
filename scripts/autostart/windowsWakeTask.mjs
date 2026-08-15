@@ -20,7 +20,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { resolveRepoRoot } from './autostartCore.mjs';
-import { runWakeTaskCommand } from './wakeCore.mjs';
+import {
+  runWakeTaskCommand,
+  resolveWindowsWhoamiPath,
+  detectElevation,
+} from './wakeCore.mjs';
 
 /** 真实 schtasks.exe executor（spawnSync，不经过 shell）。 */
 function createSchtasksExecutor() {
@@ -35,15 +39,14 @@ function createSchtasksExecutor() {
 }
 
 /**
- * 提权上下文检测：`whoami /groups` 输出含高完整性 SID（S-1-16-12288）即 elevated。
- * 只读、不 mutation；不经过 shell / CMD / PowerShell。
+ * 提权上下文检测：只调用 Windows 原生 %SystemRoot%\System32\whoami.exe（绝不落入 Git Bash GNU whoami）。
+ * 执行 `/groups /fo csv /nh`，只按 integrity SID（S-1-16-12288 / -16384 / -8192）判定，不解析本地化文本。
+ * 返回 'elevated' | 'not-elevated' | 'check-failed'；check-failed 绝不默认 elevated。
  */
 function createIsElevated() {
-  return () => {
-    const result = spawnSync('whoami.exe', ['/groups'], { encoding: 'utf-8' });
-    if (result.status !== 0) return false;
-    return /S-1-16-12288/i.test(result.stdout ?? '');
-  };
+  const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+  const whoamiPath = resolveWindowsWhoamiPath(systemRoot);
+  return () => detectElevation({ whoamiPath, spawnSyncFn: spawnSync });
 }
 
 /** 把 XML 写入系统临时目录，返回临时文件绝对路径。 */
@@ -138,6 +141,11 @@ function printResult(result) {
   }
   if (result.reason === 'NON_WINDOWS') {
     console.error('拒绝：Windows Wake Task 仅支持 win32 平台。');
+  } else if (result.reason === 'ELEVATION_CHECK_FAILED') {
+    console.error('拒绝：无法检测管理员权限（Windows whoami.exe 调用失败），为避免误判已停止。');
+    console.error('请确认 %SystemRoot%\\System32\\whoami.exe 存在且可执行，然后在提权 Git Bash 中重新执行：');
+    console.error('  npm run wake-task:enable');
+    console.error('（或 npm run wake-task:disable）');
   } else if (result.reason === 'ELEVATION_REQUIRED') {
     console.error('拒绝：enable / disable 需要管理员权限（提权上下文）。');
     console.error('请先关闭当前窗口，从 Windows 开始菜单右键「Git Bash」→「以管理员身份运行」，然后重新执行：');

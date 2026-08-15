@@ -15,6 +15,12 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   DEFAULT_HOLD_AWAKE_WINDOW_MS,
+  ELEVATION_CHECK_FAILED,
+  ELEVATION_ELEVATED,
+  ELEVATION_NOT_ELEVATED,
+  INTEGRITY_SID_HIGH,
+  INTEGRITY_SID_MEDIUM,
+  INTEGRITY_SID_SYSTEM,
   WAKE_LEAD_TIME_MINUTES,
   WAKE_TASK_NAME,
   WAKE_TASK_MUTATION_FROM_SERVER,
@@ -26,13 +32,16 @@ import {
   buildWakeTaskXml,
   computeNextWakeStartBoundary,
   computeWakeTime,
+  detectElevation,
   detectScheduleDrift,
   detectWakeTaskStale,
   isWakeTaskCommandSafe,
   parseConfiguredScheduleFromDescription,
+  parseElevationOutput,
   parseWakeSchedule,
   parseWakeTaskQueryXml,
   resolveWakeScheduleFromBackend,
+  resolveWindowsWhoamiPath,
   runWakeTaskCommand,
   verifyWakeTaskSettings,
 } from './wakeCore.mjs';
@@ -61,7 +70,7 @@ function baseDeps(overrides: Partial<WakeTaskRunDeps> = {}): WakeTaskRunDeps {
     writeXmlFile: vi.fn(() => 'C:\\temp\\wake.xml'),
     removeXmlFile: vi.fn(),
     fetchJson: vi.fn(async () => ({})),
-    isElevated: () => true,
+    isElevated: () => ELEVATION_ELEVATED,
     ...overrides,
   };
 }
@@ -458,10 +467,95 @@ describe('runWakeTaskCommand — status', () => {
   });
 });
 
-describe('runWakeTaskCommand — 提权门禁（ELEVATION_REQUIRED）', () => {
+describe('Windows 提权检测（elevation detector）', () => {
+  const csv = (...rows: string[]) => rows.join('\n');
+
+  it('Medium integrity S-1-16-8192 → not-elevated', () => {
+    expect(parseElevationOutput(csv('"A","B","S-1-16-8192",""'))).toBe(ELEVATION_NOT_ELEVATED);
+  });
+
+  it('High integrity S-1-16-12288 → elevated', () => {
+    expect(parseElevationOutput(csv('"A","B","S-1-16-12288",""'))).toBe(ELEVATION_ELEVATED);
+  });
+
+  it('System integrity S-1-16-16384 → elevated', () => {
+    expect(parseElevationOutput(csv('"A","B","S-1-16-16384",""'))).toBe(ELEVATION_ELEVATED);
+  });
+
+  it('中文/乱码组名但 SID 正确 → 正确判定', () => {
+    // 模拟真实 whoami CSV：组名是 GBK 乱码，SID 仍是 ASCII。
+    const garbled = '"BUILTIN\\��������Ա","����","S-1-5-32-544","ֻ���ھܾ�����"\n'
+      + '"Mandatory Label\\Medium Mandatory Level","��ǩ","S-1-16-8192",""';
+    expect(parseElevationOutput(garbled)).toBe(ELEVATION_NOT_ELEVATED);
+  });
+
+  it('Administrators 组 enabled 但 integrity=Medium → not-elevated', () => {
+    const out = csv(
+      '"BUILTIN\\Administrators","Alias","S-1-5-32-544","Enabled"',
+      '"Mandatory Label\\Medium Mandatory Level","Label","S-1-16-8192",""',
+    );
+    expect(parseElevationOutput(out)).toBe(ELEVATION_NOT_ELEVATED);
+  });
+
+  it('用户名是 Administrator 但 integrity=Medium → not-elevated', () => {
+    const out = csv(
+      '"MACHINE\\Administrator","User","S-1-5-21-1","Enabled"',
+      '"Mandatory Label\\Medium Mandatory Level","Label","S-1-16-8192",""',
+    );
+    expect(parseElevationOutput(out)).toBe(ELEVATION_NOT_ELEVATED);
+  });
+
+  it('High integrity 即使不解析 Administrators 文本 → elevated', () => {
+    // 不含 "Administrators" 字样，仅凭 S-1-16-12288 判定。
+    expect(parseElevationOutput(csv('"A","B","S-1-16-12288",""'))).toBe(ELEVATION_ELEVATED);
+  });
+
+  it('无任何 integrity SID / 空输出 → check-failed', () => {
+    expect(parseElevationOutput('')).toBe(ELEVATION_CHECK_FAILED);
+    expect(parseElevationOutput(null as unknown as string)).toBe(ELEVATION_CHECK_FAILED);
+    expect(parseElevationOutput(csv('"Everyone","","S-1-1-0",""'))).toBe(ELEVATION_CHECK_FAILED);
+  });
+
+  it('resolveWindowsWhoamiPath 指向 System32 whoami.exe，不是裸名/GNU', () => {
+    const p = resolveWindowsWhoamiPath('C:\\Windows');
+    expect(p).toBe(path.join('C:\\Windows', 'System32', 'whoami.exe'));
+    expect(p.toLowerCase()).toContain('system32');
+    expect(p.toLowerCase()).not.toContain('usr\\bin');
+    expect(p).not.toBe('whoami.exe');
+  });
+
+  it('detectElevation：spawn error → check-failed（safe failure）', () => {
+    const spawnSyncFn = vi.fn(() => ({ error: new Error('ENOENT'), status: null, stdout: '', stderr: '' }));
+    expect(detectElevation({ whoamiPath: 'C:\\Windows\\System32\\whoami.exe', spawnSyncFn })).toBe(ELEVATION_CHECK_FAILED);
+  });
+
+  it('detectElevation：whoami non-zero exit → check-failed（safe failure）', () => {
+    const spawnSyncFn = vi.fn(() => ({ status: 1, stdout: '', stderr: 'err' }));
+    expect(detectElevation({ whoamiPath: 'C:\\Windows\\System32\\whoami.exe', spawnSyncFn })).toBe(ELEVATION_CHECK_FAILED);
+  });
+
+  it('detectElevation：调用显式 System32 whoami.exe + /groups /fo csv /nh + shell=false', () => {
+    const spawnSyncFn = vi.fn(() => ({ status: 0, stdout: '"A","B","S-1-16-12288",""', stderr: '' }));
+    const result = detectElevation({ whoamiPath: 'C:\\Windows\\System32\\whoami.exe', spawnSyncFn });
+    expect(result).toBe(ELEVATION_ELEVATED);
+    expect(spawnSyncFn).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\whoami.exe',
+      ['/groups', '/fo', 'csv', '/nh'],
+      { encoding: 'utf-8', shell: false },
+    );
+  });
+
+  it('SID 常量值冻结为正确完整性级别', () => {
+    expect(INTEGRITY_SID_HIGH).toBe('S-1-16-12288');
+    expect(INTEGRITY_SID_SYSTEM).toBe('S-1-16-16384');
+    expect(INTEGRITY_SID_MEDIUM).toBe('S-1-16-8192');
+  });
+});
+
+describe('runWakeTaskCommand — 提权门禁（ELEVATION_REQUIRED / ELEVATION_CHECK_FAILED）', () => {
   it('enable 非提权 → ELEVATION_REQUIRED，0 次 schtasks mutation', async () => {
     const { executor, calls } = captureSchtasks();
-    const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => false, schtasksExecutor: executor }));
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => ELEVATION_NOT_ELEVATED, schtasksExecutor: executor }));
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('ELEVATION_REQUIRED');
     expect(calls).toHaveLength(0);
@@ -469,17 +563,45 @@ describe('runWakeTaskCommand — 提权门禁（ELEVATION_REQUIRED）', () => {
 
   it('disable 非提权 → ELEVATION_REQUIRED，0 次 schtasks mutation', async () => {
     const { executor, calls } = captureSchtasks();
-    const result = await runWakeTaskCommand(['disable'], baseDeps({ isElevated: () => false, schtasksExecutor: executor }));
+    const result = await runWakeTaskCommand(['disable'], baseDeps({ isElevated: () => ELEVATION_NOT_ELEVATED, schtasksExecutor: executor }));
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('ELEVATION_REQUIRED');
     expect(calls).toHaveLength(0);
   });
 
-  it('status 不要求提权（isElevated=false 仍可运行）', async () => {
+  it('status 不要求提权（isElevated=not-elevated 仍可运行）', async () => {
     const executor: SchtasksExecutor = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
-    const result = await runWakeTaskCommand(['status'], baseDeps({ isElevated: () => false, schtasksExecutor: executor }));
+    const result = await runWakeTaskCommand(['status'], baseDeps({ isElevated: () => ELEVATION_NOT_ELEVATED, schtasksExecutor: executor }));
     expect(result.ok).toBe(true);
     expect(result.status).toBe('absent');
+  });
+
+  it('enable 检测失败（check-failed）→ ELEVATION_CHECK_FAILED，0 次 schtasks mutation', async () => {
+    const { executor, calls } = captureSchtasks();
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => ELEVATION_CHECK_FAILED, schtasksExecutor: executor }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('ELEVATION_CHECK_FAILED');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('disable 检测失败（check-failed）→ ELEVATION_CHECK_FAILED，0 次 schtasks mutation', async () => {
+    const { executor, calls } = captureSchtasks();
+    const result = await runWakeTaskCommand(['disable'], baseDeps({ isElevated: () => ELEVATION_CHECK_FAILED, schtasksExecutor: executor }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('ELEVATION_CHECK_FAILED');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('enable 提权（elevated）→ 进入 create path（1 次 schtasks /Create）', async () => {
+    const fetchJson: FetchJson = vi.fn(async (path: string) => {
+      if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+      return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+    });
+    const { executor, calls } = captureSchtasks();
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => ELEVATION_ELEVATED, fetchJson, schtasksExecutor: executor }));
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('/Create');
   });
 });
 
