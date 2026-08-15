@@ -24,6 +24,7 @@ import {
   runWakeTaskCommand,
   resolveWindowsWhoamiPath,
   detectElevation,
+  encodeTaskXmlForWindows,
 } from './wakeCore.mjs';
 
 /** 真实 schtasks.exe executor（spawnSync，不经过 shell）。 */
@@ -49,11 +50,11 @@ function createIsElevated() {
   return () => detectElevation({ whoamiPath, spawnSyncFn: spawnSync });
 }
 
-/** 把 XML 写入系统临时目录，返回临时文件绝对路径。 */
+/** 把 XML 编码为 UTF-16LE + BOM 后写入系统临时目录，返回临时文件绝对路径（唯一 Task XML 写盘入口）。 */
 function createWriteXmlFile() {
   return (xml) => {
     const filePath = path.join(os.tmpdir(), `offerflow-wake-task-${process.pid}.xml`);
-    fs.writeFileSync(filePath, xml, 'utf-8');
+    fs.writeFileSync(filePath, encodeTaskXmlForWindows(xml));
     return filePath;
   };
 }

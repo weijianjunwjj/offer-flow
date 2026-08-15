@@ -72,6 +72,9 @@ export function buildWakeTaskXml(input: {
   executionTimeLimit?: string;
 }): string;
 
+/** 把 Task Scheduler XML 编码为 UTF-16LE + BOM（FF FE）的 Buffer，供 schtasks /Create /XML 唯一写盘。 */
+export function encodeTaskXmlForWindows(xml: string): Buffer;
+
 export function buildWakeTaskDescription(input: {
   dailyAt: string;
   timezone: string;

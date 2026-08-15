@@ -35,6 +35,7 @@ import {
   detectElevation,
   detectScheduleDrift,
   detectWakeTaskStale,
+  encodeTaskXmlForWindows,
   isWakeTaskCommandSafe,
   parseConfiguredScheduleFromDescription,
   parseElevationOutput,
@@ -203,11 +204,11 @@ describe('wake task command / XML 冻结设置', () => {
   });
 });
 
-describe('XML 编码契约（declaration 与写盘编码一致）', () => {
+describe('XML 编码契约（UTF-16 declaration 与实际字节编码一致）', () => {
   function xml() {
     return buildWakeTaskXml({
       taskName: WAKE_TASK_NAME,
-      description: 'test wake task (Asia/Shanghai)',
+      description: buildWakeTaskDescription({ dailyAt: '09:00', timezone: 'Asia/Shanghai' }),
       nodeExecutable: NODE,
       wakeBridgePath: BRIDGE,
       workingDirectory: REPO_ROOT,
@@ -215,24 +216,71 @@ describe('XML 编码契约（declaration 与写盘编码一致）', () => {
     });
   }
 
-  it('XML declaration 统一为 UTF-8（不含 UTF-16）', () => {
+  it('XML declaration 固定为 UTF-16（不含 UTF-8 declaration）', () => {
     const x = xml();
-    expect(x).toContain('<?xml version="1.0" encoding="UTF-8"?>');
-    expect(x).not.toContain('UTF-16');
+    expect(x).toContain('<?xml version="1.0" encoding="UTF-16"?>');
+    expect(x).not.toContain('encoding="UTF-8"');
   });
 
-  it('实际写盘后可按 UTF-8 被 Buffer/fs 正确解析（无 UTF-16 BOM）', () => {
-    // 本测试是唯一真实触碰文件系统的点位：验证 writeFileSync(utf-8) 与 declaration 的 UTF-8 一致。
+  it('encodeTaskXmlForWindows 输出 Buffer，且前两字节为 UTF-16LE BOM（FF FE）', () => {
+    const buf = encodeTaskXmlForWindows(xml());
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf[0]).toBe(0xff);
+    expect(buf[1]).toBe(0xfe);
+  });
+
+  it('不是 UTF-8 BOM（EF BB BF）', () => {
+    const buf = encodeTaskXmlForWindows(xml());
+    expect([buf[0], buf[1], buf[2]]).not.toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  it('去除 BOM 后按 utf16le 解码正确，首行为 UTF-16 declaration', () => {
+    const decoded = encodeTaskXmlForWindows(xml()).subarray(2).toString('utf16le');
+    expect(decoded.startsWith('<?xml version="1.0" encoding="UTF-16"?>')).toBe(true);
+    expect(decoded).toContain('<WakeToRun>true</WakeToRun>');
+  });
+
+  it('不是纯 UTF-8 字节（首两字节不是 "<" 0x3c + "?" 0x3f）', () => {
+    const buf = encodeTaskXmlForWindows(xml());
+    expect(buf[0] === 0x3c && buf[1] === 0x3f).toBe(false);
+  });
+
+  it('编码后仍含全部冻结 settings（含 InteractiveToken / LeastPrivilege）', () => {
+    const decoded = encodeTaskXmlForWindows(xml()).subarray(2).toString('utf16le');
+    expect(decoded).toContain('<WakeToRun>true</WakeToRun>');
+    expect(decoded).toContain('<StartWhenAvailable>false</StartWhenAvailable>');
+    expect(decoded).toContain('<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>');
+    expect(decoded).toContain('<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>');
+    expect(decoded).toContain('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>');
+    expect(decoded).toContain('<LogonType>InteractiveToken</LogonType>');
+    expect(decoded).toContain('<RunLevel>LeastPrivilege</RunLevel>');
+  });
+
+  it('编码后 command 仍安全（不含 cmd.exe / powershell.exe / secret）', () => {
+    const decoded = encodeTaskXmlForWindows(xml()).subarray(2).toString('utf16le');
+    expect(decoded).not.toMatch(/cmd\.exe|powershell\.exe|pwsh/i);
+    expect(decoded).not.toMatch(/TAVILY|DEEPSEEK|API_KEY|SECRET|PASSWORD|Bearer|tvly-/i);
+  });
+
+  it('metadata（description）编码后仍正确保留', () => {
+    const decoded = encodeTaskXmlForWindows(xml()).subarray(2).toString('utf16le');
+    expect(decoded).toContain('dailyAt=09:00');
+    expect(decoded).toContain('timezone=Asia/Shanghai');
+    expect(decoded).toContain('wakeLeadMinutes=2');
+  });
+
+  it('实际写盘后可按 UTF-16LE + BOM 被正确读回（无 UTF-8 BOM）', () => {
+    // 本测试是唯一真实触碰文件系统的点位：验证 encodeTaskXmlForWindows 产物与 declaration 一致。
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-wake-xml-'));
     const file = path.join(dir, 'wake.xml');
     try {
-      fs.writeFileSync(file, xml(), 'utf-8');
+      fs.writeFileSync(file, encodeTaskXmlForWindows(xml()));
       const buf = fs.readFileSync(file);
-      // 首字节必须是 '<'（0x3c）+ '?'（0x3f），不是 UTF-16 BOM（FF FE / FE FF）。
-      expect(buf[0]).toBe(0x3c);
-      expect(buf[1]).toBe(0x3f);
-      const decoded = buf.toString('utf-8');
-      expect(decoded).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+      // 首字节必须是 UTF-16LE BOM（FF FE），不是 UTF-8 BOM（EF BB BF）或 '<'（0x3c）。
+      expect(buf[0]).toBe(0xff);
+      expect(buf[1]).toBe(0xfe);
+      const decoded = buf.subarray(2).toString('utf16le');
+      expect(decoded).toContain('<?xml version="1.0" encoding="UTF-16"?>');
       expect(decoded).toContain('<WakeToRun>true</WakeToRun>');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -343,6 +391,29 @@ describe('runWakeTaskCommand — enable', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe('/Create');
     expect(calls[0]).toContain('/XML');
+  });
+
+  it('enable 经唯一 writeXmlFile 写盘（UTF-16 helper 可落盘），且临时 XML 清理不回归', async () => {
+    const fetchJson: FetchJson = vi.fn(async (path: string) => {
+      if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+      return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+    });
+    const writeXmlFile = vi.fn((_xml: string) => 'C:\\temp\\wake.xml');
+    const removeXmlFile = vi.fn();
+    const { executor, calls } = captureSchtasks();
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson, schtasksExecutor: executor, writeXmlFile, removeXmlFile }));
+    expect(result.ok).toBe(true);
+    // 唯一写盘入口：writeXmlFile 恰好调用一次，收到完整 frozen xml（UTF-16 declaration）。
+    expect(writeXmlFile).toHaveBeenCalledTimes(1);
+    const writtenXml = writeXmlFile.mock.calls[0][0];
+    expect(writtenXml).toContain('<?xml version="1.0" encoding="UTF-16"?>');
+    // 该 xml 经唯一 encoding helper 落盘后是 UTF-16LE + BOM（不是 UTF-8 字节）。
+    const buf = encodeTaskXmlForWindows(writtenXml);
+    expect(buf[0]).toBe(0xff);
+    expect(buf[1]).toBe(0xfe);
+    // 临时 XML 清理照常执行，且路径与 schtasks /Create 使用的临时文件路径一致。
+    expect(removeXmlFile).toHaveBeenCalledWith('C:\\temp\\wake.xml');
+    expect(calls[0]).toContain('C:\\temp\\wake.xml');
   });
 
   it('无 active plan → NO_ACTIVE_PLAN，不调用 schtasks', async () => {

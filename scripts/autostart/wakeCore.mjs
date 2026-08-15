@@ -218,7 +218,7 @@ export function buildWakeTaskXml({
   executionTimeLimit = WAKE_TASK_EXECUTION_TIME_LIMIT,
 }) {
   const escapedDescription = String(description).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>${escapedDescription}</Description>
@@ -266,6 +266,26 @@ export function buildWakeTaskXml({
   </Actions>
 </Task>
 `;
+}
+
+/**
+ * 把 Task Scheduler XML 编码为 Windows `schtasks /Create /XML` 可接受的实际字节流。
+ *
+ * 冻结契约（v0.9）：declaration 与实际字节编码必须一致，否则 schtasks import 报
+ * "unable to switch encoding"（真实 elevated import 已复现，见 TASK_XML_ENCODING_IMPORT_COMPATIBILITY_BUG）。
+ * 正式 contract = UTF-16LE + BOM：
+ *   - 前两字节 0xFF 0xFE（UTF-16LE BOM）
+ *   - 后续为 xml 的 UTF-16LE 编码
+ *   - xml 内 declaration 固定为 encoding="UTF-16"
+ *
+ * 绝不使用 `writeFileSync(path, xml, 'utf-8')` 写入 Task XML —— 那会产出 UTF-8 字节 +
+ * UTF-16 declaration，正是本 bug 的根因。返回 Buffer，由 windowsWakeTask.mjs 唯一写盘。
+ */
+export function encodeTaskXmlForWindows(xml) {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(xml, 'utf16le'),
+  ]);
 }
 
 /**
