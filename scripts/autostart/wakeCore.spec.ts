@@ -10,6 +10,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   DEFAULT_HOLD_AWAKE_WINDOW_MS,
   WAKE_LEAD_TIME_MINUTES,
@@ -143,6 +146,43 @@ describe('wake task command / XML 冻结设置', () => {
 
   it('buildWakeTaskCommand 只含 node + bridge 两个 token', () => {
     expect(buildWakeTaskCommand({ nodeExecutable: NODE, wakeBridgePath: BRIDGE })).toBe(`"${NODE}" "${BRIDGE}"`);
+  });
+});
+
+describe('XML 编码契约（declaration 与写盘编码一致）', () => {
+  function xml() {
+    return buildWakeTaskXml({
+      taskName: WAKE_TASK_NAME,
+      description: 'test wake task (Asia/Shanghai)',
+      nodeExecutable: NODE,
+      wakeBridgePath: BRIDGE,
+      workingDirectory: REPO_ROOT,
+      startBoundary: '2026-08-16T08:58:00',
+    });
+  }
+
+  it('XML declaration 统一为 UTF-8（不含 UTF-16）', () => {
+    const x = xml();
+    expect(x).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+    expect(x).not.toContain('UTF-16');
+  });
+
+  it('实际写盘后可按 UTF-8 被 Buffer/fs 正确解析（无 UTF-16 BOM）', () => {
+    // 本测试是唯一真实触碰文件系统的点位：验证 writeFileSync(utf-8) 与 declaration 的 UTF-8 一致。
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-wake-xml-'));
+    const file = path.join(dir, 'wake.xml');
+    try {
+      fs.writeFileSync(file, xml(), 'utf-8');
+      const buf = fs.readFileSync(file);
+      // 首字节必须是 '<'（0x3c）+ '?'（0x3f），不是 UTF-16 BOM（FF FE / FE FF）。
+      expect(buf[0]).toBe(0x3c);
+      expect(buf[1]).toBe(0x3f);
+      const decoded = buf.toString('utf-8');
+      expect(decoded).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+      expect(decoded).toContain('<WakeToRun>true</WakeToRun>');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

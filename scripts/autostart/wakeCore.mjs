@@ -147,7 +147,7 @@ export function buildWakeTaskXml({
   executionTimeLimit = WAKE_TASK_EXECUTION_TIME_LIMIT,
 }) {
   const escapedDescription = String(description).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<?xml version="1.0" encoding="UTF-16"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>${escapedDescription}</Description>
