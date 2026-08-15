@@ -9,7 +9,7 @@
  *   1. 不依赖调用时 cwd —— 从自身 import.meta.url 解析 repo root。
  *   2. process.chdir(repoRoot)。
  *   3. 确认后端启动入口（server/index.ts）存在。
- *   4. 设置 non-secret flags：OFFERFLOW_DAILY_JOB_SCHEDULER / OFFERFLOW_DAILY_SEARCH_PLAN = true。
+ *   4. 设置 non-secret flags：OFFERFLOW_DAILY_JOB_SCHEDULER / OFFERFLOW_DAILY_SEARCH_PLAN / OFFERFLOW_WAKE_SCHEDULER = true。
  *   5. 保留父进程已有 credential env（叠加 flags，绝不覆盖、绝不打印）。
  *   6. 用 process.execPath + tsx CLI entry 启动 backend（不依赖 shell / npm / .cmd shim）。
  *   7. stdout/stderr 写入 logs/autostart/ 日志。

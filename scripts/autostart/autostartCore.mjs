@@ -217,13 +217,16 @@ export function resolveRepoRoot(importMetaUrl) {
 
 /**
  * 无人值守 backend 的 non-secret runtime flags。
- * 同时开 Scheduler（自动运行）与 DailySearchPlan（暴露 Plan Control / Brief / SourceRun 观测），
+ * 同时开 Scheduler（自动运行）、DailySearchPlan（暴露 Plan Control / Brief / SourceRun 观测）
+ * 与 Wake Scheduler（把 plan lifecycle 对齐到 Windows Task Scheduler wake task），
  * 后台仍只是同一份 backend process，不额外起 dev server / 浏览器。
+ * 只注入 boolean capability 开关，绝不注入、绝不打印任何 secret / API key。
  */
 export function buildRuntimeFlags() {
   return {
     OFFERFLOW_DAILY_JOB_SCHEDULER: 'true',
     OFFERFLOW_DAILY_SEARCH_PLAN: 'true',
+    OFFERFLOW_WAKE_SCHEDULER: 'true',
   };
 }
 
@@ -305,6 +308,7 @@ export async function runBackend(deps) {
     `  backendEntry=${backendEntry}`,
     `  scheduler=${flags.OFFERFLOW_DAILY_JOB_SCHEDULER}`,
     `  dailySearchPlan=${flags.OFFERFLOW_DAILY_SEARCH_PLAN}`,
+    `  wakeScheduler=${flags.OFFERFLOW_WAKE_SCHEDULER}`,
   ].join('\n');
   writeLog(logPath, `${header}\n`);
 

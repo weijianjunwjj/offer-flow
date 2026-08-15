@@ -51,13 +51,28 @@ describe('resolveRepoRoot — 不依赖 cwd', () => {
   });
 });
 
-describe('buildRuntimeFlags — 双开关', () => {
+describe('buildRuntimeFlags — 三开关', () => {
   it('OFFERFLOW_DAILY_JOB_SCHEDULER=true', () => {
     expect(buildRuntimeFlags().OFFERFLOW_DAILY_JOB_SCHEDULER).toBe('true');
   });
 
   it('OFFERFLOW_DAILY_SEARCH_PLAN=true', () => {
     expect(buildRuntimeFlags().OFFERFLOW_DAILY_SEARCH_PLAN).toBe('true');
+  });
+
+  it('OFFERFLOW_WAKE_SCHEDULER=true', () => {
+    expect(buildRuntimeFlags().OFFERFLOW_WAKE_SCHEDULER).toBe('true');
+  });
+
+  it('不发明 API key / secret：仅三个 capability flag，值全为 true', () => {
+    const flags = buildRuntimeFlags();
+    expect(Object.keys(flags).sort()).toEqual([
+      'OFFERFLOW_DAILY_JOB_SCHEDULER',
+      'OFFERFLOW_DAILY_SEARCH_PLAN',
+      'OFFERFLOW_WAKE_SCHEDULER',
+    ].sort());
+    expect(Object.values(flags).every((v) => v === 'true')).toBe(true);
+    expect(JSON.stringify(flags)).not.toMatch(/API_KEY|SECRET|PASSWORD|TAVILY|DEEPSEEK|Bearer/i);
   });
 });
 
@@ -97,6 +112,7 @@ describe('buildBackendSpawn — 只启动 backend，不启动 Vite', () => {
     expect(spawn.env.OTHER).toBe('keep');
     expect(spawn.env.OFFERFLOW_DAILY_JOB_SCHEDULER).toBe('true');
     expect(spawn.env.OFFERFLOW_DAILY_SEARCH_PLAN).toBe('true');
+    expect(spawn.env.OFFERFLOW_WAKE_SCHEDULER).toBe('true');
   });
 
   it('路径含空格时 args 仍是完整路径字符串（不拆散）', () => {
@@ -177,6 +193,7 @@ describe('runBackend — 组合行为（fake spawn + fake 文件系统）', () =
     expect(opts.cwd).toBe('D:\\VSCode\\offer-flow');
     expect(opts.windowsHide).toBe(true);
     expect((opts.env as Record<string, string>).OFFERFLOW_DAILY_JOB_SCHEDULER).toBe('true');
+    expect((opts.env as Record<string, string>).OFFERFLOW_WAKE_SCHEDULER).toBe('true');
     expect((opts.env as Record<string, string>).DEEPSEEK_API_KEY).toBe('super-secret');
     expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
   });
@@ -295,6 +312,7 @@ describe('offerflowAutostartLauncher — 模块导入与 main 执行（launcher-
     expect(deps.flags).toEqual({
       OFFERFLOW_DAILY_JOB_SCHEDULER: 'true',
       OFFERFLOW_DAILY_SEARCH_PLAN: 'true',
+      OFFERFLOW_WAKE_SCHEDULER: 'true',
     });
     expect(deps.logDir).toBe('D:\\VSCode\\offer-flow\\logs\\autostart');
     // 按当前真实实现验证 contract 字段：不发明字段、不额外注入 secret 到 flags。

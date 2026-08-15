@@ -21,6 +21,7 @@ import {
   waitForOccurrence,
   waitForHealthy,
 } from './offerflowWakeBridge.mjs';
+import { buildRuntimeFlags } from './autostartCore.mjs';
 import type { WakeBridgeDeps } from './offerflowWakeBridge.mjs';
 
 const NODE = 'D:\\nodejs\\node.exe';
@@ -215,6 +216,34 @@ describe('main — backend 健康与恢复', () => {
     await main(deps);
     expect(spawnLauncherFn).toHaveBeenCalledTimes(1);
     expect(spawnLauncherFn).toHaveBeenCalledWith({ nodeExecutable: NODE, launcherPath: LAUNCHER, repoRoot: REPO_ROOT });
+  });
+
+  it('backend down 恢复时复用正式 launcher，其 runtime flags 含三个 capability flags（含 wake）', async () => {
+    const spawnLauncherFn = vi.fn();
+    let healthy = false;
+    const deps = makeDeps({
+      spawnLauncherFn,
+      fetchJson: vi.fn(async (path: string) => {
+        if (path.includes('/health')) return { ok: healthy };
+        if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+        if (path === '/daily-search-plans/p1') return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+        if (path.startsWith('/source-runs')) {
+          return { runs: [{ searchPlanVersionId: 'v1', scheduledFor: new Date(2026, 7, 15, 9, 0, 0).getTime(), status: 'SUCCEEDED' }] };
+        }
+        return {};
+      }),
+      setTimeoutFn: (fn) => { healthy = true; fn(); return 0; },
+    });
+    await main(deps);
+    expect(spawnLauncherFn).toHaveBeenCalledTimes(1);
+    // 恢复用的必须是正式 launcher（不是第二套 daemon）。
+    expect(spawnLauncherFn.mock.calls[0][0].launcherPath).toBe(LAUNCHER);
+    // 该正式 launcher 注入的 capability flags 完整包含 wake（wake bridge 无需自行拼 env / 写 secret）。
+    expect(buildRuntimeFlags()).toEqual({
+      OFFERFLOW_DAILY_JOB_SCHEDULER: 'true',
+      OFFERFLOW_DAILY_SEARCH_PLAN: 'true',
+      OFFERFLOW_WAKE_SCHEDULER: 'true',
+    });
   });
 
   it('绝不调用 Run Now（不 POST /run-now）', async () => {
