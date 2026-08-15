@@ -46,6 +46,7 @@ function makeDeps(overrides: Partial<WakeBridgeDeps> = {}): WakeBridgeDeps & {
     occurrencePollIntervalMs: 500,
     fetchJson,
     spawnLauncherFn: vi.fn(),
+    readTaskConfiguredSchedule: async () => null,
     now: () => new Date(2026, 7, 15, 8, 58, 0).getTime(),
     setTimeoutFn: (fn) => { fn(); return 0; },
     chdirFn: vi.fn(),
@@ -218,7 +219,7 @@ describe('main — backend 健康与恢复', () => {
     expect(spawnLauncherFn).toHaveBeenCalledWith({ nodeExecutable: NODE, launcherPath: LAUNCHER, repoRoot: REPO_ROOT });
   });
 
-  it('backend down 恢复时复用正式 launcher，其 runtime flags 含三个 capability flags（含 wake）', async () => {
+  it('backend down 恢复时复用正式 launcher，其 runtime flags 含两个 capability flags（不含 wake）', async () => {
     const spawnLauncherFn = vi.fn();
     let healthy = false;
     const deps = makeDeps({
@@ -238,11 +239,10 @@ describe('main — backend 健康与恢复', () => {
     expect(spawnLauncherFn).toHaveBeenCalledTimes(1);
     // 恢复用的必须是正式 launcher（不是第二套 daemon）。
     expect(spawnLauncherFn.mock.calls[0][0].launcherPath).toBe(LAUNCHER);
-    // 该正式 launcher 注入的 capability flags 完整包含 wake（wake bridge 无需自行拼 env / 写 secret）。
+    // 该正式 launcher 注入的 capability flags 为 scheduler + dailySearchPlan（wake 归提权 CLI，不再注入 backend）。
     expect(buildRuntimeFlags()).toEqual({
       OFFERFLOW_DAILY_JOB_SCHEDULER: 'true',
       OFFERFLOW_DAILY_SEARCH_PLAN: 'true',
-      OFFERFLOW_WAKE_SCHEDULER: 'true',
     });
   });
 
@@ -262,7 +262,7 @@ describe('main — backend 健康与恢复', () => {
     expect(deps.fetchCalls.some((p) => p.includes('run-now'))).toBe(false);
   });
 
-  it('无 active plan → 只保持存活窗口后正常退出，不调用 run-now', async () => {
+  it('无 active plan → 立即 EXIT_NO_ACTIVE_PLAN，不 hold、不调用 run-now', async () => {
     const deps = makeDeps({
       fetchJson: vi.fn(async (path: string) => {
         if (path.includes('/health')) return { ok: true };
@@ -273,7 +273,61 @@ describe('main — backend 健康与恢复', () => {
     });
     const result = await main(deps);
     expect(result.exitCode).toBe(0);
+    expect(result.outcome).toBe('no_active_plan');
+    expect(result.reason).toBe('EXIT_NO_ACTIVE_PLAN');
     expect(deps.fetchCalls.some((p) => p.includes('run-now'))).toBe(false);
+    expect(deps.fetchCalls.some((p) => p.startsWith('/source-runs'))).toBe(false);
+  });
+
+  it('plan paused → 立即 EXIT_NO_ACTIVE_PLAN，不 hold、不 Run Now', async () => {
+    const deps = makeDeps({
+      fetchJson: vi.fn(async (path: string) => {
+        if (path.includes('/health')) return { ok: true };
+        if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'paused', activeVersionId: 'v1' }] };
+        return {};
+      }),
+    });
+    const result = await main(deps);
+    expect(result.outcome).toBe('no_active_plan');
+    expect(result.reason).toBe('EXIT_NO_ACTIVE_PLAN');
+    expect(deps.fetchCalls.some((p) => p.includes('run-now'))).toBe(false);
+  });
+
+  it('schedule drift（configured 08:00 vs active 09:00）→ WAKE_TASK_STALE 安全退出，不 hold、不 mutation', async () => {
+    const readTaskConfiguredSchedule = vi.fn(async () => ({ dailyAt: '08:00', timezone: 'Asia/Shanghai', wakeLeadMinutes: 2 }));
+    const deps = makeDeps({
+      readTaskConfiguredSchedule,
+      fetchJson: vi.fn(async (path: string) => {
+        if (path.includes('/health')) return { ok: true };
+        if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+        if (path === '/daily-search-plans/p1') return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+        return {};
+      }),
+    });
+    const result = await main(deps);
+    expect(result.outcome).toBe('wake_task_stale');
+    expect(result.reason).toBe('WAKE_TASK_STALE');
+    expect(readTaskConfiguredSchedule).toHaveBeenCalledTimes(1);
+    expect(deps.fetchCalls.some((p) => p.includes('run-now'))).toBe(false);
+    expect(deps.fetchCalls.some((p) => p.startsWith('/source-runs'))).toBe(false);
+  });
+
+  it('schedule 一致（configured 09:00 = active 09:00）→ 进入 hold awake 并观测到 terminal', async () => {
+    const readTaskConfiguredSchedule = vi.fn(async () => ({ dailyAt: '09:00', timezone: 'Asia/Shanghai', wakeLeadMinutes: 2 }));
+    const deps = makeDeps({
+      readTaskConfiguredSchedule,
+      fetchJson: vi.fn(async (path: string) => {
+        if (path.includes('/health')) return { ok: true };
+        if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+        if (path === '/daily-search-plans/p1') return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+        if (path.startsWith('/source-runs')) {
+          return { runs: [{ searchPlanVersionId: 'v1', scheduledFor: new Date(2026, 7, 15, 9, 0, 0).getTime(), status: 'SUCCEEDED' }] };
+        }
+        return {};
+      }),
+    });
+    const result = await main(deps);
+    expect(result.outcome).toBe('terminal');
   });
 
   it('launcher 缺失 → 返回非零退出码，不 spawn', async () => {

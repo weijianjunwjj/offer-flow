@@ -22,6 +22,11 @@ import type { DailyRunCoordinator } from '../daily-run/DailyRunCoordinator';
  *   skip-today（SkipRepository 持久化）、
  *   run-now（复用 DailyRunCoordinator.run，triggerType=MANUAL，不自己 Search/Pipeline/create SourceRun）。
  *
+ * 冻结边界（v0.9 Wake Admin-Bootstrap）：
+ *   WAKE_TASK_MUTATION_FROM_SERVER = FORBIDDEN
+ *   create / version / pause / resume 绝不 mutation Windows Task Scheduler。
+ *   Windows wake task 是管理员引导产物；schedule 变化由用户在提权 CLI 重新 reconcile。
+ *
  * 端点：
  *   POST /daily-search-plans                     创建计划 + 首个活跃版本
  *   GET  /daily-search-plans                     列出计划
@@ -66,21 +71,11 @@ export interface SearchPlanControlDeps {
   skipRepo: SkipRepository;
 }
 
-/**
- * v0.9 Windows Wake Layer reconciliation 依赖（未提供时不触发任何 wake task 对齐）。
- * 由 WindowsWakeSchedulerAdapter 收口，T023 API 不得直接散落调用 schtasks。
- */
-export interface SearchPlanWakeDeps {
-  reconcile: () => void | Promise<void>;
-}
-
 export interface SearchPlanRouteDeps {
   now?: () => number;
   createId?: () => string;
   /** T032 控制端点（run-now / skip-today / pause / resume）；缺省仅注册 CRUD。 */
   control?: SearchPlanControlDeps;
-  /** lifecycle 变化（create/version/pause/resume）后对齐 Windows wake task；缺省不启用。 */
-  wake?: SearchPlanWakeDeps;
 }
 
 function buildVersion(
@@ -123,18 +118,6 @@ export function registerSearchPlanRoutes(
   const now = deps.now ?? Date.now;
   const createId = deps.createId ?? randomUUID;
   const control = deps.control;
-  const wake = deps.wake;
-
-  /** lifecycle 变化后对齐 wake task；失败不阻断 lifecycle 变更本身（best-effort OS 对齐）。 */
-  const reconcileWakeSafely = async (): Promise<void> => {
-    if (wake === undefined) return;
-    try {
-      await wake.reconcile();
-    } catch {
-      // reconcile 失败仅记日志，不影响 create / version / pause / resume 的正式结果。
-      console.error('[search-plan] wake reconcile 失败（不阻断 lifecycle 变更）');
-    }
-  };
 
   app.register(async (scoped) => {
     const repo = new SearchPlanRepository(scoped.db);
@@ -182,7 +165,6 @@ export function registerSearchPlanRoutes(
       repo.insertPlan(plan);
       repo.insertVersion(version);
       repo.setActiveVersion(planId, versionId);
-      await reconcileWakeSafely();
       return reply.code(201).send({ plan: repo.getPlan(planId)!, version: repo.getVersion(versionId)! });
     });
 
@@ -221,7 +203,6 @@ export function registerSearchPlanRoutes(
       });
       repo.insertVersion(version);
       repo.setActiveVersion(id, versionId);
-      await reconcileWakeSafely();
       return reply.code(201).send({ version: repo.getVersion(versionId)! });
     });
 
@@ -243,7 +224,6 @@ export function registerSearchPlanRoutes(
         const id = idFrom(request.params);
         const plan = resolveControllablePlan(id);
         if (plan.status !== 'paused') repo.updatePlan(id, { status: 'paused' });
-        await reconcileWakeSafely();
         return { plan: repo.getPlan(id)! };
       });
 
@@ -251,7 +231,6 @@ export function registerSearchPlanRoutes(
         const id = idFrom(request.params);
         const plan = resolveControllablePlan(id);
         if (plan.status !== 'active') repo.updatePlan(id, { status: 'active' });
-        await reconcileWakeSafely();
         return { plan: repo.getPlan(id)! };
       });
 

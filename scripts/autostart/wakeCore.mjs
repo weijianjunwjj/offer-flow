@@ -7,13 +7,20 @@
  *   - PlanVersion.schedule = business source of truth
  *   - Windows Task Scheduler = 只负责「把机器从 S3 睡眠唤醒，并保持存活到 occurrence terminal」
  *
+ * v0.9 Wake Admin-Bootstrap 架构冻结：
+ *   - Windows wake task 是 PRIVILEGED BOOTSTRAP ARTIFACT（由提权 CLI enable 创建/覆盖）。
+ *   - 普通 OfferFlow backend 绝不 mutation Windows Task Scheduler（WAKE_TASK_MUTATION_FROM_SERVER=FORBIDDEN）。
+ *   - Wake Bridge 是 RUNTIME POLICY GATE：无 active plan / paused / deleted 立即安全退出，绝不 Run Now。
+ *   - 只有 OS wake trigger 时间本身变化（dailyAt 变化）才需要重新提权 bootstrap。
+ *
  * 本模块只包含「可单测的纯逻辑」：wake trigger 计算（dailyAt - WAKE_LEAD_TIME_MINUTES）、
  * Task Scheduler XML 定义（WakeToRun / StartWhenAvailable / battery flags / MultipleInstances）、
  * 命令构建（node + wake bridge，绝不含 cmd.exe / powershell.exe / secret）、schtasks 参数构造、
- * XML 解析与设置校验、enable / disable / status 子命令编排。
+ * 配置持久化（configuredDailyAt / timezone / wakeLeadMinutes 写入 description 安全 metadata）、
+ * schedule drift 检测、XML 解析与设置校验、enable / disable / status 子命令编排（含提权门禁）。
  *
  * 绝不触碰真实 schtasks.exe、真实 Task Scheduler、真实文件系统、真实 fetch。
- * 这些 side effect 由 windowsWakeTask.mjs / server 侧 adapter 注入。
+ * 这些 side effect 由 windowsWakeTask.mjs / offerflowWakeBridge.mjs 注入。
  * 绝不把 secret 写入任何 command、XML、日志或 env 值。
  */
 
@@ -53,6 +60,15 @@ export const SOURCE_RUN_TERMINAL_STATUSES = [
   'CANCELLED',
   'INTERRUPTED',
 ];
+
+/**
+ * 架构冻结标记：普通 OfferFlow backend runtime 禁止 mutation Windows Task Scheduler。
+ * wake task 是管理员引导产物，schedule 变化只能通过提权 CLI（wake-task:enable）reconcile。
+ */
+export const WAKE_TASK_MUTATION_FROM_SERVER = 'FORBIDDEN';
+
+/** description 中机器可解析配置的 marker（bootstrap 时写入，status/bridge 时读回比较）。 */
+const WAKE_CONFIG_MARKER = 'offerflow-wake-config:';
 
 const DAILY_AT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -197,9 +213,40 @@ export function buildWakeTaskXml({
 `;
 }
 
-/** 生成固定、无 secret 的 wake task 描述文本（含 timezone 便于观测）。 */
-export function buildWakeTaskDescription({ timezone }) {
-  return `OfferFlow v0.9 Windows wake task (${timezone}) — wakes host from S3 sleep so DailyJobScheduler creates the daily SCHEDULED occurrence. Not a business scheduler.`;
+/**
+ * 生成固定、无 secret 的 wake task 描述文本，并把 bootstrap 时的 configured schedule 持久化为
+ * 可解析的安全 metadata（只含 dailyAt / timezone / wakeLeadMinutes，绝不含 secret）。
+ * status / bridge 每次读回该 metadata，与当前 active PlanVersion schedule 比较以检测 drift。
+ */
+export function buildWakeTaskDescription({ dailyAt, timezone, wakeLeadMinutes = WAKE_LEAD_TIME_MINUTES }) {
+  return `OfferFlow v0.9 Windows wake task (${timezone}) — wakes host from S3 sleep so DailyJobScheduler creates the daily SCHEDULED occurrence. Not a business scheduler. [${WAKE_CONFIG_MARKER} dailyAt=${dailyAt}; timezone=${timezone}; wakeLeadMinutes=${wakeLeadMinutes}]`;
+}
+
+/**
+ * 从 task description 解析 bootstrap 时持久化的 configured schedule。
+ * 无 marker / dailyAt 非法 → null（表示旧 task 或非本工具注册，无法判定 drift）。
+ */
+export function parseConfiguredScheduleFromDescription(description) {
+  if (typeof description !== 'string') return null;
+  const idx = description.indexOf(WAKE_CONFIG_MARKER);
+  if (idx < 0) return null;
+  const rest = description.slice(idx + WAKE_CONFIG_MARKER.length);
+  const close = rest.indexOf(']');
+  const body = close >= 0 ? rest.slice(0, close) : rest;
+  const map = {};
+  for (const pair of body.split(';').map((s) => s.trim()).filter((s) => s !== '')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0) continue;
+    map[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+  }
+  if (typeof map.dailyAt !== 'string' || !isValidDailyAt(map.dailyAt)) return null;
+  const timezone = typeof map.timezone === 'string' && map.timezone !== ''
+    ? map.timezone
+    : 'Asia/Shanghai';
+  const wakeLeadMinutes = typeof map.wakeLeadMinutes === 'string' && /^\d+$/.test(map.wakeLeadMinutes)
+    ? Number(map.wakeLeadMinutes)
+    : WAKE_LEAD_TIME_MINUTES;
+  return { dailyAt: map.dailyAt, timezone, wakeLeadMinutes };
 }
 
 // ── schtasks 参数构造 ───────────────────────────────────────────────────────
@@ -247,6 +294,7 @@ export function parseWakeTaskQueryXml(stdout) {
   return {
     command,
     arguments: argumentsValue ?? '',
+    description: readXmlTag(xml, 'Description') ?? '',
     startBoundary,
     wakeToRun: readXmlBool(xml, 'WakeToRun'),
     startWhenAvailable: readXmlBool(xml, 'StartWhenAvailable'),
@@ -301,14 +349,30 @@ export function detectWakeTaskStale(parsed, { nodeExecutable, wakeBridgePath }) 
   return parsed.command !== nodeExecutable || currentArguments !== wakeBridgePath;
 }
 
+/**
+ * schedule drift 检测：bootstrap 时持久化的 configured dailyAt 与当前 active plan dailyAt 是否一致。
+ * 只有 OS wake trigger 时间本身变化（dailyAt 变化）才算 drift —— pause / resume / no active plan 不算。
+ */
+export function detectScheduleDrift(parsed, activeDailyAt) {
+  if (parsed === null) return false;
+  const configured = parseConfiguredScheduleFromDescription(parsed.description);
+  if (configured === null) return false; // 无配置 marker 无法判定（status 层会据此标 stale）
+  return configured.dailyAt !== activeDailyAt;
+}
+
 // ── enable / disable / status 子命令编排 ───────────────────────────────────
 
 /**
  * 执行 wake-task 子命令（enable / disable / status），返回结构化结果。
  * 全部 side effect 通过 deps 注入：schtasksExecutor（真实实现调用 schtasks.exe）、
- * writeXmlFile / removeXmlFile（真实实现写/删临时 XML）、fetchJson（真实实现用 global fetch 读后端 active schedule）。
+ * writeXmlFile / removeXmlFile（真实实现写/删临时 XML）、fetchJson（真实实现用 global fetch 读后端 active schedule）、
+ * isElevated（真实实现用 whoami /groups 检测高完整性 token）。
  *
- * enable 必须从后端 active PlanVersion.schedule 取 dailyAt（绝不硬编码 09:00 作为产品常量）。
+ * 提权门禁：enable / disable 是 PRIVILEGED INSTALL / UNINSTALL，非 elevated 直接 ELEVATION_REQUIRED，
+ * 绝不调用 schtasks /Create /Delete。status 是 READ ONLY，普通用户可运行。
+ *
+ * enable 必须从后端 active PlanVersion.schedule 取 dailyAt（绝不硬编码 09:00 作为产品常量），
+ * 并把 configured schedule 持久化进 task description（供 status / bridge 做 drift 检测）。
  */
 export async function runWakeTaskCommand(argv, deps) {
   const {
@@ -320,6 +384,7 @@ export async function runWakeTaskCommand(argv, deps) {
     writeXmlFile,
     removeXmlFile,
     fetchJson,
+    isElevated,
     now = Date.now,
   } = deps;
   const subcommand = argv[0];
@@ -329,6 +394,9 @@ export async function runWakeTaskCommand(argv, deps) {
   }
 
   if (subcommand === 'enable') {
+    if (!isElevated()) {
+      return { ok: false, code: 1, subcommand, reason: 'ELEVATION_REQUIRED', taskName: WAKE_TASK_NAME };
+    }
     const resolved = await resolveWakeScheduleFromBackend(fetchJson);
     if (resolved === null) {
       return { ok: false, code: 1, subcommand, reason: 'NO_ACTIVE_PLAN', taskName: WAKE_TASK_NAME };
@@ -343,7 +411,7 @@ export async function runWakeTaskCommand(argv, deps) {
     const command = buildWakeTaskCommand({ nodeExecutable, wakeBridgePath });
     const xml = buildWakeTaskXml({
       taskName: WAKE_TASK_NAME,
-      description: buildWakeTaskDescription({ timezone }),
+      description: buildWakeTaskDescription({ dailyAt, timezone, wakeLeadMinutes: WAKE_LEAD_TIME_MINUTES }),
       nodeExecutable,
       wakeBridgePath,
       workingDirectory,
@@ -377,12 +445,16 @@ export async function runWakeTaskCommand(argv, deps) {
       startBoundary,
       dailyAt,
       timezone,
+      wakeLeadMinutes: WAKE_LEAD_TIME_MINUTES,
       xml,
       schtasksArgs: createArgs,
     };
   }
 
   if (subcommand === 'disable') {
+    if (!isElevated()) {
+      return { ok: false, code: 1, subcommand, reason: 'ELEVATION_REQUIRED', taskName: WAKE_TASK_NAME };
+    }
     const deleteArgs = buildDeleteArgs({ taskName: WAKE_TASK_NAME });
     const result = schtasksExecutor(deleteArgs);
     // 幂等：任务不存在也算成功（schtasks /Delete 对不存在任务返回非零）。
@@ -407,18 +479,46 @@ export async function runWakeTaskCommand(argv, deps) {
       return { ok: true, code: 0, subcommand, taskName: WAKE_TASK_NAME, status: 'absent', schtasksArgs: queryArgs };
     }
     const settings = verifyWakeTaskSettings(parsed);
-    const stale = detectWakeTaskStale(parsed, { nodeExecutable, wakeBridgePath });
+    const commandDrift = detectWakeTaskStale(parsed, { nodeExecutable, wakeBridgePath });
+    const commandCurrent = settings.allVerified && !commandDrift;
+    const configured = parseConfiguredScheduleFromDescription(parsed.description);
+    const activeSchedule = await resolveWakeScheduleFromBackend(fetchJson);
+
+    let status;
+    let scheduleDrift = null;
+    if (!commandCurrent) {
+      status = 'stale';
+    } else if (activeSchedule === null) {
+      // 后端不可达 → 无法比对 schedule，降级为只读 registered（不臆断 current/stale）。
+      status = 'registered';
+      scheduleDrift = null;
+    } else if (configured === null) {
+      // 无配置 marker（旧 task / 非本工具注册）→ 无法证明 current → 需提权 re-bootstrap。
+      status = 'stale';
+      scheduleDrift = true;
+    } else if (configured.dailyAt !== activeSchedule.dailyAt) {
+      status = 'stale';
+      scheduleDrift = true;
+    } else {
+      status = 'current';
+      scheduleDrift = false;
+    }
+
     return {
       ok: true,
       code: 0,
       subcommand,
       taskName: WAKE_TASK_NAME,
-      status: 'registered',
+      status,
       command: parsed.command,
       arguments: parsed.arguments,
       startBoundary: parsed.startBoundary,
       settings,
-      stale,
+      commandDrift,
+      scheduleDrift,
+      configuredSchedule: configured,
+      activeSchedule,
+      requiresElevatedReconciliation: status === 'stale',
       schtasksArgs: queryArgs,
     };
   }

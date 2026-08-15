@@ -12,6 +12,7 @@ export const HEALTH_TIMEOUT_MS: number;
 export const RECOVER_HEALTH_WAIT_MS: number;
 export const OCCURRENCE_POLL_INTERVAL_MS: number;
 export const SOURCE_RUN_TERMINAL_STATUSES: string[];
+export const WAKE_TASK_MUTATION_FROM_SERVER: string;
 
 export function isValidDailyAt(dailyAt: string): boolean;
 
@@ -20,6 +21,12 @@ export interface WakeSchedule {
   timezone: string;
 }
 export function parseWakeSchedule(schedule: unknown): WakeSchedule;
+
+export interface ConfiguredSchedule {
+  dailyAt: string;
+  timezone: string;
+  wakeLeadMinutes: number;
+}
 
 export function computeWakeTime(dailyAt: string, leadMinutes: number): string;
 export function computeNextWakeStartBoundary(input: {
@@ -44,7 +51,13 @@ export function buildWakeTaskXml(input: {
   executionTimeLimit?: string;
 }): string;
 
-export function buildWakeTaskDescription(input: { timezone: string }): string;
+export function buildWakeTaskDescription(input: {
+  dailyAt: string;
+  timezone: string;
+  wakeLeadMinutes?: number;
+}): string;
+
+export function parseConfiguredScheduleFromDescription(description: string | null | undefined): ConfiguredSchedule | null;
 
 export function buildCreateArgs(input: { taskName: string; xmlFilePath: string }): string[];
 export function buildDeleteArgs(input: { taskName: string }): string[];
@@ -53,6 +66,7 @@ export function buildQueryArgs(input: { taskName: string }): string[];
 export interface WakeTaskParsed {
   command: string;
   arguments: string;
+  description: string;
   startBoundary: string | null;
   wakeToRun: boolean | null;
   startWhenAvailable: boolean | null;
@@ -76,6 +90,7 @@ export function detectWakeTaskStale(
   parsed: WakeTaskParsed | null,
   expected: { nodeExecutable: string; wakeBridgePath: string },
 ): boolean;
+export function detectScheduleDrift(parsed: WakeTaskParsed | null, activeDailyAt: string): boolean;
 
 export interface SchtasksExecutorResult {
   status: number;
@@ -84,6 +99,7 @@ export interface SchtasksExecutorResult {
 }
 export type SchtasksExecutor = (args: string[]) => SchtasksExecutorResult;
 export type FetchJson = (path: string) => Promise<Record<string, unknown>>;
+export type IsElevated = () => boolean;
 
 export interface WakeTaskRunDeps {
   platform: string;
@@ -94,8 +110,11 @@ export interface WakeTaskRunDeps {
   writeXmlFile: (xml: string) => string;
   removeXmlFile: (xmlFilePath: string) => void;
   fetchJson: FetchJson;
+  isElevated: IsElevated;
   now?: () => number;
 }
+
+export type WakeTaskStatus = 'absent' | 'registered' | 'current' | 'stale';
 
 export interface WakeTaskRunResult {
   ok: boolean;
@@ -110,11 +129,16 @@ export interface WakeTaskRunResult {
   wakeAt?: string;
   dailyAt?: string;
   timezone?: string;
+  wakeLeadMinutes?: number;
   xml?: string;
   schtasksArgs?: string[];
-  status?: 'absent' | 'registered';
+  status?: WakeTaskStatus;
   settings?: WakeTaskSettings;
-  stale?: boolean;
+  commandDrift?: boolean;
+  scheduleDrift?: boolean | null;
+  configuredSchedule?: ConfiguredSchedule | null;
+  activeSchedule?: WakeSchedule | null;
+  requiresElevatedReconciliation?: boolean;
   existed?: boolean;
 }
 

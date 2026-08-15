@@ -5,19 +5,22 @@
  *   - 只确保 host/runtime 存活，让现有 DailyJobScheduler 在 dailyAt 创建正式 SCHEDULED occurrence。
  *   - 绝不调用 run-now API、DailyRunCoordinator.run()、DailyPipeline.run()、不 INSERT source_runs。
  *
- * 流程：
+ * v0.9 Wake Admin-Bootstrap 语义（RUNTIME POLICY GATE）：
  *   1. chdir 到 repoRoot，确认 launcher 存在。
- *   2. 检查 127.0.0.1:17365/health。
- *   3. 已健康 → 不启动第二个 backend；不健康/不存在 → 通过 offerflowAutostartLauncher.mjs 恢复。
- *   4. 解析 active plan 的 occurrence（planId / versionId / scheduledFor / scheduledDay）。
- *   5. 保持存活：等到对应 SCHEDULED SourceRun 进入 terminal，或达到 bounded timeout（默认 10 分钟）。
+ *   2. 检查 127.0.0.1:17365/health；已健康 → 不启动第二个 backend；否则经 launcher 恢复。
+ *   3. 读取当前 DailySearchPlan（正式 API / read contract）：
+ *      无 active plan / paused / deleted → 立即 EXIT_NO_ACTIVE_PLAN（不 hold、不 Run Now、不创建 SourceRun）。
+ *   4. schedule drift 检测：读取自身 task 的 configuredDailyAt（bootstrap 时持久化的安全 metadata），
+ *      与 active plan dailyAt 比较；不一致 → 记录 WAKE_TASK_STALE=YES，安全退出（绝不 mutation / Run Now / 自动提权）。
+ *   5. 一致 → 保持存活：等到对应 SCHEDULED SourceRun 进入 terminal，或达到 bounded timeout（默认 10 分钟）。
  *   6. 正常退出，Windows Task Scheduler 随后可释放 keep-awake。
  *
- * 明确不做：不调用 run-now、不创建 SourceRun、不调 DailyRunCoordinator、不调 DailyPipeline。
- * 所有 side effect（fetch / spawn / 文件系统 / 计时器）都通过 deps 注入，测试用 fake 替换。
+ * 明确不做：不调用 run-now、不创建 SourceRun、不调 DailyRunCoordinator、不调 DailyPipeline、
+ * 不 mutation Windows Task Scheduler、不自动提权。
+ * 所有 side effect（fetch / spawn / 文件系统 / 计时器 / schtasks 只读探测）都通过 deps 注入，测试用 fake 替换。
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -28,7 +31,11 @@ import {
   OCCURRENCE_POLL_INTERVAL_MS,
   RECOVER_HEALTH_WAIT_MS,
   SOURCE_RUN_TERMINAL_STATUSES,
+  WAKE_TASK_NAME,
+  buildQueryArgs,
+  parseConfiguredScheduleFromDescription,
   parseWakeSchedule,
+  parseWakeTaskQueryXml,
 } from './wakeCore.mjs';
 import {
   composeLogFileName,
@@ -169,6 +176,7 @@ export async function main({
   occurrencePollIntervalMs = OCCURRENCE_POLL_INTERVAL_MS,
   fetchJson = defaultFetchJson(),
   spawnLauncherFn = defaultSpawnLauncher,
+  readTaskConfiguredSchedule = defaultReadTaskConfiguredSchedule,
   now = Date.now,
   setTimeoutFn = (fn, ms) => setTimeout(fn, ms),
   chdirFn = (dir) => process.chdir(dir),
@@ -209,12 +217,18 @@ export async function main({
     log('[wake-bridge] backend already healthy — not starting a second backend');
   }
 
-  // 2) 解析 active occurrence；无 active plan 时只保持存活窗口后正常退出。
+  // 2) 读取 active plan；无 active plan / paused / deleted → 立即安全退出（不 hold、不 Run Now）。
   const occurrence = await resolveActiveOccurrence({ fetchJson, now });
   if (occurrence === null) {
-    log('[wake-bridge] no active plan occurrence — holding awake then exiting');
-    await sleep(setTimeoutFn, holdAwakeWindowMs);
-    return { exitCode: 0, outcome: 'timeout', reason: 'NO_ACTIVE_PLAN' };
+    log('[wake-bridge] no active plan — EXIT_NO_ACTIVE_PLAN（不 hold / 不 Run Now / 不创建 SourceRun）');
+    return { exitCode: 0, outcome: 'no_active_plan', reason: 'EXIT_NO_ACTIVE_PLAN' };
+  }
+
+  // 3) schedule drift 检测：bootstrap 时的 configuredDailyAt 与 active plan dailyAt 不一致 → 安全退出。
+  const configuredSchedule = await readTaskConfiguredSchedule();
+  if (configuredSchedule !== null && configuredSchedule.dailyAt !== occurrence.schedule.dailyAt) {
+    log(`[wake-bridge] WAKE_TASK_STALE=YES configured=${configuredSchedule.dailyAt} active=${occurrence.schedule.dailyAt} — 不冒充 wake capability current`);
+    return { exitCode: 0, outcome: 'wake_task_stale', reason: 'WAKE_TASK_STALE' };
   }
 
   log(`[wake-bridge] observing occurrence plan=${occurrence.planId} version=${occurrence.versionId} scheduledFor=${occurrence.scheduledFor}`);
@@ -256,6 +270,18 @@ function defaultSpawnLauncher({ nodeExecutable, launcherPath, repoRoot }) {
   });
   child.unref();
   return child;
+}
+
+/**
+ * 只读探测自身 wake task 的 configured schedule（bootstrap 时写入 description 的安全 metadata）。
+ * schtasks /Query /XML 只读，绝不 mutation；读不到 / 无 marker → null（无法判定 drift，bridge 按正常继续）。
+ */
+function defaultReadTaskConfiguredSchedule() {
+  const result = spawnSync('schtasks.exe', buildQueryArgs({ taskName: WAKE_TASK_NAME }), { encoding: 'utf-8' });
+  if (result.status !== 0) return null;
+  const parsed = parseWakeTaskQueryXml(result.stdout);
+  if (parsed === null) return null;
+  return parseConfiguredScheduleFromDescription(parsed.description);
 }
 
 function defaultWriteLog(repoRoot) {

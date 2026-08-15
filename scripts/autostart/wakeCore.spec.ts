@@ -17,15 +17,19 @@ import {
   DEFAULT_HOLD_AWAKE_WINDOW_MS,
   WAKE_LEAD_TIME_MINUTES,
   WAKE_TASK_NAME,
+  WAKE_TASK_MUTATION_FROM_SERVER,
   buildCreateArgs,
   buildDeleteArgs,
   buildQueryArgs,
   buildWakeTaskCommand,
+  buildWakeTaskDescription,
   buildWakeTaskXml,
   computeNextWakeStartBoundary,
   computeWakeTime,
+  detectScheduleDrift,
   detectWakeTaskStale,
   isWakeTaskCommandSafe,
+  parseConfiguredScheduleFromDescription,
   parseWakeSchedule,
   parseWakeTaskQueryXml,
   resolveWakeScheduleFromBackend,
@@ -57,6 +61,7 @@ function baseDeps(overrides: Partial<WakeTaskRunDeps> = {}): WakeTaskRunDeps {
     writeXmlFile: vi.fn(() => 'C:\\temp\\wake.xml'),
     removeXmlFile: vi.fn(),
     fetchJson: vi.fn(async () => ({})),
+    isElevated: () => true,
     ...overrides,
   };
 }
@@ -98,6 +103,46 @@ describe('parseWakeSchedule', () => {
   it('非法 dailyAt 抛错', () => {
     expect(() => parseWakeSchedule({ dailyAt: 'nope' })).toThrow();
     expect(() => parseWakeSchedule(null)).toThrow();
+  });
+});
+
+describe('configured schedule 持久化（description metadata）与 drift 检测', () => {
+  it('buildWakeTaskDescription 持久化 dailyAt/timezone/wakeLeadMinutes，且不含 secret', () => {
+    const desc = buildWakeTaskDescription({ dailyAt: '09:00', timezone: 'Asia/Shanghai' });
+    expect(desc).toContain('dailyAt=09:00');
+    expect(desc).toContain('timezone=Asia/Shanghai');
+    expect(desc).toContain('wakeLeadMinutes=2');
+    expect(desc).not.toMatch(/TAVILY|DEEPSEEK|API_KEY|SECRET|PASSWORD|Bearer/i);
+  });
+
+  it('parseConfiguredScheduleFromDescription 往返一致', () => {
+    const desc = buildWakeTaskDescription({ dailyAt: '08:30', timezone: 'Asia/Singapore', wakeLeadMinutes: 3 });
+    expect(parseConfiguredScheduleFromDescription(desc)).toEqual({
+      dailyAt: '08:30',
+      timezone: 'Asia/Singapore',
+      wakeLeadMinutes: 3,
+    });
+  });
+
+  it('无 marker / 非法 dailyAt → null', () => {
+    expect(parseConfiguredScheduleFromDescription('no marker here')).toBeNull();
+    expect(parseConfiguredScheduleFromDescription('')).toBeNull();
+    expect(parseConfiguredScheduleFromDescription(null)).toBeNull();
+    expect(parseConfiguredScheduleFromDescription('offerflow-wake-config: dailyAt=bad; timezone=x')).toBeNull();
+  });
+
+  it('detectScheduleDrift：configured dailyAt ≠ active dailyAt → true；一致 → false', () => {
+    const xml = buildWakeTaskXml({
+      taskName: WAKE_TASK_NAME,
+      description: buildWakeTaskDescription({ dailyAt: '09:00', timezone: 'Asia/Shanghai' }),
+      nodeExecutable: NODE,
+      wakeBridgePath: BRIDGE,
+      workingDirectory: REPO_ROOT,
+      startBoundary: '2026-08-16T08:58:00',
+    });
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(detectScheduleDrift(parsed, '09:00')).toBe(false);
+    expect(detectScheduleDrift(parsed, '10:00')).toBe(true);
   });
 });
 
@@ -332,6 +377,24 @@ describe('runWakeTaskCommand — disable', () => {
 });
 
 describe('runWakeTaskCommand — status', () => {
+  const activePlanFetch: FetchJson = vi.fn(async (path: string) => {
+    if (path === '/daily-search-plans') {
+      return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+    }
+    return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+  });
+
+  function currentXml(dailyAt = '09:00', nodeExecutable = NODE, bridgePath = BRIDGE) {
+    return buildWakeTaskXml({
+      taskName: WAKE_TASK_NAME,
+      description: buildWakeTaskDescription({ dailyAt, timezone: 'Asia/Shanghai' }),
+      nodeExecutable,
+      wakeBridgePath: bridgePath,
+      workingDirectory: REPO_ROOT,
+      startBoundary: '2026-08-16T08:58:00',
+    });
+  }
+
   it('task 不存在 → absent', async () => {
     const executor: SchtasksExecutor = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
     const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor }));
@@ -339,36 +402,84 @@ describe('runWakeTaskCommand — status', () => {
     expect(result.status).toBe('absent');
   });
 
-  it('task 已注册且设置正确 → registered + allVerified', async () => {
+  it('task 已注册 + 设置正确 + schedule 与 active plan 一致 → current', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00'), stderr: '' }));
+    const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson: activePlanFetch }));
+    expect(result.status).toBe('current');
+    expect(result.settings?.allVerified).toBe(true);
+    expect(result.commandDrift).toBe(false);
+    expect(result.scheduleDrift).toBe(false);
+    expect(result.requiresElevatedReconciliation).toBe(false);
+    expect(result.command).toBe(NODE);
+  });
+
+  it('schedule drift（configured 09:00 vs active 10:00）→ stale + 需提权 reconcile', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00'), stderr: '' }));
+    const fetchJson: FetchJson = vi.fn(async (path: string) => {
+      if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+      return { activeVersion: { id: 'v1', schedule: { dailyAt: '10:00', timezone: 'Asia/Shanghai' } } };
+    });
+    const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson }));
+    expect(result.status).toBe('stale');
+    expect(result.scheduleDrift).toBe(true);
+    expect(result.requiresElevatedReconciliation).toBe(true);
+  });
+
+  it('command drift（node.exe 变化）→ stale + 需提权 reconcile', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00', 'D:\\old\\node.exe'), stderr: '' }));
+    const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson: activePlanFetch }));
+    expect(result.status).toBe('stale');
+    expect(result.commandDrift).toBe(true);
+    expect(result.requiresElevatedReconciliation).toBe(true);
+  });
+
+  it('旧 task 无配置 marker → stale（无法证明 current，需 re-bootstrap）', async () => {
     const xml = buildWakeTaskXml({
       taskName: WAKE_TASK_NAME,
-      description: 'test',
+      description: 'legacy description without marker',
       nodeExecutable: NODE,
       wakeBridgePath: BRIDGE,
       workingDirectory: REPO_ROOT,
       startBoundary: '2026-08-16T08:58:00',
     });
     const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: xml, stderr: '' }));
-    const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor }));
-    expect(result.status).toBe('registered');
-    expect(result.settings?.allVerified).toBe(true);
-    expect(result.stale).toBe(false);
-    expect(result.command).toBe(NODE);
+    const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson: activePlanFetch }));
+    expect(result.status).toBe('stale');
+    expect(result.requiresElevatedReconciliation).toBe(true);
   });
 
-  it('task command 与当前 repo 不一致 → stale=true', async () => {
-    const xml = buildWakeTaskXml({
-      taskName: WAKE_TASK_NAME,
-      description: 'test',
-      nodeExecutable: 'D:\\old\\node.exe',
-      wakeBridgePath: 'D:\\old\\bridge.mjs',
-      workingDirectory: REPO_ROOT,
-      startBoundary: '2026-08-16T08:58:00',
-    });
-    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: xml, stderr: '' }));
-    const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor }));
+  it('后端不可达 → registered（降级只读，不臆断 current/stale）', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00'), stderr: '' }));
+    const fetchJson: FetchJson = vi.fn(async () => { throw new Error('ECONNREFUSED'); });
+    const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson }));
     expect(result.status).toBe('registered');
-    expect(result.stale).toBe(true);
+    expect(result.scheduleDrift).toBeNull();
+    expect(result.requiresElevatedReconciliation).toBe(false);
+  });
+});
+
+describe('runWakeTaskCommand — 提权门禁（ELEVATION_REQUIRED）', () => {
+  it('enable 非提权 → ELEVATION_REQUIRED，0 次 schtasks mutation', async () => {
+    const { executor, calls } = captureSchtasks();
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => false, schtasksExecutor: executor }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('ELEVATION_REQUIRED');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('disable 非提权 → ELEVATION_REQUIRED，0 次 schtasks mutation', async () => {
+    const { executor, calls } = captureSchtasks();
+    const result = await runWakeTaskCommand(['disable'], baseDeps({ isElevated: () => false, schtasksExecutor: executor }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('ELEVATION_REQUIRED');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('status 不要求提权（isElevated=false 仍可运行）', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
+    const result = await runWakeTaskCommand(['status'], baseDeps({ isElevated: () => false, schtasksExecutor: executor }));
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('absent');
   });
 });
 
@@ -417,6 +528,10 @@ describe('resolveWakeScheduleFromBackend', () => {
 });
 
 describe('冻结常量', () => {
+  it('WAKE_TASK_MUTATION_FROM_SERVER = FORBIDDEN（backend 绝不 mutation wake task）', () => {
+    expect(WAKE_TASK_MUTATION_FROM_SERVER).toBe('FORBIDDEN');
+  });
+
   it('hold-awake 窗口为有界 10 分钟', () => {
     expect(DEFAULT_HOLD_AWAKE_WINDOW_MS).toBe(10 * 60 * 1000);
   });

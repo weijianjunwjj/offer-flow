@@ -68,7 +68,6 @@ export function resolveRepoRoot(importMetaUrl: string): string;
 export interface RuntimeFlags {
   OFFERFLOW_DAILY_JOB_SCHEDULER: string;
   OFFERFLOW_DAILY_SEARCH_PLAN: string;
-  OFFERFLOW_WAKE_SCHEDULER: string;
 }
 export function buildRuntimeFlags(): RuntimeFlags;
 

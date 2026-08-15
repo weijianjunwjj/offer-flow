@@ -27,7 +27,6 @@ import { registerDailyJobBriefRoutes } from './daily-brief/dailyBriefRoutes';
 import { registerSourceRunRoutes } from './source-run/sourceRunRoutes';
 import { createDailyRunCoordinator } from './daily-run/runtime';
 import { DailyJobScheduler } from './scheduler/DailyJobScheduler';
-import { createWindowsWakeReconciler } from './wake/wakeSchedulerAdapter';
 import {
   CAPABILITY_BASELINE_SCHEMA_VERSION,
   DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION,
@@ -121,11 +120,6 @@ export interface DailyJobSchedulerCapability {
   enabled?: boolean;
 }
 
-/** v0.9 Windows Wake Layer 能力：默认关闭，与 dailyJobScheduler / autostart 解耦——仅开启时才对齐 wake task。 */
-export interface WakeSchedulerCapability {
-  enabled?: boolean;
-}
-
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
@@ -139,7 +133,6 @@ export interface BuildServerOptions {
   radar?: RadarCapability;
   dailySearchPlan?: DailySearchPlanCapability;
   dailyJobScheduler?: DailyJobSchedulerCapability;
-  wake?: WakeSchedulerCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -176,8 +169,6 @@ export function buildServer(
   const dailySearchPlanEnabled = options.dailySearchPlan?.enabled ?? false;
   // v0.9 每日主动求职调度：默认关闭（需 schema v14），独立于 dailySearchPlan API。
   const dailyJobSchedulerEnabled = options.dailyJobScheduler?.enabled ?? false;
-  // v0.9 Windows Wake Layer：默认关闭，独立于 scheduler / autostart；仅开启时才把 lifecycle 变化对齐到 wake task。
-  const wakeSchedulerEnabled = options.wake?.enabled ?? false;
   const novaWingAnalysisContextEnabled = options.radar?.novaWingAnalysisContextEnabled ?? false;
   const injectedNovaWingAdapter = options.radar?.novaWingHostAdapter;
   const ownedNovaWingRuntime = novaWingAnalysisContextEnabled && injectedNovaWingAdapter === undefined
@@ -311,22 +302,8 @@ export function buildServer(
       // Plan Control API enabled → coordinator only（不因开 CRUD/控制 API 而自动开 timer）。
       const coordinator = createDailyRunCoordinator({ db });
       if (dailySearchPlanEnabled) {
-        const wakeReconciler = wakeSchedulerEnabled ? createWindowsWakeReconciler(db) : undefined;
         registerSearchPlanRoutes(app, {
           control: { coordinator, skipRepo: new SkipRepository(db) },
-          wake: wakeReconciler
-            ? {
-                reconcile: () => {
-                  const result = wakeReconciler.reconcile();
-                  if (result.reason !== undefined) {
-                    console.error(
-                      `[wake] reconcile ${result.action}:${result.reason}`
-                      + `${result.stderr ? ` (${result.stderr})` : ''}`,
-                    );
-                  }
-                },
-              }
-            : undefined,
         });
       }
       // T041 DailyJobBrief 只读 API：复用 dailySearchPlan/dailyJobScheduler 的 v15 门禁
@@ -392,21 +369,6 @@ export function resolveDailySearchPlanCapability(
   return readBackendFlag(env.OFFERFLOW_DAILY_SEARCH_PLAN) ? { enabled: true } : undefined;
 }
 
-/**
- * 从环境变量解析 v0.9 Windows Wake Layer 能力开关（默认关闭）。
- *
- * OFFERFLOW_WAKE_SCHEDULER 与其它 backend 开关采用同一套 readBackendFlag 约定：
- *   - absent / '' / 非 'true' → undefined（不构造 wake reconciler，不触碰 Task Scheduler）；
- *   - 'true' → { enabled: true }（buildServer 在 dailySearchPlan 控制端点后把 lifecycle 变化对齐到 wake task）。
- *
- * 与 dailyJobScheduler / autostart 解耦：wake 只负责「机器从 S3 唤醒」，绝不触发业务 Run。
- */
-export function resolveWakeSchedulerCapability(
-  env: NodeJS.ProcessEnv = process.env,
-): WakeSchedulerCapability | undefined {
-  return readBackendFlag(env.OFFERFLOW_WAKE_SCHEDULER) ? { enabled: true } : undefined;
-}
-
 /** 启动日志用：把绝对 DB 路径脱敏为 <repo-root> 相对形式，不泄露机器绝对路径。 */
 function desensitizeDbPath(dbPath: string): string {
   const root = process.cwd();
@@ -447,8 +409,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // v0.9 每日找岗计划 API（CRUD + Run Now / Pause / Resume / Skip Today）：默认关闭，独立于 scheduler。
   // 同样需 schema ≥ v15（控制端点依赖 daily_search_plan_skips），由 buildServer 的 requiredVersion 门禁统一拒绝。
   const dailySearchPlanCapability = resolveDailySearchPlanCapability(process.env);
-  // v0.9 Windows Wake Layer：默认关闭，独立于 scheduler；需 dailySearchPlan 控制端点（wake 对齐挂在 plan lifecycle 上）。
-  const wakeSchedulerCapability = resolveWakeSchedulerCapability(process.env);
   const realDbPath = getDbPath();
   const realSchemaVersion = probeSchemaVersion(realDbPath);
   // schema < v8 时禁止启用雷达：评审/晋升/动作/推荐均依赖 v8 候选关系表，
@@ -472,8 +432,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     + `radar=${radarEnabled ? 'ENABLED' : 'DISABLED'} analysis=${radarAnalysisEnabled ? 'ENABLED' : 'DISABLED'} `
     + `novaWingContext=${novaWingAnalysisContextEnabled ? 'ENABLED' : 'DISABLED'} `
     + `dailySearchPlan=${dailySearchPlanCapability ? 'ENABLED' : 'DISABLED'} `
-    + `dailyJobScheduler=${dailyJobSchedulerCapability ? 'ENABLED' : 'DISABLED'} `
-    + `wake=${wakeSchedulerCapability ? 'ENABLED' : 'DISABLED'}`,
+    + `dailyJobScheduler=${dailyJobSchedulerCapability ? 'ENABLED' : 'DISABLED'}`,
   );
   let loadedNovaWing: LoadedNovaWingRuntime | undefined;
   let app: ReturnType<typeof Fastify>;
@@ -499,7 +458,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       } : undefined,
       dailySearchPlan: dailySearchPlanCapability,
       dailyJobScheduler: dailyJobSchedulerCapability,
-      wake: wakeSchedulerCapability,
     });
   } catch (error) {
     loadedNovaWing?.ownedRuntime?.close();
