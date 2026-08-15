@@ -4,14 +4,15 @@
  * 子命令（v0.9 Wake Admin-Bootstrap 语义）：
  *   enable   提权安装/覆盖（从后端 active PlanVersion.schedule 读 dailyAt，注册 WakeToRun wake task）
  *   disable  提权卸载（删除 OfferFlow 自己的 wake task，幂等，绝不删其它任务）
- *   status   只读探测：absent / registered / current / stale；stale 时提示需提权 reconcile
+ *   status   只读探测：absent / registered / current / stale；stale 时输出 STALE_REASON_CODES + 需提权 reconcile 提示
  *
- * 安全边界：
+ * 安全边界（PRIVILEGE BOUNDARY HARDENING）：
  *  - 通过 spawnSync 直接调用 schtasks.exe，绝不经过 CMD / PowerShell / shell。
  *  - enable / disable 是 PRIVILEGED INSTALL / UNINSTALL：非提权上下文直接 ELEVATION_REQUIRED，
  *    绝不调用 schtasks /Create /Delete，也不给用户模糊的 Access Denied。
  *  - status 是 READ ONLY，普通用户可运行；若 Windows 限制导致不可读，降级为 registered（不臆断）。
- *  - task command 只含 node executable + wake bridge 路径，绝不含 cmd.exe / powershell.exe / secret。
+ *  - task action 只含 System32 ping.exe + 有界 hold 参数（WINDOWS_SYSTEM32_ONLY），
+ *    绝不引用 node.exe / repo script / cmd.exe / powershell.exe / 用户目录可写代码 / secret。
  *  - 非 Windows 平台明确拒绝。
  */
 
@@ -80,52 +81,59 @@ function createFetchJson() {
   };
 }
 
-/** 当前 repo 的 wake bridge 绝对路径（manager 与 bridge 同目录）。 */
-function resolveWakeBridgePath(repoRoot) {
-  return path.join(repoRoot, 'scripts', 'autostart', 'offerflowWakeBridge.mjs');
+/** 本机 SystemRoot（用于解析 System32 ping.exe 绝对路径与 whoami 路径）。 */
+function resolveSystemRoot() {
+  return process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+}
+
+function printStatusResult(result) {
+  if (result.status === 'absent') {
+    console.log('status: absent');
+    return;
+  }
+  if (result.status === 'registered') {
+    console.log('status: registered');
+    console.log('  （后端不可达，无法比对当前 active plan schedule；仅确认 task 已注册且静态 contract current）');
+    console.log(`command: ${result.command}`);
+    console.log(`arguments: ${result.arguments}`);
+    console.log(`startBoundary: ${result.startBoundary ?? ''}`);
+    return;
+  }
+  // current / stale
+  console.log(`status: ${result.status}`);
+  console.log(`command: ${result.command}`);
+  console.log(`arguments: ${result.arguments}`);
+  console.log(`startBoundary: ${result.startBoundary ?? ''}`);
+  console.log(`logonType: ${result.logonType ?? 'omitted'}`);
+  console.log(`runLevel: ${result.runLevel ?? 'omitted'}`);
+  console.log(`userId: ${result.userId ?? 'omitted'}`);
+  console.log(`wakeToRun: ${result.wakeToRun ?? 'unknown'}`);
+  console.log(`startWhenAvailable: ${result.startWhenAvailable ?? 'unknown'}`);
+  console.log(`multipleInstancesPolicy: ${result.multipleInstancesPolicy ?? 'unknown'}`);
+  console.log(`batteryFlags: ${result.batteryFlags ?? 'unknown'}`);
+  if (result.configuredSchedule) {
+    console.log(`configuredDailyAt: ${result.configuredSchedule.dailyAt} (${result.configuredSchedule.timezone})`);
+  } else {
+    console.log('configuredDailyAt: unknown');
+  }
+  if (result.activeSchedule) {
+    console.log(`activePlanDailyAt: ${result.activeSchedule.dailyAt} (${result.activeSchedule.timezone})`);
+  } else {
+    console.log('activePlanDailyAt: unknown');
+  }
+  if (result.status === 'stale') {
+    const codes = result.staleReasonCodes ?? [];
+    console.log(`STALE_REASON_CODES: ${codes.length > 0 ? codes.join(', ') : '(none)'}`);
+    console.log('REQUIRES_ELEVATED_RECONCILIATION: YES');
+  } else {
+    console.log('STALE_REASON_CODES: (none)');
+    console.log('REQUIRES_ELEVATED_RECONCILIATION: NO');
+  }
 }
 
 function printResult(result) {
   if (result.subcommand === 'status') {
-    if (result.status === 'absent') {
-      console.log('status: absent');
-    } else if (result.status === 'registered') {
-      console.log('status: registered');
-      console.log('  （后端不可达，无法比对当前 active plan schedule；仅确认 task 已注册且命令/设置当前）');
-      console.log(`command: ${result.command}`);
-      console.log(`startBoundary: ${result.startBoundary ?? ''}`);
-    } else {
-      console.log(`status: ${result.status}`);
-      console.log(`command: ${result.command}`);
-      console.log(`arguments: ${result.arguments}`);
-      console.log(`startBoundary: ${result.startBoundary ?? ''}`);
-      const s = result.settings;
-      if (s) {
-        console.log(`wakeToRun: ${s.wakeToRun}`);
-        console.log(`startWhenAvailable: ${s.startWhenAvailable ?? 'unknown'}`);
-        console.log(`multipleInstancesPolicy: ${s.multipleInstancesPolicy ?? 'unknown'}`);
-        console.log(`batteryFlags: ${s.batteryFlags ?? 'unknown'}`);
-        console.log(`commandSafe: ${s.commandSafe}`);
-      }
-      if (result.configuredSchedule) {
-        console.log(`configuredDailyAt: ${result.configuredSchedule.dailyAt} (${result.configuredSchedule.timezone})`);
-      } else {
-        console.log('configuredDailyAt: unknown');
-      }
-      if (result.activeSchedule) {
-        console.log(`activePlanDailyAt: ${result.activeSchedule.dailyAt} (${result.activeSchedule.timezone})`);
-      } else {
-        console.log('activePlanDailyAt: unknown');
-      }
-      if (result.commandDrift) {
-        console.log('commandDrift: YES（node.exe / wake bridge 路径变化，需提权 re-bootstrap）');
-      }
-      if (result.status === 'stale') {
-        console.log('REQUIRES_ELEVATED_RECONCILIATION: YES');
-      } else {
-        console.log('REQUIRES_ELEVATED_RECONCILIATION: NO');
-      }
-    }
+    printStatusResult(result);
     return;
   }
   if (result.ok) {
@@ -135,6 +143,7 @@ function printResult(result) {
       console.log(`dailyAt: ${result.dailyAt} (${result.timezone})`);
       console.log(`wakeAt: ${result.wakeAt}`);
       console.log(`command: ${result.command}`);
+      console.log(`arguments: ${result.arguments}`);
     } else if (result.subcommand === 'disable') {
       console.log(result.existed ? 'disabled' : 'disabled (no existing task)');
     }
@@ -169,9 +178,7 @@ async function main() {
   const repoRoot = resolveRepoRoot(import.meta.url);
   const result = await runWakeTaskCommand(argv, {
     platform: process.platform,
-    nodeExecutable: process.execPath,
-    wakeBridgePath: resolveWakeBridgePath(repoRoot),
-    workingDirectory: repoRoot,
+    systemRoot: resolveSystemRoot(),
     schtasksExecutor: createSchtasksExecutor(),
     writeXmlFile: createWriteXmlFile(),
     removeXmlFile: createRemoveXmlFile(),

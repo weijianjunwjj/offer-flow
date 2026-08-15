@@ -5,22 +5,26 @@
  *   - DailyJobScheduler = WHEN（业务调度）
  *   - DailyRunCoordinator = ONE RUN LIFECYCLE
  *   - PlanVersion.schedule = business source of truth
- *   - Windows Task Scheduler = 只负责「把机器从 S3 睡眠唤醒，并保持存活到 occurrence terminal」
+ *   - Windows Task Scheduler = 只负责「把机器从 S3 睡眠唤醒，并短暂保持存活」
  *
- * v0.9 Wake Admin-Bootstrap 架构冻结：
+ * v0.9 Wake Admin-Bootstrap 架构冻结（PRIVILEGE BOUNDARY HARDENING）：
  *   - Windows wake task 是 PRIVILEGED BOOTSTRAP ARTIFACT（由提权 CLI enable 创建/覆盖）。
  *   - 普通 OfferFlow backend 绝不 mutation Windows Task Scheduler（WAKE_TASK_MUTATION_FROM_SERVER=FORBIDDEN）。
- *   - Wake Bridge 是 RUNTIME POLICY GATE：无 active plan / paused / deleted 立即安全退出，绝不 Run Now。
+ *   - 本机当前 Windows 用户是 Builtin Administrator：Task Scheduler 会忽略 RunLevel，task action 实际 elevated。
+ *     因此 task action 的 trust boundary 必须收敛为 WINDOWS_SYSTEM32_ONLY：
+ *     唯一允许的 action = C:\Windows\System32\ping.exe + 有界 hold 参数（约 5 分钟）。
+ *     绝不使用 node.exe / repo script / cmd.exe / powershell.exe（这些是 user-writable / 可提权路径）。
+ *   - Wake Task 与 OfferFlow runtime 彻底解耦：不启动 backend、不读 Plan、不调用 HTTP / Run Now、不观测 SourceRun。
  *   - 只有 OS wake trigger 时间本身变化（dailyAt 变化）才需要重新提权 bootstrap。
  *
  * 本模块只包含「可单测的纯逻辑」：wake trigger 计算（dailyAt - WAKE_LEAD_TIME_MINUTES）、
  * Task Scheduler XML 定义（WakeToRun / StartWhenAvailable / battery flags / MultipleInstances）、
- * 命令构建（node + wake bridge，绝不含 cmd.exe / powershell.exe / secret）、schtasks 参数构造、
+ * 受信 action 构建（System32 ping.exe + 有界 hold）、schtasks 参数构造、
  * 配置持久化（configuredDailyAt / timezone / wakeLeadMinutes 写入 description 安全 metadata）、
- * schedule drift 检测、XML 解析与设置校验、enable / disable / status 子命令编排（含提权门禁）。
+ * schedule drift 检测、XML 解析与 STALE_REASON_CODES 计算、enable / disable / status 子命令编排（含提权门禁）。
  *
  * 绝不触碰真实 schtasks.exe、真实 Task Scheduler、真实文件系统、真实 fetch。
- * 这些 side effect 由 windowsWakeTask.mjs / offerflowWakeBridge.mjs 注入。
+ * 这些 side effect 由 windowsWakeTask.mjs 注入。
  * 绝不把 secret 写入任何 command、XML、日志或 env 值。
  */
 
@@ -35,32 +39,23 @@ export const WAKE_TASK_NAME = 'OfferFlowDailyJobHunterWake';
 /** 唤醒提前量：wake trigger = dailyAt - 2 分钟（给 backend 留出恢复与 occurrence 创建的时间）。 */
 export const WAKE_LEAD_TIME_MINUTES = 2;
 
-/** wake bridge 默认保持存活窗口（08:58 → 09:08 左右），有界，不无限等待。 */
-export const DEFAULT_HOLD_AWAKE_WINDOW_MS = 10 * 60 * 1000;
+/** 有界 hold 的 ping 次数：ping -n 301 ≈ 300 秒 ≈ 5 分钟。bounded，绝不无限运行。 */
+export const WAKE_HOLD_PING_COUNT = 301;
 
-/** Task Scheduler 执行时限（略大于 hold-awake 窗口 + 恢复开销，保证 bridge 能跑满窗口）。 */
+/** 有界 hold 时长（5 分钟，供文档/验收口径，实际由 ping -n 次数控制）。 */
+export const WAKE_HOLD_DURATION_MS = 5 * 60 * 1000;
+
+/**
+ * 唯一允许的 task action executable：Windows 受保护 System32 目录中的系统自带 ping.exe。
+ * 绝不使用 node.exe / repo script / cmd.exe / powershell.exe —— 它们是 user-writable / 可提权路径。
+ */
+export const TRUSTED_HOLD_EXECUTABLE = 'C:\\Windows\\System32\\ping.exe';
+
+/** 有界 hold 参数：ping 本机回环地址 301 次（约 5 分钟），仅让 task process 存活以保持机器 awake。 */
+export const TRUSTED_HOLD_ARGUMENTS = `127.0.0.1 -n ${WAKE_HOLD_PING_COUNT}`;
+
+/** Task Scheduler 执行时限（第二层保护，略大于 hold 窗口，绝不无限运行）。 */
 export const WAKE_TASK_EXECUTION_TIME_LIMIT = 'PT15M';
-
-/** 后端健康检查地址（与 server/index.ts 的 /health 一致）。 */
-export const HEALTH_URL = 'http://127.0.0.1:17365/health';
-
-/** 健康检查单次超时。 */
-export const HEALTH_TIMEOUT_MS = 2000;
-
-/** 恢复 backend 后等待其健康的 bounded 上限。 */
-export const RECOVER_HEALTH_WAIT_MS = 60 * 1000;
-
-/** occurrence 观测轮询间隔。 */
-export const OCCURRENCE_POLL_INTERVAL_MS = 5000;
-
-/** SourceRun 终态集合（与 server/source-run/types.ts SOURCE_RUN_TERMINAL_STATUSES 一致）。 */
-export const SOURCE_RUN_TERMINAL_STATUSES = [
-  'PARTIALLY_SUCCEEDED',
-  'SUCCEEDED',
-  'FAILED',
-  'CANCELLED',
-  'INTERRUPTED',
-];
 
 /**
  * 架构冻结标记：普通 OfferFlow backend runtime 禁止 mutation Windows Task Scheduler。
@@ -68,7 +63,17 @@ export const SOURCE_RUN_TERMINAL_STATUSES = [
  */
 export const WAKE_TASK_MUTATION_FROM_SERVER = 'FORBIDDEN';
 
-/** description 中机器可解析配置的 marker（bootstrap 时写入，status/bridge 时读回比较）。 */
+/**
+ * 新的安全验收口径（Builtin Administrator 会忽略 RunLevel，task 实际 elevated）：
+ *   - TASK_EXECUTION_MAY_BE_ELEVATED = YES（当前账户为 Builtin Administrator，无法成立 LeastPrivilege）
+ *   - TASK_ACTION_TRUST_BOUNDARY = WINDOWS_SYSTEM32_ONLY（action 只能位于 System32）
+ *   - USER_WRITABLE_CODE_EXECUTED = NO（绝不执行 node.exe / repo script / 用户目录可写代码）
+ */
+export const TASK_EXECUTION_MAY_BE_ELEVATED = 'YES';
+export const TASK_ACTION_TRUST_BOUNDARY = 'WINDOWS_SYSTEM32_ONLY';
+export const USER_WRITABLE_CODE_EXECUTED = 'NO';
+
+/** description 中机器可解析配置的 marker（bootstrap 时写入，status 读回比较）。 */
 const WAKE_CONFIG_MARKER = 'offerflow-wake-config:';
 
 const DAILY_AT_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -191,28 +196,52 @@ export function localStartBoundary(instant) {
   return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}T${pad(t.getHours())}:${pad(t.getMinutes())}:00`;
 }
 
-// ── Wake task command / XML ─────────────────────────────────────────────────
+// ── 受信 action（System32-only） ────────────────────────────────────────────
 
-/** 构建 wake task 命令文本：`"<node.exe>" "<wakeBridge.mjs>"`（仅两个 token，绝不含 secret）。 */
-export function buildWakeTaskCommand({ nodeExecutable, wakeBridgePath }) {
-  return `"${nodeExecutable}" "${wakeBridgePath}"`;
+/**
+ * 解析 System32 目录下 ping.exe 的绝对路径（唯一允许的 task action executable）。
+ * 绝不返回裸 'ping.exe'（避免落到 PATH 中用户可写的同名文件）。
+ */
+export function resolveTrustedHoldExecutable(systemRoot) {
+  return path.join(systemRoot || 'C:\\Windows', 'System32', 'ping.exe');
 }
 
 /**
+ * 判定 task command 是否为受信 System32 ping.exe（大小写/斜杠不敏感，绝对路径精确匹配）。
+ * 这是 task action trust boundary 的核心检查：绝不放行裸 ping.exe / 用户目录 / node.exe / 任何脚本。
+ */
+export function isTrustedSystem32Ping(command, systemRoot = 'C:\\Windows') {
+  if (typeof command !== 'string' || command.trim() === '') return false;
+  const norm = (p) => p.replace(/\//g, '\\').toLowerCase();
+  return norm(command) === norm(path.join(systemRoot, 'System32', 'ping.exe'));
+}
+
+/** 判定 task arguments 是否为有界 hold 参数（127.0.0.1 -n <bounded-count>，空白/大小写不敏感）。 */
+export function isTrustedHoldArguments(argumentsText) {
+  const norm = (s) => (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return norm(argumentsText) === norm(TRUSTED_HOLD_ARGUMENTS);
+}
+
+// ── Wake task XML ───────────────────────────────────────────────────────────
+
+/**
  * 构建 Task Scheduler 2.0 XML（daily CalendarTrigger + 全部冻结 settings）。
- * 关键冻结项（PHASE 5/6/7/8）：
+ * 关键冻结项：
  *   - WakeToRun = true（本功能核心，机器从 S3 唤醒）
  *   - StartWhenAvailable = false（不建第二套 missed-run recovery，catch-up 仍归 DailyJobScheduler）
  *   - DisallowStartIfOnBatteries = false / StopIfGoingOnBatteries = false（保证笔记本未接 AC 也能唤醒）
- *   - MultipleInstancesPolicy = IgnoreNew（避免已有 wake bridge 运行时再起第二实例）
+ *   - MultipleInstancesPolicy = IgnoreNew（避免已有 hold task 运行时再起第二实例）
  *
- * command/arguments 只含 node executable + wake bridge 路径，绝不含 cmd.exe / powershell.exe / secret。
+ * action trust boundary（PRIVILEGE BOUNDARY HARDENING）：
+ *   command = System32 ping.exe，arguments = 有界 hold 参数，绝不引用 node.exe / repo script / cmd.exe / powershell.exe。
+ *   RunLevel 仍写 LeastPrivilege 作为非管理员账户的「最小权限意图」，但 Builtin Administrator 会忽略它；
+ *   真正的安全保证是 action 收敛为 System32-only（见 TASK_ACTION_TRUST_BOUNDARY）。
  */
 export function buildWakeTaskXml({
   taskName,
   description,
-  nodeExecutable,
-  wakeBridgePath,
+  command,
+  arguments: argumentsText,
   workingDirectory,
   startBoundary,
   executionTimeLimit = WAKE_TASK_EXECUTION_TIME_LIMIT,
@@ -259,8 +288,8 @@ export function buildWakeTaskXml({
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>${nodeExecutable}</Command>
-      <Arguments>"${wakeBridgePath}"</Arguments>
+      <Command>${command}</Command>
+      <Arguments>${argumentsText}</Arguments>
       <WorkingDirectory>${workingDirectory}</WorkingDirectory>
     </Exec>
   </Actions>
@@ -291,10 +320,10 @@ export function encodeTaskXmlForWindows(xml) {
 /**
  * 生成固定、无 secret 的 wake task 描述文本，并把 bootstrap 时的 configured schedule 持久化为
  * 可解析的安全 metadata（只含 dailyAt / timezone / wakeLeadMinutes，绝不含 secret）。
- * status / bridge 每次读回该 metadata，与当前 active PlanVersion schedule 比较以检测 drift。
+ * status 每次读回该 metadata，与当前 active PlanVersion schedule 比较以检测 drift。
  */
 export function buildWakeTaskDescription({ dailyAt, timezone, wakeLeadMinutes = WAKE_LEAD_TIME_MINUTES }) {
-  return `OfferFlow v0.9 Windows wake task (${timezone}) — wakes host from S3 sleep so DailyJobScheduler creates the daily SCHEDULED occurrence. Not a business scheduler. [${WAKE_CONFIG_MARKER} dailyAt=${dailyAt}; timezone=${timezone}; wakeLeadMinutes=${wakeLeadMinutes}]`;
+  return `OfferFlow v0.9 Windows wake task (${timezone}) — host-wake only: wakes the machine from S3 sleep and holds it awake briefly so the long-running backend's DailyJobScheduler creates the daily SCHEDULED occurrence. Does not execute OfferFlow code. [${WAKE_CONFIG_MARKER} dailyAt=${dailyAt}; timezone=${timezone}; wakeLeadMinutes=${wakeLeadMinutes}]`;
 }
 
 /**
@@ -341,7 +370,7 @@ export function buildQueryArgs({ taskName }) {
   return ['/Query', '/TN', taskName, '/XML'];
 }
 
-// ── schtasks /Query /XML 解析与设置校验 ────────────────────────────────────
+// ── schtasks /Query /XML 解析与 STALE_REASON_CODES 计算 ──────────────────────
 
 /** 提取 XML 中单个元素文本（schtasks /Query /XML 输出为受控 Task Scheduler XML）。 */
 function readXmlTag(xml, tag) {
@@ -349,14 +378,25 @@ function readXmlTag(xml, tag) {
   return match === null ? null : match[1];
 }
 
-function readXmlBool(xml, tag) {
+/**
+ * 读取 XML boolean 元素。defaultValue 用于 Windows canonical XML 会省略默认 false 设置的场景：
+ * 例如 StartWhenAvailable / DisallowStartIfOnBatteries / StopIfGoingOnBatteries 为 false（默认值）时，
+ * schtasks /Query /XML 可能直接省略该元素，此时应视为 false 而非「缺失 → 误判 stale」。
+ */
+function readXmlBool(xml, tag, defaultValue = null) {
   const value = readXmlTag(xml, tag);
-  return value === null ? null : value.trim().toLowerCase() === 'true';
+  if (value === null) return defaultValue;
+  return value.trim().toLowerCase() === 'true';
 }
 
 /**
  * 解析 schtasks /Query /XML 的 stdout，返回结构化 task 状态。
  * 输出为空 / 无 <Task> 根节点 → null（表示任务不存在 / disabled）。
+ *
+ * 规范化要点（修复 stale 误判根因）：
+ *   - Windows canonical XML 省略默认 false 设置（StartWhenAvailable / battery flags）→ 按 false 处理。
+ *   - MultipleInstancesPolicy 缺省为 IgnoreNew（schema default）→ 按 IgnoreNew 处理。
+ *   - RunLevel 可能被省略（Builtin Administrator 会忽略 RunLevel）→ 单独保留为 null，不参与 stale 判定。
  */
 export function parseWakeTaskQueryXml(stdout) {
   if (typeof stdout !== 'string' || stdout.trim() === '') return null;
@@ -371,57 +411,38 @@ export function parseWakeTaskQueryXml(stdout) {
     arguments: argumentsValue ?? '',
     description: readXmlTag(xml, 'Description') ?? '',
     startBoundary,
+    logonType: readXmlTag(xml, 'LogonType'),
+    runLevel: readXmlTag(xml, 'RunLevel'),
+    userId: readXmlTag(xml, 'UserId'),
     wakeToRun: readXmlBool(xml, 'WakeToRun'),
-    startWhenAvailable: readXmlBool(xml, 'StartWhenAvailable'),
-    multipleInstancesPolicy: readXmlTag(xml, 'MultipleInstancesPolicy'),
-    disallowStartIfOnBatteries: readXmlBool(xml, 'DisallowStartIfOnBatteries'),
-    stopIfGoingOnBatteries: readXmlBool(xml, 'StopIfGoingOnBatteries'),
+    startWhenAvailable: readXmlBool(xml, 'StartWhenAvailable', false),
+    multipleInstancesPolicy: readXmlTag(xml, 'MultipleInstancesPolicy') ?? 'IgnoreNew',
+    disallowStartIfOnBatteries: readXmlBool(xml, 'DisallowStartIfOnBatteries', false),
+    stopIfGoingOnBatteries: readXmlBool(xml, 'StopIfGoingOnBatteries', false),
   };
-}
-
-/** 判定 task command 是否安全：不含 cmd.exe / powershell.exe / secret。 */
-export function isWakeTaskCommandSafe(parsed) {
-  if (parsed === null) return true; // 不存在即无风险
-  const text = `${parsed.command}\n${parsed.arguments}`.toLowerCase();
-  if (text.includes('cmd.exe') || text.includes('powershell.exe') || text.includes('pwsh')) return false;
-  return !/TAVILY|DEEPSEEK|API_KEY|SECRET|PASSWORD|Bearer/i.test(text);
 }
 
 /**
- * 校验已注册 task 的冻结设置是否全部符合期望。
- * 返回 { allVerified, commandSafe, wakeToRun, startWhenAvailable, multipleInstancesPolicy, batteryFlags }。
+ * 计算 task contract 与冻结期望之间的 mismatch reason codes（静态部分，不含 schedule drift）。
+ * 返回空数组 = 静态 contract current。
+ * 支持的最小 reason code 集（PHASE 10）：
+ *   COMMAND_MISMATCH / ARGUMENTS_MISMATCH / WAKE_TO_RUN_MISMATCH / START_WHEN_AVAILABLE_MISMATCH /
+ *   MULTIPLE_INSTANCE_MISMATCH / BATTERY_POLICY_MISMATCH / PRINCIPAL_MISMATCH。
+ * 注意：PRINCIPAL 只比较 LogonType（InteractiveToken）；RunLevel 不参与（Builtin Administrator 会省略它）。
  */
-export function verifyWakeTaskSettings(parsed) {
-  if (parsed === null) {
-    return {
-      allVerified: false,
-      commandSafe: true,
-      wakeToRun: false,
-      startWhenAvailable: null,
-      multipleInstancesPolicy: null,
-      batteryFlags: null,
-    };
+export function computeWakeTaskMismatches(parsed, { systemRoot = 'C:\\Windows' } = {}) {
+  if (parsed === null) return [];
+  const reasons = [];
+  if (!isTrustedSystem32Ping(parsed.command, systemRoot)) reasons.push('COMMAND_MISMATCH');
+  if (!isTrustedHoldArguments(parsed.arguments)) reasons.push('ARGUMENTS_MISMATCH');
+  if (parsed.wakeToRun !== true) reasons.push('WAKE_TO_RUN_MISMATCH');
+  if (parsed.startWhenAvailable !== false) reasons.push('START_WHEN_AVAILABLE_MISMATCH');
+  if (parsed.multipleInstancesPolicy !== 'IgnoreNew') reasons.push('MULTIPLE_INSTANCE_MISMATCH');
+  if (!(parsed.disallowStartIfOnBatteries === false && parsed.stopIfGoingOnBatteries === false)) {
+    reasons.push('BATTERY_POLICY_MISMATCH');
   }
-  const wakeToRun = parsed.wakeToRun === true;
-  const startWhenAvailable = parsed.startWhenAvailable === false;
-  const multipleInstancesPolicy = parsed.multipleInstancesPolicy === 'IgnoreNew';
-  const batteryFlags = parsed.disallowStartIfOnBatteries === false && parsed.stopIfGoingOnBatteries === false;
-  const commandSafe = isWakeTaskCommandSafe(parsed);
-  return {
-    allVerified: wakeToRun && startWhenAvailable && multipleInstancesPolicy && batteryFlags && commandSafe,
-    commandSafe,
-    wakeToRun,
-    startWhenAvailable,
-    multipleInstancesPolicy,
-    batteryFlags,
-  };
-}
-
-/** 比较 task 已注册 command 与当前 repo 期望值，判定是否 stale（repo 移动 / node 变化）。 */
-export function detectWakeTaskStale(parsed, { nodeExecutable, wakeBridgePath }) {
-  if (parsed === null) return false; // 不存在不叫 stale，叫 absent
-  const currentArguments = parsed.arguments.replace(/^"|"$/g, '');
-  return parsed.command !== nodeExecutable || currentArguments !== wakeBridgePath;
+  if (parsed.logonType !== 'InteractiveToken') reasons.push('PRINCIPAL_MISMATCH');
+  return reasons;
 }
 
 /**
@@ -450,14 +471,13 @@ export function detectScheduleDrift(parsed, activeDailyAt) {
  * 绝不调用 schtasks mutation；status 是 READ ONLY，普通用户可运行。
  *
  * enable 必须从后端 active PlanVersion.schedule 取 dailyAt（绝不硬编码 09:00 作为产品常量），
- * 并把 configured schedule 持久化进 task description（供 status / bridge 做 drift 检测）。
+ * 并把 configured schedule 持久化进 task description（供 status 做 drift 检测）。
+ * action 固定为 System32 ping.exe + 有界 hold 参数（trust boundary），与 OfferFlow runtime 完全解耦。
  */
 export async function runWakeTaskCommand(argv, deps) {
   const {
     platform,
-    nodeExecutable,
-    wakeBridgePath,
-    workingDirectory,
+    systemRoot = 'C:\\Windows',
     schtasksExecutor,
     writeXmlFile,
     removeXmlFile,
@@ -490,12 +510,14 @@ export async function runWakeTaskCommand(argv, deps) {
       leadMinutes: WAKE_LEAD_TIME_MINUTES,
       now: now(),
     });
-    const command = buildWakeTaskCommand({ nodeExecutable, wakeBridgePath });
+    const command = resolveTrustedHoldExecutable(systemRoot);
+    const argumentsText = TRUSTED_HOLD_ARGUMENTS;
+    const workingDirectory = path.join(systemRoot, 'System32');
     const xml = buildWakeTaskXml({
       taskName: WAKE_TASK_NAME,
       description: buildWakeTaskDescription({ dailyAt, timezone, wakeLeadMinutes: WAKE_LEAD_TIME_MINUTES }),
-      nodeExecutable,
-      wakeBridgePath,
+      command,
+      arguments: argumentsText,
       workingDirectory,
       startBoundary,
     });
@@ -523,6 +545,7 @@ export async function runWakeTaskCommand(argv, deps) {
       subcommand,
       taskName: WAKE_TASK_NAME,
       command,
+      arguments: argumentsText,
       wakeAt,
       startBoundary,
       dailyAt,
@@ -558,21 +581,20 @@ export async function runWakeTaskCommand(argv, deps) {
     const queryArgs = buildQueryArgs({ taskName: WAKE_TASK_NAME });
     const result = schtasksExecutor(queryArgs);
     if (result.status !== 0) {
-      return { ok: true, code: 0, subcommand, taskName: WAKE_TASK_NAME, status: 'absent', schtasksArgs: queryArgs };
+      return { ok: true, code: 0, subcommand, taskName: WAKE_TASK_NAME, status: 'absent', staleReasonCodes: [], schtasksArgs: queryArgs };
     }
     const parsed = parseWakeTaskQueryXml(result.stdout);
     if (parsed === null) {
-      return { ok: true, code: 0, subcommand, taskName: WAKE_TASK_NAME, status: 'absent', schtasksArgs: queryArgs };
+      return { ok: true, code: 0, subcommand, taskName: WAKE_TASK_NAME, status: 'absent', staleReasonCodes: [], schtasksArgs: queryArgs };
     }
-    const settings = verifyWakeTaskSettings(parsed);
-    const commandDrift = detectWakeTaskStale(parsed, { nodeExecutable, wakeBridgePath });
-    const commandCurrent = settings.allVerified && !commandDrift;
+    const staleReasonCodes = computeWakeTaskMismatches(parsed, { systemRoot });
     const configured = parseConfiguredScheduleFromDescription(parsed.description);
     const activeSchedule = await resolveWakeScheduleFromBackend(fetchJson);
 
     let status;
     let scheduleDrift = null;
-    if (!commandCurrent) {
+    if (staleReasonCodes.length > 0) {
+      // 静态 contract（command / arguments / settings / principal）不符 → stale，无需再比 schedule。
       status = 'stale';
     } else if (activeSchedule === null) {
       // 后端不可达 → 无法比对 schedule，降级为只读 registered（不臆断 current/stale）。
@@ -581,9 +603,10 @@ export async function runWakeTaskCommand(argv, deps) {
     } else if (configured === null) {
       // 无配置 marker（旧 task / 非本工具注册）→ 无法证明 current → 需提权 re-bootstrap。
       status = 'stale';
-      scheduleDrift = true;
+      staleReasonCodes.push('METADATA_MISMATCH');
     } else if (configured.dailyAt !== activeSchedule.dailyAt) {
       status = 'stale';
+      staleReasonCodes.push('SCHEDULE_MISMATCH');
       scheduleDrift = true;
     } else {
       status = 'current';
@@ -599,8 +622,14 @@ export async function runWakeTaskCommand(argv, deps) {
       command: parsed.command,
       arguments: parsed.arguments,
       startBoundary: parsed.startBoundary,
-      settings,
-      commandDrift,
+      logonType: parsed.logonType,
+      runLevel: parsed.runLevel,
+      userId: parsed.userId,
+      wakeToRun: parsed.wakeToRun,
+      startWhenAvailable: parsed.startWhenAvailable,
+      multipleInstancesPolicy: parsed.multipleInstancesPolicy,
+      batteryFlags: parsed.disallowStartIfOnBatteries === false && parsed.stopIfGoingOnBatteries === false,
+      staleReasonCodes,
       scheduleDrift,
       configuredSchedule: configured,
       activeSchedule,

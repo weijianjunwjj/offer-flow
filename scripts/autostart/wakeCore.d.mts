@@ -5,14 +5,15 @@
 
 export const WAKE_TASK_NAME: string;
 export const WAKE_LEAD_TIME_MINUTES: number;
-export const DEFAULT_HOLD_AWAKE_WINDOW_MS: number;
+export const WAKE_HOLD_PING_COUNT: number;
+export const WAKE_HOLD_DURATION_MS: number;
+export const TRUSTED_HOLD_EXECUTABLE: string;
+export const TRUSTED_HOLD_ARGUMENTS: string;
 export const WAKE_TASK_EXECUTION_TIME_LIMIT: string;
-export const HEALTH_URL: string;
-export const HEALTH_TIMEOUT_MS: number;
-export const RECOVER_HEALTH_WAIT_MS: number;
-export const OCCURRENCE_POLL_INTERVAL_MS: number;
-export const SOURCE_RUN_TERMINAL_STATUSES: string[];
 export const WAKE_TASK_MUTATION_FROM_SERVER: string;
+export const TASK_EXECUTION_MAY_BE_ELEVATED: string;
+export const TASK_ACTION_TRUST_BOUNDARY: string;
+export const USER_WRITABLE_CODE_EXECUTED: string;
 
 export const INTEGRITY_SID_HIGH: string;
 export const INTEGRITY_SID_SYSTEM: string;
@@ -57,16 +58,15 @@ export function computeNextWakeStartBoundary(input: {
 }): string;
 export function localStartBoundary(instant: number): string;
 
-export function buildWakeTaskCommand(input: {
-  nodeExecutable: string;
-  wakeBridgePath: string;
-}): string;
+export function resolveTrustedHoldExecutable(systemRoot?: string): string;
+export function isTrustedSystem32Ping(command: string | null | undefined, systemRoot?: string): boolean;
+export function isTrustedHoldArguments(argumentsText: string | null | undefined): boolean;
 
 export function buildWakeTaskXml(input: {
   taskName: string;
   description: string;
-  nodeExecutable: string;
-  wakeBridgePath: string;
+  command: string;
+  arguments: string;
   workingDirectory: string;
   startBoundary: string;
   executionTimeLimit?: string;
@@ -92,28 +92,33 @@ export interface WakeTaskParsed {
   arguments: string;
   description: string;
   startBoundary: string | null;
+  logonType: string | null;
+  runLevel: string | null;
+  userId: string | null;
   wakeToRun: boolean | null;
-  startWhenAvailable: boolean | null;
-  multipleInstancesPolicy: string | null;
-  disallowStartIfOnBatteries: boolean | null;
-  stopIfGoingOnBatteries: boolean | null;
+  startWhenAvailable: boolean;
+  multipleInstancesPolicy: string;
+  disallowStartIfOnBatteries: boolean;
+  stopIfGoingOnBatteries: boolean;
 }
 export function parseWakeTaskQueryXml(stdout: string | null | undefined): WakeTaskParsed | null;
-export function isWakeTaskCommandSafe(parsed: WakeTaskParsed | null): boolean;
 
-export interface WakeTaskSettings {
-  allVerified: boolean;
-  commandSafe: boolean;
-  wakeToRun: boolean;
-  startWhenAvailable: boolean | null;
-  multipleInstancesPolicy: boolean | null;
-  batteryFlags: boolean | null;
-}
-export function verifyWakeTaskSettings(parsed: WakeTaskParsed | null): WakeTaskSettings;
-export function detectWakeTaskStale(
+export type WakeTaskStaleReasonCode =
+  | 'COMMAND_MISMATCH'
+  | 'ARGUMENTS_MISMATCH'
+  | 'SCHEDULE_MISMATCH'
+  | 'METADATA_MISMATCH'
+  | 'WAKE_TO_RUN_MISMATCH'
+  | 'START_WHEN_AVAILABLE_MISMATCH'
+  | 'MULTIPLE_INSTANCE_MISMATCH'
+  | 'BATTERY_POLICY_MISMATCH'
+  | 'PRINCIPAL_MISMATCH';
+
+export function computeWakeTaskMismatches(
   parsed: WakeTaskParsed | null,
-  expected: { nodeExecutable: string; wakeBridgePath: string },
-): boolean;
+  opts?: { systemRoot?: string },
+): WakeTaskStaleReasonCode[];
+
 export function detectScheduleDrift(parsed: WakeTaskParsed | null, activeDailyAt: string): boolean;
 
 export interface SchtasksExecutorResult {
@@ -127,9 +132,7 @@ export type IsElevated = () => ElevationStatus;
 
 export interface WakeTaskRunDeps {
   platform: string;
-  nodeExecutable: string;
-  wakeBridgePath: string;
-  workingDirectory: string;
+  systemRoot?: string;
   schtasksExecutor: SchtasksExecutor;
   writeXmlFile: (xml: string) => string;
   removeXmlFile: (xmlFilePath: string) => void;
@@ -150,6 +153,13 @@ export interface WakeTaskRunResult {
   command?: string;
   arguments?: string;
   startBoundary?: string;
+  logonType?: string | null;
+  runLevel?: string | null;
+  userId?: string | null;
+  wakeToRun?: boolean | null;
+  startWhenAvailable?: boolean;
+  multipleInstancesPolicy?: string;
+  batteryFlags?: boolean;
   wakeAt?: string;
   dailyAt?: string;
   timezone?: string;
@@ -157,8 +167,7 @@ export interface WakeTaskRunResult {
   xml?: string;
   schtasksArgs?: string[];
   status?: WakeTaskStatus;
-  settings?: WakeTaskSettings;
-  commandDrift?: boolean;
+  staleReasonCodes?: WakeTaskStaleReasonCode[];
   scheduleDrift?: boolean | null;
   configuredSchedule?: ConfiguredSchedule | null;
   activeSchedule?: WakeSchedule | null;

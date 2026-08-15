@@ -1,10 +1,11 @@
 /**
  * OfferFlow v0.9 — Windows Wake Layer 核心逻辑测试。
  *
- * 覆盖（PHASE 16 点位 1-6、17、18）：
- *   09:00 → 08:58、跨午夜、WakeToRun=true、StartWhenAvailable=false、battery flags=false、
- *   MultipleInstancesPolicy=IgnoreNew、XML/command 不含 secret、command 不含 cmd.exe/powershell.exe，
- *   以及 enable / disable / status 子命令编排（fake schtasksExecutor / writeXmlFile / fetchJson）。
+ * 覆盖 PHASE 11 全部 18 个点位：
+ *   action 只位于 System32、无 node.exe / repo script / cmd.exe / powershell.exe、WakeToRun=true、
+ *   有界 hold、wake schedule 08:58、metadata 保留、StartWhenAvailable 缺失按 false、
+ *   Builtin Administrator readback 缺失 RunLevel 不误判、真实 current、schedule/command drift → stale + reason、
+ *   pause/no-active 不要求 OS mutation、Wake Task 不调用 Run Now / 不启动 backend / 不执行 user-writable code。
  *
  * 全部通过 fake 注入测纯逻辑，绝不触碰真实 schtasks.exe / Task Scheduler / 文件系统 / 后端 HTTP。
  */
@@ -14,43 +15,49 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  DEFAULT_HOLD_AWAKE_WINDOW_MS,
   ELEVATION_CHECK_FAILED,
   ELEVATION_ELEVATED,
   ELEVATION_NOT_ELEVATED,
   INTEGRITY_SID_HIGH,
   INTEGRITY_SID_MEDIUM,
   INTEGRITY_SID_SYSTEM,
+  TASK_ACTION_TRUST_BOUNDARY,
+  TASK_EXECUTION_MAY_BE_ELEVATED,
+  TRUSTED_HOLD_ARGUMENTS,
+  TRUSTED_HOLD_EXECUTABLE,
+  USER_WRITABLE_CODE_EXECUTED,
+  WAKE_HOLD_DURATION_MS,
+  WAKE_HOLD_PING_COUNT,
   WAKE_LEAD_TIME_MINUTES,
   WAKE_TASK_NAME,
   WAKE_TASK_MUTATION_FROM_SERVER,
   buildCreateArgs,
   buildDeleteArgs,
   buildQueryArgs,
-  buildWakeTaskCommand,
   buildWakeTaskDescription,
   buildWakeTaskXml,
   computeNextWakeStartBoundary,
+  computeWakeTaskMismatches,
   computeWakeTime,
   detectElevation,
   detectScheduleDrift,
-  detectWakeTaskStale,
   encodeTaskXmlForWindows,
-  isWakeTaskCommandSafe,
+  isTrustedHoldArguments,
+  isTrustedSystem32Ping,
   parseConfiguredScheduleFromDescription,
   parseElevationOutput,
   parseWakeSchedule,
   parseWakeTaskQueryXml,
+  resolveTrustedHoldExecutable,
   resolveWakeScheduleFromBackend,
   resolveWindowsWhoamiPath,
   runWakeTaskCommand,
-  verifyWakeTaskSettings,
 } from './wakeCore.mjs';
 import type { FetchJson, SchtasksExecutor, WakeTaskRunDeps } from './wakeCore.mjs';
 
-const NODE = 'D:\\nodejs\\node.exe';
-const BRIDGE = 'D:\\VSCode\\offer-flow\\scripts\\autostart\\offerflowWakeBridge.mjs';
-const REPO_ROOT = 'D:\\VSCode\\offer-flow';
+const SYSTEM_ROOT = 'C:\\Windows';
+const PING = 'C:\\Windows\\System32\\ping.exe';
+const HOLD_ARGS = TRUSTED_HOLD_ARGUMENTS;
 
 function captureSchtasks() {
   const calls: string[][] = [];
@@ -64,9 +71,7 @@ function captureSchtasks() {
 function baseDeps(overrides: Partial<WakeTaskRunDeps> = {}): WakeTaskRunDeps {
   return {
     platform: 'win32',
-    nodeExecutable: NODE,
-    wakeBridgePath: BRIDGE,
-    workingDirectory: REPO_ROOT,
+    systemRoot: SYSTEM_ROOT,
     schtasksExecutor: captureSchtasks().executor,
     writeXmlFile: vi.fn(() => 'C:\\temp\\wake.xml'),
     removeXmlFile: vi.fn(),
@@ -74,6 +79,23 @@ function baseDeps(overrides: Partial<WakeTaskRunDeps> = {}): WakeTaskRunDeps {
     isElevated: () => ELEVATION_ELEVATED,
     ...overrides,
   };
+}
+
+/** 构建带受信 action 的 canonical task XML（供解析/状态测试复用）。 */
+function trustedXml(overrides: { description?: string; command?: string; args?: string } = {}) {
+  return buildWakeTaskXml({
+    taskName: WAKE_TASK_NAME,
+    description: overrides.description ?? buildWakeTaskDescription({ dailyAt: '09:00', timezone: 'Asia/Shanghai' }),
+    command: overrides.command ?? PING,
+    arguments: overrides.args ?? HOLD_ARGS,
+    workingDirectory: path.join(SYSTEM_ROOT, 'System32'),
+    startBoundary: '2026-08-16T08:58:00',
+  });
+}
+
+/** 从 XML 中移除某个元素（模拟 Windows canonical XML 省略默认 false / 省略 RunLevel）。 */
+function stripTag(xml: string, tag: string) {
+  return xml.replace(new RegExp(`\\s*<${tag}>.*?</${tag}>`, 's'), '');
 }
 
 describe('wake trigger 计算', () => {
@@ -96,10 +118,8 @@ describe('wake trigger 计算', () => {
   });
 
   it('computeNextWakeStartBoundary 取下一次（今天未过则今天，已过则明天）', () => {
-    // 本地 2026-08-15 08:00，dailyAt=09:00 → wake 08:58 今天（未来）。
     const now = new Date(2026, 7, 15, 8, 0, 0).getTime();
     expect(computeNextWakeStartBoundary({ dailyAt: '09:00', leadMinutes: 2, now })).toBe('2026-08-15T08:58:00');
-    // 本地 2026-08-15 10:00，dailyAt=09:00 → 今天的 08:58 已过 → 明天 08:58。
     const later = new Date(2026, 7, 15, 10, 0, 0).getTime();
     expect(computeNextWakeStartBoundary({ dailyAt: '09:00', leadMinutes: 2, now: later })).toBe('2026-08-16T08:58:00');
   });
@@ -142,84 +162,90 @@ describe('configured schedule 持久化（description metadata）与 drift 检�
   });
 
   it('detectScheduleDrift：configured dailyAt ≠ active dailyAt → true；一致 → false', () => {
-    const xml = buildWakeTaskXml({
-      taskName: WAKE_TASK_NAME,
-      description: buildWakeTaskDescription({ dailyAt: '09:00', timezone: 'Asia/Shanghai' }),
-      nodeExecutable: NODE,
-      wakeBridgePath: BRIDGE,
-      workingDirectory: REPO_ROOT,
-      startBoundary: '2026-08-16T08:58:00',
-    });
-    const parsed = parseWakeTaskQueryXml(xml);
+    const parsed = parseWakeTaskQueryXml(trustedXml());
     expect(detectScheduleDrift(parsed, '09:00')).toBe(false);
     expect(detectScheduleDrift(parsed, '10:00')).toBe(true);
   });
 });
 
-describe('wake task command / XML 冻结设置', () => {
-  function xml() {
-    return buildWakeTaskXml({
-      taskName: WAKE_TASK_NAME,
-      description: 'test wake task (Asia/Shanghai)',
-      nodeExecutable: NODE,
-      wakeBridgePath: BRIDGE,
-      workingDirectory: REPO_ROOT,
-      startBoundary: '2026-08-16T08:58:00',
-    });
-  }
+describe('受信 action trust boundary（System32-only）', () => {
+  it('production wake task action 只能位于 System32（ping.exe 绝对路径）', () => {
+    expect(isTrustedSystem32Ping(PING, SYSTEM_ROOT)).toBe(true);
+    expect(resolveTrustedHoldExecutable(SYSTEM_ROOT)).toBe(PING);
+    expect(TRUSTED_HOLD_EXECUTABLE).toBe(PING);
+  });
 
+  it('拒绝 node.exe（含真实 node 路径）', () => {
+    expect(isTrustedSystem32Ping('D:\\nodejs\\node.exe', SYSTEM_ROOT)).toBe(false);
+    expect(isTrustedSystem32Ping('node.exe', SYSTEM_ROOT)).toBe(false);
+  });
+
+  it('拒绝裸 ping.exe（可能落到 PATH 中用户可写的同名文件）', () => {
+    expect(isTrustedSystem32Ping('ping.exe', SYSTEM_ROOT)).toBe(false);
+  });
+
+  it('拒绝用户目录 / 其它可写路径', () => {
+    expect(isTrustedSystem32Ping('D:\\VSCode\\offer-flow\\scripts\\autostart\\offerflowWakeBridge.mjs', SYSTEM_ROOT)).toBe(false);
+    expect(isTrustedSystem32Ping('C:\\Users\\Administrator\\ping.exe', SYSTEM_ROOT)).toBe(false);
+  });
+
+  it('有界 hold 参数：127.0.0.1 -n 301，count 有界', () => {
+    expect(WAKE_HOLD_PING_COUNT).toBe(301);
+    expect(WAKE_HOLD_DURATION_MS).toBe(5 * 60 * 1000);
+    expect(HOLD_ARGS).toBe('127.0.0.1 -n 301');
+    expect(isTrustedHoldArguments('127.0.0.1 -n 301')).toBe(true);
+    expect(isTrustedHoldArguments(' 127.0.0.1  -n  301 ')).toBe(true);
+    expect(isTrustedHoldArguments('127.0.0.1 -n 999999')).toBe(false);
+    expect(isTrustedHoldArguments('')).toBe(false);
+  });
+});
+
+describe('wake task XML 冻结设置', () => {
   it('WakeToRun = true', () => {
-    expect(xml()).toContain('<WakeToRun>true</WakeToRun>');
+    expect(trustedXml()).toContain('<WakeToRun>true</WakeToRun>');
   });
 
   it('StartWhenAvailable = false', () => {
-    expect(xml()).toContain('<StartWhenAvailable>false</StartWhenAvailable>');
+    expect(trustedXml()).toContain('<StartWhenAvailable>false</StartWhenAvailable>');
   });
 
   it('battery flags = false（DisallowStartIfOnBatteries / StopIfGoingOnBatteries）', () => {
-    expect(xml()).toContain('<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>');
-    expect(xml()).toContain('<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>');
+    expect(trustedXml()).toContain('<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>');
+    expect(trustedXml()).toContain('<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>');
   });
 
   it('MultipleInstancesPolicy = IgnoreNew', () => {
-    expect(xml()).toContain('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>');
+    expect(trustedXml()).toContain('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>');
   });
 
-  it('command 不含 cmd.exe / powershell.exe（只用 node + bridge）', () => {
-    const parsed = parseWakeTaskQueryXml(xml());
+  it('action command = System32 ping.exe', () => {
+    const parsed = parseWakeTaskQueryXml(trustedXml());
     expect(parsed).not.toBeNull();
-    expect(parsed!.command).toBe(NODE);
-    expect(parsed!.arguments).toBe(`"${BRIDGE}"`);
-    expect(isWakeTaskCommandSafe(parsed)).toBe(true);
+    expect(parsed!.command).toBe(PING);
+    expect(parsed!.arguments).toBe(HOLD_ARGS);
+  });
+
+  it('无 node.exe / 无 repo script / 无 cmd.exe / 无 powershell.exe', () => {
+    const xml = trustedXml();
+    expect(xml).not.toMatch(/node\.exe/i);
+    expect(xml).not.toMatch(/offerflowWakeBridge|\.mjs|offer-flow/i);
+    expect(xml).not.toMatch(/cmd\.exe/i);
+    expect(xml).not.toMatch(/powershell\.exe|pwsh/i);
   });
 
   it('XML / command 不含 secret', () => {
-    const command = buildWakeTaskCommand({ nodeExecutable: NODE, wakeBridgePath: BRIDGE });
-    expect(command).not.toMatch(/TAVILY|DEEPSEEK|API_KEY|SECRET|PASSWORD|Bearer/i);
-    expect(xml()).not.toMatch(/TAVILY|DEEPSEEK|API_KEY|SECRET|PASSWORD|Bearer|tvly-/i);
-  });
-
-  it('buildWakeTaskCommand 只含 node + bridge 两个 token', () => {
-    expect(buildWakeTaskCommand({ nodeExecutable: NODE, wakeBridgePath: BRIDGE })).toBe(`"${NODE}" "${BRIDGE}"`);
+    expect(trustedXml()).not.toMatch(/TAVILY|DEEPSEEK|API_KEY|SECRET|PASSWORD|Bearer|tvly-/i);
   });
 });
 
 describe('XML 编码契约（UTF-16 declaration 与实际字节编码一致）', () => {
   function xml() {
-    return buildWakeTaskXml({
-      taskName: WAKE_TASK_NAME,
-      description: buildWakeTaskDescription({ dailyAt: '09:00', timezone: 'Asia/Shanghai' }),
-      nodeExecutable: NODE,
-      wakeBridgePath: BRIDGE,
-      workingDirectory: REPO_ROOT,
-      startBoundary: '2026-08-16T08:58:00',
-    });
+    return trustedXml();
   }
 
   it('XML declaration 固定为 UTF-16（不含 UTF-8 declaration）', () => {
-    const x = xml();
-    expect(x).toContain('<?xml version="1.0" encoding="UTF-16"?>');
-    expect(x).not.toContain('encoding="UTF-8"');
+    expect(xml()).toContain('<?xml version="1.0" encoding="UTF-16"?>');
+    expect(xml()).not.toContain('encoding="UTF-8"');
   });
 
   it('encodeTaskXmlForWindows 输出 Buffer，且前两字节为 UTF-16LE BOM（FF FE）', () => {
@@ -240,12 +266,7 @@ describe('XML 编码契约（UTF-16 declaration 与实际字节编码一致）',
     expect(decoded).toContain('<WakeToRun>true</WakeToRun>');
   });
 
-  it('不是纯 UTF-8 字节（首两字节不是 "<" 0x3c + "?" 0x3f）', () => {
-    const buf = encodeTaskXmlForWindows(xml());
-    expect(buf[0] === 0x3c && buf[1] === 0x3f).toBe(false);
-  });
-
-  it('编码后仍含全部冻结 settings（含 InteractiveToken / LeastPrivilege）', () => {
+  it('编码后仍含全部冻结 settings（含 InteractiveToken / LeastPrivilege intent / System32 ping）', () => {
     const decoded = encodeTaskXmlForWindows(xml()).subarray(2).toString('utf16le');
     expect(decoded).toContain('<WakeToRun>true</WakeToRun>');
     expect(decoded).toContain('<StartWhenAvailable>false</StartWhenAvailable>');
@@ -254,29 +275,22 @@ describe('XML 编码契约（UTF-16 declaration 与实际字节编码一致）',
     expect(decoded).toContain('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>');
     expect(decoded).toContain('<LogonType>InteractiveToken</LogonType>');
     expect(decoded).toContain('<RunLevel>LeastPrivilege</RunLevel>');
+    expect(decoded).toContain(PING);
   });
 
-  it('编码后 command 仍安全（不含 cmd.exe / powershell.exe / secret）', () => {
+  it('编码后仍不含 node.exe / cmd.exe / powershell.exe / secret', () => {
     const decoded = encodeTaskXmlForWindows(xml()).subarray(2).toString('utf16le');
+    expect(decoded).not.toMatch(/node\.exe/i);
     expect(decoded).not.toMatch(/cmd\.exe|powershell\.exe|pwsh/i);
     expect(decoded).not.toMatch(/TAVILY|DEEPSEEK|API_KEY|SECRET|PASSWORD|Bearer|tvly-/i);
   });
 
-  it('metadata（description）编码后仍正确保留', () => {
-    const decoded = encodeTaskXmlForWindows(xml()).subarray(2).toString('utf16le');
-    expect(decoded).toContain('dailyAt=09:00');
-    expect(decoded).toContain('timezone=Asia/Shanghai');
-    expect(decoded).toContain('wakeLeadMinutes=2');
-  });
-
   it('实际写盘后可按 UTF-16LE + BOM 被正确读回（无 UTF-8 BOM）', () => {
-    // 本测试是唯一真实触碰文件系统的点位：验证 encodeTaskXmlForWindows 产物与 declaration 一致。
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-wake-xml-'));
     const file = path.join(dir, 'wake.xml');
     try {
       fs.writeFileSync(file, encodeTaskXmlForWindows(xml()));
       const buf = fs.readFileSync(file);
-      // 首字节必须是 UTF-16LE BOM（FF FE），不是 UTF-8 BOM（EF BB BF）或 '<'（0x3c）。
       expect(buf[0]).toBe(0xff);
       expect(buf[1]).toBe(0xfe);
       const decoded = buf.subarray(2).toString('utf16le');
@@ -305,31 +319,10 @@ describe('schtasks 参数构造', () => {
   });
 });
 
-describe('parseWakeTaskQueryXml / verifyWakeTaskSettings', () => {
-  function xmlWithOverrides(pairs: Record<string, string>) {
-    let x = buildWakeTaskXml({
-      taskName: WAKE_TASK_NAME,
-      description: 'test',
-      nodeExecutable: NODE,
-      wakeBridgePath: BRIDGE,
-      workingDirectory: REPO_ROOT,
-      startBoundary: '2026-08-16T08:58:00',
-    });
-    for (const [tag, value] of Object.entries(pairs)) {
-      x = x.replace(new RegExp(`<${tag}>.*?</${tag}>`, 's'), `<${tag}>${value}</${tag}>`);
-    }
-    return x;
-  }
-
-  it('合法 XML 全部冻结设置通过校验', () => {
-    const parsed = parseWakeTaskQueryXml(xmlWithOverrides({}));
-    const settings = verifyWakeTaskSettings(parsed);
-    expect(settings.allVerified).toBe(true);
-    expect(settings.wakeToRun).toBe(true);
-    expect(settings.startWhenAvailable).toBe(true);
-    expect(settings.multipleInstancesPolicy).toBe(true);
-    expect(settings.batteryFlags).toBe(true);
-    expect(settings.commandSafe).toBe(true);
+describe('parseWakeTaskQueryXml / computeWakeTaskMismatches', () => {
+  it('合法 XML 全部冻结设置无 mismatch', () => {
+    const parsed = parseWakeTaskQueryXml(trustedXml());
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toEqual([]);
   });
 
   it('非 Task XML / 空 stdout → null → absent', () => {
@@ -338,85 +331,110 @@ describe('parseWakeTaskQueryXml / verifyWakeTaskSettings', () => {
     expect(parseWakeTaskQueryXml(null)).toBeNull();
   });
 
-  it('WakeToRun=false → 校验失败', () => {
-    const parsed = parseWakeTaskQueryXml(xmlWithOverrides({ WakeToRun: 'false' }));
-    expect(verifyWakeTaskSettings(parsed).allVerified).toBe(false);
-    expect(verifyWakeTaskSettings(parsed).wakeToRun).toBe(false);
+  it('StartWhenAvailable XML 缺失 → 按 false 处理，不误判 stale（修复根因）', () => {
+    const xml = stripTag(trustedXml(), 'StartWhenAvailable');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(parsed!.startWhenAvailable).toBe(false);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toEqual([]);
   });
 
-  it('StartWhenAvailable=true → 校验失败（不得建第二套 missed-run recovery）', () => {
-    const parsed = parseWakeTaskQueryXml(xmlWithOverrides({ StartWhenAvailable: 'true' }));
-    expect(verifyWakeTaskSettings(parsed).startWhenAvailable).toBe(false);
+  it('battery flags 缺失（默认 false）→ 不误判 stale', () => {
+    let xml = stripTag(trustedXml(), 'DisallowStartIfOnBatteries');
+    xml = stripTag(xml, 'StopIfGoingOnBatteries');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toEqual([]);
   });
 
-  it('battery flags=true → 校验失败', () => {
-    const parsed = parseWakeTaskQueryXml(xmlWithOverrides({ DisallowStartIfOnBatteries: 'true' }));
-    expect(verifyWakeTaskSettings(parsed).batteryFlags).toBe(false);
+  it('Builtin Administrator readback 缺失 RunLevel → 不造成错误 stale（PRINCIPAL 只比 LogonType）', () => {
+    const xml = stripTag(trustedXml(), 'RunLevel');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(parsed!.runLevel).toBeNull();
+    expect(parsed!.logonType).toBe('InteractiveToken');
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toEqual([]);
   });
 
-  it('command 含 cmd.exe → commandSafe=false', () => {
-    const parsed = parseWakeTaskQueryXml(xmlWithOverrides({ Command: 'C:\\Windows\\System32\\cmd.exe' }));
-    expect(isWakeTaskCommandSafe(parsed)).toBe(false);
-    expect(verifyWakeTaskSettings(parsed).allVerified).toBe(false);
+  it('command drift（node.exe / 用户可写）→ COMMAND_MISMATCH', () => {
+    const parsed = parseWakeTaskQueryXml(trustedXml({ command: 'D:\\nodejs\\node.exe' }));
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('COMMAND_MISMATCH');
   });
 
-  it('detectWakeTaskStale：repo 移动 / node 变化 → stale', () => {
-    const parsed = parseWakeTaskQueryXml(xmlWithOverrides({}));
-    expect(detectWakeTaskStale(parsed, { nodeExecutable: NODE, wakeBridgePath: BRIDGE })).toBe(false);
-    expect(detectWakeTaskStale(parsed, { nodeExecutable: 'D:\\other\\node.exe', wakeBridgePath: BRIDGE })).toBe(true);
-    expect(detectWakeTaskStale(parsed, { nodeExecutable: NODE, wakeBridgePath: 'D:\\old\\bridge.mjs' })).toBe(true);
+  it('arguments drift → ARGUMENTS_MISMATCH', () => {
+    const parsed = parseWakeTaskQueryXml(trustedXml({ args: '127.0.0.1 -n 999999' }));
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('ARGUMENTS_MISMATCH');
+  });
+
+  it('WakeToRun=false → WAKE_TO_RUN_MISMATCH', () => {
+    const xml = trustedXml().replace('<WakeToRun>true</WakeToRun>', '<WakeToRun>false</WakeToRun>');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('WAKE_TO_RUN_MISMATCH');
+  });
+
+  it('StartWhenAvailable=true → START_WHEN_AVAILABLE_MISMATCH', () => {
+    const xml = trustedXml().replace('<StartWhenAvailable>false</StartWhenAvailable>', '<StartWhenAvailable>true</StartWhenAvailable>');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('START_WHEN_AVAILABLE_MISMATCH');
+  });
+
+  it('MultipleInstancesPolicy 漂移 → MULTIPLE_INSTANCE_MISMATCH', () => {
+    const xml = trustedXml().replace('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>', '<MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('MULTIPLE_INSTANCE_MISMATCH');
+  });
+
+  it('battery flags=true → BATTERY_POLICY_MISMATCH', () => {
+    const xml = trustedXml().replace('<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>', '<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('BATTERY_POLICY_MISMATCH');
+  });
+
+  it('LogonType 漂移 → PRINCIPAL_MISMATCH', () => {
+    const xml = trustedXml().replace('<LogonType>InteractiveToken</LogonType>', '<LogonType>Password</LogonType>');
+    const parsed = parseWakeTaskQueryXml(xml);
+    expect(computeWakeTaskMismatches(parsed, { systemRoot: SYSTEM_ROOT })).toContain('PRINCIPAL_MISMATCH');
   });
 });
 
 describe('runWakeTaskCommand — enable', () => {
-  it('从后端 active schedule 取 dailyAt 注册，绝不含 secret，wakeAt = dailyAt - 2min', async () => {
-    const fetchJson: FetchJson = vi.fn(async (path: string) => {
-      if (path === '/daily-search-plans') {
-        return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
-      }
-      if (path === '/daily-search-plans/p1') {
-        return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
-      }
-      return {};
-    });
+  const activePlanFetch: FetchJson = vi.fn(async (path: string) => {
+    if (path === '/daily-search-plans') {
+      return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+    }
+    return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+  });
+
+  it('注册 action = System32 ping.exe + 有界 hold，wakeAt = 08:58，绝不含 node/secret', async () => {
     const { executor, calls } = captureSchtasks();
-    const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson, schtasksExecutor: executor }));
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson: activePlanFetch, schtasksExecutor: executor }));
     expect(result.ok).toBe(true);
     expect(result.wakeAt).toBe('08:58');
     expect(result.dailyAt).toBe('09:00');
-    expect(result.command).toBe(`"${NODE}" "${BRIDGE}"`);
-    expect(result.taskName).toBe(WAKE_TASK_NAME);
+    expect(result.command).toBe(PING);
+    expect(result.arguments).toBe(HOLD_ARGS);
+    expect(result.command).not.toMatch(/node\.exe|cmd\.exe|powershell\.exe/i);
     expect(result.xml).toContain('<WakeToRun>true</WakeToRun>');
-    expect(result.command).not.toMatch(/TAVILY|DEEPSEEK|SECRET|API_KEY/i);
+    expect(result.xml).not.toMatch(/node\.exe|\.mjs|TAVILY|DEEPSEEK|SECRET|API_KEY/i);
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe('/Create');
     expect(calls[0]).toContain('/XML');
   });
 
-  it('enable 经唯一 writeXmlFile 写盘（UTF-16 helper 可落盘），且临时 XML 清理不回归', async () => {
-    const fetchJson: FetchJson = vi.fn(async (path: string) => {
-      if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
-      return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
-    });
+  it('enable 经唯一 writeXmlFile 写盘，且临时 XML 清理不回归', async () => {
     const writeXmlFile = vi.fn((_xml: string) => 'C:\\temp\\wake.xml');
     const removeXmlFile = vi.fn();
     const { executor, calls } = captureSchtasks();
-    const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson, schtasksExecutor: executor, writeXmlFile, removeXmlFile }));
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson: activePlanFetch, schtasksExecutor: executor, writeXmlFile, removeXmlFile }));
     expect(result.ok).toBe(true);
-    // 唯一写盘入口：writeXmlFile 恰好调用一次，收到完整 frozen xml（UTF-16 declaration）。
     expect(writeXmlFile).toHaveBeenCalledTimes(1);
     const writtenXml = writeXmlFile.mock.calls[0][0];
     expect(writtenXml).toContain('<?xml version="1.0" encoding="UTF-16"?>');
-    // 该 xml 经唯一 encoding helper 落盘后是 UTF-16LE + BOM（不是 UTF-8 字节）。
     const buf = encodeTaskXmlForWindows(writtenXml);
     expect(buf[0]).toBe(0xff);
     expect(buf[1]).toBe(0xfe);
-    // 临时 XML 清理照常执行，且路径与 schtasks /Create 使用的临时文件路径一致。
     expect(removeXmlFile).toHaveBeenCalledWith('C:\\temp\\wake.xml');
     expect(calls[0]).toContain('C:\\temp\\wake.xml');
   });
 
-  it('无 active plan → NO_ACTIVE_PLAN，不调用 schtasks', async () => {
+  it('无 active plan / paused → NO_ACTIVE_PLAN，0 次 schtasks mutation', async () => {
     const fetchJson: FetchJson = vi.fn(async () => ({ plans: [] }));
     const { executor, calls } = captureSchtasks();
     const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson, schtasksExecutor: executor }));
@@ -426,12 +444,8 @@ describe('runWakeTaskCommand — enable', () => {
   });
 
   it('schtasks 返回非零 → SCHTASKS_ERROR', async () => {
-    const fetchJson: FetchJson = vi.fn(async (path: string) => {
-      if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
-      return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
-    });
     const executor: SchtasksExecutor = vi.fn(() => ({ status: 1, stdout: '', stderr: 'access denied' }));
-    const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson, schtasksExecutor: executor }));
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ fetchJson: activePlanFetch, schtasksExecutor: executor }));
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('SCHTASKS_ERROR');
     expect(result.stderr).toBe('access denied');
@@ -464,17 +478,6 @@ describe('runWakeTaskCommand — status', () => {
     return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
   });
 
-  function currentXml(dailyAt = '09:00', nodeExecutable = NODE, bridgePath = BRIDGE) {
-    return buildWakeTaskXml({
-      taskName: WAKE_TASK_NAME,
-      description: buildWakeTaskDescription({ dailyAt, timezone: 'Asia/Shanghai' }),
-      nodeExecutable,
-      wakeBridgePath: bridgePath,
-      workingDirectory: REPO_ROOT,
-      startBoundary: '2026-08-16T08:58:00',
-    });
-  }
-
   it('task 不存在 → absent', async () => {
     const executor: SchtasksExecutor = vi.fn(() => ({ status: 1, stdout: '', stderr: '' }));
     const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor }));
@@ -482,19 +485,18 @@ describe('runWakeTaskCommand — status', () => {
     expect(result.status).toBe('absent');
   });
 
-  it('task 已注册 + 设置正确 + schedule 与 active plan 一致 → current', async () => {
-    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00'), stderr: '' }));
+  it('真实 schedule current（contract 全对 + schedule 一致）→ status=current，无 reason', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: trustedXml(), stderr: '' }));
     const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson: activePlanFetch }));
     expect(result.status).toBe('current');
-    expect(result.settings?.allVerified).toBe(true);
-    expect(result.commandDrift).toBe(false);
+    expect(result.staleReasonCodes).toEqual([]);
     expect(result.scheduleDrift).toBe(false);
     expect(result.requiresElevatedReconciliation).toBe(false);
-    expect(result.command).toBe(NODE);
+    expect(result.command).toBe(PING);
   });
 
-  it('schedule drift（configured 09:00 vs active 10:00）→ stale + 需提权 reconcile', async () => {
-    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00'), stderr: '' }));
+  it('schedule drift（configured 09:00 vs active 10:00）→ stale + SCHEDULE_MISMATCH', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: trustedXml(), stderr: '' }));
     const fetchJson: FetchJson = vi.fn(async (path: string) => {
       if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
       return { activeVersion: { id: 'v1', schedule: { dailyAt: '10:00', timezone: 'Asia/Shanghai' } } };
@@ -502,39 +504,49 @@ describe('runWakeTaskCommand — status', () => {
     const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson }));
     expect(result.status).toBe('stale');
     expect(result.scheduleDrift).toBe(true);
+    expect(result.staleReasonCodes).toContain('SCHEDULE_MISMATCH');
     expect(result.requiresElevatedReconciliation).toBe(true);
   });
 
-  it('command drift（node.exe 变化）→ stale + 需提权 reconcile', async () => {
-    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00', 'D:\\old\\node.exe'), stderr: '' }));
+  it('command drift（node.exe）→ stale + COMMAND_MISMATCH', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: trustedXml({ command: 'D:\\nodejs\\node.exe' }), stderr: '' }));
     const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson: activePlanFetch }));
     expect(result.status).toBe('stale');
-    expect(result.commandDrift).toBe(true);
+    expect(result.staleReasonCodes).toContain('COMMAND_MISMATCH');
     expect(result.requiresElevatedReconciliation).toBe(true);
   });
 
-  it('旧 task 无配置 marker → stale（无法证明 current，需 re-bootstrap）', async () => {
-    const xml = buildWakeTaskXml({
-      taskName: WAKE_TASK_NAME,
-      description: 'legacy description without marker',
-      nodeExecutable: NODE,
-      wakeBridgePath: BRIDGE,
-      workingDirectory: REPO_ROOT,
-      startBoundary: '2026-08-16T08:58:00',
-    });
-    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: xml, stderr: '' }));
+  it('旧 task 无配置 marker → stale + METADATA_MISMATCH', async () => {
+    const executor: SchtasksExecutor = vi.fn(() => ({
+      status: 0,
+      stdout: trustedXml({ description: 'legacy description without marker' }),
+      stderr: '',
+    }));
     const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson: activePlanFetch }));
     expect(result.status).toBe('stale');
+    expect(result.staleReasonCodes).toContain('METADATA_MISMATCH');
     expect(result.requiresElevatedReconciliation).toBe(true);
   });
 
   it('后端不可达 → registered（降级只读，不臆断 current/stale）', async () => {
-    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: currentXml('09:00'), stderr: '' }));
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: trustedXml(), stderr: '' }));
     const fetchJson: FetchJson = vi.fn(async () => { throw new Error('ECONNREFUSED'); });
     const result = await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson }));
     expect(result.status).toBe('registered');
     expect(result.scheduleDrift).toBeNull();
     expect(result.requiresElevatedReconciliation).toBe(false);
+  });
+
+  it('Wake Task 不调用 Run Now（status/enable 绝不 fetch /run-now）', async () => {
+    const fetchCalls: string[] = [];
+    const fetchJson: FetchJson = vi.fn(async (path: string) => {
+      fetchCalls.push(path);
+      if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+      return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+    });
+    const executor: SchtasksExecutor = vi.fn(() => ({ status: 0, stdout: trustedXml(), stderr: '' }));
+    await runWakeTaskCommand(['status'], baseDeps({ schtasksExecutor: executor, fetchJson }));
+    expect(fetchCalls.some((p) => p.includes('run-now'))).toBe(false);
   });
 });
 
@@ -554,7 +566,6 @@ describe('Windows 提权检测（elevation detector）', () => {
   });
 
   it('中文/乱码组名但 SID 正确 → 正确判定', () => {
-    // 模拟真实 whoami CSV：组名是 GBK 乱码，SID 仍是 ASCII。
     const garbled = '"BUILTIN\\��������Ա","����","S-1-5-32-544","ֻ���ھܾ�����"\n'
       + '"Mandatory Label\\Medium Mandatory Level","��ǩ","S-1-16-8192",""';
     expect(parseElevationOutput(garbled)).toBe(ELEVATION_NOT_ELEVATED);
@@ -577,7 +588,6 @@ describe('Windows 提权检测（elevation detector）', () => {
   });
 
   it('High integrity 即使不解析 Administrators 文本 → elevated', () => {
-    // 不含 "Administrators" 字样，仅凭 S-1-16-12288 判定。
     expect(parseElevationOutput(csv('"A","B","S-1-16-12288",""'))).toBe(ELEVATION_ELEVATED);
   });
 
@@ -624,6 +634,11 @@ describe('Windows 提权检测（elevation detector）', () => {
 });
 
 describe('runWakeTaskCommand — 提权门禁（ELEVATION_REQUIRED / ELEVATION_CHECK_FAILED）', () => {
+  const activePlanFetch: FetchJson = vi.fn(async (path: string) => {
+    if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
+    return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
+  });
+
   it('enable 非提权 → ELEVATION_REQUIRED，0 次 schtasks mutation', async () => {
     const { executor, calls } = captureSchtasks();
     const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => ELEVATION_NOT_ELEVATED, schtasksExecutor: executor }));
@@ -664,12 +679,8 @@ describe('runWakeTaskCommand — 提权门禁（ELEVATION_REQUIRED / ELEVATION_C
   });
 
   it('enable 提权（elevated）→ 进入 create path（1 次 schtasks /Create）', async () => {
-    const fetchJson: FetchJson = vi.fn(async (path: string) => {
-      if (path === '/daily-search-plans') return { plans: [{ id: 'p1', status: 'active', activeVersionId: 'v1' }] };
-      return { activeVersion: { id: 'v1', schedule: { dailyAt: '09:00', timezone: 'Asia/Shanghai' } } };
-    });
     const { executor, calls } = captureSchtasks();
-    const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => ELEVATION_ELEVATED, fetchJson, schtasksExecutor: executor }));
+    const result = await runWakeTaskCommand(['enable'], baseDeps({ isElevated: () => ELEVATION_ELEVATED, fetchJson: activePlanFetch, schtasksExecutor: executor }));
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0][0]).toBe('/Create');
@@ -720,12 +731,20 @@ describe('resolveWakeScheduleFromBackend', () => {
   });
 });
 
-describe('冻结常量', () => {
+describe('冻结常量（privilege boundary hardening）', () => {
   it('WAKE_TASK_MUTATION_FROM_SERVER = FORBIDDEN（backend 绝不 mutation wake task）', () => {
     expect(WAKE_TASK_MUTATION_FROM_SERVER).toBe('FORBIDDEN');
   });
 
-  it('hold-awake 窗口为有界 10 分钟', () => {
-    expect(DEFAULT_HOLD_AWAKE_WINDOW_MS).toBe(10 * 60 * 1000);
+  it('hold 窗口为有界 5 分钟，绝不无限运行', () => {
+    expect(WAKE_HOLD_DURATION_MS).toBe(5 * 60 * 1000);
+    expect(WAKE_HOLD_PING_COUNT).toBeGreaterThan(0);
+    expect(WAKE_HOLD_PING_COUNT).toBeLessThanOrEqual(600);
+  });
+
+  it('新的安全验收口径（Builtin Administrator 实际 elevated 下的 least-attack-surface）', () => {
+    expect(TASK_EXECUTION_MAY_BE_ELEVATED).toBe('YES');
+    expect(TASK_ACTION_TRUST_BOUNDARY).toBe('WINDOWS_SYSTEM32_ONLY');
+    expect(USER_WRITABLE_CODE_EXECUTED).toBe('NO');
   });
 });
