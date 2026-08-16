@@ -1,11 +1,25 @@
 /** runLease.spec.ts —— Run Lease 获取/释放/并发/stale/所有权测试 */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { acquireRunLease, releaseRunLease, readRunLease, updateHeartbeat, setWriter, getWriter } from './runLease';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  acquireRunLease,
+  releaseRunLease,
+  readRunLease,
+  updateHeartbeat,
+  setWriter,
+  getWriter,
+  getWriterAssignment,
+} from './runLease';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { WriterAssignment } from './types';
 
 const FIXTURE_CWD = path.join(__dirname, '..', '..', '.cc-auto-test-lease');
 const FIXTURE_FP = 'a'.repeat(64);
+const GPT_WRITER: WriterAssignment = {
+  executionRole: 'FAST_EXECUTOR',
+  profileId: 'gpt-writer-profile',
+  providerIdentifier: 'openai',
+};
 
 function cleanLockFile() {
   try { rmSync(path.join(FIXTURE_CWD, '.cc-auto', 'run-lock.json'), { force: true }); } catch { /* ok */ }
@@ -23,6 +37,7 @@ describe('acquireRunLease', () => {
     const result = acquireRunLease(FIXTURE_CWD, 'run-1', FIXTURE_FP);
     expect(result.ok).toBe(true);
     expect(result.lease!.writer).toBe('none');
+    expect(result.lease!.writerAssignment).toBeNull();
     expect(result.lease!.runId).toBe('run-1');
     expect(result.lease!.worktreeFingerprintAtStart).toBe(FIXTURE_FP);
   });
@@ -113,15 +128,52 @@ describe('acquireRunLease', () => {
 
   it('sets and reads writer with ownership check', () => {
     acquireRunLease(FIXTURE_CWD, 'run-1', FIXTURE_FP);
-    setWriter(FIXTURE_CWD, 'run-1', 'deepseek');
-    expect(getWriter(FIXTURE_CWD)).toBe('deepseek');
-    setWriter(FIXTURE_CWD, 'run-1', 'none');
+    expect(setWriter(FIXTURE_CWD, 'run-1', GPT_WRITER)).toBe(true);
+    expect(getWriter(FIXTURE_CWD)).toBe('assigned');
+    expect(getWriterAssignment(FIXTURE_CWD)).toEqual(GPT_WRITER);
+    expect(setWriter(FIXTURE_CWD, 'run-1', null)).toBe(true);
     expect(getWriter(FIXTURE_CWD)).toBe('none');
+    expect(getWriterAssignment(FIXTURE_CWD)).toBeNull();
   });
 
   it('does not set writer for wrong runId', () => {
     acquireRunLease(FIXTURE_CWD, 'run-1', FIXTURE_FP);
-    setWriter(FIXTURE_CWD, 'run-wrong', 'deepseek');
+    expect(setWriter(FIXTURE_CWD, 'run-wrong', GPT_WRITER)).toBe(false);
     expect(getWriter(FIXTURE_CWD)).toBe('none'); // unchanged
+  });
+
+  it('rejects a non-writer execution role', () => {
+    acquireRunLease(FIXTURE_CWD, 'run-1', FIXTURE_FP);
+    const invalid = {
+      executionRole: 'ARBITER',
+      profileId: 'arbiter-profile',
+      providerIdentifier: 'provider-x',
+    } as unknown as WriterAssignment;
+    expect(setWriter(FIXTURE_CWD, 'run-1', invalid)).toBe(false);
+    expect(getWriter(FIXTURE_CWD)).toBe('none');
+  });
+
+  it('normalizes legacy writer=deepseek in memory without rewriting the lease', () => {
+    const lockPath = path.join(FIXTURE_CWD, '.cc-auto', 'run-lock.json');
+    const legacyRaw = JSON.stringify({
+      runId: 'run-legacy',
+      pid: process.pid,
+      repositoryRoot: path.resolve(FIXTURE_CWD).replace(/\\/g, '/'),
+      acquiredAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      worktreeFingerprintAtStart: FIXTURE_FP,
+      writer: 'deepseek',
+    }, null, 2);
+    writeFileSync(lockPath, legacyRaw, 'utf8');
+
+    expect(readRunLease(FIXTURE_CWD)).toMatchObject({
+      writer: 'assigned',
+      writerAssignment: {
+        executionRole: 'WRITER',
+        profileId: 'legacy-deepseek',
+        providerIdentifier: 'deepseek',
+      },
+    });
+    expect(readFileSync(lockPath, 'utf8')).toBe(legacyRaw);
   });
 });

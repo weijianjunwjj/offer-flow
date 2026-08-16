@@ -16,7 +16,7 @@ import {
   setWriter,
   readRunLease,
 } from './runLease';
-import type { FileScope } from './types';
+import type { FileScope, WriterAssignment } from './types';
 import {
   mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync, existsSync,
   mkdtempSync, openSync, closeSync, unlinkSync, renameSync, chmodSync,
@@ -72,6 +72,16 @@ let junctionSupported = false;
 
 let TEST_CWD: string;
 const RUN_ID = 'run-test-1d';
+const FAST_GPT_WRITER: WriterAssignment = {
+  executionRole: 'FAST_EXECUTOR',
+  profileId: 'gpt-fast-profile',
+  providerIdentifier: 'openai',
+};
+const STRONG_GROK_WRITER: WriterAssignment = {
+  executionRole: 'STRONG_EXECUTOR',
+  profileId: 'grok-strong-profile',
+  providerIdentifier: 'xai',
+};
 
 function makeScope(overrides: Partial<FileScope> = {}): FileScope {
   return {
@@ -84,7 +94,7 @@ function makeScope(overrides: Partial<FileScope> = {}): FileScope {
   };
 }
 
-function setupLease(writer: 'none' | 'deepseek' = 'deepseek'): void {
+function setupLease(writer: WriterAssignment | null = FAST_GPT_WRITER): void {
   const result = acquireRunLease(TEST_CWD, RUN_ID, 'a'.repeat(64));
   if (result.ok) setWriter(TEST_CWD, RUN_ID, writer);
 }
@@ -236,7 +246,7 @@ describe('compareFileIdentity', () => {
 // authorizeWorkspaceWrite — path validation
 // ============================================================================
 describe('authorizeWorkspaceWrite — path validation', () => {
-  beforeEach(() => setupLease('deepseek'));
+  beforeEach(() => setupLease());
 
   it('authorizes approved normal file', () => {
     const r = authorizeWorkspaceWrite(writeOpts('src/test.txt'));
@@ -313,25 +323,53 @@ describe('authorizeWorkspaceWrite — writer & lease', () => {
     if (!r.ok) expect(r.reason).toBe('RUN_LEASE_MISSING');
   });
   it('rejects runId mismatch', () => {
-    setupLease('deepseek');
+    setupLease();
     const r = authorizeWorkspaceWrite(writeOpts('src/test.txt', { runId: 'run-wrong' }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('RUN_LEASE_MISMATCH');
   });
   it('rejects repo root mismatch', () => {
-    setupLease('deepseek');
+    setupLease();
     const r = authorizeWorkspaceWrite(writeOpts('src/test.txt', { repositoryRoot: '/wrong/root' }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('REPOSITORY_ROOT_MISMATCH');
   });
   it('rejects writer=none', () => {
-    setupLease('none');
+    setupLease(null);
     const r = authorizeWorkspaceWrite(writeOpts('src/test.txt'));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe('WRITER_NOT_DEEPSEEK');
+    if (!r.ok) expect(r.reason).toBe('WRITER_NOT_ASSIGNED');
   });
-  it('accepts writer=deepseek', () => {
-    setupLease('deepseek');
+  it.each([FAST_GPT_WRITER, STRONG_GROK_WRITER])(
+    'accepts any authorized Writer assignment without provider-name checks',
+    (assignment) => {
+      setupLease(assignment);
+      expect(authorizeWorkspaceWrite(writeOpts('src/test.txt')).ok).toBe(true);
+    },
+  );
+  it('does not authorize a non-Writer execution role', () => {
+    const result = acquireRunLease(TEST_CWD, RUN_ID, 'a'.repeat(64));
+    expect(result.ok).toBe(true);
+    expect(setWriter(TEST_CWD, RUN_ID, {
+      executionRole: 'ARBITER',
+      profileId: 'arbiter-profile',
+      providerIdentifier: 'provider-x',
+    } as unknown as WriterAssignment)).toBe(false);
+    const authorization = authorizeWorkspaceWrite(writeOpts('src/test.txt'));
+    expect(authorization.ok).toBe(false);
+    if (!authorization.ok) expect(authorization.reason).toBe('WRITER_NOT_ASSIGNED');
+  });
+  it('authorizes a legacy deepseek lease through tolerant read normalization', () => {
+    const lockPath = path.join(TEST_CWD, '.cc-auto', 'run-lock.json');
+    writeFileSync(lockPath, JSON.stringify({
+      runId: RUN_ID,
+      pid: process.pid,
+      repositoryRoot: path.resolve(TEST_CWD).replace(/\\/g, '/'),
+      acquiredAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      worktreeFingerprintAtStart: 'a'.repeat(64),
+      writer: 'deepseek',
+    }, null, 2), 'utf8');
     expect(authorizeWorkspaceWrite(writeOpts('src/test.txt')).ok).toBe(true);
   });
 });
@@ -343,7 +381,7 @@ describe('authorizeWorkspaceWrite — symlink', () => {
     const l = path.join(TEST_CWD, 'src', 'symlink.txt');
     symlinkSync(t, l, 'file');
     const s = makeScope({ approvedFiles: ['src/symlink.txt'] });
-    setupLease('deepseek');
+    setupLease();
     const r = authorizeWorkspaceWrite(writeOpts('src/symlink.txt', { fileScope: s }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('SYMLINK_ESCAPE');
@@ -356,7 +394,7 @@ describe('authorizeWorkspaceWrite — symlink', () => {
     const linkDir = path.join(TEST_CWD, 'src', 'link-dir');
     symlinkSync(realDir, linkDir, 'dir');
     const s = makeScope({ approvedFiles: ['src/link-dir/file.txt'] });
-    setupLease('deepseek');
+    setupLease();
     expect(authorizeWorkspaceWrite(writeOpts('src/link-dir/file.txt', { fileScope: s })).ok).toBe(false);
   });
 
@@ -367,7 +405,7 @@ describe('authorizeWorkspaceWrite — symlink', () => {
     symlinkSync(out, l, 'file');
     try {
       const s = makeScope({ approvedFiles: ['src/esc.txt'] });
-      setupLease('deepseek');
+      setupLease();
       const r = authorizeWorkspaceWrite(writeOpts('src/esc.txt', { fileScope: s }));
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.reason).toBe('SYMLINK_ESCAPE');
@@ -380,7 +418,7 @@ describe('authorizeWorkspaceWrite — symlink', () => {
     const l = path.join(TEST_CWD, 'src', 'inside-link.txt');
     symlinkSync(t, l, 'file');
     const s = makeScope({ approvedFiles: ['src/inside-link.txt'] });
-    setupLease('deepseek');
+    setupLease();
     const r = authorizeWorkspaceWrite(writeOpts('src/inside-link.txt', { fileScope: s }));
     expect(r.ok).toBe(false);
   });
@@ -400,7 +438,7 @@ describe('dual authorization — junction / symlink', () => {
 
     try {
       const s = makeScope({ approvedFiles: ['src/j-out/secret.txt'] });
-      setupLease('deepseek');
+      setupLease();
       const r = authorizeWorkspaceWrite(writeOpts('src/j-out/secret.txt', { fileScope: s }));
       // Should be rejected because resolved path is outside repo
       expect(r.ok).toBe(false);
@@ -422,7 +460,7 @@ describe('dual authorization — junction / symlink', () => {
     symlinkSync(realDir, jLink, 'junction');
 
     const s = makeScope({ approvedFiles: ['src/j-link/data.ts'] });
-    setupLease('deepseek');
+    setupLease();
     const r = authorizeWorkspaceWrite(writeOpts('src/j-link/data.ts', { fileScope: s }));
     // resolved (src/real-dir/data.ts) != requested (src/j-link/data.ts) → rejected
     expect(r.ok).toBe(false);
@@ -442,7 +480,7 @@ describe('dual authorization — junction / symlink', () => {
 
     // Approve src/j/schema.ts (this is what the attacker requests)
     const s = makeScope({ approvedFiles: ['src/j/schema.ts'] });
-    setupLease('deepseek');
+    setupLease();
     const r = authorizeWorkspaceWrite(writeOpts('src/j/schema.ts', { fileScope: s }));
     // resolved → server/schema.ts ≠ requested → rejected
     // Either SYMLINK_ESCAPE (requested/resolved mismatch) or SYSTEM_PROTECTED_PATH
@@ -468,7 +506,7 @@ describe('dual authorization — junction / symlink', () => {
     symlinkSync(gitDir, jLink, 'junction');
 
     const s = makeScope({ approvedFiles: ['src/j-git/config'] });
-    setupLease('deepseek');
+    setupLease();
     const r = authorizeWorkspaceWrite(writeOpts('src/j-git/config', { fileScope: s }));
     expect(r.ok).toBe(false);
     // Either SYMLINK_ESCAPE (junction) or SYSTEM_PROTECTED_PATH (.git is protected)
@@ -479,7 +517,7 @@ describe('dual authorization — junction / symlink', () => {
 // safeWriteWorkspaceFile — production function tests
 // ============================================================================
 describe('safeWriteWorkspaceFile', () => {
-  beforeEach(() => setupLease('deepseek'));
+  beforeEach(() => setupLease());
 
   // 1. Production Safe Write creates new file successfully
   it('creates new file with wx', () => {
@@ -520,7 +558,7 @@ describe('safeWriteWorkspaceFile', () => {
     try {
       // Set up lease at the cwd
       acquireRunLease(cwdRace, RUN_ID, 'a'.repeat(64));
-      setWriter(cwdRace, RUN_ID, 'deepseek');
+      setWriter(cwdRace, RUN_ID, FAST_GPT_WRITER);
 
       // Create the parent dir
       mkdirSync(path.join(raceDir, 'sub'), { recursive: true });
@@ -698,7 +736,7 @@ describe('wx O_EXCL behavior', () => {
 // ============================================================================
 describe('safeEditWorkspaceFile', () => {
   beforeEach(() => {
-    setupLease('deepseek');
+    setupLease();
     writeFileSync(path.join(TEST_CWD, 'src', 'edit-target.txt'), 'line 1\nline 2\nHello world\nline 4\n', 'utf8');
   });
 
@@ -771,7 +809,7 @@ describe('safeEditWorkspaceFile', () => {
   });
   it('rejects nonexistent file', () => {
     const s = makeScope({ approvedFiles: ['src/nonexistent.txt'] });
-    setupLease('deepseek');
+    setupLease();
     const r = safeEditWorkspaceFile(editOpts('src/nonexistent.txt', 'foo', 'bar', { fileScope: s }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('EDIT_TARGET_NOT_FOUND');

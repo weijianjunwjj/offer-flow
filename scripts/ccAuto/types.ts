@@ -135,7 +135,20 @@ export type RunPhase =
 
 export type LaunchStrategy = 'deepseek-first' | 'opus-plan-first';
 
-export type WriterRole = 'none' | 'deepseek';
+/** Writer authorization state is independent from the selected Provider brand. */
+export type WriterRole = 'none' | 'assigned';
+
+export type ModelProfileId = string;
+export type ProviderIdentifier = string;
+
+/** ARBITER is intentionally excluded from write authorization. */
+export type WriterExecutionRole = 'WRITER' | Exclude<ExecutionModelRole, 'ARBITER'>;
+
+export interface WriterAssignment {
+  executionRole: WriterExecutionRole;
+  profileId: ModelProfileId;
+  providerIdentifier: ProviderIdentifier;
+}
 
 // === Provider 与模型身份 ===
 
@@ -204,6 +217,7 @@ export interface RunLease {
   heartbeatAt: string;
   worktreeFingerprintAtStart: string;
   writer: WriterRole;
+  writerAssignment: WriterAssignment | null;
 }
 
 // === HUMAN_GATE ===
@@ -606,7 +620,7 @@ export type ToolExecutionErrorReason =
   | 'UNKNOWN_TOOL'
   | 'WRITE_PERMISSION_DENIED'
   | 'FILE_NOT_APPROVED'
-  | 'WRITER_NOT_DEEPSEEK'
+  | 'WRITER_NOT_ASSIGNED'
   | 'EDIT_TARGET_NOT_FOUND'
   | 'EDIT_TARGET_NOT_UNIQUE'
   | 'OLD_TEXT_EMPTY'

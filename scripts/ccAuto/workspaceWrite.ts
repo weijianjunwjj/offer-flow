@@ -1,6 +1,6 @@
 /** cc-auto v0.2.0 Slice 1D — 工作区安全写入执行点。
  *
- * 本模块提供后续 DeepSeek Tool Loop 所需的文件写入权限内核：
+ * 本模块提供 Writer Tool Loop 所需的文件写入权限内核：
  * - authorizeWorkspaceWrite：写入前多层授权检查（PROTECTED_PATH 不可绕过）
  * - 双重授权：requested path → resolved realpath 都须通过 FileScope
  * - openExistingRegularFileSecurely：非截断安全打开 + bigint dev/ino 身份验证
@@ -49,7 +49,7 @@ export type WorkspaceWriteDenyReason =
   | 'RUN_LEASE_MISSING'
   | 'RUN_LEASE_MISMATCH'
   | 'REPOSITORY_ROOT_MISMATCH'
-  | 'WRITER_NOT_DEEPSEEK'
+  | 'WRITER_NOT_ASSIGNED'
   | 'SYMLINK_ESCAPE'
   | 'TARGET_NOT_REGULAR_FILE'
   | 'FILE_IDENTITY_UNVERIFIABLE'
@@ -127,8 +127,8 @@ export function authorizeWorkspaceWrite(
     return { ok: false, reason: 'REPOSITORY_ROOT_MISMATCH', message: `repositoryRoot 不匹配` };
   }
 
-  if (lease.writer !== 'deepseek') {
-    return { ok: false, reason: 'WRITER_NOT_DEEPSEEK', message: `writer 为 "${lease.writer}"，需要 deepseek` };
+  if (lease.writer !== 'assigned' || lease.writerAssignment === null) {
+    return { ok: false, reason: 'WRITER_NOT_ASSIGNED', message: '当前 Run Lease 没有正式授权的 Writer' };
   }
 
   if (scopeNorm.approvedFiles.length > fileScope.maxChangedFiles) {

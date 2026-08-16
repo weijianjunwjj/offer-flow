@@ -570,8 +570,7 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
       deps.log(`Run Lease 获取失败：${leaseResult.reason} — ${leaseResult.detail}`);
       return finish(deps, state);
     }
-    setWriter(deps.cwd, state.runId, 'deepseek');
-    deps.log('Run Lease 已获取，writer=deepseek');
+    deps.log('Run Lease 已获取，writer=none');
 
     // P4: Capture per-file baseline BEFORE any model runs.
     // This allows us to later distinguish pre-existing dirty files (untouched by model)
@@ -872,9 +871,9 @@ export async function driveRoutedImplement(
     approvedFiles: [],
     maxChangedFiles: config.limits.maxChangedFiles,
   };
-  // Lease + writer already acquired at run level by driveStateMachine.
-  // Ensure writer is deepseek (safety check — lease ownership validated by setWriter).
-  setWriter(cwd, runId, 'deepseek');
+  // Lease is run-scoped, but Writer authorization is attempt-scoped. Discovery
+  // and arbitration must never inherit write permission from a previous attempt.
+  setWriter(cwd, runId, null);
 
   // --- 3. Determine which role to use ---
   // For REPAIR phases: use nextRoutedRole from state (set by VERIFY failure handler)
@@ -1093,6 +1092,17 @@ export async function driveRoutedImplement(
   deps.log(`FileScope 批准文件：${fileScope.approvedFiles.join(', ') || '（无候选文件）'}`);
 
   // --- 8. Write-capable Tool Loop ---
+  if (selection.role !== 'FAST_EXECUTOR' && selection.role !== 'STRONG_EXECUTOR') {
+    stop(state, 'PROVIDER_ERROR', `NON_WRITER_EXECUTION_ROLE:${selection.role}`);
+    return;
+  }
+  setWriter(cwd, runId, {
+    executionRole: selection.role,
+    profileId: selection.profileId,
+    providerIdentifier: selection.provider,
+  });
+  deps.log(`Writer 已授权：role=${selection.role}, profile=${selection.profileId}`);
+
   const executorContext = {
     profile: currentProfile,
     logicalModelName: selection.modelLogicalName,

@@ -364,7 +364,7 @@ function mapWriteDenyReason(reason: WorkspaceWriteDenyReason | string): ToolExec
     case 'RUN_LEASE_MISSING': return 'INTERNAL_ERROR';
     case 'RUN_LEASE_MISMATCH': return 'INTERNAL_ERROR';
     case 'REPOSITORY_ROOT_MISMATCH': return 'INTERNAL_ERROR';
-    case 'WRITER_NOT_DEEPSEEK': return 'WRITER_NOT_DEEPSEEK';
+    case 'WRITER_NOT_ASSIGNED': return 'WRITER_NOT_ASSIGNED';
     case 'SYMLINK_ESCAPE': return 'SYMLINK_DETECTED';
     case 'TARGET_NOT_REGULAR_FILE': return 'FILE_NOT_REGULAR_FILE';
     case 'FILE_IDENTITY_UNVERIFIABLE': return 'FILE_IDENTITY_UNVERIFIABLE';

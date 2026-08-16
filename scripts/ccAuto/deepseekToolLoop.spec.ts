@@ -36,6 +36,11 @@ const testProfile: ProviderProfile = {
   models: [{ logicalName: 'deepseek', requestedModelId: 'deepseek-chat', acceptedReportedModelIds: ['deepseek-chat'], displayName: 'DeepSeek Chat' }],
   pricing: { 'deepseek-chat': { inputPerMTokens: 1.0, outputPerMTokens: 2.0, cacheCreationPerMTokens: 1.25, cacheReadPerMTokens: 0.1, currency: 'CNY' as const, source: 'test', updatedAt: '2026-08-04' } },
 };
+const TEST_WRITER_ASSIGNMENT = {
+  executionRole: 'WRITER',
+  profileId: testProfile.id,
+  providerIdentifier: testProfile.vendor,
+} as const;
 
 beforeEach(() => {
   TEST_CWD = path.join(os.tmpdir(), `cc-auto-loop-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
@@ -127,7 +132,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-1turn', 'one turn', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -179,7 +184,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-2turn', 'two turns', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -241,7 +246,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-3turn', 'three turns', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -294,7 +299,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-recover', 'recover', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -342,7 +347,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-timeout', 'timeout', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -374,7 +379,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-mm', 'mismatch', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -394,7 +399,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     registry.register(new MockProviderAdapter('VERIFIED_SUCCESS'));
     const runId = createRunState(TEST_CWD, 'ps-1', 'pure state', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -424,7 +429,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'ps-empty', 'empty', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -455,7 +460,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'ps-max', 'max turns', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -508,7 +513,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-write-fail', 'write fail', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -549,7 +554,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-protected', 'protected', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -587,7 +592,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
 
     const runId = createRunState(TEST_CWD, 'int-maxturns', 'maxturns', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),
@@ -699,7 +704,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     const before = [...scope.approvedFiles];
     const runId = createRunState(TEST_CWD, 'ps-scope', 'scope', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: scope,
@@ -714,7 +719,7 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     registry.register(new MockProviderAdapter('VERIFIED_SUCCESS'));
     const runId = createRunState(TEST_CWD, 'ps-nogit', 'nogit', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId, fileScope: makeScope(),

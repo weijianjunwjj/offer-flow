@@ -11,10 +11,15 @@
  */
 import { existsSync, readFileSync, writeFileSync, closeSync, openSync, unlinkSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import type { RunLease, WriterRole } from './types';
+import type { RunLease, WriterAssignment, WriterExecutionRole, WriterRole } from './types';
 
 const LOCK_FILE = 'run-lock.json';
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const LEGACY_DEEPSEEK_WRITER_ASSIGNMENT: WriterAssignment = {
+  executionRole: 'WRITER',
+  profileId: 'legacy-deepseek',
+  providerIdentifier: 'deepseek',
+};
 
 /** 获取 Run Lease 的领域结果 */
 export interface AcquireLeaseResult {
@@ -48,7 +53,9 @@ export function acquireRunLease(
   if (existsSync(lockPath)) {
     let existing: RunLease;
     try {
-      existing = JSON.parse(readFileSync(lockPath, 'utf8')) as RunLease;
+      const parsed = normalizeRunLease(JSON.parse(readFileSync(lockPath, 'utf8')));
+      if (!parsed) throw new Error('INVALID_RUN_LEASE');
+      existing = parsed;
     } catch {
       return {
         ok: false,
@@ -99,6 +106,7 @@ export function acquireRunLease(
     heartbeatAt: new Date().toISOString(),
     worktreeFingerprintAtStart: worktreeFingerprint,
     writer: 'none',
+    writerAssignment: null,
   };
 
   try {
@@ -135,7 +143,9 @@ function checkOwnership(lockPath: string, runId: string, expectedRoot: string): 
 
   let lock: RunLease;
   try {
-    lock = JSON.parse(readFileSync(lockPath, 'utf8')) as RunLease;
+    const parsed = normalizeRunLease(JSON.parse(readFileSync(lockPath, 'utf8')));
+    if (!parsed) throw new Error('INVALID_RUN_LEASE');
+    lock = parsed;
   } catch {
     return { ok: false, reason: 'OWNERSHIP_MISMATCH', detail: 'Run Lease 文件损坏' };
   }
@@ -174,33 +184,44 @@ export function updateHeartbeat(cwd: string, runId: string): void {
   const check = checkOwnership(lockPath, runId, expectedRoot);
   if (!check.ok) return;
 
-  const lease = JSON.parse(readFileSync(lockPath, 'utf8')) as RunLease;
+  const lease = readLeaseFile(lockPath);
+  if (!lease) return;
   lease.heartbeatAt = new Date().toISOString();
   writeFileSync(lockPath, JSON.stringify(lease, null, 2), 'utf8');
 }
 
-/** 设置 writer——校验所有权后写入 */
-export function setWriter(cwd: string, runId: string, writer: WriterRole): void {
+/** 设置或清除正式 Writer assignment——校验所有权后写入。 */
+export function setWriter(
+  cwd: string,
+  runId: string,
+  assignment: WriterAssignment | null,
+): boolean {
   const lockPath = lockFilePath(cwd);
   const expectedRoot = normalize(path.resolve(cwd));
   const check = checkOwnership(lockPath, runId, expectedRoot);
-  if (!check.ok) return;
+  if (!check.ok) return false;
 
-  const lease = JSON.parse(readFileSync(lockPath, 'utf8')) as RunLease;
-  lease.writer = writer;
+  const normalizedAssignment = assignment === null
+    ? null
+    : normalizeWriterAssignment(assignment);
+  if (assignment !== null && normalizedAssignment === null) return false;
+
+  const lease = readLeaseFile(lockPath);
+  if (!lease) return false;
+  lease.writer = normalizedAssignment === null ? 'none' : 'assigned';
+  lease.writerAssignment = normalizedAssignment;
   writeFileSync(lockPath, JSON.stringify(lease, null, 2), 'utf8');
+  return true;
 }
 
 /** 获取当前 writer */
 export function getWriter(cwd: string): WriterRole {
-  const lockPath = lockFilePath(cwd);
-  if (!existsSync(lockPath)) return 'none';
-  try {
-    const lease = JSON.parse(readFileSync(lockPath, 'utf8')) as RunLease;
-    return lease.writer;
-  } catch {
-    return 'none';
-  }
+  return readRunLease(cwd)?.writer ?? 'none';
+}
+
+/** 获取当前 Writer 的审计身份；没有正式授权时返回 null。 */
+export function getWriterAssignment(cwd: string): WriterAssignment | null {
+  return readRunLease(cwd)?.writerAssignment ?? null;
 }
 
 /** 释放 Run Lease——校验所有权后删除 */
@@ -219,11 +240,7 @@ export function releaseRunLease(cwd: string, runId: string): void {
 export function readRunLease(cwd: string): RunLease | undefined {
   const lockPath = lockFilePath(cwd);
   if (!existsSync(lockPath)) return undefined;
-  try {
-    return JSON.parse(readFileSync(lockPath, 'utf8')) as RunLease;
-  } catch {
-    return undefined;
-  }
+  return readLeaseFile(lockPath);
 }
 
 /** 启动 heartbeat 定时器。返回 stop 函数用于清除。 */
@@ -272,4 +289,77 @@ function lockFilePath(cwd: string): string {
 
 function normalize(p: string): string {
   return path.resolve(p).replace(/\\/g, '/');
+}
+
+function readLeaseFile(lockPath: string): RunLease | undefined {
+  try {
+    return normalizeRunLease(JSON.parse(readFileSync(lockPath, 'utf8')));
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeRunLease(value: unknown): RunLease | undefined {
+  if (!isRecord(value)) return undefined;
+  if (
+    typeof value.runId !== 'string'
+    || typeof value.pid !== 'number'
+    || !Number.isSafeInteger(value.pid)
+    || typeof value.repositoryRoot !== 'string'
+    || typeof value.acquiredAt !== 'string'
+    || typeof value.heartbeatAt !== 'string'
+    || typeof value.worktreeFingerprintAtStart !== 'string'
+  ) return undefined;
+
+  let writer: WriterRole;
+  let writerAssignment: WriterAssignment | null;
+  if (value.writer === 'none') {
+    writer = 'none';
+    writerAssignment = null;
+  } else if (value.writer === 'assigned') {
+    writerAssignment = normalizeWriterAssignment(value.writerAssignment);
+    if (!writerAssignment) return undefined;
+    writer = 'assigned';
+  } else if (value.writer === 'deepseek') {
+    // Migration-free compatibility for legacy run-lock.json files. The file is
+    // not rewritten merely by reading it, and Provider identity remains audit-only.
+    writer = 'assigned';
+    writerAssignment = { ...LEGACY_DEEPSEEK_WRITER_ASSIGNMENT };
+  } else {
+    return undefined;
+  }
+
+  return {
+    runId: value.runId,
+    pid: value.pid,
+    repositoryRoot: value.repositoryRoot,
+    acquiredAt: value.acquiredAt,
+    heartbeatAt: value.heartbeatAt,
+    worktreeFingerprintAtStart: value.worktreeFingerprintAtStart,
+    writer,
+    writerAssignment,
+  };
+}
+
+function normalizeWriterAssignment(value: unknown): WriterAssignment | null {
+  if (!isRecord(value)) return null;
+  if (!isWriterExecutionRole(value.executionRole)) return null;
+  if (!isIdentityPart(value.profileId) || !isIdentityPart(value.providerIdentifier)) return null;
+  return {
+    executionRole: value.executionRole,
+    profileId: value.profileId,
+    providerIdentifier: value.providerIdentifier,
+  };
+}
+
+function isWriterExecutionRole(value: unknown): value is WriterExecutionRole {
+  return value === 'WRITER' || value === 'FAST_EXECUTOR' || value === 'STRONG_EXECUTOR';
+}
+
+function isIdentityPart(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

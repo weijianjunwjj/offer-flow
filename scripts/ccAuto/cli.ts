@@ -11,6 +11,7 @@ import { latestRunId, ccAutoRoot, loadRunState, isTaskSucceeded, StatePersistenc
 import { renderReport } from './report';
 import { resolveLocalPackageBin } from './localBin';
 import { runPreflight } from './preflight';
+import { loadProjectEnv } from '../../server/config/loadEnv';
 
 const CWD = process.cwd();
 const HOOK_SCRIPT_PATH = path.join('scripts', 'ccAuto', 'hookScript.cjs');
@@ -523,8 +524,28 @@ function handleStatePersistenceFailure(
   return { exitCode: 1 };
 }
 
+export interface CcAutoCliProcessDeps {
+  loadEnv: (rootDir?: string) => void;
+  handleCli: typeof runCli;
+}
+
+/**
+ * cc-auto 真实进程启动边界：先复用项目 env contract，再进入任何 CLI
+ * 参数处理、配置解析、Profile/Provider 初始化。测试可注入无 secret 的 seam。
+ */
+export async function runCcAutoCliProcess(
+  argv: string[] = process.argv,
+  cwd: string = CWD,
+  deps: Partial<CcAutoCliProcessDeps> = {},
+): ReturnType<typeof runCli> {
+  const loadEnv = deps.loadEnv ?? loadProjectEnv;
+  const handleCli = deps.handleCli ?? runCli;
+  loadEnv(cwd);
+  return handleCli(argv, cwd);
+}
+
 async function main(): Promise<void> {
-  const { exitCode } = await runCli(process.argv, CWD);
+  const { exitCode } = await runCcAutoCliProcess();
   process.exit(exitCode);
 }
 

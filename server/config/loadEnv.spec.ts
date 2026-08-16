@@ -161,6 +161,19 @@ describe('loadEnv · env root contract', () => {
       expect(process.env[A]).toBe('ambient');
     });
 
+    it('重复加载保持第一次加载结果，不重复覆盖 process.env', () => {
+      delete process.env[A];
+      writeFileSync(path.join(dir, '.env'), `${A}=from-base\n`);
+      writeFileSync(path.join(dir, '.env.local'), `${A}=from-local\n`);
+
+      loadProjectEnv(dir);
+      const firstLoadedValue = process.env[A];
+      loadProjectEnv(dir);
+
+      expect(firstLoadedValue).toBeDefined();
+      expect(process.env[A]).toBe(firstLoadedValue);
+    });
+
     it('server/.env 不再被读取', () => {
       mkdirSync(path.join(dir, 'server'), { recursive: true });
       writeFileSync(path.join(dir, 'server', '.env'), `${A}=server-value\n`);

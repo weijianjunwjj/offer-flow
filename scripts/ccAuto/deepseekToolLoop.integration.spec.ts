@@ -50,6 +50,11 @@ const testProfile: ProviderProfile = {
     },
   },
 };
+const TEST_WRITER_ASSIGNMENT = {
+  executionRole: 'WRITER',
+  profileId: testProfile.id,
+  providerIdentifier: testProfile.vendor,
+} as const;
 
 let TEST_CWD: string;
 let REPO_ROOT: string;
@@ -192,7 +197,7 @@ describe('integration: read → final', () => {
     const registry = createRegistry(fetch);
     const runId = createRunState(TEST_CWD, 'int-read-final', 'read → final', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const result = await runDeepSeekToolLoop({
       repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId,
@@ -245,7 +250,7 @@ describe('integration: read → edit → final', () => {
     const scope = makeScope({ approvedFiles: ['src/example.ts'] });
     const runId = createRunState(TEST_CWD, 'int-edit', 'read → edit → final', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch } = createFakeFetch(() => {
@@ -310,7 +315,7 @@ describe('integration: read → edit → final', () => {
     expect(result.status).toBe('COMPLETED');
     expect(result.summary.terminationReason).toBe('FINAL_RESPONSE');
 
-    // writer unchanged via Tool Loop (writer stays deepseek but Tool Loop doesn't change it)
+    // Writer assignment remains unchanged; the Tool Loop does not grant itself permission.
     // Check the scope wasn't mutated
     expect(scope.approvedFiles).toContain('src/example.ts');
   });
@@ -325,7 +330,7 @@ describe('integration: write → final', () => {
     const scope = makeScope({ approvedFiles: ['src/out.ts'] });
     const runId = createRunState(TEST_CWD, 'int-write', 'write → final', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
     // Ensure the initial commit exists for git diff to show changes against
     execSync('git commit --allow-empty -m "before-write"', { cwd: TEST_CWD, stdio: 'pipe' });
 
@@ -383,7 +388,7 @@ describe('integration: unauthorized edit', () => {
 
     const runId = createRunState(TEST_CWD, 'int-unauth', 'unauthorized', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let providerCalls = 0;
     const { fetch } = createFakeFetch(() => {
@@ -440,7 +445,7 @@ describe('integration: path escape', () => {
 
     const runId = createRunState(TEST_CWD, 'int-escape', 'path escape', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const { fetch } = createFakeFetch(() => {
       return chatResponse({
@@ -482,7 +487,7 @@ describe('integration: absolute path escape', () => {
 
     const runId = createRunState(TEST_CWD, 'int-abswin', 'abs path win', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const { fetch } = createFakeFetch(() => {
       return chatResponse({
@@ -518,7 +523,7 @@ describe('integration: absolute path escape', () => {
 
     const runId = createRunState(TEST_CWD, 'int-absposix', 'abs path posix', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const { fetch } = createFakeFetch(() => {
       return chatResponse({
@@ -597,7 +602,7 @@ describe('integration: oldText mismatch', () => {
 
     const runId = createRunState(TEST_CWD, 'int-otm', 'oldText mismatch', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let providerCalls = 0;
     const { fetch } = createFakeFetch(() => {
@@ -651,7 +656,7 @@ describe('integration: same-round A succeeds, B fails, C skipped', () => {
 
     const runId = createRunState(TEST_CWD, 'int-fail2', 'A ok B fail', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let providerCalls = 0;
     const { fetch } = createFakeFetch(() => {
@@ -696,7 +701,7 @@ describe('integration: permanent Provider error', () => {
   it('no retry on 400 parameter error', async () => {
     const runId = createRunState(TEST_CWD, 'int-400', 'permanent error', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const { fetch } = createFakeFetch(() => {
@@ -736,7 +741,7 @@ describe('integration: reasoning_content passthrough', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-reason', 'reasoning test', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch, requests } = createFakeFetch(() => {
@@ -790,7 +795,7 @@ describe('integration: tool result redaction', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-redact', 'redact test', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch, requests } = createFakeFetch(() => {
@@ -835,7 +840,7 @@ describe('integration: Provider timeout on second turn', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-r2timeout', 'round 2 timeout', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch } = createFakeFetch((_url, init) => {
@@ -891,7 +896,7 @@ describe('integration: total execution timeout', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-totalto', 'total timeout', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     // Always return tool_calls to force multiple turns
     let turn = 0;
@@ -932,7 +937,7 @@ describe('integration: identity mismatch', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-idm', 'identity mismatch', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const { fetch } = createFakeFetch(() => {
       return chatResponse({
@@ -972,7 +977,7 @@ describe('integration: repeated tool error', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-repeat', 'repeat error', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     // Same tool call each turn
     let turn = 0;
@@ -1015,7 +1020,7 @@ describe('integration: summary integrity', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-summary', 'summary', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     const { fetch } = createFakeFetch(() => {
       return chatResponse({ content: 'All done!' });
@@ -1055,7 +1060,7 @@ describe('integration: 429 retry → success', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-429', '429 retry', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1128,7 +1133,7 @@ describe('integration: 5xx retry → 5xx retry → success', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-5xx', '5xx retry', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1204,7 +1209,7 @@ describe('integration: retry exhaustion', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-rex', 'retry exhaustion', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1278,7 +1283,7 @@ describe('integration: transient transport → success', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-tte', 'transient transport', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1348,7 +1353,7 @@ describe('integration: transient transport exhaustion', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-ttex', 'transient transport exhaustion', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1403,7 +1408,7 @@ describe('integration: permanent non-transient transport', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-ntz', 'non-transient transport', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1454,7 +1459,7 @@ describe('integration: permanent errors — no retry', () => {
   it('400: 1 attempt, no retry, STOPPED with PROVIDER_ERROR', async () => {
     const runId = createRunState(TEST_CWD, 'int-400-p', '400 permanent', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1496,7 +1501,7 @@ describe('integration: permanent errors — no retry', () => {
   it('MODEL_IDENTITY_MISMATCH: 1 attempt, no retry, STOPPED', async () => {
     const runId = createRunState(TEST_CWD, 'int-mm-p', 'mismatch permanent', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1533,7 +1538,7 @@ describe('integration: permanent errors — no retry', () => {
   it('MODEL_IDENTITY_UNVERIFIED: 1 attempt, no retry, STOPPED with MODEL_IDENTITY_UNVERIFIED', async () => {
     const runId = createRunState(TEST_CWD, 'int-uv-p', 'unverified permanent', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     const sleepCalls: number[] = [];
@@ -1600,7 +1605,7 @@ describe('integration: UNKNOWN_AFTER_CRASH Tool Loop regression', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-crash', 'crash after dispatch', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let requestCount = 0;
     // Custom adapter that throws a raw non-domain Error on the second call
@@ -1686,7 +1691,7 @@ describe('integration: Round 2 HTTP history — read → final', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-r2hist', 'round 2 history', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch, requests } = createFakeFetch(() => {
@@ -1747,7 +1752,7 @@ describe('integration: Round 3 HTTP history — read → edit → final', () => 
     const scope = makeScope({ approvedFiles: ['src/example.ts'] });
     const runId = createRunState(TEST_CWD, 'int-r3hist', 'round 3 history', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch, requests } = createFakeFetch(() => {
@@ -1840,7 +1845,7 @@ describe('integration: reasoning_content cross-round assertions', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-rcr', 'reasoning cross', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch, requests } = createFakeFetch(() => {
@@ -1917,7 +1922,7 @@ describe('integration: real tool result redaction', () => {
     const scope = makeScope();
     const runId = createRunState(TEST_CWD, 'int-redact2', 'redact fixture', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
 
     let turn = 0;
     const { fetch, requests } = createFakeFetch(() => {
@@ -1974,7 +1979,7 @@ describe('integration: maxWriteContentBytes limit — Tool Loop level', () => {
     const scope = makeScope({ approvedFiles: ['src/out.ts'] });
     const runId = createRunState(TEST_CWD, 'int-wcl', 'write content limit', 'custom').runId;
     acquireRunLease(TEST_CWD, runId, 'a'.repeat(64));
-    setWriter(TEST_CWD, runId, 'deepseek');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
     execSync('git commit --allow-empty -m "before-write-limit"', { cwd: TEST_CWD, stdio: 'pipe' });
 
     // Build content > 1024 bytes (1 UTF-8 char = 1 byte for ASCII)

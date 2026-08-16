@@ -143,7 +143,7 @@ export interface ReadAuthOptions {
 }
 
 /**
- * 读取授权——不要求 writer=deepseek，但要求 Run Lease 有效 + runId 匹配 + repositoryRoot 匹配。
+ * 读取授权不要求 Writer assignment，但要求 Run Lease 有效 + runId 匹配 + repositoryRoot 匹配。
  *
  * 验证链：
  * 1. 路径规范化
