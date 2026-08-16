@@ -11,11 +11,16 @@ import {
 } from './writerModelProfileBenchmark';
 import type { PersistedWriterBenchmarkSample } from './writerModelProfileBenchmarkStore';
 import {
+  computeWriterQualificationIdentityFingerprint,
+  WRITER_BENCHMARK_CONTRACT_VERSION,
+  WRITER_QUALIFICATION_IDENTITY_SCHEMA_VERSION,
+  type WriterQualificationIdentitySnapshot,
+} from './writerBenchmarkIdentity';
+import {
   evaluateWriterProfileQualification,
   selectLatestWriterBenchmarkSamplesByCell,
   WRITER_QUALIFICATION_POLICY_VERSION,
   type WriterQualificationEvaluationOptions,
-  type WriterQualificationIdentityInput,
 } from './writerProfileQualification';
 
 interface SampleOptions {
@@ -28,6 +33,8 @@ interface SampleOptions {
   unavailable?: boolean;
   verdict?: WriterBenchmarkVerdict;
   protocolValid?: boolean | null;
+  qualificationIdentity?: WriterQualificationIdentitySnapshot;
+  legacy?: boolean;
 }
 
 const FIXTURES: Record<WriterExpectedActionClass, { fixtureId: string; fixtureVersion: string }> = {
@@ -36,19 +43,33 @@ const FIXTURES: Record<WriterExpectedActionClass, { fixtureId: string; fixtureVe
   WRITE: { fixtureId: 'fixture-write', fixtureVersion: 'v1' },
 };
 
-const COMPLETE_IDENTITY: WriterQualificationIdentityInput = {
-  profileId: 'profile-under-test',
-  modelIdentifier: 'model-version-1',
-  providerProfileConfigFingerprint: 'provider-config-fingerprint-1',
-  fixtureSet: (['SEARCH', 'READ', 'WRITE'] as const).map(expected => ({
-    expectedActionClass: expected,
-    ...FIXTURES[expected],
-  })),
-  toolSchemaAdapterContractFingerprint: 'tool-adapter-contract-1',
-  writerSystemContractFingerprint: 'writer-system-contract-1',
-  inferenceSettingsFingerprint: 'inference-settings-1',
-  qualificationPolicyVersion: WRITER_QUALIFICATION_POLICY_VERSION,
-};
+function identitySnapshot(
+  overrides: Partial<Omit<WriterQualificationIdentitySnapshot, 'qualificationIdentityFingerprint'>> = {},
+): WriterQualificationIdentitySnapshot {
+  const input = {
+    benchmarkContractVersion: WRITER_BENCHMARK_CONTRACT_VERSION,
+    profileId: 'profile-under-test',
+    modelIdentifier: 'model-version-1',
+    providerProfileFingerprint: '1'.repeat(64),
+    fixtureSet: (['SEARCH', 'READ', 'WRITE'] as const).map(expected => ({
+      expectedActionClass: expected,
+      ...FIXTURES[expected],
+    })),
+    toolSchemaAdapterContractFingerprint: '2'.repeat(64),
+    writerSystemContractFingerprint: '3'.repeat(64),
+    inferenceSettingsFingerprint: '4'.repeat(64),
+    qualificationPolicyVersion: WRITER_QUALIFICATION_POLICY_VERSION,
+    ...overrides,
+  };
+  return {
+    identitySchemaVersion: WRITER_QUALIFICATION_IDENTITY_SCHEMA_VERSION,
+    ...input,
+    qualificationIdentityFingerprint:
+      computeWriterQualificationIdentityFingerprint(input),
+  };
+}
+
+const COMPLETE_IDENTITY = identitySnapshot();
 
 function sample(options: SampleOptions): PersistedWriterBenchmarkSample {
   const profileId = options.profileId ?? 'profile-under-test';
@@ -64,14 +85,13 @@ function sample(options: SampleOptions): PersistedWriterBenchmarkSample {
   const fixture = FIXTURES[options.expected];
   const truncated = verdict === 'OUTPUT_TRUNCATED_NO_ACTION';
 
-  return {
-    schemaVersion: 'writer-model-profile-benchmark-sample-v2',
+  const common = {
     benchmarkSampleId: options.id,
     fixtureId: fixture.fixtureId,
     fixtureVersion: fixture.fixtureVersion,
     profileId,
     providerIdentifier: options.providerIdentifier ?? 'provider-a',
-    executionRole: 'FAST_EXECUTOR',
+    executionRole: 'FAST_EXECUTOR' as const,
     startedAt: '2026-08-16T00:00:00.000Z',
     completedAt: options.completedAt ?? '2026-08-16T00:00:01.000Z',
     latencyMs: 1_000,
@@ -103,6 +123,16 @@ function sample(options: SampleOptions): PersistedWriterBenchmarkSample {
     providerErrorCategory: unavailable ? 'TRANSPORT' : null,
     providerErrorCode: unavailable ? 'NETWORK_UNAVAILABLE' : null,
   };
+  return options.legacy
+    ? {
+        ...common,
+        schemaVersion: 'writer-model-profile-benchmark-sample-v2',
+      }
+    : {
+        ...common,
+        schemaVersion: 'writer-model-profile-benchmark-sample-v3',
+        qualificationIdentity: options.qualificationIdentity ?? COMPLETE_IDENTITY,
+      };
 }
 
 function strictTool(expected: WriterExpectedActionClass): string {
@@ -135,7 +165,6 @@ function evaluate(
   options: WriterQualificationEvaluationOptions = {},
 ) {
   return evaluateWriterProfileQualification('profile-under-test', samples, {
-    identity: COMPLETE_IDENTITY,
     ...options,
   });
 }
@@ -306,27 +335,56 @@ describe('Writer Qualification Policy v1', () => {
 
   it('rejects mixed qualification identity evidence without blaming capability', () => {
     const evidence = completeStrictEvidence();
-    const baseline = evaluate(evidence);
-    const firstId = evidence[0].benchmarkSampleId;
-    const result = evaluate(evidence, {
-      sampleIdentityFingerprints: {
-        [firstId]: `${baseline.qualificationIdentity.fingerprint}-different`,
-      },
-    });
+    const changedIdentity = identitySnapshot({ modelIdentifier: 'model-version-2' });
+    evidence[0] = {
+      ...evidence[0],
+      schemaVersion: 'writer-model-profile-benchmark-sample-v3',
+      qualificationIdentity: changedIdentity,
+    };
+    const result = evaluate(evidence);
 
     expect(result.status).toBe('INSUFFICIENT_EVIDENCE');
     expect(result.reasonCodes).toContain('EVIDENCE_IDENTITY_MIXED');
   });
 
+  it('rejects a tampered v3 snapshot and never mutates persisted identity', () => {
+    const evidence = completeStrictEvidence();
+    const tampered = {
+      ...COMPLETE_IDENTITY,
+      modelIdentifier: 'tampered-without-refingerprint',
+    };
+    evidence[0] = {
+      ...evidence[0],
+      schemaVersion: 'writer-model-profile-benchmark-sample-v3',
+      qualificationIdentity: tampered,
+    };
+    const before = JSON.stringify(evidence);
+
+    const result = evaluate(evidence);
+
+    expect(result.status).toBe('INSUFFICIENT_EVIDENCE');
+    expect(result.reasonCodes).toContain('QUALIFICATION_IDENTITY_INVALID');
+    expect(JSON.stringify(evidence)).toBe(before);
+  });
+
   it('marks legacy persisted evidence identity incomplete instead of inventing versions', () => {
+    const legacyEvidence = (['SEARCH', 'READ', 'WRITE'] as const).flatMap(expected => (
+      [1, 2, 3].map(index => sample({
+        id: `legacy-${expected}-${index}`,
+        expected,
+        toolNames: [strictTool(expected)],
+        legacy: true,
+      }))
+    ));
     const result = evaluateWriterProfileQualification(
       'profile-under-test',
-      completeStrictEvidence(),
+      legacyEvidence,
     );
 
     expect(result.status).toBe('INSUFFICIENT_EVIDENCE');
     expect(result.qualificationIdentity.complete).toBe(false);
     expect(result.qualificationIdentity.incompleteFields).toEqual(expect.arrayContaining([
+      'benchmarkContractVersion',
       'modelIdentifier',
       'providerProfileConfigFingerprint',
       'toolSchemaAdapterContractFingerprint',
@@ -349,33 +407,32 @@ describe('Writer Qualification Policy v1', () => {
   it('treats a Provider config fingerprint change as a new identity', () => {
     const evidence = completeStrictEvidence();
     const oldResult = evaluate(evidence);
-    const newIdentity = {
-      ...COMPLETE_IDENTITY,
-      providerProfileConfigFingerprint: 'provider-config-fingerprint-2',
+    const changedIdentity = identitySnapshot({ providerProfileFingerprint: '5'.repeat(64) });
+    evidence[0] = {
+      ...evidence[0],
+      schemaVersion: 'writer-model-profile-benchmark-sample-v3',
+      qualificationIdentity: changedIdentity,
     };
-    const result = evaluateWriterProfileQualification('profile-under-test', evidence, {
-      identity: newIdentity,
-      sampleIdentityFingerprints: {
-        [evidence[0].benchmarkSampleId]: oldResult.qualificationIdentity.fingerprint,
-      },
-    });
+    const result = evaluateWriterProfileQualification('profile-under-test', evidence);
 
-    expect(result.qualificationIdentity.fingerprint)
+    expect(changedIdentity.qualificationIdentityFingerprint)
       .not.toBe(oldResult.qualificationIdentity.fingerprint);
     expect(result.status).toBe('INSUFFICIENT_EVIDENCE');
     expect(result.reasonCodes).toContain('EVIDENCE_IDENTITY_MIXED');
   });
 
   it('returns insufficient evidence for a mismatched policy version', () => {
+    const mismatched = identitySnapshot({
+      qualificationPolicyVersion: 'writer-qualification-policy-v2',
+    });
+    const evidence = completeStrictEvidence().map(sampleItem => ({
+      ...sampleItem,
+      schemaVersion: 'writer-model-profile-benchmark-sample-v3' as const,
+      qualificationIdentity: mismatched,
+    }));
     const result = evaluateWriterProfileQualification(
       'profile-under-test',
-      completeStrictEvidence(),
-      {
-        identity: {
-          ...COMPLETE_IDENTITY,
-          qualificationPolicyVersion: 'writer-qualification-policy-v2',
-        },
-      },
+      evidence,
     );
 
     expect(result.status).toBe('INSUFFICIENT_EVIDENCE');

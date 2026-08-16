@@ -336,9 +336,18 @@ export interface AdapterProfileValidationResult {
   message?: string;
 }
 
+/** Versioned, Provider-neutral metadata used only to fingerprint benchmark semantics. */
+export interface ProviderAdapterQualificationContract {
+  adapterId: string;
+  adapterContractVersion: string;
+  toolCallTranslationVersion: string;
+}
+
 /** Provider Adapter 接口——根据 transport 选择实现，不根据 vendor 选择 */
 export interface ProviderAdapter {
   readonly transport: ProviderProfile['transport'];
+  /** Optional for runtime compatibility; Writer v3 benchmark requires it fail-closed. */
+  readonly qualificationContract?: ProviderAdapterQualificationContract;
 
   /**
    * Profile 预校验（可选）——在创建 PendingCall 前执行。

@@ -4,18 +4,25 @@
  * This module consumes persisted benchmark evidence. It never grants write
  * authorization and is not consulted by runtime routing.
  */
-import { createHash } from 'node:crypto';
 import type {
   WriterDecisionActionClass,
   WriterExpectedActionClass,
 } from './__fixtures__/writerDecisionFixture';
 import type { WriterBenchmarkVerdict } from './writerModelProfileBenchmark';
 import { reclassifyWriterBenchmarkSample } from './writerModelProfileBenchmark.run';
-import type { PersistedWriterBenchmarkSample } from './writerModelProfileBenchmarkStore';
+import {
+  WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION,
+  type PersistedWriterBenchmarkSample,
+  type PersistedWriterBenchmarkSampleV3,
+} from './writerModelProfileBenchmarkStore';
 import type { ExecutionModelRole } from './types';
+import {
+  computeWriterQualificationIdentityFingerprint,
+  validateWriterQualificationIdentitySnapshot,
+} from './writerBenchmarkIdentity';
+import { WRITER_QUALIFICATION_POLICY_VERSION } from './writerQualificationPolicyContract';
 
-export const WRITER_QUALIFICATION_POLICY_VERSION =
-  'writer-qualification-policy-v1' as const;
+export { WRITER_QUALIFICATION_POLICY_VERSION } from './writerQualificationPolicyContract';
 export const WRITER_QUALIFICATION_MIN_SAMPLES_PER_FIXTURE = 3 as const;
 
 export type WriterQualificationStatus =
@@ -27,6 +34,7 @@ export type WriterProtocolFailureAttribution = 'MODEL' | 'ADAPTER' | 'UNRESOLVED
 
 export type WriterQualificationReasonCode =
   | 'QUALIFICATION_IDENTITY_INCOMPLETE'
+  | 'QUALIFICATION_IDENTITY_INVALID'
   | 'POLICY_VERSION_MISMATCH'
   | 'EVIDENCE_IDENTITY_MIXED'
   | 'FIXTURE_IDENTITY_MISMATCH'
@@ -51,6 +59,7 @@ export interface WriterQualificationFixtureIdentity {
 
 /** Null means the current evidence cannot truthfully establish that field. */
 export interface WriterQualificationIdentityInput {
+  benchmarkContractVersion: string | null;
   profileId: string;
   modelIdentifier: string | null;
   providerProfileConfigFingerprint: string | null;
@@ -68,9 +77,6 @@ export interface WriterQualificationIdentity extends WriterQualificationIdentity
 }
 
 export interface WriterQualificationEvaluationOptions {
-  identity?: WriterQualificationIdentityInput;
-  /** Optional per-sample attestation used to detect mixed qualification batches. */
-  sampleIdentityFingerprints?: Readonly<Record<string, string | null>>;
   /** INVALID_PROTOCOL defaults to UNRESOLVED unless explicitly attributed. */
   protocolAttributionBySampleId?: Readonly<
     Record<string, WriterProtocolFailureAttribution>
@@ -154,6 +160,7 @@ const VERDICT_ORDER: readonly WriterBenchmarkVerdict[] = [
 ];
 const REASON_ORDER: readonly WriterQualificationReasonCode[] = [
   'QUALIFICATION_IDENTITY_INCOMPLETE',
+  'QUALIFICATION_IDENTITY_INVALID',
   'POLICY_VERSION_MISMATCH',
   'EVIDENCE_IDENTITY_MIXED',
   'FIXTURE_IDENTITY_MISMATCH',
@@ -185,9 +192,8 @@ export function selectLatestWriterBenchmarkSamplesByCell(
 }
 
 /**
- * Evaluate one explicit evidence batch. Persisted v2 samples do not carry the
- * full qualification identity, so callers that omit options.identity receive
- * a truthful incomplete identity and cannot be certified.
+ * Evaluate one explicit evidence batch. Only immutable persisted v3 snapshots
+ * can establish identity; evaluator options cannot retrofit legacy samples.
  */
 export function evaluateWriterProfileQualification(
   profileId: string,
@@ -199,20 +205,16 @@ export function evaluateWriterProfileQualification(
     .filter(sample => sample.profileId === profileId)
     .map(reclassifyWriterBenchmarkSample)
     .sort(compareSamples);
-  const identity = normalizeIdentity(
-    options.identity ?? inferIncompleteIdentity(profileId, profileSamples),
-  );
+  const identityResolution = resolvePersistedIdentity(profileId, profileSamples);
+  const identity = identityResolution.identity;
   const fixtureIdentityMismatch = profileSamples.some(sample => !identity.fixtureSet.some(item => (
     item.expectedActionClass === sample.expectedActionClass
     && item.fixtureId === sample.fixtureId
     && item.fixtureVersion === sample.fixtureVersion
   )));
-  const sampleIdentityMixed = identity.fingerprint !== null
-    && profileSamples.some(sample => {
-      const attested = options.sampleIdentityFingerprints?.[sample.benchmarkSampleId];
-      return attested !== undefined && attested !== identity.fingerprint;
-    });
-  const identityMixed = foreignProfileObserved || fixtureIdentityMismatch || sampleIdentityMixed;
+  const identityMixed = foreignProfileObserved
+    || fixtureIdentityMismatch
+    || identityResolution.mixed;
   const protocolAttribution = options.protocolAttributionBySampleId ?? {};
 
   const fixtureCoverage = Object.fromEntries(
@@ -225,6 +227,7 @@ export function evaluateWriterProfileQualification(
   const reasonSet = new Set<WriterQualificationReasonCode>();
 
   if (!identity.complete) reasonSet.add('QUALIFICATION_IDENTITY_INCOMPLETE');
+  if (identityResolution.invalid) reasonSet.add('QUALIFICATION_IDENTITY_INVALID');
   if (identity.qualificationPolicyVersion !== WRITER_QUALIFICATION_POLICY_VERSION) {
     reasonSet.add('POLICY_VERSION_MISMATCH');
   }
@@ -415,9 +418,82 @@ function aggregateOperationalReliability(
   };
 }
 
+interface PersistedIdentityResolution {
+  identity: WriterQualificationIdentity;
+  mixed: boolean;
+  invalid: boolean;
+}
+
+function resolvePersistedIdentity(
+  profileId: string,
+  samples: readonly PersistedWriterBenchmarkSample[],
+): PersistedIdentityResolution {
+  const v3Samples = samples.filter(isV3Sample);
+  if (v3Samples.length === 0) {
+    return {
+      identity: normalizeIdentity(inferIncompleteIdentity(profileId, samples)),
+      mixed: false,
+      invalid: false,
+    };
+  }
+
+  const fingerprints = new Set(
+    v3Samples.map(sample => sample.qualificationIdentity.qualificationIdentityFingerprint),
+  );
+  const invalid = v3Samples.some(sample => (
+    !validateWriterQualificationIdentitySnapshot(sample.qualificationIdentity)
+    || sample.qualificationIdentity.profileId !== sample.profileId
+    || !sample.qualificationIdentity.fixtureSet.some(fixture => (
+      fixture.expectedActionClass === sample.expectedActionClass
+      && fixture.fixtureId === sample.fixtureId
+      && fixture.fixtureVersion === sample.fixtureVersion
+    ))
+  ));
+  const legacyMixed = v3Samples.length !== samples.length;
+  const snapshot = v3Samples[0].qualificationIdentity;
+  const normalized = normalizeIdentity({
+    benchmarkContractVersion: snapshot.benchmarkContractVersion,
+    profileId: snapshot.profileId,
+    modelIdentifier: snapshot.modelIdentifier,
+    providerProfileConfigFingerprint: snapshot.providerProfileFingerprint,
+    fixtureSet: snapshot.fixtureSet.map(fixture => ({ ...fixture })),
+    toolSchemaAdapterContractFingerprint: snapshot.toolSchemaAdapterContractFingerprint,
+    writerSystemContractFingerprint: snapshot.writerSystemContractFingerprint,
+    inferenceSettingsFingerprint: snapshot.inferenceSettingsFingerprint,
+    qualificationPolicyVersion: snapshot.qualificationPolicyVersion,
+  });
+  const snapshotMismatch = normalized.fingerprint
+    !== snapshot.qualificationIdentityFingerprint;
+  const incompleteSnapshot = invalid || snapshotMismatch || legacyMixed;
+  const identity = !incompleteSnapshot
+    ? normalized
+    : {
+        ...normalized,
+        complete: false,
+        incompleteFields: uniqueSorted([
+          ...normalized.incompleteFields,
+          'qualificationIdentitySnapshot',
+        ]),
+        fingerprint: null,
+      };
+
+  return {
+    identity,
+    mixed: legacyMixed || fingerprints.size > 1,
+    invalid: invalid || snapshotMismatch,
+  };
+}
+
+function isV3Sample(
+  sample: PersistedWriterBenchmarkSample,
+): sample is PersistedWriterBenchmarkSampleV3 {
+  return sample.schemaVersion === WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION;
+}
+
 function normalizeIdentity(input: WriterQualificationIdentityInput): WriterQualificationIdentity {
   const fixtureSet = uniqueFixtureIdentities(input.fixtureSet);
   const incompleteFields: string[] = [];
+  if (!nonEmpty(input.benchmarkContractVersion)) incompleteFields.push('benchmarkContractVersion');
   if (!input.profileId.trim()) incompleteFields.push('profileId');
   if (!nonEmpty(input.modelIdentifier)) incompleteFields.push('modelIdentifier');
   if (!nonEmpty(input.providerProfileConfigFingerprint)) {
@@ -455,6 +531,7 @@ function inferIncompleteIdentity(
   samples: readonly PersistedWriterBenchmarkSample[],
 ): WriterQualificationIdentityInput {
   return {
+    benchmarkContractVersion: null,
     profileId,
     modelIdentifier: null,
     providerProfileConfigFingerprint: null,
@@ -471,17 +548,17 @@ function inferIncompleteIdentity(
 }
 
 function fingerprintIdentity(identity: WriterQualificationIdentityInput): string {
-  const canonical = JSON.stringify({
+  return computeWriterQualificationIdentityFingerprint({
+    benchmarkContractVersion: identity.benchmarkContractVersion!,
     profileId: identity.profileId,
-    modelIdentifier: identity.modelIdentifier,
-    providerProfileConfigFingerprint: identity.providerProfileConfigFingerprint,
+    modelIdentifier: identity.modelIdentifier!,
+    providerProfileFingerprint: identity.providerProfileConfigFingerprint!,
     fixtureSet: uniqueFixtureIdentities(identity.fixtureSet),
-    toolSchemaAdapterContractFingerprint: identity.toolSchemaAdapterContractFingerprint,
-    writerSystemContractFingerprint: identity.writerSystemContractFingerprint,
-    inferenceSettingsFingerprint: identity.inferenceSettingsFingerprint,
+    toolSchemaAdapterContractFingerprint: identity.toolSchemaAdapterContractFingerprint!,
+    writerSystemContractFingerprint: identity.writerSystemContractFingerprint!,
+    inferenceSettingsFingerprint: identity.inferenceSettingsFingerprint!,
     qualificationPolicyVersion: identity.qualificationPolicyVersion,
   });
-  return createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
 function hasCompleteFixtureSet(fixtures: readonly WriterQualificationFixtureIdentity[]): boolean {

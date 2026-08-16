@@ -177,6 +177,11 @@ export { TimeoutError } from './providerErrors';
  */
 export class MockProviderAdapter implements ProviderAdapter {
   readonly transport = 'openai-chat' as const; // mock 仅对接 openai-chat 形态
+  readonly qualificationContract = {
+    adapterId: 'mock-openai-chat-adapter',
+    adapterContractVersion: 'mock-openai-chat-adapter-v1',
+    toolCallTranslationVersion: 'mock-openai-chat-tool-call-translation-v1',
+  } as const;
 
   private _scenario: MockProviderScenario;
 

@@ -66,6 +66,13 @@ Provider identifier 可以保留作审计和 Adapter lookup，但 Provider/Model
 batch，不能通过不断追加调用来稀释失败样本，直到出现期望答案。后续 requalification 是新的 batch；
 旧结果继续保留审计可读性。
 
+### 3.1 Sample v3 身份来源
+
+自 `writer-model-profile-benchmark-sample-v3` 起，完整 identity 必须在 Provider call 前冻结为不可变
+snapshot。Evaluator 只读取、校验和比较该 snapshot，不允许用当前配置补写 v1 / v2 历史 sample。
+Sample schema、benchmark contract、fixture version 和 Policy version 是四个独立版本维度，具体字段与
+fingerprint 边界见 `writer-benchmark-sample-v3.md`。
+
 ## 4. 可评估 Evidence
 
 一个 **evaluable capability sample** 必须同时满足：
@@ -310,6 +317,6 @@ WRITE:  FAIL_WRONG_ACTION    [READ]
 
 ## 15. 实现边界
 
-本 Policy 不允许修改 benchmark、routing、Provider Adapter、Writer assignment、fixture、prompt、
-token limit、tool schema 或 workspace permission logic。Evaluator 实现必须保持 raw samples 不变，并
-继续维持 qualification、runtime routing 与 Writer authorization 的职责分离。
+本 Policy 的 evaluator 实现不得借资格判定修改 benchmark、routing、Provider Adapter、Writer
+assignment、fixture、prompt、token limit、tool schema 或 workspace permission logic。Evaluator 必须
+保持 raw samples 不变，并继续维持 qualification、runtime routing 与 Writer authorization 的职责分离。

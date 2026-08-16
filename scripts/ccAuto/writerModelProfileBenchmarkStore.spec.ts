@@ -54,51 +54,58 @@ describe('Writer benchmark sample persistence', () => {
       logicalModelName: 'model-safe-store',
       executionRole: 'FAST_EXECUTOR',
       sampleIdFactory: () => 'writer-sample-safe-store-1',
-      invoke: async () => ({
-        providerCallCount: 1,
-        providerCompletion: {
-          finishReason: 'tool_calls',
-          outputTokenLimitHit: false,
-          providerErrorCategory: null,
-          providerErrorCode: null,
-        },
-        executionResult: {
-          ok: true,
-          usageRecord: {
-            model: 'builder',
-            requestedModelId: 'model-safe-store',
-            reportedModel: 'model-safe-store',
-            providerId: 'profile-safe-store',
-            modelIdentityStatus: 'VERIFIED',
-            pricingStatus: 'PRICED',
-            usageStatus: 'AVAILABLE',
-            costStatus: 'AVAILABLE',
-            inputTokens: 10,
-            outputTokens: 5,
-            cacheCreationInputTokens: 0,
-            cacheReadInputTokens: 20,
-            costRmbCustom: 0.001,
-            costRmbOfficial: null,
-            durationMs: 2,
-            numTurns: 1,
-            subtype: 'tool_calls',
-            isError: false,
-            toolUseCounts: null,
-            toolErrorCounts: null,
-            permissionDenialsCount: 0,
-            executionRole: 'FAST_EXECUTOR',
+      invocation: {
+        resolveAdapterContract: () => ({
+          adapterId: 'store-test-adapter',
+          adapterContractVersion: 'store-test-adapter-v1',
+          toolCallTranslationVersion: 'store-test-tool-translation-v1',
+        }),
+        invoke: async () => ({
+          providerCallCount: 1,
+          providerCompletion: {
+            finishReason: 'tool_calls',
+            outputTokenLimitHit: false,
+            providerErrorCategory: null,
+            providerErrorCode: null,
           },
-          content: '',
-          toolCalls: [{
-            id: 'call-safe-1',
-            type: 'function',
-            function: {
-              name: 'write_file',
-              arguments: JSON.stringify({ path: 'safe.ts', content: forbiddenArgument }),
+          executionResult: {
+            ok: true,
+            usageRecord: {
+              model: 'builder',
+              requestedModelId: 'model-safe-store',
+              reportedModel: 'model-safe-store',
+              providerId: 'profile-safe-store',
+              modelIdentityStatus: 'VERIFIED',
+              pricingStatus: 'PRICED',
+              usageStatus: 'AVAILABLE',
+              costStatus: 'AVAILABLE',
+              inputTokens: 10,
+              outputTokens: 5,
+              cacheCreationInputTokens: 0,
+              cacheReadInputTokens: 20,
+              costRmbCustom: 0.001,
+              costRmbOfficial: null,
+              durationMs: 2,
+              numTurns: 1,
+              subtype: 'tool_calls',
+              isError: false,
+              toolUseCounts: null,
+              toolErrorCounts: null,
+              permissionDenialsCount: 0,
+              executionRole: 'FAST_EXECUTOR',
             },
-          }],
-        } satisfies ProviderExecutionResult,
-      }),
+            content: '',
+            toolCalls: [{
+              id: 'call-safe-1',
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: JSON.stringify({ path: 'safe.ts', content: forbiddenArgument }),
+              },
+            }],
+          } satisfies ProviderExecutionResult,
+        }),
+      },
     });
 
     const saved = saveWriterBenchmarkSample(cwd, result);
@@ -115,6 +122,12 @@ describe('Writer benchmark sample persistence', () => {
     expect(parsed.totalTokens).toBe(35);
     expect(parsed.verdict).toBe('PASS_STRICT');
     expect(parsed.passed).toBe(true);
+    expect(parsed.qualificationIdentity).toEqual(expect.objectContaining({
+      benchmarkContractVersion: 'writer-model-profile-benchmark-v3',
+      profileId: 'profile-safe-store',
+      modelIdentifier: 'model-safe-store',
+      qualificationPolicyVersion: 'writer-qualification-policy-v1',
+    }));
     expect(parsed).not.toHaveProperty('rawActionSummary');
     expect(parsed).not.toHaveProperty('protocolError');
     expect(raw).not.toContain(forbiddenArgument);

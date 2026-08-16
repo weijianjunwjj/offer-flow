@@ -12,12 +12,16 @@ import type {
   WriterDecisionActionClass,
   WriterExpectedActionClass,
 } from './__fixtures__/writerDecisionFixture';
+import type { WriterQualificationIdentitySnapshot } from './writerBenchmarkIdentity';
 
-export const WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION =
+export const WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION_V1 =
+  'writer-model-profile-benchmark-sample-v1' as const;
+export const WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION_V2 =
   'writer-model-profile-benchmark-sample-v2' as const;
+export const WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION =
+  'writer-model-profile-benchmark-sample-v3' as const;
 
-export interface PersistedWriterBenchmarkSample {
-  schemaVersion: typeof WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION;
+interface PersistedWriterBenchmarkSampleBase {
   benchmarkSampleId: string;
   fixtureId: string;
   fixtureVersion: string;
@@ -52,6 +56,23 @@ export interface PersistedWriterBenchmarkSample {
   providerErrorCategory: string | null;
   providerErrorCode: string | null;
 }
+
+export interface PersistedLegacyWriterBenchmarkSample
+  extends PersistedWriterBenchmarkSampleBase {
+  schemaVersion:
+    | typeof WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION_V1
+    | typeof WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION_V2;
+}
+
+export interface PersistedWriterBenchmarkSampleV3
+  extends PersistedWriterBenchmarkSampleBase {
+  schemaVersion: typeof WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION;
+  qualificationIdentity: WriterQualificationIdentitySnapshot;
+}
+
+export type PersistedWriterBenchmarkSample =
+  | PersistedLegacyWriterBenchmarkSample
+  | PersistedWriterBenchmarkSampleV3;
 
 export interface SavedWriterBenchmarkSample {
   filePath: string;
@@ -89,7 +110,7 @@ export function saveWriterBenchmarkSample(
 
 export function toPersistedWriterBenchmarkSample(
   result: WriterModelProfileBenchmarkResult,
-): PersistedWriterBenchmarkSample {
+): PersistedWriterBenchmarkSampleV3 {
   return {
     schemaVersion: WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION,
     benchmarkSampleId: result.benchmarkSampleId,
@@ -97,6 +118,7 @@ export function toPersistedWriterBenchmarkSample(
     fixtureVersion: result.fixtureVersion,
     profileId: result.profileId,
     providerIdentifier: result.providerIdentifier,
+    qualificationIdentity: structuredClone(result.qualificationIdentity),
     executionRole: result.executionRole,
     startedAt: result.startedAt,
     completedAt: result.completedAt,

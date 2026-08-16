@@ -430,6 +430,11 @@ function isValidTokenValue(value: number | null | undefined): value is number {
  */
 export class OpenAIChatAdapter implements ProviderAdapter {
   readonly transport = 'openai-chat' as const;
+  readonly qualificationContract = {
+    adapterId: 'openai-chat-adapter',
+    adapterContractVersion: 'openai-chat-adapter-v1',
+    toolCallTranslationVersion: 'openai-chat-tool-call-translation-v1',
+  } as const;
 
   private readonly _fetch: FetchLike;
 

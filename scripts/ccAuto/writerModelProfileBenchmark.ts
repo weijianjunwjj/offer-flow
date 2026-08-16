@@ -3,6 +3,7 @@ import type {
   ExecutionModelRole,
   ModelToolCall,
   ProviderAdapter,
+  ProviderAdapterQualificationContract,
   ProviderAdapterResolver,
   ProviderExecutionResult,
   ProviderProfile,
@@ -12,10 +13,16 @@ import { executeProviderCall, newCallId } from './executor';
 import { parseToolCalls } from './toolProtocol';
 import {
   classifyWriterDecisionAction,
+  WRITER_DECISION_FIXTURES,
   type WriterDecisionActionClass,
   type WriterDecisionFixture,
   type WriterExpectedActionClass,
 } from './__fixtures__/writerDecisionFixture';
+import {
+  buildWriterQualificationIdentitySnapshot,
+  type WriterQualificationIdentitySnapshot,
+} from './writerBenchmarkIdentity';
+import { WRITER_QUALIFICATION_POLICY_VERSION } from './writerQualificationPolicyContract';
 
 // 与现有 routed Writer 单次调用上限一致，避免 reasoning 模型在给出 action 前被截断。
 const BENCHMARK_MAX_OUTPUT_TOKENS = 4_096;
@@ -52,16 +59,17 @@ export interface WriterBenchmarkProviderCompletion {
   providerErrorCode: string | null;
 }
 
-export type WriterBenchmarkInvocationCapability = (
-  request: WriterBenchmarkInvocationRequest,
-) => Promise<WriterBenchmarkInvocationOutcome>;
+export interface WriterBenchmarkInvocationCapability {
+  resolveAdapterContract(profile: ProviderProfile): ProviderAdapterQualificationContract;
+  invoke(request: WriterBenchmarkInvocationRequest): Promise<WriterBenchmarkInvocationOutcome>;
+}
 
 export interface WriterModelProfileBenchmarkInput {
   fixture: WriterDecisionFixture;
   profile: ProviderProfile;
   logicalModelName: string;
   executionRole: ExecutionModelRole;
-  invoke: WriterBenchmarkInvocationCapability;
+  invocation: WriterBenchmarkInvocationCapability;
   sampleIdFactory?: () => string;
   now?: () => Date;
 }
@@ -72,6 +80,7 @@ export interface WriterModelProfileBenchmarkResult {
   fixtureVersion: string;
   profileId: string;
   providerIdentifier: string;
+  qualificationIdentity: WriterQualificationIdentitySnapshot;
   executionRole: ExecutionModelRole;
   startedAt: string;
   completedAt: string;
@@ -198,16 +207,31 @@ export async function runWriterModelProfileBenchmark(
   const now = input.now ?? (() => new Date());
   const benchmarkSampleId = input.sampleIdFactory?.() ?? newBenchmarkSampleId();
   const started = now();
+  const systemPrompt = buildSystemPrompt(input.fixture);
+  const tools = buildToolDefinitions(input.fixture);
+  // Freeze the complete identity before any Provider execution. The resolver
+  // exposes only versioned Adapter metadata and never receives parentEnv.
+  const qualificationIdentity = buildWriterQualificationIdentitySnapshot({
+    profile: input.profile,
+    logicalModelName: input.logicalModelName,
+    qualificationFixtures: WRITER_DECISION_FIXTURES,
+    adapterContract: input.invocation.resolveAdapterContract(input.profile),
+    tools,
+    toolMode: 'enabled',
+    writerSystemContract: BENCHMARK_SYSTEM_CONTRACT,
+    maxOutputTokens: BENCHMARK_MAX_OUTPUT_TOKENS,
+    qualificationPolicyVersion: WRITER_QUALIFICATION_POLICY_VERSION,
+  });
   let invocation: WriterBenchmarkInvocationOutcome;
 
   try {
-    invocation = await input.invoke({
+    invocation = await input.invocation.invoke({
       profile: input.profile,
       logicalModelName: input.logicalModelName,
       executionRole: input.executionRole,
-      systemPrompt: buildSystemPrompt(input.fixture),
+      systemPrompt,
       userPrompt: buildObservationPrompt(input.fixture),
-      tools: buildToolDefinitions(input.fixture),
+      tools,
       maxOutputTokens: BENCHMARK_MAX_OUTPUT_TOKENS,
       timeoutMs: BENCHMARK_TIMEOUT_MS,
     });
@@ -216,6 +240,7 @@ export async function runWriterModelProfileBenchmark(
     return buildResult({
       input,
       benchmarkSampleId,
+      qualificationIdentity,
       startedAt: started.toISOString(),
       completedAt: now().toISOString(),
       providerCallCount: 0,
@@ -252,6 +277,7 @@ export async function runWriterModelProfileBenchmark(
     return buildResult({
       input,
       benchmarkSampleId,
+      qualificationIdentity,
       startedAt: started.toISOString(),
       completedAt: completed.toISOString(),
       providerCallCount: invocation.providerCallCount,
@@ -275,6 +301,7 @@ export async function runWriterModelProfileBenchmark(
   return buildResult({
     input,
     benchmarkSampleId,
+    qualificationIdentity,
     startedAt: started.toISOString(),
     completedAt: completed.toISOString(),
     providerCallCount: invocation.providerCallCount,
@@ -292,47 +319,60 @@ export async function runWriterModelProfileBenchmark(
 export function createProviderBenchmarkInvocation(
   options: ProviderBenchmarkInvocationOptions,
 ): WriterBenchmarkInvocationCapability {
-  return async (request) => {
-    let providerCallCount = 0;
-    const countingRegistry: ProviderAdapterResolver = {
-      resolve(transport: string): ProviderAdapter | null {
-        const adapter = options.adapterRegistry.resolve(transport);
-        if (!adapter) return null;
-        return {
-          transport: adapter.transport,
-          ...(adapter.validateProfile
-            ? { validateProfile: (profile) => adapter.validateProfile!(profile) }
-            : {}),
-          execute: async (providerRequest, context) => {
-            providerCallCount += 1;
-            return adapter.execute(providerRequest, context);
-          },
-        };
-      },
-    };
+  return {
+    resolveAdapterContract(profile) {
+      const adapter = options.adapterRegistry.resolve(profile.transport);
+      if (!adapter) throw new Error(`ADAPTER_NOT_FOUND:${profile.transport}`);
+      if (!adapter.qualificationContract) {
+        throw new Error(`ADAPTER_QUALIFICATION_CONTRACT_MISSING:${profile.transport}`);
+      }
+      return { ...adapter.qualificationContract };
+    },
+    async invoke(request) {
+      let providerCallCount = 0;
+      const countingRegistry: ProviderAdapterResolver = {
+        resolve(transport: string): ProviderAdapter | null {
+          const adapter = options.adapterRegistry.resolve(transport);
+          if (!adapter) return null;
+          return {
+            transport: adapter.transport,
+            ...(adapter.qualificationContract
+              ? { qualificationContract: { ...adapter.qualificationContract } }
+              : {}),
+            ...(adapter.validateProfile
+              ? { validateProfile: (profile) => adapter.validateProfile!(profile) }
+              : {}),
+            execute: async (providerRequest, context) => {
+              providerCallCount += 1;
+              return adapter.execute(providerRequest, context);
+            },
+          };
+        },
+      };
 
-    const executionResult = await executeProviderCall({
-      profile: request.profile,
-      logicalModelName: request.logicalModelName,
-      role: 'builder',
-      systemPrompt: request.systemPrompt,
-      userPrompt: request.userPrompt,
-      maxOutputTokens: request.maxOutputTokens,
-      timeoutMs: request.timeoutMs,
-      adapterRegistry: countingRegistry,
-      parentEnv: options.parentEnv,
-      cwd: options.cwd,
-      callId: options.callIdFactory?.() ?? newCallId(),
-      tools: request.tools,
-      toolMode: 'enabled',
-      executionRole: request.executionRole,
-    });
+      const executionResult = await executeProviderCall({
+        profile: request.profile,
+        logicalModelName: request.logicalModelName,
+        role: 'builder',
+        systemPrompt: request.systemPrompt,
+        userPrompt: request.userPrompt,
+        maxOutputTokens: request.maxOutputTokens,
+        timeoutMs: request.timeoutMs,
+        adapterRegistry: countingRegistry,
+        parentEnv: options.parentEnv,
+        cwd: options.cwd,
+        callId: options.callIdFactory?.() ?? newCallId(),
+        tools: request.tools,
+        toolMode: 'enabled',
+        executionRole: request.executionRole,
+      });
 
-    return {
-      executionResult,
-      providerCallCount,
-      providerCompletion: deriveProviderCompletion(executionResult),
-    };
+      return {
+        executionResult,
+        providerCallCount,
+        providerCompletion: deriveProviderCompletion(executionResult),
+      };
+    },
   };
 }
 
@@ -518,6 +558,7 @@ export function isPassingWriterVerdict(verdict: WriterBenchmarkVerdict): boolean
 function buildResult(params: {
   input: WriterModelProfileBenchmarkInput;
   benchmarkSampleId: string;
+  qualificationIdentity: WriterQualificationIdentitySnapshot;
   startedAt: string;
   completedAt: string;
   providerCallCount: number;
@@ -541,6 +582,7 @@ function buildResult(params: {
     fixtureVersion: params.input.fixture.version,
     profileId: params.input.profile.id,
     providerIdentifier: params.input.profile.vendor,
+    qualificationIdentity: params.qualificationIdentity,
     executionRole: params.input.executionRole,
     startedAt: params.startedAt,
     completedAt: params.completedAt,

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AdapterRegistry } from './adapter';
+import { AdapterRegistry, createMockAdapterRegistry } from './adapter';
 import type {
   ModelToolCall,
   ProviderAdapter,
+  ProviderAdapterQualificationContract,
   ProviderCallResponse,
   ProviderExecutionResult,
   ProviderProfile,
@@ -47,6 +48,12 @@ const PROFILE: ProviderProfile = {
       updatedAt: '2026-08-16T00:00:00.000Z',
     },
   },
+};
+
+const ADAPTER_CONTRACT: ProviderAdapterQualificationContract = {
+  adapterId: 'benchmark-test-adapter',
+  adapterContractVersion: 'benchmark-test-adapter-v1',
+  toolCallTranslationVersion: 'benchmark-test-tool-translation-v1',
 };
 
 function usage(overrides: Partial<UsageRecord> = {}): UsageRecord {
@@ -100,16 +107,19 @@ function successfulInvocation(
   content: string | null = '',
   providerCompletion?: WriterBenchmarkProviderCompletion,
 ): WriterBenchmarkInvocationCapability {
-  return vi.fn(async () => ({
-    providerCallCount: 1,
-    providerCompletion,
-    executionResult: {
-      ok: true,
-      usageRecord: usage(),
-      content,
-      toolCalls: calls,
-    } satisfies ProviderExecutionResult,
-  }));
+  return {
+    resolveAdapterContract: () => ({ ...ADAPTER_CONTRACT }),
+    invoke: vi.fn(async () => ({
+      providerCallCount: 1,
+      providerCompletion,
+      executionResult: {
+        ok: true,
+        usageRecord: usage(),
+        content,
+        toolCalls: calls,
+      } satisfies ProviderExecutionResult,
+    })),
+  };
 }
 
 async function benchmark(
@@ -121,7 +131,7 @@ async function benchmark(
     profile: PROFILE,
     logicalModelName: 'model-a',
     executionRole: 'FAST_EXECUTOR',
-    invoke: successfulInvocation([actionCall(actual)]),
+    invocation: successfulInvocation([actionCall(actual)]),
   });
 }
 
@@ -179,10 +189,10 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'FAST_EXECUTOR',
-      invoke,
+      invocation: invoke,
     });
 
-    const request = vi.mocked(invoke).mock.calls[0][0];
+    const request = vi.mocked(invoke.invoke).mock.calls[0][0];
     expect(request.userPrompt).not.toContain('expectedNextActionClass');
     expect(request.userPrompt).not.toContain('observedNextAction');
     expect(request.userPrompt).toContain('observationState');
@@ -198,7 +208,7 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'FAST_EXECUTOR',
-      invoke: successfulInvocation([], 'The task is complete.'),
+      invocation: successfulInvocation([], 'The task is complete.'),
     });
 
     expect(result).toMatchObject({
@@ -216,7 +226,7 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'STRONG_EXECUTOR',
-      invoke: successfulInvocation([], 'partial reasoning', {
+      invocation: successfulInvocation([], 'partial reasoning', {
         finishReason: 'length',
         outputTokenLimitHit: true,
         providerErrorCategory: null,
@@ -236,7 +246,7 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'STRONG_EXECUTOR',
-      invoke: successfulInvocation([], ''),
+      invocation: successfulInvocation([], ''),
     });
     expect(noAction).toMatchObject({
       actualActionClass: null,
@@ -254,7 +264,7 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'FAST_EXECUTOR',
-      invoke: successfulInvocation([...calls]),
+      invocation: successfulInvocation([...calls]),
     });
 
     expect(result).toMatchObject({
@@ -284,7 +294,7 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'FAST_EXECUTOR',
-      invoke: successfulInvocation(calls),
+      invocation: successfulInvocation(calls),
     });
 
     expect(result).toMatchObject({
@@ -305,19 +315,22 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'FAST_EXECUTOR',
-      invoke: async () => ({
-        providerCallCount: 1,
-        executionResult: {
-          ok: false,
-          stopReason: 'PROVIDER_ERROR',
-          requiresHumanConfirmation: false,
-          usageRecord: null,
-          identityConfirmationContext: null,
-          message: 'safe failure',
-          errorKind: 'RATE_LIMIT',
-          httpStatus: 429,
-        },
-      }),
+      invocation: {
+        resolveAdapterContract: () => ({ ...ADAPTER_CONTRACT }),
+        invoke: async () => ({
+          providerCallCount: 1,
+          executionResult: {
+            ok: false,
+            stopReason: 'PROVIDER_ERROR',
+            requiresHumanConfirmation: false,
+            usageRecord: null,
+            identityConfirmationContext: null,
+            message: 'safe failure',
+            errorKind: 'RATE_LIMIT',
+            httpStatus: 429,
+          },
+        }),
+      },
     });
 
     expect(result).toMatchObject({
@@ -334,6 +347,7 @@ describe('Writer Model Profile Behavior Benchmark', () => {
     let adapterCalls = 0;
     const adapter: ProviderAdapter = {
       transport: 'openai-chat',
+      qualificationContract: ADAPTER_CONTRACT,
       async execute(request): Promise<ProviderCallResponse> {
         adapterCalls += 1;
         return {
@@ -365,7 +379,7 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       profile: PROFILE,
       logicalModelName: 'model-a',
       executionRole: 'FAST_EXECUTOR',
-      invoke: createProviderBenchmarkInvocation({
+      invocation: createProviderBenchmarkInvocation({
         adapterRegistry: registry,
         parentEnv: { PATH: process.env.PATH ?? '', BENCHMARK_TEST_TOKEN: 'not-recorded' },
         cwd: process.cwd(),
@@ -377,5 +391,73 @@ describe('Writer Model Profile Behavior Benchmark', () => {
     expect(result.providerCallCount).toBe(1);
     expect(result.verdict).toBe('PASS_STRICT');
     expect(JSON.stringify(result)).not.toContain('not-recorded');
+  });
+
+  it('keeps qualification identity stable across API key rotation', async () => {
+    const runWithCredential = async (credential: string) => {
+      const { registry } = createMockAdapterRegistry('VERIFIED_SUCCESS');
+      return runWriterModelProfileBenchmark({
+        fixture: WRITER_DECISION_FIXTURE,
+        profile: PROFILE,
+        logicalModelName: 'model-a',
+        executionRole: 'FAST_EXECUTOR',
+        invocation: createProviderBenchmarkInvocation({
+          adapterRegistry: registry,
+          parentEnv: { PATH: process.env.PATH ?? '', BENCHMARK_TEST_TOKEN: credential },
+          cwd: process.cwd(),
+        }),
+      });
+    };
+    const oldKey = 'credential-rotation-old-private';
+    const newKey = 'credential-rotation-new-private';
+    const [before, after] = await Promise.all([
+      runWithCredential(oldKey),
+      runWithCredential(newKey),
+    ]);
+
+    expect(after.qualificationIdentity.qualificationIdentityFingerprint)
+      .toBe(before.qualificationIdentity.qualificationIdentityFingerprint);
+    expect(JSON.stringify([before, after])).not.toContain(oldKey);
+    expect(JSON.stringify([before, after])).not.toContain(newKey);
+  });
+
+  it('freezes identity before invocation and does not recompute it from later profile mutation', async () => {
+    const mutableProfile = structuredClone(PROFILE);
+    const invocation = successfulInvocation([actionCall('WRITE')]);
+    const invoke = invocation.invoke;
+    invocation.invoke = async (request) => {
+      request.profile.models[0].requestedModelId = 'mutated-after-snapshot';
+      return invoke(request);
+    };
+
+    const result = await runWriterModelProfileBenchmark({
+      fixture: WRITER_DECISION_FIXTURE,
+      profile: mutableProfile,
+      logicalModelName: 'model-a',
+      executionRole: 'FAST_EXECUTOR',
+      invocation,
+    });
+
+    expect(result.qualificationIdentity.modelIdentifier).toBe('model-a');
+    expect(mutableProfile.models[0].requestedModelId).toBe('mutated-after-snapshot');
+  });
+
+  it('fails before Provider execution when Adapter qualification metadata is missing', async () => {
+    const execute = vi.fn<ProviderAdapter['execute']>();
+    const registry = new AdapterRegistry();
+    registry.register({ transport: 'openai-chat', execute });
+
+    await expect(runWriterModelProfileBenchmark({
+      fixture: WRITER_DECISION_FIXTURE,
+      profile: PROFILE,
+      logicalModelName: 'model-a',
+      executionRole: 'FAST_EXECUTOR',
+      invocation: createProviderBenchmarkInvocation({
+        adapterRegistry: registry,
+        parentEnv: { PATH: process.env.PATH ?? '', BENCHMARK_TEST_TOKEN: 'private' },
+        cwd: process.cwd(),
+      }),
+    })).rejects.toThrow('ADAPTER_QUALIFICATION_CONTRACT_MISSING:openai-chat');
+    expect(execute).not.toHaveBeenCalled();
   });
 });

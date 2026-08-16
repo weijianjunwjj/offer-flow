@@ -118,7 +118,7 @@ export async function runConfiguredWriterModelProfileBenchmarks(
         profile,
         logicalModelName: configured.logicalModelName,
         executionRole: configured.executionRole,
-        invoke: invocation,
+        invocation,
       });
       const saved = saveWriterBenchmarkSample(cwd, result);
       samples.push(saved.sample);
@@ -172,7 +172,7 @@ export async function runConfiguredWriterModelProfileBenchmarkCell(
     profile,
     logicalModelName: configured.logicalModelName,
     executionRole,
-    invoke: createProviderBenchmarkInvocation({
+    invocation: createProviderBenchmarkInvocation({
       adapterRegistry: createProductionAdapterRegistry(),
       parentEnv,
       cwd,
