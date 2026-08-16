@@ -1351,6 +1351,7 @@ vi.mock('./deepseekToolLoop', () => ({
 
 import { runDeepSeekToolLoop } from './deepseekToolLoop';
 import { captureRunStartBaseline } from './git';
+import { acquireRunLease } from './runLease';
 import type { OrchestratorDeps } from './orchestrator';
 
 function makeToolLoopResult(overrides: Partial<DeepSeekToolLoopResult> = {}): DeepSeekToolLoopResult {
@@ -1688,6 +1689,79 @@ describe('P10 Partial Progress → VERIFY', () => {
     // Key assertion: did NOT go to ArbitrationCapsule from driveRoutedImplement
     const finalState = loadRunState(cwd2, state.runId);
     expect(finalState.arbitrationCapsule).toBeUndefined();
+  });
+
+  // ====================================================================
+  // Candidate-First: executor pre-read before free-form discovery
+  // ====================================================================
+  it('Candidate-First：首轮消息包含最高候选正文，且预读占用既有 tool-call budget', async () => {
+    const task = 'add unit tests for shipment tracker fields';
+    const state = createRunState(cwd2, `run-candidate-first-${Date.now()}`, task, 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    state.changedFiles = ['src/logistics/ShipmentTracker.fields.spec.ts'];
+    saveRunState(cwd2, state);
+
+    mkdirSync(path.join(cwd2, 'src', 'logistics'), { recursive: true });
+    mkdirSync(path.join(cwd2, 'scripts'), { recursive: true });
+    writeFileSync(
+      path.join(cwd2, 'src', 'logistics', 'ShipmentTracker.fields.spec.ts'),
+      'export const candidateMarker = "candidate-first-content";\n',
+      'utf8',
+    );
+    writeFileSync(
+      path.join(cwd2, 'src', 'logistics', 'ShipmentTracker.ts'),
+      'export class ShipmentTracker {}\n',
+      'utf8',
+    );
+    acquireRunLease(cwd2, state.runId, 'd'.repeat(64));
+
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED',
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/logistics/ShipmentTracker.fields.spec.ts"]}',
+      turns: 1,
+      totalToolCalls: 0,
+      auditTrail: [],
+      callIds: ['candidate-discovery-response'],
+      summary: {
+        ...makeToolLoopResult().summary,
+        toolCallCount: 0,
+        callIds: ['candidate-discovery-response'],
+      },
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED',
+      stopReason: null,
+      summary: {
+        ...makeToolLoopResult().summary,
+        changedFiles: ['src/logistics/ShipmentTracker.fields.spec.ts'],
+      },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const logLines: string[] = [];
+    await driveRoutedImplement(
+      routedOrchDeps(cwd2, { log: line => logLines.push(line) }),
+      state,
+      [],
+      captureRunStartBaseline(cwd2),
+    );
+
+    const discoveryOptions = (runDeepSeekToolLoop as any).mock.calls[0][0];
+    expect(discoveryOptions.maxTotalToolCalls, logLines.join('\n')).toBe(7);
+    expect(discoveryOptions.userPrompt, logLines.join('\n')).toContain('src/logistics/ShipmentTracker.fields.spec.ts');
+    expect(discoveryOptions.userPrompt).toContain('candidate-first-content');
+    const observation = loadRunState(cwd2, state.runId).toolLoopObservations?.find(o => o.stage === 'DISCOVERY');
+    expect(observation?.totalToolCalls).toBe(1);
+    expect(observation?.auditTrail[0]).toMatchObject({
+      turn: 0,
+      toolName: 'read_file',
+      toolCallId: 'candidate-first-read',
+      ok: true,
+    });
   });
 
   // ====================================================================

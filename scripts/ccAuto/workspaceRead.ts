@@ -664,7 +664,11 @@ function globWalk(
     }
 
     const entryAbs = path.join(currentAbs, entry);
-    const entryRel = rootRel ? path.posix.join(rootRel, entry) : entry;
+    const entryRel = currentRel
+      ? path.posix.join(currentRel, entry)
+      : rootRel
+        ? path.posix.join(rootRel, entry)
+        : entry;
 
     state.scannedEntries++;
 

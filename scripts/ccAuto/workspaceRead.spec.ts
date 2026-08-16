@@ -552,6 +552,20 @@ describe('safeGlob', () => {
     }
   });
 
+  it('preserves nested directory segments in recursive glob results', () => {
+    mkdirSync(path.join(TEST_CWD, 'src', 'nested', 'deeper'), { recursive: true });
+    writeFileSync(path.join(TEST_CWD, 'src', 'nested', 'deeper', 'target.spec.ts'), 'content', 'utf8');
+    const result = safeGlob({
+      repositoryRoot: REPO_ROOT, cwd: TEST_CWD, runId: RUN_ID,
+      fileScope: makeScope(), pattern: 'src/**/*.ts',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.paths).toContain('src/nested/deeper/target.spec.ts');
+      expect(result.result.paths).not.toContain('src/target.spec.ts');
+    }
+  });
+
   // 50. absolute pattern rejected
   it('rejects absolute pattern', () => {
     const result = safeGlob({
