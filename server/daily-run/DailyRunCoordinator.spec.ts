@@ -687,6 +687,58 @@ describe('DailyRunCoordinator — coverage / terminal status（FR-015 / SC-012 �
       assert.equal(brief.emptyReason, null);
     });
   });
+
+  it('brief 持久化真实 coverage（修复「今日搜索覆盖显示 0」），多 run 累积合并', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(coverage(30, 0)));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      // 真实 30/30 覆盖被持久化到 brief，而非 EMPTY_COVERAGE 的 0。
+      assert.equal(brief.coverage.queriesCompleted, 30);
+      assert.equal(brief.coverage.queriesFailed, 0);
+
+      // 第二次 run：coverage(2, 1) → 累积合并为 32 completed / 1 failed。
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage(
+        coverage(2, 1, [{ queryKey: '苏州×前端开发×React', errorCode: 'TIMEOUT', message: 'timeout' }]),
+      ));
+      await coordinator.run(manualInput());
+
+      const merged = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(merged !== null);
+      assert.equal(merged.coverage.queriesCompleted, 32);
+      assert.equal(merged.coverage.queriesFailed, 1);
+      assert.equal(merged.coverage.failedScopes.length, 1);
+      assert.equal(merged.coverage.failedScopes[0]?.queryKey, '苏州×前端开发×React');
+    });
+  });
+
+  it('coverage merge 语义冻结（GATE 1）：counters 累计（A），queryResults/failedScopes 按 queryKey 去重', async () => {
+    await withCoordinator(async ({ coordinator, briefRepo, pipelineRun }) => {
+      // run-1：30 完成，queryKey 'q1'
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage({
+        queriesCompleted: 30, queriesFailed: 0, failedScopes: [],
+        queryResults: [{ queryKey: 'q1', status: 'COMPLETED', resultsReturned: 5 }],
+      }));
+      await coordinator.run(manualInput());
+      // run-2：30 完成，同一 queryKey 'q1'（重复执行）
+      pipelineRun.mockImplementationOnce(async () => pipelineResultWithCoverage({
+        queriesCompleted: 30, queriesFailed: 0, failedScopes: [],
+        queryResults: [{ queryKey: 'q1', status: 'COMPLETED', resultsReturned: 5 }],
+      }));
+      await coordinator.run(manualInput());
+
+      const brief = briefRepo.findByLogicalIdentity('2026-08-14', 'version-1');
+      assert.ok(brief !== null);
+      // A：counters 累计，30 + 30 = 60 是 intentional。
+      assert.equal(brief.coverage.queriesCompleted, 60);
+      assert.equal(brief.coverage.queriesFailed, 0);
+      // 列表按 queryKey 去重：同一查询只保留一条逻辑覆盖记录。
+      assert.equal(brief.coverage.queryResults.length, 1);
+      assert.equal(brief.coverage.queryResults[0]?.queryKey, 'q1');
+    });
+  });
 });
 
 describe('DailyRunCoordinator — Discovery Preservation Across Enrichment Failure（Bug B）', () => {

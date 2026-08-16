@@ -177,6 +177,16 @@ describe('DailyJobBriefPage · 推荐批次', () => {
     expect(link.exists()).toBe(true);
     expect(link.attributes('href')).toBe('https://www.zhipin.com/job/123');
     expect(link.attributes('target')).toBe('_blank');
+    expect(link.attributes('rel')).toBe('noopener noreferrer');
+  });
+
+  it('推荐项非法 sourceUrl（javascript:）→ 不渲染来源链接', async () => {
+    stubToday([brief()], () => ({
+      recommendationBatch: batch(),
+      recommendationItems: [recommendationItem({ sourceUrl: 'javascript:alert(1)' })],
+    }));
+    const wrapper = await mountPage();
+    expect(wrapper.find('[data-testid="recommendation-source-link"]').exists()).toBe(false);
   });
 
   it('推荐项无 sourceUrl → 不制造来源按钮', async () => {
@@ -223,7 +233,7 @@ describe('DailyJobBriefPage · Discovery', () => {
     expect(wrapper.find('[data-testid="discovery-title"]').text()).toContain('高级前端开发工程师');
     expect(wrapper.find('[data-testid="discovery-company"]').text()).toContain('某科技有限公司');
     expect(wrapper.find('[data-testid="discovery-evidence-level"]').text()).toContain('需人工确认');
-    expect(wrapper.find('[data-testid="discovery-source-url"]').text()).toContain('zhipin.com');
+    expect(wrapper.find('[data-testid="discovery-source-link"]').text()).toContain('zhipin.com');
   });
 
   it('推荐 0 但有 discovery：不显示完全空批，显示推荐空态 + 发现区', async () => {
@@ -237,6 +247,68 @@ describe('DailyJobBriefPage · Discovery', () => {
     expect(wrapper.find('[data-testid="fully-empty"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="discovery-section"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="discovery-count"]').text()).toContain('2 条发现');
+  });
+
+  it('有效 sourceUrl → 标题与来源均为新窗口外链（target/rel）', async () => {
+    stubToday([brief()], () => ({
+      recommendationBatch: batch({ recommendationSet: { contractVersion: 1, recommendations: [], blocked: [], emptyReason: 'no_current_successful_analysis' } }),
+      recommendationItems: [],
+      discoveryItems: [discoveryItem()],
+    }));
+    const wrapper = await mountPage();
+
+    const titleLink = wrapper.find('[data-testid="discovery-title-link"]');
+    expect(titleLink.exists()).toBe(true);
+    expect(titleLink.attributes('href')).toBe('https://www.zhipin.com/job/123');
+    expect(titleLink.attributes('target')).toBe('_blank');
+    expect(titleLink.attributes('rel')).toBe('noopener noreferrer');
+
+    const sourceLink = wrapper.find('[data-testid="discovery-source-link"]');
+    expect(sourceLink.exists()).toBe(true);
+    expect(sourceLink.attributes('href')).toBe('https://www.zhipin.com/job/123');
+    expect(sourceLink.attributes('target')).toBe('_blank');
+    expect(sourceLink.attributes('rel')).toBe('noopener noreferrer');
+  });
+
+  it('非法 sourceUrl（javascript:）→ 不渲染可点击链接，保持纯文本', async () => {
+    stubToday([brief()], () => ({
+      recommendationBatch: batch({ recommendationSet: { contractVersion: 1, recommendations: [], blocked: [], emptyReason: 'no_current_successful_analysis' } }),
+      recommendationItems: [],
+      discoveryItems: [discoveryItem({ sourceUrl: 'javascript:alert(1)', sourceDomain: 'evil.com' })],
+    }));
+    const wrapper = await mountPage();
+
+    expect(wrapper.find('[data-testid="discovery-title-link"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="discovery-source-link"]').exists()).toBe(false);
+    // 保持纯文本（不构造猜测 URL）
+    expect(wrapper.find('[data-testid="discovery-source-url"]').text()).toContain('javascript:alert(1)');
+  });
+
+  it('空 sourceUrl → 标题纯文本、不渲染任何来源链接', async () => {
+    stubToday([brief()], () => ({
+      recommendationBatch: batch({ recommendationSet: { contractVersion: 1, recommendations: [], blocked: [], emptyReason: 'no_current_successful_analysis' } }),
+      recommendationItems: [],
+      discoveryItems: [discoveryItem({ sourceUrl: null, sourceDomain: null })],
+    }));
+    const wrapper = await mountPage();
+
+    expect(wrapper.find('[data-testid="discovery-title-link"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="discovery-source-link"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="discovery-source-url"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="discovery-title"]').text()).toContain('高级前端开发工程师');
+  });
+
+  it('有效外链下 item 内容仍可读（标题/公司/城市）', async () => {
+    stubToday([brief()], () => ({
+      recommendationBatch: batch({ recommendationSet: { contractVersion: 1, recommendations: [], blocked: [], emptyReason: 'no_current_successful_analysis' } }),
+      recommendationItems: [],
+      discoveryItems: [discoveryItem({ city: '苏州', company: '某科技有限公司' })],
+    }));
+    const wrapper = await mountPage();
+
+    expect(wrapper.find('[data-testid="discovery-title"]').text()).toContain('高级前端开发工程师');
+    expect(wrapper.find('[data-testid="discovery-company"]').text()).toContain('某科技有限公司');
+    expect(wrapper.text()).toContain('苏州');
   });
 });
 

@@ -160,6 +160,23 @@ function formatTime(ms: number): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+/**
+ * 只有合法 http(s) 绝对 URL 才可作为外链；空值、非法 scheme（javascript:/data:/相对路径等）
+ * 一律返回 undefined。绝不构造猜测 URL，也不对后端原文做归一化改写。
+ */
+function safeSourceUrl(url: string | null): string | undefined {
+  if (url === null) return undefined;
+  const trimmed = url.trim();
+  if (trimmed === '') return undefined;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+  } catch {
+    return undefined;
+  }
+  return trimmed;
+}
 </script>
 
 <template>
@@ -291,13 +308,13 @@ function formatTime(ms: number): string {
                   :data-testid="`recommendation-evidence-${ref.polarity}`"
                 >{{ ref.polarity === 'support' ? '＋' : '－' }} {{ ref.evidenceKey }}</code>
               </details>
-              <p v-if="rec.sourceUrl" class="source-url">
+              <p v-if="safeSourceUrl(rec.sourceUrl)" class="source-url">
                 <a
-                  :href="rec.sourceUrl"
+                  :href="safeSourceUrl(rec.sourceUrl)"
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid="recommendation-source-link"
-                >查看岗位来源</a>
+                >查看岗位来源<span class="ext-ico" aria-hidden="true">↗</span></a>
               </p>
             </div>
 
@@ -343,7 +360,18 @@ function formatTime(ms: number): string {
             :data-testid="`discovery-item-${item.candidateId}`"
           >
             <div class="rec-head">
-              <n-text strong data-testid="discovery-title">{{ item.title ?? '未命名岗位' }}</n-text>
+              <a
+                v-if="safeSourceUrl(item.sourceUrl)"
+                :href="safeSourceUrl(item.sourceUrl)"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="discovery-title-link"
+                data-testid="discovery-title-link"
+              >
+                <span class="rec-title" data-testid="discovery-title">{{ item.title ?? '未命名岗位' }}</span>
+                <span class="ext-ico" aria-hidden="true">↗</span>
+              </a>
+              <n-text v-else strong data-testid="discovery-title">{{ item.title ?? '未命名岗位' }}</n-text>
               <n-tag size="small" :type="evidenceLevelTagType(item.evidenceLevel)" data-testid="discovery-evidence-level">
                 {{ evidenceLevelLabel(item.evidenceLevel) }}
               </n-tag>
@@ -354,7 +382,15 @@ function formatTime(ms: number): string {
               <template v-if="item.sourceDomain"> · <n-text depth="3">{{ item.sourceDomain }}</n-text></template>
             </p>
             <p v-if="item.sourceUrl" class="source-url">
-              <n-text depth="3" data-testid="discovery-source-url">来源：{{ item.sourceUrl }}</n-text>
+              <a
+                v-if="safeSourceUrl(item.sourceUrl)"
+                :href="safeSourceUrl(item.sourceUrl)"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="source-url-link"
+                data-testid="discovery-source-link"
+              >{{ item.sourceUrl }}<span class="ext-ico" aria-hidden="true">↗</span></a>
+              <n-text v-else depth="3" data-testid="discovery-source-url">来源：{{ item.sourceUrl }}</n-text>
             </p>
           </div>
         </n-card>
@@ -385,6 +421,12 @@ function formatTime(ms: number): string {
 .blocked { margin-top: 12px; }
 .blocked-item { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
 .discovery-item { opacity: 0.92; }
+.rec-title { font-weight: 600; }
+.discovery-title-link { display: inline-flex; align-items: center; gap: 4px; color: var(--of-ink, #0f172a); text-decoration: none; }
+.discovery-title-link:hover { color: var(--of-brand, #2563eb); text-decoration: underline; }
 .source-url { margin: 4px 0 0; font-size: 12px; word-break: break-all; }
+.source-url-link { color: var(--of-brand, #2563eb); text-decoration: none; }
+.source-url-link:hover { text-decoration: underline; }
+.ext-ico { font-size: 12px; line-height: 1; opacity: 0.75; }
 @media (max-width: 860px) { .hero { align-items: flex-start; flex-direction: column; } }
 </style>

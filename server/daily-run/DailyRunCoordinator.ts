@@ -269,7 +269,7 @@ export class DailyRunCoordinator {
       ])];
       briefRepo.updateProjection(existing.id, {
         sourceRunIds: [...new Set([...existing.sourceRunIds, runId])],
-        coverage: EMPTY_COVERAGE,
+        coverage: this.mergeCoverage(existing.coverage, pipelineResult.coverage),
         recommendationBatchId: selectedBatchId,
         discoveryItemIds: mergedDiscoveryItemIds,
         emptyReason: this.emptyReasonFor(selectedBatchId, mergedDiscoveryItemIds),
@@ -285,7 +285,7 @@ export class DailyRunCoordinator {
       recommendationBatchId: incomingBatchId,
       discoveryItemIds: incomingDiscoveryItemIds,
       status: 'READY',
-      coverage: EMPTY_COVERAGE,
+      coverage: pipelineResult.coverage,
       costSummaryJson: null,
       emptyReason: this.emptyReasonFor(incomingBatchId, incomingDiscoveryItemIds),
       generatedAt: this.deps.now(),
@@ -307,5 +307,30 @@ export class DailyRunCoordinator {
   private emptyReasonFor(batchId: string, discoveryItemIds: string[]): string | null {
     if (this.isNonEmptyBatch(batchId)) return null;
     return discoveryItemIds.length === 0 ? '今日未发现值得处理的新岗位' : null;
+  }
+
+  /**
+   * 日级 coverage 累积合并（多 run 追加同一 logical brief 时）。
+   *
+   * 语义冻结（GATE 1）：SearchCoverage 的 counters 与列表本就是两套语义——
+   *   queriesCompleted / queriesFailed = 查询「执行次数」计数，跨 run 直接累计（30 + 30 = 60 是 intentional）；
+   *   failedScopes / queryResults = 按 queryKey 的「逻辑覆盖」记录，跨 run 按 queryKey 去重后追加（同一查询只保留一条）。
+   * 与前端「完成查询 N 次 / 覆盖 M 个查询」两个不同维度一致，不是无意的双语义。
+   */
+  private mergeCoverage(existing: SearchCoverage, incoming: SearchCoverage): SearchCoverage {
+    const failedKeys = new Set(existing.failedScopes.map((f) => f.queryKey));
+    const resultKeys = new Set(existing.queryResults.map((r) => r.queryKey));
+    return {
+      queriesCompleted: existing.queriesCompleted + incoming.queriesCompleted,
+      queriesFailed: existing.queriesFailed + incoming.queriesFailed,
+      failedScopes: [
+        ...existing.failedScopes,
+        ...incoming.failedScopes.filter((f) => !failedKeys.has(f.queryKey)),
+      ],
+      queryResults: [
+        ...existing.queryResults,
+        ...incoming.queryResults.filter((r) => !resultKeys.has(r.queryKey)),
+      ],
+    };
   }
 }
