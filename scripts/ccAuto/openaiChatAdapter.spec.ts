@@ -752,6 +752,44 @@ describe('normalizeOpenAIChatUsage', () => {
     // 不双计——inputTokens 只用了 miss，没有额外加 prompt_tokens
   });
 
+  it('maps standard OpenAI prompt_tokens_details.cached_tokens without double counting', () => {
+    const result = normalizeOpenAIChatUsage({
+      prompt_tokens: 1000,
+      completion_tokens: 500,
+      total_tokens: 1500,
+      prompt_tokens_details: { cached_tokens: 200 },
+    });
+    expect(result.inconsistent).toBe(false);
+    expect(result.rawUsage).toEqual({
+      inputTokens: 800,
+      outputTokens: 500,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 200,
+    });
+  });
+
+  it('fails closed when standard and legacy cache counters disagree', () => {
+    const result = normalizeOpenAIChatUsage({
+      prompt_tokens: 1000,
+      completion_tokens: 500,
+      prompt_cache_hit_tokens: 200,
+      prompt_cache_miss_tokens: 800,
+      prompt_tokens_details: { cached_tokens: 300 },
+    });
+    expect(result.inconsistent).toBe(true);
+    expect(result.rawUsage.inputTokens).toBeNull();
+  });
+
+  it('fails closed when cached_tokens exceeds prompt_tokens', () => {
+    const result = normalizeOpenAIChatUsage({
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      prompt_tokens_details: { cached_tokens: 101 },
+    });
+    expect(result.inconsistent).toBe(true);
+    expect(result.rawUsage.cacheReadInputTokens).toBeNull();
+  });
+
   // 42. prompt_tokens 与 hit+miss 不一致 → fail closed
   it('detects inconsistency when prompt_tokens != hit + miss', () => {
     const result = normalizeOpenAIChatUsage({

@@ -217,6 +217,9 @@ const openaiChatUsageSchema = z.object({
   total_tokens: z.number().int().finite().nonnegative().nullable().optional(),
   prompt_cache_hit_tokens: z.number().int().finite().nonnegative().nullable().optional(),
   prompt_cache_miss_tokens: z.number().int().finite().nonnegative().nullable().optional(),
+  prompt_tokens_details: z.object({
+    cached_tokens: z.number().int().finite().nonnegative().nullable().optional(),
+  }).nullable().optional(),
 });
 
 const openaiChatResponseSchema = z.object({
@@ -261,11 +264,15 @@ export interface OpenAIChatUsageResult {
  *   cacheCreationInputTokens = 0（OpenAI Chat 无 cache creation 概念）
  *   cacheReadInputTokens = prompt_cache_hit_tokens
  *   同时校验 prompt_tokens === hit + miss，不等则标记 inconsistent
+ * - 标准 OpenAI prompt_tokens_details.cached_tokens 存在时：
+ *   inputTokens = prompt_tokens - cached_tokens
+ *   cacheReadInputTokens = cached_tokens
+ *   cacheCreationInputTokens = 0（OpenAI Chat 没有独立 cache creation 计费维度）
  * - 只有 prompt_tokens + completion_tokens，无缓存细分：
  *   inputTokens = prompt_tokens
  *   outputTokens = completion_tokens
- *   cacheCreationInputTokens = null（Provider 未返回）
- *   cacheReadInputTokens = null（Provider 未返回）
+ *   cacheCreationInputTokens = 0（该协议不存在独立维度）
+ *   cacheReadInputTokens = 0（Provider 未报告缓存命中）
  * - usage 完全缺失：全部 null
  * - 所有 Token 必须为非负整数，非法值拒绝
  */
@@ -291,6 +298,9 @@ export function normalizeOpenAIChatUsage(
     raw.prompt_cache_hit_tokens !== undefined &&
     raw.prompt_cache_miss_tokens !== null &&
     raw.prompt_cache_miss_tokens !== undefined;
+  const standardCachedTokens = raw.prompt_tokens_details?.cached_tokens;
+  const hasStandardCacheBreakdown =
+    standardCachedTokens !== null && standardCachedTokens !== undefined;
 
   if (hasCacheBreakdown) {
     // 校验 token 值合法性
@@ -307,6 +317,20 @@ export function normalizeOpenAIChatUsage(
         },
         inconsistent: true,
         inconsistencyReason: `cache token 值非法：hit=${hit}, miss=${miss}`,
+      };
+    }
+
+    if (hasStandardCacheBreakdown && standardCachedTokens !== hit) {
+      return {
+        rawUsage: {
+          inputTokens: null,
+          outputTokens: null,
+          cacheCreationInputTokens: null,
+          cacheReadInputTokens: null,
+        },
+        inconsistent: true,
+        inconsistencyReason:
+          `prompt_tokens_details.cached_tokens (${standardCachedTokens}) !== prompt_cache_hit_tokens (${hit})`,
       };
     }
 
@@ -359,6 +383,40 @@ export function normalizeOpenAIChatUsage(
         outputTokens: completionTokens,
         cacheCreationInputTokens: 0,  // OpenAI Chat 没有独立 cache creation 类别
         cacheReadInputTokens: hit,
+      },
+      inconsistent: false,
+      inconsistencyReason: '',
+    };
+  }
+
+  if (hasStandardCacheBreakdown) {
+    const promptTokens = raw.prompt_tokens ?? null;
+    const completionTokens = raw.completion_tokens ?? null;
+    if (
+      !isValidTokenValue(promptTokens)
+      || !isValidTokenValue(standardCachedTokens)
+      || standardCachedTokens > promptTokens
+      || (completionTokens !== null && !isValidTokenValue(completionTokens))
+    ) {
+      return {
+        rawUsage: {
+          inputTokens: null,
+          outputTokens: null,
+          cacheCreationInputTokens: null,
+          cacheReadInputTokens: null,
+        },
+        inconsistent: true,
+        inconsistencyReason:
+          `标准 cached_tokens 无法与 prompt_tokens 对账：prompt=${promptTokens}, cached=${standardCachedTokens}`,
+      };
+    }
+
+    return {
+      rawUsage: {
+        inputTokens: promptTokens - standardCachedTokens,
+        outputTokens: completionTokens,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: standardCachedTokens,
       },
       inconsistent: false,
       inconsistencyReason: '',
