@@ -342,4 +342,8 @@ describe('isPricingReady', () => {
     });
     expect(isPricingReady(profile, 'writer-model')).toBe(false);
   });
+
+  it('returns false when logicalModelName is not in profile.models', () => {
+    expect(isPricingReady(testProfile(), 'missing-model')).toBe(false);
+  });
 });
