@@ -39,6 +39,11 @@ Policy 必须版本化，因为结果只有放在产生它的规则下才可解�
 
 `INSUFFICIENT_EVIDENCE` 是正常治理状态，不是 model failure。
 
+正式资格结果必须由显式 `WriterQualificationBatch` membership 产生，并持久化为不可覆盖的
+`WriterQualificationResultArtifact`。目录中的 lifetime samples 仍可用于 diagnostics，但不得通过
+“最新 3 条”隐式改写一个已完成 Batch 的正式结果。Artifact contract 与安全持久化见
+`writer-qualification-artifacts-v1.md`。
+
 `NOT_QUALIFIED` 只表示当前 Qualification Identity 在
 `writer-qualification-policy-v1` 下不满足 Writer 资格，不表示某个 Provider 或 Model 永久不具备
 Writer 能力，也不得形成永久 blacklist。Model、Profile 实质配置、Provider config、fixture、tool /
@@ -320,3 +325,7 @@ WRITE:  FAIL_WRONG_ACTION    [READ]
 本 Policy 的 evaluator 实现不得借资格判定修改 benchmark、routing、Provider Adapter、Writer
 assignment、fixture、prompt、token limit、tool schema 或 workspace permission logic。Evaluator 必须
 保持 raw samples 不变，并继续维持 qualification、runtime routing 与 Writer authorization 的职责分离。
+
+正式 evaluator 调用必须先按 Frozen Batch 中显式列出的 sample IDs 选择 evidence，再复用本 Policy 的
+判定逻辑。相同 identity 的后续 requalification 使用新 Batch；历史 Batch、Result 与 diagnostics 均不
+覆盖。
