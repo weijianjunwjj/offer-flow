@@ -2,6 +2,7 @@
 import type { RunState } from './store';
 import { isTaskSucceeded } from './store';
 import { summarizeUsage, opusShare } from './budget';
+import { formatRoleName } from './taskCostSummary';
 
 export function renderReport(state: RunState): string {
   const totals = summarizeUsage(state.calls);
@@ -109,16 +110,10 @@ export function renderReport(state: RunState): string {
   if (state.routedExecution && state.toolLoopObservations && state.toolLoopObservations.length > 0) {
     lines.push('## Routed Tool Loop 明细');
     lines.push('');
-    const roleNames: Record<string, string> = {
-      WRITER: 'Writer',
-      FAST_EXECUTOR: 'V4 Flash',
-      STRONG_EXECUTOR: 'V4 Pro',
-      ARBITER: 'Opus 5',
-    };
     for (const obs of state.toolLoopObservations) {
       const stageLabel = obs.stage ? ` [${obs.stage}]` : '';
       const displayRole = obs.executionRole ?? obs.role;
-      lines.push(`### ${roleNames[displayRole] ?? displayRole} (${obs.modelLogicalName})${stageLabel}`);
+      lines.push(`### ${formatRoleName(displayRole)} (${obs.modelLogicalName})${stageLabel}`);
       if (obs.profileId) lines.push(`- profileId: ${obs.profileId}`);
       lines.push(`- executionRole: ${displayRole}`);
       if (obs.legacyRoutingLane) lines.push(`- legacyRoutingLane: ${obs.legacyRoutingLane}`);
