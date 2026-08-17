@@ -481,6 +481,45 @@ describe('executeProviderCall — security boundaries', () => {
     }
   });
 
+  it('redacts every declared credential from defensive adapter exception output', async () => {
+    const credentialA = 'credential-a-must-not-leak';
+    const credentialB = 'credential-b-must-not-leak';
+    const multiCredentialProfile: ProviderProfile = {
+      ...testProfile,
+      credentialEnvVars: ['PROVIDER_CREDENTIAL_A', 'PROVIDER_CREDENTIAL_B'],
+    };
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat',
+      execute: async () => {
+        throw new Error(`Provider echoed ${credentialA} and ${credentialB}`);
+      },
+    });
+
+    const result = await executeProviderCall({
+      profile: multiCredentialProfile,
+      logicalModelName: 'deepseek',
+      role: 'builder',
+      systemPrompt: 't',
+      userPrompt: 't',
+      maxOutputTokens: 4096,
+      timeoutMs: 30_000,
+      adapterRegistry: registry,
+      parentEnv: {
+        PATH: '/usr/bin',
+        HOME: '/home/test',
+        PROVIDER_CREDENTIAL_A: credentialA,
+        PROVIDER_CREDENTIAL_B: credentialB,
+      },
+      cwd: FIXTURE_CWD,
+    });
+
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(credentialA);
+    expect(serialized).not.toContain(credentialB);
+    expect(serialized).toContain('<redacted-secret>');
+  });
+
   it('fails closed when credential is missing', async () => {
     const { registry } = makeRegistry('VERIFIED_SUCCESS');
     const envWithoutCred = { PATH: '/usr/bin', HOME: '/home/test' };

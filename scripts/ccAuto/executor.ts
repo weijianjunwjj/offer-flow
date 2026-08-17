@@ -46,10 +46,10 @@ function buildProviderFailureDetail(opts: {
   providerId: string;
   requestedModelId: string;
   timeoutMs: number;
-  credentialValue?: string;
+  credentialValues: string[];
 }): ProviderFailureDetail {
-  const { err, callId, providerId, requestedModelId, timeoutMs, credentialValue } = opts;
-  const secrets = credentialValue ? [credentialValue] : [];
+  const { err, callId, providerId, requestedModelId, timeoutMs, credentialValues } = opts;
+  const secrets = credentialValues;
 
   // 安全提取 error cause name
   let causeName: string | null = null;
@@ -313,14 +313,17 @@ export async function executeProviderCall(
     const isTransientTransport =
       err instanceof TransportError && err.transient === true;
 
-    const credentialValue = childEnv[profile.credentialEnvVars[0]];
+    const credentialValues = profile.credentialEnvVars
+      .map(name => childEnv[name])
+      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    const safeErrorMessage = redactSecretValues((err as Error).message, credentialValues);
     const failureDetail = buildProviderFailureDetail({
       err: err as Error,
       callId,
       providerId: profile.id,
       requestedModelId,
       timeoutMs: opts.timeoutMs,
-      credentialValue,
+      credentialValues,
     });
 
     return {
@@ -329,7 +332,7 @@ export async function executeProviderCall(
       requiresHumanConfirmation: false,
       usageRecord: null,
       identityConfirmationContext: null,
-      message: `Provider 调用失败：${(err as Error).message}` +
+      message: `Provider 调用失败：${safeErrorMessage}` +
         (marked ? '' : '（警告：无法更新 PendingCall 状态，内部状态可能不一致）'),
       errorKind: isTimeout ? 'HTTP' : undefined,
       httpStatus: null,
