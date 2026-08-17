@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runCcAutoCliProcess } from './cli';
-import { runWriterBenchmarkProcess } from './writerModelProfileBenchmark.run';
+import {
+  runWriterBenchmarkProcess,
+  runWriterQualificationCandidateProcess,
+} from './writerModelProfileBenchmark.run';
 
 const originalEnv = { ...process.env };
 const cleanup: string[] = [];
@@ -79,10 +82,42 @@ describe('cc-auto process env bootstrap', () => {
     expect(order).toEqual(['env', 'benchmark-provider-initialization']);
   });
 
+  it('qualification candidate startup bootstraps env before resolving the explicit candidate', async () => {
+    const order: string[] = [];
+    const candidate = {
+      profileId: 'profile-a',
+      logicalModelName: 'logical-model-a',
+    };
+    const emptyResult = {
+      samples: [],
+      sampleFiles: [],
+      summaries: [],
+      benchmarkInvocationCount: 0,
+      providerCallCount: 0,
+    };
+
+    const result = await runWriterQualificationCandidateProcess(
+      candidate,
+      'D:/workspace',
+      {
+        loadEnv: () => { order.push('env'); },
+        runBenchmarks: async (receivedCandidate) => {
+          expect(receivedCandidate).toEqual(candidate);
+          order.push('candidate-provider-initialization');
+          return emptyResult;
+        },
+      },
+    );
+
+    expect(result).toBe(emptyResult);
+    expect(order).toEqual(['env', 'candidate-provider-initialization']);
+  });
+
   it('bootstrap entrypoints contain no provider-specific credential selection', () => {
     const startupSource = [
       runCcAutoCliProcess.toString(),
       runWriterBenchmarkProcess.toString(),
+      runWriterQualificationCandidateProcess.toString(),
     ].join('\n').toLowerCase();
 
     for (const providerName of ['deepseek', 'gpt', 'grok', 'claude']) {

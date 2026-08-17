@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  ExecutionModelRole,
   ModelToolCall,
   ProviderAdapter,
   ProviderAdapterQualificationContract,
@@ -8,6 +7,7 @@ import type {
   ProviderExecutionResult,
   ProviderProfile,
   ProviderToolDefinition,
+  WriterExecutionRole,
 } from './types';
 import { executeProviderCall, newCallId } from './executor';
 import { parseToolCalls } from './toolProtocol';
@@ -38,7 +38,7 @@ const BENCHMARK_SYSTEM_CONTRACT = [
 export interface WriterBenchmarkInvocationRequest {
   profile: ProviderProfile;
   logicalModelName: string;
-  executionRole: ExecutionModelRole;
+  executionRole: WriterExecutionRole;
   systemPrompt: string;
   userPrompt: string;
   tools: ProviderToolDefinition[];
@@ -68,7 +68,7 @@ export interface WriterModelProfileBenchmarkInput {
   fixture: WriterDecisionFixture;
   profile: ProviderProfile;
   logicalModelName: string;
-  executionRole: ExecutionModelRole;
+  executionRole: WriterExecutionRole;
   invocation: WriterBenchmarkInvocationCapability;
   sampleIdFactory?: () => string;
   now?: () => Date;
@@ -81,7 +81,7 @@ export interface WriterModelProfileBenchmarkResult {
   profileId: string;
   providerIdentifier: string;
   qualificationIdentity: WriterQualificationIdentitySnapshot;
-  executionRole: ExecutionModelRole;
+  executionRole: WriterExecutionRole;
   startedAt: string;
   completedAt: string;
   toolCallCount: number;
@@ -364,7 +364,9 @@ export function createProviderBenchmarkInvocation(
         callId: options.callIdFactory?.() ?? newCallId(),
         tools: request.tools,
         toolMode: 'enabled',
-        executionRole: request.executionRole,
+        executionRole: request.executionRole === 'WRITER'
+          ? null
+          : request.executionRole,
       });
 
       return {

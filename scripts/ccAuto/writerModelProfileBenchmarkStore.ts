@@ -7,7 +7,7 @@ import type {
   WriterBenchmarkVerdict,
   WriterModelProfileBenchmarkResult,
 } from './writerModelProfileBenchmark';
-import type { ExecutionModelRole } from './types';
+import type { WriterExecutionRole } from './types';
 import type {
   WriterDecisionActionClass,
   WriterExpectedActionClass,
@@ -27,7 +27,7 @@ interface PersistedWriterBenchmarkSampleBase {
   fixtureVersion: string;
   profileId: string;
   providerIdentifier: string;
-  executionRole: ExecutionModelRole;
+  executionRole: WriterExecutionRole;
   startedAt: string;
   completedAt: string;
   latencyMs: number;

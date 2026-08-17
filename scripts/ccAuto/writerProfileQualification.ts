@@ -15,7 +15,7 @@ import {
   type PersistedWriterBenchmarkSample,
   type PersistedWriterBenchmarkSampleV3,
 } from './writerModelProfileBenchmarkStore';
-import type { ExecutionModelRole } from './types';
+import type { WriterExecutionRole } from './types';
 import {
   computeWriterQualificationIdentityFingerprint,
   validateWriterQualificationIdentitySnapshot,
@@ -114,7 +114,7 @@ export interface WriterFixtureQualificationEvidence {
 export interface WriterQualificationCapabilityEvidence {
   fixtureCoverage: Record<WriterExpectedActionClass, WriterFixtureQualificationEvidence>;
   sampleIds: string[];
-  sourceExecutionRoles: ExecutionModelRole[];
+  sourceExecutionRoles: WriterExecutionRole[];
   totalSamples: number;
   capabilitySamples: number;
   protocolInvalidSamples: number;
