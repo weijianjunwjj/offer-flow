@@ -110,14 +110,23 @@ export function renderReport(state: RunState): string {
     lines.push('## Routed Tool Loop 明细');
     lines.push('');
     const roleNames: Record<string, string> = {
+      WRITER: 'Writer',
       FAST_EXECUTOR: 'V4 Flash',
       STRONG_EXECUTOR: 'V4 Pro',
       ARBITER: 'Opus 5',
     };
     for (const obs of state.toolLoopObservations) {
       const stageLabel = obs.stage ? ` [${obs.stage}]` : '';
-      lines.push(`### ${roleNames[obs.role] ?? obs.role} (${obs.modelLogicalName})${stageLabel}`);
-      lines.push(`- Provider calls: ${obs.totalToolCalls}`);
+      const displayRole = obs.executionRole ?? obs.role;
+      lines.push(`### ${roleNames[displayRole] ?? displayRole} (${obs.modelLogicalName})${stageLabel}`);
+      if (obs.profileId) lines.push(`- profileId: ${obs.profileId}`);
+      lines.push(`- executionRole: ${displayRole}`);
+      if (obs.legacyRoutingLane) lines.push(`- legacyRoutingLane: ${obs.legacyRoutingLane}`);
+      lines.push(`- writerRuntimeRuns: ${obs.writerRuntimeRunCount ?? (obs.stage === 'WRITER' ? 1 : 0)}`);
+      lines.push(`- providerInvocations: ${obs.providerInvocationCount ?? 'N/A'}`);
+      lines.push(`- transportAttempts: ${obs.transportAttemptCount ?? 'N/A'}`);
+      lines.push(`- transportRetries: ${obs.transportRetryCount ?? 0}`);
+      lines.push(`- toolCalls: ${obs.totalToolCalls}`);
       lines.push(`- Turns: ${obs.turns}`);
       lines.push(`- Termination reason: ${obs.terminationReason ?? 'N/A'}`);
       if (obs.changedFiles.length > 0) {

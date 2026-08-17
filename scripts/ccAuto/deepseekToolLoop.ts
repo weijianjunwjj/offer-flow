@@ -311,6 +311,9 @@ export async function runDeepSeekToolLoop(
   const changedFilesSet = new Set<string>();
   let turns = 0;
   let totalToolCalls = 0;
+  let providerInvocationCount = 0;
+  let transportAttemptCount = 0;
+  let transportRetryCount = 0;
   const startMs = monotonicNow();
   let finalText: string | null = null;
 
@@ -360,6 +363,9 @@ export async function runDeepSeekToolLoop(
     for (const cid of providerResult.allCallIds) {
       callIds.push(cid);
     }
+    providerInvocationCount += providerResult.providerInvocationCount;
+    transportAttemptCount += providerResult.transportAttemptCount;
+    transportRetryCount += providerResult.transportRetryCount;
 
     // 2. Provider 失败 → 根据原因分类终止
     if (!providerResult.ok) {
@@ -556,6 +562,9 @@ export async function runDeepSeekToolLoop(
       auditTrail,
       summary,
       failureDetail: lastFailureDetail,
+      providerInvocationCount,
+      transportAttemptCount,
+      transportRetryCount,
     };
   }
 
@@ -594,6 +603,9 @@ interface RetryResult {
   reasoningContent?: string | null;
   usageRecord?: UsageRecord | null;
   allCallIds: string[];
+  providerInvocationCount: number;
+  transportAttemptCount: number;
+  transportRetryCount: number;
   // failure-specific
   stopReason?: ProviderExecutionStopReason | null;
   requiresHumanConfirmation?: boolean;
@@ -607,10 +619,24 @@ interface RetryResult {
 
 const BACKOFF_MS = [250, 500];
 
+function emptyTransportCounts(): Pick<RetryResult, 'providerInvocationCount' | 'transportAttemptCount' | 'transportRetryCount'> {
+  return { providerInvocationCount: 0, transportAttemptCount: 0, transportRetryCount: 0 };
+}
+
+function addTransportAudit(
+  totals: Pick<RetryResult, 'providerInvocationCount' | 'transportAttemptCount' | 'transportRetryCount'>,
+  audit: import('./types').ProviderTransportAudit | undefined,
+): void {
+  totals.providerInvocationCount += 1;
+  totals.transportAttemptCount += audit?.transportAttempts ?? 1;
+  totals.transportRetryCount += audit?.transportRetryCount ?? 0;
+}
+
 async function executeProviderCallWithRetry(
   ctx: RetryContext,
 ): Promise<RetryResult> {
   const allCallIds: string[] = [];
+  const transportTotals = emptyTransportCounts();
   let lastErrorKind: string | undefined;
   let lastHttpStatus: number | null | undefined;
   let attempts = 0;
@@ -638,6 +664,7 @@ async function executeProviderCallWithRetry(
       callId,
       executionRole: ctx.executorContext.executionRole ?? null,
     });
+    addTransportAudit(transportTotals, result.transportAudit);
 
     // Success
     if (result.ok) {
@@ -648,6 +675,7 @@ async function executeProviderCallWithRetry(
         reasoningContent: result.reasoningContent,
         usageRecord: result.usageRecord,
         allCallIds,
+        ...transportTotals,
       };
     }
 
@@ -671,6 +699,7 @@ async function executeProviderCallWithRetry(
     return {
       ok: false,
       allCallIds,
+      ...transportTotals,
       stopReason: result.stopReason,
       requiresHumanConfirmation: result.requiresHumanConfirmation,
       errorKind: result.errorKind,
@@ -691,6 +720,7 @@ async function executeProviderCallWithRetry(
   return {
     ok: false,
     allCallIds,
+    ...transportTotals,
     stopReason: null,
     requiresHumanConfirmation: false,
     errorKind: lastErrorKind,

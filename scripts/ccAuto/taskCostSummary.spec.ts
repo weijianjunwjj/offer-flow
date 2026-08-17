@@ -511,5 +511,42 @@ describe('格式化', () => {
     expect(formatRoleName('FAST_EXECUTOR')).toBe('V4 Flash');
     expect(formatRoleName('STRONG_EXECUTOR')).toBe('V4 Pro');
     expect(formatRoleName('ARBITER')).toBe('Opus 5');
+    expect(formatRoleName('WRITER')).toBe('Writer');
+  });
+});
+
+describe('Writer cost attribution', () => {
+  it('Grok Writer cost 归入 WRITER，不落入 FAST_EXECUTOR', () => {
+    const summary = makeSummary([
+      {
+        usage: fakeUsage({
+          requestedModelId: 'grok-4.6',
+          reportedModel: 'grok-4.6',
+          providerId: 'apikey-grok-4-6',
+          costRmbCustom: 0.0203,
+        }),
+        role: 'WRITER',
+        provider: 'apikey-grok-4-6',
+        modelLogicalName: 'grok-4-6-writer',
+      },
+    ]);
+    const writer = summary.byRole.find((e) => e.role === 'WRITER');
+    const flash = summary.byRole.find((e) => e.role === 'FAST_EXECUTOR');
+    expect(writer).toBeTruthy();
+    expect(writer!.costRmb).toBeCloseTo(0.0203);
+    expect(writer!.modelLogicalName).toBe('grok-4-6-writer');
+    expect(flash).toBeUndefined();
+  });
+
+  it('FAST / STRONG / ARBITER 路径仍各自归入历史 lane', () => {
+    const summary = makeSummary([
+      { usage: fakeUsage({ costRmbCustom: 0.01 }), role: 'FAST_EXECUTOR', provider: 'ds', modelLogicalName: 'flash' },
+      { usage: fakeUsage({ costRmbCustom: 0.02 }), role: 'STRONG_EXECUTOR', provider: 'ds', modelLogicalName: 'pro' },
+      { usage: fakeUsage({ costRmbCustom: 0.03 }), role: 'ARBITER', provider: 'anthropic', modelLogicalName: 'opus' },
+    ]);
+    expect(summary.byRole.find((e) => e.role === 'FAST_EXECUTOR')?.costRmb).toBeCloseTo(0.01);
+    expect(summary.byRole.find((e) => e.role === 'STRONG_EXECUTOR')?.costRmb).toBeCloseTo(0.02);
+    expect(summary.byRole.find((e) => e.role === 'ARBITER')?.costRmb).toBeCloseTo(0.03);
+    expect(summary.byRole.find((e) => e.role === 'WRITER')).toBeUndefined();
   });
 });

@@ -8,6 +8,8 @@ import path from 'node:path';
 import {
   captureRunStartBaseline,
   computeRunChangedFiles,
+  inspectGitHead,
+  GitBaselineError,
 } from './git';
 
 let cwd: string;
@@ -195,5 +197,74 @@ describe('computeRunChangedFiles', () => {
 
     // If FileScope only has demoRun.ts approved, cli.ts would be FILE_NOT_APPROVED
     // This test proves the security counter-example is detectable
+  });
+});
+
+describe('Git HEAD classification', () => {
+  it('normal repo + valid HEAD → baseline 正常且不打印 ambiguous HEAD', () => {
+    commitFile('a.ts', 'clean\n');
+    const stderr: string[] = [];
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown, ...args: unknown[]) => {
+      stderr.push(String(chunk));
+      return (origErr as (chunk: unknown, ...rest: unknown[]) => boolean)(chunk, ...args);
+    }) as typeof process.stderr.write;
+    try {
+      expect(inspectGitHead(cwd)).toBe('NORMAL_HEAD');
+      const baseline = captureRunStartBaseline(cwd);
+      expect(baseline.headState).toBe('NORMAL_HEAD');
+      expect(baseline.files.length).toBe(0);
+    } finally {
+      process.stderr.write = origErr;
+    }
+    expect(stderr.join('')).not.toContain("ambiguous argument 'HEAD'");
+  });
+
+  it('git repo + unborn HEAD → 明确 unborn 语义，不打印 ambiguous HEAD', () => {
+    writeFileSync(path.join(cwd, 'draft.ts'), 'unborn\n', 'utf8');
+    const stderr: string[] = [];
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown, ...args: unknown[]) => {
+      stderr.push(String(chunk));
+      return (origErr as (chunk: unknown, ...rest: unknown[]) => boolean)(chunk, ...args);
+    }) as typeof process.stderr.write;
+    try {
+      expect(inspectGitHead(cwd)).toBe('UNBORN_HEAD');
+      const baseline = captureRunStartBaseline(cwd);
+      expect(baseline.headState).toBe('UNBORN_HEAD');
+      expect(baseline.files.map((f) => f.path)).toContain('draft.ts');
+    } finally {
+      process.stderr.write = origErr;
+    }
+    expect(stderr.join('')).not.toContain("ambiguous argument 'HEAD'");
+    expect(stderr.join('')).not.toMatch(/fatal:/);
+  });
+
+  it('non-git directory → NOT_A_GIT_REPOSITORY', () => {
+    const plain = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-nongit-'));
+    try {
+      expect(() => inspectGitHead(plain)).toThrow(GitBaselineError);
+      try {
+        inspectGitHead(plain);
+      } catch (error) {
+        expect(error).toBeInstanceOf(GitBaselineError);
+        expect((error as GitBaselineError).kind).toBe('NOT_A_GIT_REPOSITORY');
+      }
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it('real git command failure → GIT_COMMAND_FAILED，不被吞掉', () => {
+    commitFile('a.ts', 'seed\n');
+    // 仓库仍有 commit，但 HEAD 指向不存在的分支：不是 unborn，也不是 non-git。
+    writeFileSync(path.join(cwd, '.git', 'HEAD'), 'ref: refs/heads/missing-branch\n', 'utf8');
+    expect(() => inspectGitHead(cwd)).toThrow(GitBaselineError);
+    try {
+      inspectGitHead(cwd);
+    } catch (error) {
+      expect(error).toBeInstanceOf(GitBaselineError);
+      expect((error as GitBaselineError).kind).toBe('GIT_COMMAND_FAILED');
+    }
   });
 });

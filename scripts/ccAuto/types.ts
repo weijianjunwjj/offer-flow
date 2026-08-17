@@ -47,8 +47,8 @@ export interface CallUsage {
   callId: string;
   model: ModelRole;
   modelId: string;
-  /** v0.2.0 Slice 1F-RUN P2: routed execution role（FAST_EXECUTOR | STRONG_EXECUTOR | ARBITER），legacy 调用为 null */
-  executionRole?: ExecutionModelRole | null;
+  /** 本次调用的运行时执行角色；legacy 调用为 null，不得把 null 伪装成 FAST */
+  executionRole?: RuntimeExecutionRole | null;
   inputTokens: number | null;
   outputTokens: number | null;
   cacheCreationInputTokens: number | null;
@@ -146,6 +146,13 @@ export type ProviderIdentifier = string;
 
 /** ARBITER is intentionally excluded from write authorization. */
 export type WriterExecutionRole = 'WRITER' | Exclude<ExecutionModelRole, 'ARBITER'>;
+
+/**
+ * 本次调用实际扮演的运行时执行角色。
+ * 与历史模型 lane（FAST / STRONG / ARBITER）正交：lane 描述模型档位，
+ * 本类型描述这次执行在 Runtime 里干什么。
+ */
+export type RuntimeExecutionRole = WriterExecutionRole | 'ARBITER';
 
 export interface WriterAssignment {
   executionRole: WriterExecutionRole;
@@ -469,8 +476,8 @@ export interface UsageRecord {
   toolErrorCounts: Record<string, number> | null;
   permissionDenialsCount: number;
 
-  /** v0.2.0 Slice 1F-RUN P2: routed execution role，legacy 调用为 null */
-  executionRole?: ExecutionModelRole | null;
+  /** 本次调用的运行时执行角色；legacy 调用为 null，不得把 null 伪装成 FAST */
+  executionRole?: RuntimeExecutionRole | null;
 }
 
 /** Provider 失败诊断——安全结构化摘要，不含密钥/完整请求体/响应体/文件正文/工具结果正文。
@@ -819,8 +826,8 @@ export interface DeepSeekToolLoopExecutorContext {
   adapterRegistry: ProviderAdapterResolver;
   parentEnv: NodeJS.ProcessEnv;
   callIdFactory?: () => string;
-  /** v0.2.0 Slice 1F-RUN P2: routed execution role for cost attribution (null = legacy) */
-  executionRole?: ExecutionModelRole | null;
+  /** 本次 Tool Loop 的运行时执行角色；null = 未声明，成本归因必须 fail honest */
+  executionRole?: RuntimeExecutionRole | null;
 }
 
 export type ToolLoopAuditStatus =
@@ -854,6 +861,12 @@ export interface DeepSeekToolLoopResult {
   summary: DeepSeekToolLoopSummary;
   /** v0.8.x 诊断修复：Provider 失败诊断（若因 Provider 异常终止） */
   failureDetail?: ProviderFailureDetail | null;
+  /** 到达 Adapter / Provider request 边界的次数（一次 request→response = 1，不含 transport retry） */
+  providerInvocationCount: number;
+  /** 实际 HTTP transport attempt 次数（含 connect-timeout retry） */
+  transportAttemptCount: number;
+  /** 因 connect-timeout 触发的 transport retry 次数 */
+  transportRetryCount: number;
 }
 
 /** Tool Loop 执行摘要——完成或失败后必然产生 */
@@ -1154,7 +1167,7 @@ export interface RunningCostSnapshot {
   actualCostRmb: number | null;
   expectedBudgetUsedRatio: number | null;
   maximumBudgetUsedRatio: number | null;
-  costByRole: Partial<Record<ExecutionModelRole, {
+  costByRole: Partial<Record<RuntimeExecutionRole, {
     calls: number;
     inputTokens: number | null;
     outputTokens: number | null;
@@ -1166,7 +1179,7 @@ export interface RunningCostSnapshot {
 
 /** 按模型角色的成本明细 */
 export interface CostByRoleEntry {
-  role: ExecutionModelRole;
+  role: RuntimeExecutionRole;
   provider: string;
   modelLogicalName: string;
   calls: number;
@@ -1250,10 +1263,24 @@ export interface ToolLoopAuditEntry {
 /** 单次 Routed Tool Loop 尝试的结构化观测（脱敏）。
  *  外部可在报告/日志中使用，无需读取 state.json。 */
 export interface RoutedToolLoopObservation {
+  /** 历史模型 lane（FAST / STRONG / ARBITER）。只描述预算路由档位，不是 Runtime execution role。 */
   role: ExecutionModelRole;
+  /** 本次 Tool Loop 实际扮演的运行时角色。Writer 必须是 WRITER，不得回退成 FAST。 */
+  executionRole?: RuntimeExecutionRole;
+  /** 与 role 相同的历史 lane 显式别名，避免把它当成 execution role。 */
+  legacyRoutingLane?: ExecutionModelRole;
+  profileId?: string;
   modelLogicalName: string;
   turns: number;
   totalToolCalls: number;
+  /** 本条观测对应的 Writer Runtime Run 数。Writer 为 1，Discovery 为 0。 */
+  writerRuntimeRunCount?: number;
+  /** 到达 Provider request 边界的次数。一次 response 含多个 tool calls 仍只 +1。 */
+  providerInvocationCount?: number;
+  /** 实际 HTTP transport attempt 次数。 */
+  transportAttemptCount?: number;
+  /** 因 connect-timeout 触发的 transport retry 次数。 */
+  transportRetryCount?: number;
   auditTrail: ToolLoopAuditEntry[];
   terminationReason: ToolLoopTerminationReason | null;
   changedFiles: string[];

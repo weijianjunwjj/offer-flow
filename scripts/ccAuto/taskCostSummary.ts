@@ -11,6 +11,7 @@
 import type {
   UsageRecord,
   ExecutionModelRole,
+  RuntimeExecutionRole,
   RunningCostSnapshot,
   TaskCostSummary,
   TaskBudgetEstimate,
@@ -32,7 +33,7 @@ export interface SnapshotInput {
   taskId: string;
   usageRecords: Array<{
     usage: UsageRecord;
-    role: ExecutionModelRole;
+    role: RuntimeExecutionRole;
     provider: string;
     modelLogicalName: string;
     /** 真实 callId，用于升级成本精确归因；缺失时降级为 role 匹配 */
@@ -130,7 +131,7 @@ export interface SummaryInput {
   estimate: TaskBudgetEstimate;
   usageRecords: Array<{
     usage: UsageRecord;
-    role: ExecutionModelRole;
+    role: RuntimeExecutionRole;
     provider: string;
     modelLogicalName: string;
     /** 真实 callId，用于升级成本精确归因；缺失时降级为 role 匹配 */
@@ -138,7 +139,7 @@ export interface SummaryInput {
   }>;
   selections: ModelSelection[];
   attempts: Array<{
-    role: ExecutionModelRole;
+    role: RuntimeExecutionRole;
     failure?: ModelAttemptFailure;
   }>;
   completed: boolean;
@@ -193,7 +194,7 @@ export function buildTaskCostSummary(input: SummaryInput): TaskCostSummary {
   const allCacheKnown = allCacheCreationKnown && allCacheReadKnown;
 
   // --- by role ---
-  const roleMap = new Map<ExecutionModelRole, {
+  const roleMap = new Map<RuntimeExecutionRole, {
     provider: string;
     modelLogicalName: string;
     calls: number;
@@ -429,9 +430,10 @@ export function formatPercentOrNA(ratio: number | null): string {
   return `${pct.toFixed(1)}%`;
 }
 
-/** 格式化角色显示名 */
-export function formatRoleName(role: ExecutionModelRole): string {
+/** 格式化运行时执行角色。历史 lane 仍显示 V4 Flash / V4 Pro；WRITER 不得显示成 Flash。 */
+export function formatRoleName(role: RuntimeExecutionRole): string {
   switch (role) {
+    case 'WRITER': return 'Writer';
     case 'FAST_EXECUTOR': return 'V4 Flash';
     case 'STRONG_EXECUTOR': return 'V4 Pro';
     case 'ARBITER': return 'Opus 5';

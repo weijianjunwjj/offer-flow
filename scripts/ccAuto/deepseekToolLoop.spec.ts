@@ -150,6 +150,98 @@ describe('runDeepSeekToolLoop — integration (real executor + fake adapter)', (
     const state = loadRunState(TEST_CWD, runId);
     expect(state.calls.length).toBe(1);
     expect(state.pendingCall).toBeUndefined();
+    expect(result.providerInvocationCount).toBe(1);
+    expect(result.transportAttemptCount).toBe(1);
+    expect(result.transportRetryCount).toBe(0);
+  });
+
+  it('一次 Provider response 含多个 tool calls 仍只计 1 次 provider invocation', async () => {
+    const registry = new AdapterRegistry();
+    let callNum = 0;
+    registry.register({
+      transport: 'openai-chat' as const,
+      async execute(req: ProviderCallRequest) {
+        callNum += 1;
+        if (callNum === 1) {
+          return providerSuccess(req, '', [
+            toolCall('r1', 'read_file', { path: 'src/test.txt' }),
+            toolCall('r2', 'read_file', { path: 'src/edit-me.txt' }),
+          ]);
+        }
+        return providerSuccess(req, 'done after two reads');
+      },
+    });
+    const runId = prepareLoopRun('multi-tool-one-turn');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
+    const result = await runDeepSeekToolLoop(loopOptions(runId, registry, {
+      maxTurns: 4,
+      maxToolCallsPerTurn: 4,
+      maxTotalToolCalls: 8,
+    }));
+    expect(result.status).toBe('COMPLETED');
+    expect(result.totalToolCalls).toBe(2);
+    expect(result.providerInvocationCount).toBe(2);
+    expect(result.transportAttemptCount).toBe(2);
+    expect(result.transportRetryCount).toBe(0);
+    expect(callNum).toBe(2);
+  });
+
+  it('多个 provider turns 不得误计成一次 provider invocation', async () => {
+    const registry = new AdapterRegistry();
+    let callNum = 0;
+    registry.register({
+      transport: 'openai-chat' as const,
+      async execute(req: ProviderCallRequest) {
+        callNum += 1;
+        if (callNum === 1) return providerSuccess(req, '', [toolCall('r1', 'read_file', { path: 'src/test.txt' })]);
+        if (callNum === 2) return providerSuccess(req, '', [toolCall('e1', 'edit_file', { path: 'src/edit-me.txt', oldText: 'ORIGINAL CONTENT', newText: 'CHANGED' })]);
+        if (callNum === 3) return providerSuccess(req, '', [toolCall('r2', 'read_file', { path: 'src/edit-me.txt' })]);
+        return providerSuccess(req, 'final after four turns');
+      },
+    });
+    const runId = prepareLoopRun('four-turns');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
+    const result = await runDeepSeekToolLoop(loopOptions(runId, registry, {
+      maxTurns: 8,
+      maxToolCallsPerTurn: 4,
+      maxTotalToolCalls: 16,
+    }));
+    expect(result.status).toBe('COMPLETED');
+    expect(result.turns).toBe(4);
+    expect(result.providerInvocationCount).toBe(4);
+    expect(result.transportAttemptCount).toBe(4);
+    expect(result.transportRetryCount).toBe(0);
+    expect(result.totalToolCalls).toBe(3);
+  });
+
+  it('connect timeout retry 记 1 次 provider invocation + 2 次 transport attempt', async () => {
+    const { TransportError } = await import('./providerErrors');
+    const registry = new AdapterRegistry();
+    let adapterAttempts = 0;
+    registry.register({
+      transport: 'openai-chat' as const,
+      async execute(req: ProviderCallRequest) {
+        adapterAttempts += 1;
+        if (adapterAttempts === 1) {
+          throw new TransportError('connect timeout', {
+            transient: true,
+            cause: Object.assign(new Error('connect timeout'), { code: 'UND_ERR_CONNECT_TIMEOUT' }),
+          });
+        }
+        return providerSuccess(req, 'recovered after connect timeout');
+      },
+    });
+    const runId = prepareLoopRun('connect-retry');
+    setWriter(TEST_CWD, runId, TEST_WRITER_ASSIGNMENT);
+    const result = await runDeepSeekToolLoop(loopOptions(runId, registry, {
+      maxTurns: 2,
+      maxTransientRetries: 0,
+    }));
+    expect(result.status).toBe('COMPLETED');
+    expect(result.providerInvocationCount).toBe(1);
+    expect(result.transportAttemptCount).toBe(2);
+    expect(result.transportRetryCount).toBe(1);
+    expect(adapterAttempts).toBe(2);
   });
 
   // 6.2 Two-turn: read_file → final

@@ -626,6 +626,31 @@ describe('createConsoleRoutedExecutionReporter', () => {
       expect(writer.contains('Partial progress: yes')).toBe(true);
       expect(writer.contains('Tool failure reason: TOOL_EXECUTION_FAILED')).toBe(true);
     });
+
+    it('Writer observation 显示 WRITER，不显示 V4 Flash', async () => {
+      const obs = makeObservation({
+        role: 'FAST_EXECUTOR',
+        executionRole: 'WRITER',
+        legacyRoutingLane: 'FAST_EXECUTOR',
+        profileId: 'apikey-grok-4-6',
+        modelLogicalName: 'grok-4-6-writer',
+        writerRuntimeRunCount: 1,
+        providerInvocationCount: 4,
+        transportAttemptCount: 5,
+        transportRetryCount: 1,
+        totalToolCalls: 3,
+      });
+      await reporter.onToolLoopObservation!(obs);
+      const full = writer.fullText();
+      expect(full).toContain('Writer');
+      expect(full).toContain('executionRole: WRITER');
+      expect(full).toContain('profileId: apikey-grok-4-6');
+      expect(full).toContain('modelLogicalName: grok-4-6-writer');
+      expect(full).toContain('providerInvocations: 4');
+      expect(full).toContain('transportAttempts: 5');
+      expect(full).toContain('transportRetries: 1');
+      expect(full).not.toMatch(/^V4 Flash$/m);
+    });
   });
 });
 

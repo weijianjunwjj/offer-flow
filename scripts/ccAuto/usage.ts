@@ -73,8 +73,8 @@ export interface BuildUsageRecordInput {
   toolUseCounts?: Record<string, number> | null;
   toolErrorCounts?: Record<string, number> | null;
   permissionDenialsCount?: number;
-  /** v0.2.0 Slice 1F-RUN P2: routed execution role, null for legacy */
-  executionRole?: import('./types').ExecutionModelRole | null;
+  /** 本次调用的运行时执行角色；legacy 为 null，不得伪装成 FAST */
+  executionRole?: import('./types').RuntimeExecutionRole | null;
 }
 
 /**

@@ -19,7 +19,7 @@ import type {
   RunningCostSnapshot,
   TaskCostSummary,
   BudgetMode,
-  ExecutionModelRole,
+  RuntimeExecutionRole,
   RoutedToolLoopObservation,
 } from './types';
 import { redactSecretLiterals } from './redact';
@@ -30,8 +30,9 @@ import { redactSecretLiterals } from './redact';
 
 const SEP = '────────────────────────────────';
 
-function roleLabel(role: ExecutionModelRole): string {
+function roleLabel(role: RuntimeExecutionRole): string {
   switch (role) {
+    case 'WRITER': return 'Writer';
     case 'FAST_EXECUTOR': return 'V4 Flash';
     case 'STRONG_EXECUTOR': return 'V4 Pro';
     case 'ARBITER': return 'Opus 5';
@@ -335,10 +336,23 @@ export function createConsoleRoutedExecutionReporter(
     },
 
     async onToolLoopObservation(observation: RoutedToolLoopObservation): Promise<void> {
-      const label = roleLabel(observation.role);
+      const executionRole = observation.executionRole ?? observation.role;
+      const label = roleLabel(executionRole);
       write('');
       write(`${label}`);
-      write(`Provider calls: ${observation.totalToolCalls}`);
+      if (observation.profileId) {
+        write(`profileId: ${observation.profileId}`);
+      }
+      write(`modelLogicalName: ${observation.modelLogicalName}`);
+      write(`executionRole: ${executionRole}`);
+      if (observation.legacyRoutingLane) {
+        write(`legacyRoutingLane: ${observation.legacyRoutingLane}`);
+      }
+      write(`writerRuntimeRuns: ${observation.writerRuntimeRunCount ?? (observation.stage === 'WRITER' ? 1 : 0)}`);
+      write(`providerInvocations: ${observation.providerInvocationCount ?? 'N/A'}`);
+      write(`transportAttempts: ${observation.transportAttemptCount ?? 'N/A'}`);
+      write(`transportRetries: ${observation.transportRetryCount ?? 0}`);
+      write(`toolCalls: ${observation.totalToolCalls}`);
       write('Tool Loop:');
       if (observation.totalToolCalls === 0 || observation.auditTrail.length === 0) {
         write('  （无工具调用记录）');

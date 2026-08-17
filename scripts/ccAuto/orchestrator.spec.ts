@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { runTask, resumeTask, builderPrompt, extractExplicitFiles, directEditPrompt, driveRoutedImplement } from './orchestrator';
+import { runTask, resumeTask, builderPrompt, extractExplicitFiles, directEditPrompt, driveRoutedImplement, resolvePersistedExecutionRole } from './orchestrator';
 import { DEFAULT_CONFIG, type CcAutoConfig } from './config';
 import { createRunState, loadRunState, saveRunState, _atomicRenameWithRetry } from './store';
 import { customRmbCost, usdToRmb, summarizeUsage } from './budget';
@@ -1389,6 +1389,9 @@ function makeToolLoopResult(overrides: Partial<DeepSeekToolLoopResult> = {}): De
       callIds: ['c1', 'c2', 'c3'],
       changedFiles: [],
     },
+    providerInvocationCount: 2,
+    transportAttemptCount: 2,
+    transportRetryCount: 0,
     ...overrides,
   };
 }
@@ -2218,6 +2221,76 @@ describe('P10 Partial Progress → VERIFY', () => {
     const stages = reloaded.toolLoopObservations?.map((o) => o.stage);
     expect(stages).toContain('DISCOVERY');
     expect(stages).toContain('WRITER');
+
+    const writerObs = reloaded.toolLoopObservations?.find((o) => o.stage === 'WRITER');
+    expect(writerObs?.executionRole).toBe('WRITER');
+    expect(writerObs?.legacyRoutingLane).toBe('FAST_EXECUTOR');
+    expect(writerObs?.profileId).toBe('apikey-grok-4-6');
+    expect(writerObs?.modelLogicalName).toBe('grok-4-6-writer');
+    expect(writerObs?.writerRuntimeRunCount).toBe(1);
+    expect(writerObs?.providerInvocationCount).toBe(2);
+    expect(writerObs?.transportAttemptCount).toBe(2);
+    expect(writerObs?.transportRetryCount).toBe(0);
+
+    const writerCallOpts = (runDeepSeekToolLoop as any).mock.calls[1][0];
+    expect(writerCallOpts.executorContext.executionRole).toBe('WRITER');
+  });
+
+  it('Writer observation 不得把 executionRole 显示成 V4 Flash', async () => {
+    const state = createRunState(cwd2, `run-writer-role-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 0;
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(cwd2, state);
+
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED',
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/radarView.spec.ts"]}',
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      providerInvocationCount: 1,
+      transportAttemptCount: 1,
+      transportRetryCount: 0,
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1'] },
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED',
+      stopReason: null,
+      turns: 4,
+      totalToolCalls: 3,
+      providerInvocationCount: 4,
+      transportAttemptCount: 5,
+      transportRetryCount: 1,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 3, toolCallId: 'w3', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/radarView.spec.ts'], callIds: ['w1', 'w2', 'w3'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+
+    const deps = routedOrchDeps(cwd2);
+    await driveRoutedImplement(deps, state, [], captureRunStartBaseline(cwd2));
+
+    const writerObs = loadRunState(cwd2, state.runId).toolLoopObservations?.find((o) => o.stage === 'WRITER');
+    expect(writerObs?.executionRole).toBe('WRITER');
+    expect(writerObs?.writerRuntimeRunCount).toBe(1);
+    expect(writerObs?.providerInvocationCount).toBe(4);
+    expect(writerObs?.transportAttemptCount).toBe(5);
+    expect(writerObs?.transportRetryCount).toBe(1);
+    expect(writerObs?.totalToolCalls).toBe(3);
+
+    const md = renderReport(loadRunState(cwd2, state.runId));
+    expect(md).toContain('executionRole: WRITER');
+    expect(md).toContain('### Writer (grok-4-6-writer) [WRITER]');
+    expect(md).toContain('providerInvocations: 4');
+    expect(md).toContain('transportAttempts: 5');
+    expect(md).toContain('transportRetries: 1');
   });
   it('Regression E: Pro 无修改失败 → ArbitrationCapsule → STOP', async () => {
     // Task with NO explicit file → discovery runs first, finds nothing
@@ -2554,5 +2627,21 @@ describe('P10 Partial Progress → VERIFY', () => {
     expect(reloaded.nextRoutedRole).toBe('STRONG_EXECUTOR');
     // flashLastCallId is the LAST callId from discovery (f5)
     expect(reloaded.flashLastCallId).toBe('f5');
+  });
+});
+
+describe('resolvePersistedExecutionRole — fail honest', () => {
+  it('已知角色原样返回', () => {
+    expect(resolvePersistedExecutionRole('WRITER')).toBe('WRITER');
+    expect(resolvePersistedExecutionRole('FAST_EXECUTOR')).toBe('FAST_EXECUTOR');
+    expect(resolvePersistedExecutionRole('STRONG_EXECUTOR')).toBe('STRONG_EXECUTOR');
+    expect(resolvePersistedExecutionRole('ARBITER')).toBe('ARBITER');
+  });
+
+  it('unknown / null 不得伪装成 FAST_EXECUTOR', () => {
+    expect(resolvePersistedExecutionRole(null)).toBeNull();
+    expect(resolvePersistedExecutionRole(undefined)).toBeNull();
+    expect(resolvePersistedExecutionRole('V4 Flash' as never)).toBeNull();
+    expect(resolvePersistedExecutionRole('UNKNOWN' as never)).toBeNull();
   });
 });

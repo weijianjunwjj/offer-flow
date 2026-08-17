@@ -16,7 +16,7 @@ import {
 import { renderReport } from './report';
 import { shouldEscalateToArbiter, budgetGate, changedFilesExceeded } from './stateMachine';
 import { validateConfiguredModelPricing } from './budget';
-import { changedFilesSince, shortStatus, captureRunStartBaseline, computeRunChangedFiles } from './git';
+import { changedFilesSince, shortStatus, captureRunStartBaseline, computeRunChangedFiles, GitBaselineError } from './git';
 import type { RunStartBaseline } from './git';
 import {
   evaluateDirectEditEligibility, prepareDirectEditContext, validateDirectEdits, applyDirectEdits,
@@ -575,9 +575,21 @@ async function driveStateMachine(deps: OrchestratorDeps, state: RunState, estima
     // P4: Capture per-file baseline BEFORE any model runs.
     // This allows us to later distinguish pre-existing dirty files (untouched by model)
     // from files actually changed during this run.
-    runStartBaseline = captureRunStartBaseline(deps.cwd);
+    try {
+      runStartBaseline = captureRunStartBaseline(deps.cwd);
+    } catch (err) {
+      if (err instanceof GitBaselineError) {
+        stop(state, 'PROVIDER_ERROR', `GIT_BASELINE_${err.kind}: ${err.message}`);
+        deps.log(`Git baseline 捕获失败：${err.kind} — ${err.message}`);
+        return finish(deps, state);
+      }
+      throw err;
+    }
     if (runStartBaseline.files.length > 0) {
       deps.log(`Run-start baseline 已捕获 ${runStartBaseline.files.length} 个预存脏文件`);
+    }
+    if (runStartBaseline.headState === 'UNBORN_HEAD') {
+      deps.log('Git HEAD 尚未诞生（仓库已 init 但无 commit），baseline 使用 unborn 语义，不调用 git diff HEAD');
     }
   }
 
@@ -1137,9 +1149,8 @@ export async function driveRoutedImplement(
     timeoutMs: 300_000,
     adapterRegistry: registry,
     parentEnv,
-    // The Writer is not a Flash/Pro/Arbiter routing role; cost attribution is
-    // carried by the profile/provider of the call itself, so executionRole is null.
-    executionRole: null as import('./types').ExecutionModelRole | null,
+    // Runtime Writer 扮演 WRITER，不是历史 FAST/STRONG lane。
+    executionRole: 'WRITER' as const,
   };
 
   // 写入型 Tool Loop：把已批准文件列表显式注入 prompt，避免模型做宽泛探索。
@@ -1246,9 +1257,16 @@ export async function driveRoutedImplement(
   // P8: Build and report RoutedToolLoopObservation
   const observation: RoutedToolLoopObservation = {
     role: selection.role,
+    executionRole: 'WRITER',
+    legacyRoutingLane: selection.role,
+    profileId: selectedWriter.candidate.profileId,
     modelLogicalName: selectedWriter.candidate.logicalModelName,
     turns: toolLoopResult.turns,
     totalToolCalls: toolLoopResult.totalToolCalls,
+    writerRuntimeRunCount: 1,
+    providerInvocationCount: toolLoopResult.providerInvocationCount,
+    transportAttemptCount: toolLoopResult.transportAttemptCount,
+    transportRetryCount: toolLoopResult.transportRetryCount,
     auditTrail: toolLoopResult.auditTrail.map((e) => ({
       turn: e.turn,
       toolName: e.toolName,
@@ -1362,6 +1380,15 @@ export async function driveRoutedImplement(
   return;
 }
 
+export function resolvePersistedExecutionRole(
+  value: import('./types').RuntimeExecutionRole | null | undefined,
+): import('./types').RuntimeExecutionRole | null {
+  if (value === 'WRITER' || value === 'FAST_EXECUTOR' || value === 'STRONG_EXECUTOR' || value === 'ARBITER') {
+    return value;
+  }
+  return null;
+}
+
 /** Maps a non-RESOLVED writer resolution to a precise fail-closed stop detail. */
 function formatWriterResolutionFailure(resolution: RuntimeWriterResolution): string {
   switch (resolution.status) {
@@ -1405,27 +1432,26 @@ async function buildAndPersistCostSummary(
   // Build usage records from calls
   const usageRecords: Array<{
     usage: import('./types').UsageRecord;
-    role: import('./types').ExecutionModelRole;
+    role: import('./types').RuntimeExecutionRole;
     provider: string;
     modelLogicalName: string;
     callId?: string;
   }> = [];
 
   for (const call of calls) {
-    // P2 fix: use executionRole from the call record itself (set at call time),
-    // NOT a heuristic from call.model/builder.
-    const role: import('./types').ExecutionModelRole =
-      (call.executionRole ?? null) as import('./types').ExecutionModelRole | null
-      ?? (call.model === 'arbiter' ? 'ARBITER' : 'FAST_EXECUTOR');  // legacy fallback
+    // 只采信调用时写入的 executionRole。未知角色 fail honest，不得伪装 FAST。
+    const role = resolvePersistedExecutionRole(call.executionRole);
+    if (role === null) continue;
     const decision = (authoritative.routingDecisions ?? []).find(
-      (d) => d.role === role,
+      (d) => d.role === role || (role === 'WRITER' && d.modelLogicalName === call.modelId),
     );
+    const writerObs = (authoritative.toolLoopObservations ?? []).find((o) => o.stage === 'WRITER');
     usageRecords.push({
       usage: {
         model: 'builder',
         requestedModelId: call.modelId,
         reportedModel: call.modelId,
-        providerId: decision?.provider ?? 'unknown',
+        providerId: decision?.provider ?? (role === 'WRITER' ? writerObs?.profileId ?? 'unknown' : 'unknown'),
         modelIdentityStatus: 'VERIFIED',
         pricingStatus: (call.costRmbCustom !== null) ? 'PRICED' : 'UNPRICED',
         usageStatus: (call.inputTokens !== null && call.outputTokens !== null) ? 'AVAILABLE' : 'PARTIAL',
@@ -1444,9 +1470,9 @@ async function buildAndPersistCostSummary(
         toolErrorCounts: call.toolErrorCounts ?? null,
         permissionDenialsCount: call.permissionDenialsCount,
       },
-      role,  // authoritative: from executionRole (P2)
-      provider: decision?.provider ?? 'deepseek',
-      modelLogicalName: decision?.modelLogicalName ?? 'unknown',
+      role,
+      provider: decision?.provider ?? (role === 'WRITER' ? writerObs?.profileId ?? 'unknown' : 'unknown'),
+      modelLogicalName: decision?.modelLogicalName ?? writerObs?.modelLogicalName ?? 'unknown',
       callId: call.callId,  // H2: propagate callId for escalation cost attribution
     });
   }
@@ -1658,9 +1684,16 @@ async function runRoutedDiscovery(
   // Build DISCOVERY observation
   const discoveryObs: RoutedToolLoopObservation = {
     role,
+    executionRole: role,
+    legacyRoutingLane: role,
+    profileId: profile.id,
     modelLogicalName,
     turns: discoveryResult.turns,
     totalToolCalls: candidateToolCalls + discoveryResult.totalToolCalls,
+    writerRuntimeRunCount: 0,
+    providerInvocationCount: discoveryResult.providerInvocationCount,
+    transportAttemptCount: discoveryResult.transportAttemptCount,
+    transportRetryCount: discoveryResult.transportRetryCount,
     auditTrail: [...candidateAudit, ...discoveryResult.auditTrail].map((e) => ({
       turn: e.turn,
       toolName: e.toolName,

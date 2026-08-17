@@ -138,8 +138,8 @@ export interface ExecuteProviderCallOptions {
   toolMode?: import('./types').ProviderToolMode;
   /** 由受信任调用方预生成的调用 ID；不得来自模型输出。 */
   callId?: string;
-  /** v0.2.0 Slice 1F-RUN P2: routed execution role for cost attribution (null = legacy) */
-  executionRole?: import('./types').ExecutionModelRole | null;
+  /** 本次调用的运行时执行角色；Writer 必须传 WRITER，不得为了归因回退 FAST */
+  executionRole?: import('./types').RuntimeExecutionRole | null;
 }
 
 /**
