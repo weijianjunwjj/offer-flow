@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { runTask, resumeTask, builderPrompt, extractExplicitFiles, directEditPrompt, driveRoutedImplement, resolvePersistedExecutionRole } from './orchestrator';
+import { createConsoleRoutedExecutionReporter } from './consoleReporter';
 import { DEFAULT_CONFIG, type CcAutoConfig } from './config';
 import { createRunState, loadRunState, saveRunState, _atomicRenameWithRetry } from './store';
 import { customRmbCost, usdToRmb, summarizeUsage } from './budget';
@@ -2627,6 +2628,152 @@ describe('P10 Partial Progress → VERIFY', () => {
     expect(reloaded.nextRoutedRole).toBe('STRONG_EXECUTOR');
     // flashLastCallId is the LAST callId from discovery (f5)
     expect(reloaded.flashLastCallId).toBe('f5');
+  });
+});
+
+// ============================================================================
+// Task B: Writer Budget 归因 —— Writer budget 必须使用 selected Runtime Writer Profile
+// ============================================================================
+
+describe('Task B: Writer Budget 归因', () => {
+  let cwd3: string;
+
+  beforeEach(() => {
+    cwd3 = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-wb-'));
+    execFileSync('git', ['init', '-q'], { cwd: cwd3 });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: cwd3 });
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: cwd3 });
+    process.env.TEST_GROK_KEY = 'dummy';
+    setupGrokCertificate(cwd3);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(cwd3, { recursive: true, force: true });
+  });
+
+  function mockDiscoveryAndWriter(): void {
+    const discoveryResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      finalText: '{"candidateFiles":["src/radarView.spec.ts"]}',
+      auditTrail: [
+        { turn: 1, toolCallId: 'd1', toolName: 'glob', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: [], callIds: ['d1'] },
+    });
+    const writerResult = makeToolLoopResult({
+      status: 'COMPLETED' as const,
+      stopReason: null,
+      auditTrail: [
+        { turn: 1, toolCallId: 'w1', toolName: 'read_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+        { turn: 2, toolCallId: 'w2', toolName: 'edit_file', status: 'EXECUTED', resultOk: true, errorReason: null },
+      ] as ToolLoopAuditRecord[],
+      summary: { ...makeToolLoopResult().summary, changedFiles: ['src/radarView.spec.ts'], callIds: ['w1', 'w2'] },
+    });
+    (runDeepSeekToolLoop as any)
+      .mockResolvedValueOnce(discoveryResult)
+      .mockResolvedValueOnce(writerResult);
+  }
+
+  // Case A + F：legacy STRONG + selected Writer → budget role=WRITER、model=grok-4-6-writer
+  it('Case A：legacy STRONG → budget 归因 WRITER + grok-4-6-writer（非 deepseek-v4-pro）', async () => {
+    const state = createRunState(cwd3, `run-wb-a-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = ['src/radarView.spec.ts'];
+    saveRunState(cwd3, state);
+
+    mockDiscoveryAndWriter();
+    await driveRoutedImplement(routedOrchDeps(cwd3), state, [], captureRunStartBaseline(cwd3));
+
+    const budget = loadRunState(cwd3, state.runId).budgetEstimate;
+    expect(budget).toBeTruthy();
+    expect(budget!.estimatedCalls[0].role).toBe('WRITER');
+    expect(budget!.estimatedCalls[0].modelLogicalName).toBe('grok-4-6-writer');
+    expect(budget!.estimatedCalls[0].modelLogicalName).not.toBe('deepseek-v4-pro');
+    expect(budget!.estimatedCalls[0].provider).toBe('third-party');
+  });
+
+  // Case B：legacy FAST → 仍用 selected Writer profile
+  it('Case B：legacy FAST → budget 仍归因 grok-4-6-writer（非 deepseek-v4-flash）', async () => {
+    const state = createRunState(cwd3, `run-wb-b-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    state.changedFiles = ['src/radarView.spec.ts'];
+    saveRunState(cwd3, state);
+
+    mockDiscoveryAndWriter();
+    await driveRoutedImplement(routedOrchDeps(cwd3), state, [], captureRunStartBaseline(cwd3));
+
+    const budget = loadRunState(cwd3, state.runId).budgetEstimate;
+    expect(budget!.estimatedCalls[0].role).toBe('WRITER');
+    expect(budget!.estimatedCalls[0].modelLogicalName).toBe('grok-4-6-writer');
+    expect(budget!.estimatedCalls[0].modelLogicalName).not.toBe('deepseek-v4-flash');
+  });
+
+  // Case F：report 不得把 Writer 显示成 V4 Pro / V4 Flash
+  it('Case F：预算报告首选模型显示 Writer，不显示 V4 Pro / V4 Flash', async () => {
+    const state = createRunState(cwd3, `run-wb-f-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.repairCycles = 1;
+    state.currentPhase = 'REPAIR_1';
+    state.nextRoutedRole = 'STRONG_EXECUTOR';
+    state.changedFiles = ['src/radarView.spec.ts'];
+    saveRunState(cwd3, state);
+
+    mockDiscoveryAndWriter();
+
+    const lines: string[] = [];
+    const reporter = createConsoleRoutedExecutionReporter({ writeLine: (t: string) => lines.push(t) });
+    await driveRoutedImplement(routedOrchDeps(cwd3, { routedReporter: reporter }), state, [], captureRunStartBaseline(cwd3));
+
+    const budgetText = lines.join('\n');
+    expect(budgetText).toContain('首选模型：Writer');
+    expect(budgetText).not.toMatch(/首选模型：V4 (Pro|Flash)/);
+  });
+});
+
+// ============================================================================
+// Task B: Writer selection 失败 → fail closed（不生成 DS Writer budget）
+// ============================================================================
+
+describe('Task B: Writer selection fail-closed', () => {
+  let cwd4: string;
+
+  beforeEach(() => {
+    cwd4 = mkdtempSync(path.join(os.tmpdir(), 'cc-auto-wbc-'));
+    execFileSync('git', ['init', '-q'], { cwd: cwd4 });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: cwd4 });
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: cwd4 });
+    process.env.TEST_GROK_KEY = 'dummy';
+    // 不调用 setupGrokCertificate：Writer selection 将 NO_ELIGIBLE_WRITER
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(cwd4, { recursive: true, force: true });
+  });
+
+  // Case C：Writer selection 失败 → WRITER_ONBOARDING_FAILED，不 fallback DS
+  it('Case C：Writer selection 失败 → WRITER_ONBOARDING_FAILED（不 fallback DS，不调用 Provider）', async () => {
+    const state = createRunState(cwd4, `run-wbc-c-${Date.now()}`, '补充岗位雷达展示字段的单元测试', 'custom');
+    state.routedExecution = true;
+    state.currentPhase = 'IMPLEMENT';
+    saveRunState(cwd4, state);
+
+    await driveRoutedImplement(routedOrchDeps(cwd4), state, [], captureRunStartBaseline(cwd4));
+
+    saveRunState(cwd4, state);
+    const reloaded = loadRunState(cwd4, state.runId);
+    expect(reloaded.done).toBe(true);
+    expect(reloaded.stopReason).toBe('WRITER_ONBOARDING_FAILED');
+    // 未调用 Provider（runDeepSeekToolLoop 未被调用）
+    expect((runDeepSeekToolLoop as any).mock.calls.length).toBe(0);
+    // 未生成预算
+    expect(reloaded.budgetEstimate).toBeFalsy();
   });
 });
 

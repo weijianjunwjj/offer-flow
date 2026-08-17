@@ -820,7 +820,6 @@ import type {
   RoutingDecisionRecord,
   ProviderProfile,
 } from './types';
-import type { ModelPricing } from './types';
 import { setWriter, acquireRunLease, releaseRunLease } from './runLease';
 import { computeWorktreeFingerprint } from './worktreeFingerprint';
 import {
@@ -974,19 +973,23 @@ export async function driveRoutedImplement(
 
   deps.log(`路由选择：${selection.role === 'FAST_EXECUTOR' ? 'V4 Flash' : 'V4 Pro'}（${selection.reasonCodes.join('、')}）`);
 
-  // --- 6. Budget estimate —— 收集所有 Provider Profile 的定价（不仅仅是当前模型）
-  const _pricingByModel: Record<string, ModelPricing> = {};
-  for (const profile of [flashProfile, proProfile]) {
-    if (!profile) continue;
-    for (const pricingKey of Object.keys(profile.pricing)) {
-      const modelConfig = profile.models.find((m) => m.requestedModelId === pricingKey);
-      const logicalName = modelConfig?.logicalName ?? pricingKey;
-      if (!_pricingByModel[logicalName]) {
-        _pricingByModel[logicalName] = profile.pricing[pricingKey];
-      }
-    }
+  // --- 6. Runtime Writer onboarding（selection）：先于预算。Writer budget 必须归因于 selected
+  //     Runtime Writer Profile，不得用 legacyRoutingLane 的 fastModel / strongModel pricing。
+  //     Selection ≠ Authorization：workspaceWrite 仍由后续 preflight + setWriter 授予。
+  const writerResolution = resolveRuntimeWriter({
+    cwd,
+    config,
+    adapterRegistry: registry,
+    parentEnv,
+  });
+  if (writerResolution.status !== 'RESOLVED') {
+    const detail = formatWriterResolutionFailure(writerResolution);
+    stop(state, 'WRITER_ONBOARDING_FAILED', detail);
+    deps.log(`Runtime Writer onboarding 失败：${detail}`);
+    return;
   }
 
+  // --- 7. Budget estimate —— Writer 预算来自 selected Profile Pricing Contract（不回退 legacy lane）
   const budgetEstimate = estimateTaskBudget({
     runId, taskId: runId,
     initialSelection: selection,
@@ -999,8 +1002,11 @@ export async function driveRoutedImplement(
     userPromptChars: state.taskDescription.length + 4000,
     routingConfig: mrConfig,
     budgetPolicy: config.budgetPolicy!,
-    pricingByModel: _pricingByModel,
+    pricingByModel: {},
     hasOpusProvider: false,
+    selectedProfile: writerResolution.writer.profile,
+    selectedLogicalModel: writerResolution.writer.candidate.logicalModelName,
+    // 不显式传 request context tokens：交由 taskBudget 基于 prompt / files 估算（Task A 默认路径）。
   });
   saveBudgetEstimate(cwd, runId, budgetEstimate);
   state.budgetEstimate = budgetEstimate;
@@ -1108,21 +1114,8 @@ export async function driveRoutedImplement(
 
   deps.log(`FileScope 批准文件：${fileScope.approvedFiles.join(', ') || '（无候选文件）'}`);
 
-  // --- 8. Runtime Writer onboarding: eligibility → candidate pool → selection ---
-  const writerResolution = resolveRuntimeWriter({
-    cwd,
-    config,
-    adapterRegistry: registry,
-    parentEnv,
-  });
-  if (writerResolution.status !== 'RESOLVED') {
-    const detail = formatWriterResolutionFailure(writerResolution);
-    stop(state, 'WRITER_ONBOARDING_FAILED', detail);
-    deps.log(`Runtime Writer onboarding 失败：${detail}`);
-    return;
-  }
-
   // Phase F: fail-closed preflight immediately before the first real invocation.
+  // Writer selection 已前移至预算前（见上文第 6 步）；此处仅做 TOCTOU 二次校验，不重复 selection。
   const writerPreflight = preflightRuntimeWriter({
     cwd,
     candidate: writerResolution.writer.candidate,
