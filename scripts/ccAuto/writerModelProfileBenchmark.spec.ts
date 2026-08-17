@@ -21,6 +21,7 @@ import {
   type WriterBenchmarkInvocationCapability,
   type WriterBenchmarkProviderCompletion,
 } from './writerModelProfileBenchmark';
+import { toPersistedWriterBenchmarkSample } from './writerModelProfileBenchmarkStore';
 
 const PROFILE: ProviderProfile = {
   id: 'profile-a',
@@ -341,6 +342,46 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       providerErrorCategory: 'RATE_LIMIT',
       providerErrorCode: 'HTTP_429',
     });
+  });
+
+  it('persists a safe transport cause code in v3 evidence', async () => {
+    const result = await runWriterModelProfileBenchmark({
+      fixture: WRITER_DECISION_FIXTURE,
+      profile: PROFILE,
+      logicalModelName: 'model-a',
+      executionRole: 'FAST_EXECUTOR',
+      invocation: {
+        resolveAdapterContract: () => ({ ...ADAPTER_CONTRACT }),
+        invoke: async () => ({
+          providerCallCount: 1,
+          executionResult: {
+            ok: false,
+            stopReason: 'PROVIDER_ERROR',
+            requiresHumanConfirmation: false,
+            usageRecord: null,
+            identityConfirmationContext: null,
+            message: 'safe failure',
+            failureDetail: {
+              errorClass: 'TransportError',
+              safeMessage: 'safe failure',
+              errorKind: 'TRANSPORT',
+              httpStatus: null,
+              networkErrorCode: 'UND_ERR_CONNECT_TIMEOUT',
+              causeName: 'TypeError',
+              timeoutMs: 120_000,
+              providerId: PROFILE.id,
+              requestedModelId: 'model-a',
+              callId: 'safe-call-id',
+            },
+          },
+        }),
+      },
+    });
+
+    const persisted = toPersistedWriterBenchmarkSample(result);
+    expect(result.providerErrorCode).toBe('UND_ERR_CONNECT_TIMEOUT');
+    expect(persisted.providerErrorCode).toBe('UND_ERR_CONNECT_TIMEOUT');
+    expect(JSON.stringify(persisted)).not.toContain('safe transport failure');
   });
 
   it('uses the standard adapter boundary once without routing or a tool loop', async () => {

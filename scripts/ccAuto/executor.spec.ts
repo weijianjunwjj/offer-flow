@@ -606,6 +606,85 @@ describe('executeProviderCall — stable error classification', () => {
     }
   });
 
+  it('preserves a safe network code from a bounded nested cause chain', async () => {
+    const connectTimeout = Object.assign(new Error('connect timeout'), {
+      name: 'ConnectTimeoutError',
+      code: 'UND_ERR_CONNECT_TIMEOUT',
+    });
+    const fetchFailure = Object.assign(new TypeError('fetch failed'), {
+      cause: connectTimeout,
+    });
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat' as const,
+      execute: async () => {
+        throw new TransportError('safe transport failure', {
+          transient: true,
+          cause: fetchFailure,
+        });
+      },
+    });
+
+    const result = await executeProviderCall({
+      profile: testProfile,
+      logicalModelName: 'deepseek',
+      role: 'builder',
+      systemPrompt: 't',
+      userPrompt: 't',
+      maxOutputTokens: 4096,
+      timeoutMs: 30_000,
+      adapterRegistry: registry,
+      parentEnv: parentEnv(),
+      cwd: FIXTURE_CWD,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failureDetail?.networkErrorCode).toBe('UND_ERR_CONNECT_TIMEOUT');
+      expect(result.failureDetail?.safeMessage).toBe('safe transport failure');
+      expect(JSON.stringify(result.failureDetail)).not.toContain('connect timeout');
+    }
+  });
+
+  it('does not persist a nested code that contains a credential value', async () => {
+    const credentialValue = 'LEAKABLE_SECRET_12345';
+    const nestedFailure = Object.assign(new Error('nested failure'), {
+      code: credentialValue,
+    });
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat' as const,
+      execute: async () => {
+        const fetchFailure = Object.assign(new TypeError('fetch failed'), {
+          cause: nestedFailure,
+        });
+        throw new TransportError('safe transport failure', {
+          transient: true,
+          cause: fetchFailure,
+        });
+      },
+    });
+
+    const result = await executeProviderCall({
+      profile: testProfile,
+      logicalModelName: 'deepseek',
+      role: 'builder',
+      systemPrompt: 't',
+      userPrompt: 't',
+      maxOutputTokens: 4096,
+      timeoutMs: 30_000,
+      adapterRegistry: registry,
+      parentEnv: { ...parentEnv(), DEEPSEEK_API_KEY: credentialValue },
+      cwd: FIXTURE_CWD,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.failureDetail?.networkErrorCode).toBeNull();
+      expect(JSON.stringify(result.failureDetail)).not.toContain(credentialValue);
+    }
+  });
+
   // 6. ProviderProtocolError 不被识别为 TimeoutError
   it('ProviderProtocolError is NOT classified as PROVIDER_TIMEOUT', async () => {
     const runId = createRunState(FIXTURE_CWD, 'stable-to-3', '测试', 'custom').runId;

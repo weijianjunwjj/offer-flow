@@ -61,7 +61,7 @@ function buildProviderFailureDetail(opts: {
   }
 
   // 安全提取网络错误码（复用 openaiChatAdapter 中的 getNetworkErrorCode 逻辑）
-  const networkErrorCode = getSafeNetworkErrorCode(err);
+  const networkErrorCode = getSafeNetworkErrorCode(err, secrets);
 
   let errorKind: ProviderFailureDetail['errorKind'];
   let httpStatus: number | null = null;
@@ -96,27 +96,54 @@ function buildProviderFailureDetail(opts: {
   };
 }
 
+const MAX_NETWORK_ERROR_CAUSE_DEPTH = 4;
+const SAFE_NETWORK_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,63}$/;
+
 /**
  * 安全提取网络错误码——不依赖 openaiChatAdapter.ts 内部导出。
- * 读取 error.code、error.cause.code、errno 映射。
+ * 有界遍历 error/cause 链，只保留短的 Node/Undici 风格 code；不持久化
+ * message、stack、header、body 或 URL。
  */
-function getSafeNetworkErrorCode(err: unknown): string | null {
-  if (!err || typeof err !== 'object') return null;
-  const e = err as Record<string, unknown>;
-  // 1. error.cause.code
-  if (e.cause && typeof e.cause === 'object') {
-    const cause = e.cause as Record<string, unknown>;
-    if (typeof cause.code === 'string') return cause.code;
+function getSafeNetworkErrorCode(err: unknown, secrets: readonly string[]): string | null {
+  let current = err;
+  const seen = new Set<object>();
+
+  for (let depth = 0; depth < MAX_NETWORK_ERROR_CAUSE_DEPTH; depth += 1) {
+    if (!current || typeof current !== 'object' || seen.has(current)) return null;
+    seen.add(current);
+    const error = current as Record<string, unknown>;
+    const cause = error.cause && typeof error.cause === 'object'
+      ? error.cause as Record<string, unknown>
+      : null;
+
+    // 保持既有优先级：优先读取当前错误的直接 cause code。
+    const causeCode = safeNetworkErrorCode(cause?.code, secrets);
+    if (causeCode) return causeCode;
+
+    const directCode = safeNetworkErrorCode(error.code, secrets);
+    if (directCode) return directCode;
+
+    const errnoCode = mapNetworkErrno(error.errno);
+    if (errnoCode) return errnoCode;
+
+    current = cause;
   }
-  // 2. error.code（Node 原生错误）
-  if (typeof e.code === 'string') return e.code;
-  // 3. errno 到 code 的保守映射
-  if (typeof e.errno === 'number') {
-    if (e.errno === -4078 || e.errno === -54) return 'ECONNRESET';
-    if (e.errno === -4039 || e.errno === -60) return 'ETIMEDOUT';
-    if (e.errno === -3008 || e.errno === -3000) return 'EAI_AGAIN';
-    if (e.errno === -4073 || e.errno === -61) return 'ECONNREFUSED';
-  }
+
+  return null;
+}
+
+function safeNetworkErrorCode(value: unknown, secrets: readonly string[]): string | null {
+  if (typeof value !== 'string' || !SAFE_NETWORK_ERROR_CODE_PATTERN.test(value)) return null;
+  if (secrets.some((secret) => secret.length > 0 && value.includes(secret))) return null;
+  return value;
+}
+
+function mapNetworkErrno(value: unknown): string | null {
+  if (typeof value !== 'number') return null;
+  if (value === -4078 || value === -54) return 'ECONNRESET';
+  if (value === -4039 || value === -60) return 'ETIMEDOUT';
+  if (value === -3008 || value === -3000) return 'EAI_AGAIN';
+  if (value === -4073 || value === -61) return 'ECONNREFUSED';
   return null;
 }
 
