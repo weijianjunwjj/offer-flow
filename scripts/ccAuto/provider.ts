@@ -6,7 +6,14 @@
  * - 所有校验错误 fail closed
  * - 不保存任何密钥正文，只保存凭证环境变量名称
  */
-import type { ProviderProfile, ModelIdentity, ModelPricing, ProviderConfigLoadResult } from './types';
+import type {
+  ContextPricingTier,
+  ModelIdentity,
+  ModelPricing,
+  ProviderConfigLoadResult,
+  ProviderProfile,
+  TokenPricingRates,
+} from './types';
 import type { CcAutoConfig } from './config';
 import { checkProfileEnvConflicts, formatEnvConflicts } from './envNamespace';
 
@@ -238,10 +245,117 @@ export function validateModelPricing(
   _modelId: string,
   p: unknown,
 ): { ok: boolean; pricing?: ModelPricing; error?: string } {
-  if (!p || typeof p !== 'object') {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) {
     return { ok: false, error: '必须是非 null 对象' };
   }
   const o = p as Record<string, unknown>;
+
+  const metadata = validatePricingMetadata(o);
+  if (!metadata.ok) return metadata;
+
+  if (o.pricingType === 'context-tiered') {
+    return validateContextTieredPricing(o, metadata.value!);
+  }
+  if (o.pricingType !== undefined && o.pricingType !== 'flat') {
+    return { ok: false, error: `pricingType 必须是 'flat' | 'context-tiered'，收到 ${JSON.stringify(o.pricingType)}` };
+  }
+
+  const rates = validateTokenPricingRates(o);
+  if (!rates.ok) return rates;
+
+  return {
+    ok: true,
+    pricing: {
+      ...(o.pricingType === 'flat' ? { pricingType: 'flat' as const } : {}),
+      ...rates.value!,
+      ...metadata.value!,
+    },
+  };
+}
+
+function validateContextTieredPricing(
+  o: Record<string, unknown>,
+  metadata: Pick<ModelPricing, 'currency' | 'source' | 'updatedAt'>,
+): { ok: boolean; pricing?: ModelPricing; error?: string } {
+  if (o.thresholdBasis !== 'REQUEST_CONTEXT_TOKENS') {
+    return {
+      ok: false,
+      error: `thresholdBasis 必须为 'REQUEST_CONTEXT_TOKENS'，收到 ${JSON.stringify(o.thresholdBasis)}`,
+    };
+  }
+  if (!Array.isArray(o.tiers) || o.tiers.length === 0) {
+    return { ok: false, error: 'tiers 必须是至少包含 1 项的数组' };
+  }
+
+  const tiers: ContextPricingTier[] = [];
+  const ids = new Set<string>();
+  let expectedFromInclusive = 0;
+
+  for (let index = 0; index < o.tiers.length; index += 1) {
+    const rawTier = o.tiers[index];
+    if (!rawTier || typeof rawTier !== 'object' || Array.isArray(rawTier)) {
+      return { ok: false, error: `tiers[${index}] 必须是非 null 对象` };
+    }
+    const tier = rawTier as Record<string, unknown>;
+    if (typeof tier.id !== 'string' || tier.id.trim().length === 0) {
+      return { ok: false, error: `tiers[${index}].id 必须是有效字符串` };
+    }
+    if (ids.has(tier.id)) {
+      return { ok: false, error: `tier id 重复：${tier.id}` };
+    }
+    ids.add(tier.id);
+    if (!Number.isInteger(tier.fromInclusive) || (tier.fromInclusive as number) < 0) {
+      return { ok: false, error: `tiers[${index}].fromInclusive 必须为非负整数` };
+    }
+    const fromInclusive = tier.fromInclusive as number;
+    if (fromInclusive < expectedFromInclusive) {
+      return { ok: false, error: `tiers[${index}] 与上一档重叠（overlap）` };
+    }
+    if (fromInclusive > expectedFromInclusive) {
+      return { ok: false, error: `tiers[${index}] 与上一档之间存在空档（gap）` };
+    }
+
+    const upToInclusive = tier.upToInclusive;
+    if (upToInclusive !== null
+      && (!Number.isInteger(upToInclusive) || (upToInclusive as number) < fromInclusive)) {
+      return { ok: false, error: `tiers[${index}].upToInclusive 必须为不小于 fromInclusive 的整数或 null` };
+    }
+    if (upToInclusive === null && index !== o.tiers.length - 1) {
+      return { ok: false, error: `tiers[${index}] catch-all 必须是最后一档` };
+    }
+    if (!tier.rates || typeof tier.rates !== 'object' || Array.isArray(tier.rates)) {
+      return { ok: false, error: `tiers[${index}].rates 必须是非 null 对象` };
+    }
+    const rates = validateTokenPricingRates(tier.rates as Record<string, unknown>);
+    if (!rates.ok) return { ok: false, error: `tiers[${index}].rates 校验失败：${rates.error}` };
+
+    tiers.push({
+      id: tier.id,
+      fromInclusive,
+      upToInclusive: upToInclusive as number | null,
+      rates: rates.value!,
+    });
+    if (upToInclusive !== null) expectedFromInclusive = (upToInclusive as number) + 1;
+  }
+
+  if (tiers.at(-1)?.upToInclusive !== null) {
+    return { ok: false, error: 'tiers 必须包含最终 catch-all 档（upToInclusive=null）' };
+  }
+
+  return {
+    ok: true,
+    pricing: {
+      pricingType: 'context-tiered',
+      thresholdBasis: 'REQUEST_CONTEXT_TOKENS',
+      tiers,
+      ...metadata,
+    },
+  };
+}
+
+function validateTokenPricingRates(
+  o: Record<string, unknown>,
+): { ok: boolean; value?: TokenPricingRates; error?: string } {
 
   const numericFields = [
     'inputPerMTokens',
@@ -259,6 +373,21 @@ export function validateModelPricing(
       return { ok: false, error: `${field} 必须为非负有穷值，收到 ${value}` };
     }
   }
+
+  return {
+    ok: true,
+    value: {
+      inputPerMTokens: o.inputPerMTokens as number,
+      outputPerMTokens: o.outputPerMTokens as number,
+      cacheCreationPerMTokens: o.cacheCreationPerMTokens as number,
+      cacheReadPerMTokens: o.cacheReadPerMTokens as number,
+    },
+  };
+}
+
+function validatePricingMetadata(
+  o: Record<string, unknown>,
+): { ok: boolean; value?: Pick<ModelPricing, 'currency' | 'source' | 'updatedAt'>; error?: string } {
 
   // --- currency 必须为 CNY ---
   if (o.currency !== 'CNY') {
@@ -278,11 +407,7 @@ export function validateModelPricing(
 
   return {
     ok: true,
-    pricing: {
-      inputPerMTokens: o.inputPerMTokens as number,
-      outputPerMTokens: o.outputPerMTokens as number,
-      cacheCreationPerMTokens: o.cacheCreationPerMTokens as number,
-      cacheReadPerMTokens: o.cacheReadPerMTokens as number,
+    value: {
       currency: 'CNY',
       source: o.source as string,
       updatedAt: o.updatedAt as string,

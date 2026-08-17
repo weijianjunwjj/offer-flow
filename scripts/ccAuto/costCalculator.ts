@@ -8,6 +8,7 @@
 
 import type { UsageRecord } from './types';
 import type { ModelPricing } from './types';
+import { computeCostRmbFromPricing as computeUsageCost } from './cost';
 
 /** 四类 Token 完整性标记 */
 export interface TokenCompleteness {
@@ -59,8 +60,13 @@ export function computeAllProCostPerCall(
     if (cacheCreateT === null || cacheCreateT === undefined) completeness.allCacheCreationTokensKnown = false;
     if (cacheReadT === null || cacheReadT === undefined) completeness.allCacheReadTokensKnown = false;
 
-    // 至少需要 input 和 output 已知才能计算成本
-    if (inputT === null || inputT === undefined || outputT === null || outputT === undefined) {
+    // 单次 invocation 的完整成本要求四类 usage 均已知；不得把未知 cache usage 当成 0。
+    if (
+      inputT === null || inputT === undefined
+      || outputT === null || outputT === undefined
+      || cacheCreateT === null || cacheCreateT === undefined
+      || cacheReadT === null || cacheReadT === undefined
+    ) {
       allCallsPriced = false;
       perCallCosts.push({
         costRmb: null,
@@ -74,7 +80,7 @@ export function computeAllProCostPerCall(
 
     const costRmb = computeCostRmbFromPricing(
       inputT, outputT,
-      cacheCreateT ?? 0, cacheReadT ?? 0,
+      cacheCreateT, cacheReadT,
       proPricing,
     );
 
@@ -105,11 +111,14 @@ export function computeCostRmbFromPricing(
   cacheReadTokens: number,
   pricing: ModelPricing,
 ): number {
-  const inputCost = (inputTokens / 1_000_000) * pricing.inputPerMTokens;
-  const outputCost = (outputTokens / 1_000_000) * pricing.outputPerMTokens;
-  const cacheCreateCost = (cacheCreationTokens / 1_000_000) * pricing.cacheCreationPerMTokens;
-  const cacheReadCost = (cacheReadTokens / 1_000_000) * pricing.cacheReadPerMTokens;
-  return roundCost(inputCost + outputCost + cacheCreateCost + cacheReadCost);
+  const cost = computeUsageCost({
+    inputTokens,
+    outputTokens,
+    cacheCreationInputTokens: cacheCreationTokens,
+    cacheReadInputTokens: cacheReadTokens,
+  }, pricing);
+  if (cost === null) throw new Error('PRICING_CONTEXT_TOKENS_UNAVAILABLE');
+  return roundCost(cost);
 }
 
 /**

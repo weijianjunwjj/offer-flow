@@ -18,6 +18,7 @@ import type {
   TaskBudgetPolicy,
 } from './types';
 import type { ModelPricing } from './types';
+import { computeCostRmbFromPricing } from './cost';
 
 // ============================================================================
 // 公开接口
@@ -346,10 +347,14 @@ function computeCallCost(
   outputTokens: number,
   pricing: ModelPricing,
 ): number {
-  return roundCost(
-    (inputTokens / 1_000_000) * pricing.inputPerMTokens +
-    (outputTokens / 1_000_000) * pricing.outputPerMTokens,
-  );
+  const cost = computeCostRmbFromPricing({
+    inputTokens,
+    outputTokens,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+  }, pricing);
+  if (cost === null) throw new Error('PRICING_CONTEXT_TOKENS_UNAVAILABLE');
+  return roundCost(cost);
 }
 
 function roundCost(cost: number): number {

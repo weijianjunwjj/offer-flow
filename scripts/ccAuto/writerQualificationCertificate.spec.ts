@@ -283,6 +283,56 @@ describe('Writer Qualification Certificate v1', () => {
     })).toBe('ACTIVE_VALID');
   });
 
+  it('keeps an ACTIVE_VALID certificate applicable across a pricing-only schedule change', () => {
+    const cwd = createCwd();
+    const before = identity();
+    const tieredProfile: ProviderProfile = {
+      ...PROFILE,
+      pricing: {
+        'model-a': {
+          pricingType: 'context-tiered',
+          thresholdBasis: 'REQUEST_CONTEXT_TOKENS',
+          tiers: [{
+            id: 'base',
+            fromInclusive: 0,
+            upToInclusive: 200_000,
+            rates: {
+              inputPerMTokens: 1,
+              outputPerMTokens: 2,
+              cacheCreationPerMTokens: 0,
+              cacheReadPerMTokens: 0,
+            },
+          }, {
+            id: 'high',
+            fromInclusive: 200_001,
+            upToInclusive: null,
+            rates: {
+              inputPerMTokens: 2,
+              outputPerMTokens: 4,
+              cacheCreationPerMTokens: 0,
+              cacheReadPerMTokens: 0,
+            },
+          }],
+          currency: 'CNY',
+          source: 'provider-a updated pricing',
+          updatedAt: '2026-08-18',
+        },
+      },
+    };
+    const after = identity({ profile: tieredProfile });
+    const result = persistFrozenResult(cwd, 'batch-pricing-change', before, 'QUALIFIED');
+    const certificate = issueWriterQualificationCertificate(cwd, issuanceInput(result, before));
+
+    expect(after.qualificationIdentityFingerprint).toBe(before.qualificationIdentityFingerprint);
+    expect(evaluateWriterQualificationCertificate({
+      certificate,
+      frozenResult: result,
+      currentQualificationIdentity: after,
+      requiredQualificationPolicyVersion: WRITER_QUALIFICATION_POLICY_VERSION,
+      requiredBenchmarkContractVersion: WRITER_BENCHMARK_CONTRACT_VERSION,
+    })).toBe('ACTIVE_VALID');
+  });
+
   it('fails applicability after model or endpoint changes', () => {
     const currentIdentity = identity();
     const cwd = createCwd();

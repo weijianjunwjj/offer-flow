@@ -166,9 +166,30 @@ describe('Writer benchmark qualification identity snapshot v3', () => {
       models: PROFILE.models.map(model => ({ ...model, displayName: 'Renamed Model' })),
       pricing: {
         'model-a-v1': {
-          ...PROFILE.pricing['model-a-v1'],
-          inputPerMTokens: 999,
-          outputPerMTokens: 999,
+          pricingType: 'context-tiered',
+          thresholdBasis: 'REQUEST_CONTEXT_TOKENS',
+          tiers: [{
+            id: 'base',
+            fromInclusive: 0,
+            upToInclusive: 100,
+            rates: {
+              inputPerMTokens: 999,
+              outputPerMTokens: 999,
+              cacheCreationPerMTokens: 0,
+              cacheReadPerMTokens: 0,
+            },
+          }, {
+            id: 'high',
+            fromInclusive: 101,
+            upToInclusive: null,
+            rates: {
+              inputPerMTokens: 1_999,
+              outputPerMTokens: 1_999,
+              cacheCreationPerMTokens: 0,
+              cacheReadPerMTokens: 0,
+            },
+          }],
+          currency: 'CNY',
           source: 'new-price-source',
           updatedAt: '2027-01-01T00:00:00.000Z',
         },

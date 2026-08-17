@@ -69,6 +69,11 @@ Provider 的静态配置，来自 `.cc-auto/config.json`。
 
 ### 2.3 ModelPricing
 
+`ModelPricing` 是 Provider-neutral union：现有 Profile 可继续使用 flat pricing；只有按单次请求上下文切档的
+模型才使用 `context-tiered` schedule。两种形式共享 `currency / source / updatedAt`。
+
+Flat pricing 保持原结构：
+
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `inputPerMTokens` | `number` | 输入价格（元/百万 Token） |
@@ -78,6 +83,18 @@ Provider 的静态配置，来自 `.cc-auto/config.json`。
 | `currency` | `'CNY'` | 计价货币（v0.2.0 仅允许 CNY——所有配置价格由用户预先换算为人民币/百万 Token；多币种与汇率换算推迟到未来版本） |
 | `source` | `string` | 价格来源 |
 | `updatedAt` | `string` | 价格更新日期（ISO 8601） |
+
+Context-tiered pricing：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pricingType` | `'context-tiered'` | 显式定价契约判别字段 |
+| `thresholdBasis` | `'REQUEST_CONTEXT_TOKENS'` | 以 prompt/context token 数选档，不含 output |
+| `tiers` | `ContextPricingTier[]` | 从 0 开始、无重叠、无空档、最终 catch-all 的有序档位 |
+
+每个 `ContextPricingTier` 保存唯一 `id`、`fromInclusive`、`upToInclusive`（最终档为 `null`）以及完整
+`rates`。`rates` 显式包含 input、output、cache creation、cache read 四维实际费率，不使用 multiplier
+作为持久化核心语义。
 
 ---
 
@@ -150,6 +167,11 @@ Provider 的静态配置，来自 `.cc-auto/config.json`。
 - usage 部分缺失 → 可用字段记录值，缺失字段为 `null`，`usageStatus='PARTIAL'`；
 - 报告不得把 `null` 显示为 `¥0.00`，必须显示 `UNAVAILABLE` 或等效文本；
 - 存在 null 费用调用且任务已停止时，报告可标注"已知下限"；**运行期出现 costStatus='UNAVAILABLE' 必须立即 COST_UNAVAILABLE 停止，不得继续运行。**
+
+对于 `REQUEST_CONTEXT_TOKENS`，标准化后的档位依据为
+`inputTokens + cacheReadInputTokens`。OpenAI Chat Adapter 已通过一致性校验证明二者完整覆盖
+`prompt_tokens`；cache read 参与选档，但成本只按 cache-read rate 计一次。任一组成部分未知时不得默认
+低档，费用为 `null`。
 
 ---
 

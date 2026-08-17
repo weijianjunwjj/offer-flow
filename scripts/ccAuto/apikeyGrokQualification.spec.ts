@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildChildEnv } from './buildChildEnv';
-import { computeCostRmbFromPricing } from './cost';
+import { computeCostRmbFromPricing, computePricingDecision } from './cost';
 import { checkModelIdentity } from './modelIdentity';
 import {
   OpenAIChatAdapter,
@@ -21,6 +21,7 @@ import {
 } from './writerBenchmarkIdentity';
 import { WRITER_DECISION_FIXTURES } from './__fixtures__/writerDecisionFixture';
 import { resolveWriterQualificationCandidate } from './writerModelProfileBenchmark.run';
+import { resolveWriterQualificationIdentitySnapshot } from './writerModelProfileBenchmark';
 import { WRITER_QUALIFICATION_POLICY_VERSION } from './writerQualificationPolicyContract';
 
 const PROFILE_ID = 'apikey-grok-4-6';
@@ -43,12 +44,31 @@ const GROK_PROFILE: ProviderProfile = {
   }],
   pricing: {
     'grok-4.6': {
-      inputPerMTokens: 2,
-      outputPerMTokens: 6,
-      cacheCreationPerMTokens: 0,
-      cacheReadPerMTokens: 0.3,
+      pricingType: 'context-tiered',
+      thresholdBasis: 'REQUEST_CONTEXT_TOKENS',
+      tiers: [{
+        id: 'context-up-to-200k',
+        fromInclusive: 0,
+        upToInclusive: 200_000,
+        rates: {
+          inputPerMTokens: 2,
+          outputPerMTokens: 6,
+          cacheCreationPerMTokens: 0,
+          cacheReadPerMTokens: 0.3,
+        },
+      }, {
+        id: 'context-over-200k',
+        fromInclusive: 200_001,
+        upToInclusive: null,
+        rates: {
+          inputPerMTokens: 4,
+          outputPerMTokens: 12,
+          cacheCreationPerMTokens: 0,
+          cacheReadPerMTokens: 0.6,
+        },
+      }],
       currency: 'CNY',
-      source: 'APIKEY.fun Grok 企业版第三方价格（<=200K；OpenAI Chat 无独立 cache-creation 计费维度；>200K 三项 ×2 未进入 flat pricing）',
+      source: 'APIKEY.fun Grok 企业版第三方价格',
       updatedAt: '2026-08-17',
     },
   },
@@ -108,7 +128,7 @@ const TOOLS: ProviderToolDefinition[] = [{
 }];
 
 describe('APIKEY.fun Grok 4.6 Qualification Profile offline conformance', () => {
-  it('loads the exact Provider, model, credential, and <=200K pricing contract', () => {
+  it('loads the exact Provider, model, credential, and two-tier context pricing contract', () => {
     const profile = loadProfile();
     expect(profile).toMatchObject({
       id: PROFILE_ID,
@@ -126,15 +146,33 @@ describe('APIKEY.fun Grok 4.6 Qualification Profile offline conformance', () => 
       }],
     });
     expect(profile.pricing['grok-4.6']).toMatchObject({
-      inputPerMTokens: 2,
-      outputPerMTokens: 6,
-      cacheCreationPerMTokens: 0,
-      cacheReadPerMTokens: 0.3,
+      pricingType: 'context-tiered',
+      thresholdBasis: 'REQUEST_CONTEXT_TOKENS',
+      tiers: [{
+        id: 'context-up-to-200k',
+        fromInclusive: 0,
+        upToInclusive: 200_000,
+        rates: {
+          inputPerMTokens: 2,
+          outputPerMTokens: 6,
+          cacheCreationPerMTokens: 0,
+          cacheReadPerMTokens: 0.3,
+        },
+      }, {
+        id: 'context-over-200k',
+        fromInclusive: 200_001,
+        upToInclusive: null,
+        rates: {
+          inputPerMTokens: 4,
+          outputPerMTokens: 12,
+          cacheCreationPerMTokens: 0,
+          cacheReadPerMTokens: 0.6,
+        },
+      }],
       currency: 'CNY',
+      source: 'APIKEY.fun Grok 企业版第三方价格',
       updatedAt: '2026-08-17',
     });
-    expect(profile.pricing['grok-4.6'].source).toContain('<=200K');
-    expect(profile.pricing['grok-4.6'].source).toContain('>200K');
   });
 
   it('resolves an independent Qualification Candidate without runtime routing', () => {
@@ -257,6 +295,57 @@ describe('APIKEY.fun Grok 4.6 Qualification Profile offline conformance', () => 
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 200,
     }, profile.pricing['grok-4.6'])).toBeCloseTo(0.00226, 12);
+  });
+
+  it('preserves Smoke #3 and the frozen formal batch costs under the base tier', () => {
+    const pricing = loadProfile().pricing['grok-4.6'];
+    const smoke = computePricingDecision({
+      inputTokens: 1_139,
+      outputTokens: 304,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 128,
+    }, pricing);
+    expect(smoke).toMatchObject({
+      pricingTierId: 'context-up-to-200k',
+      requestContextTokens: 1_267,
+    });
+    expect(smoke.cost).toBeCloseTo(0.0041404, 12);
+
+    const formalUsages = [
+      [1_011, 73, 128],
+      [115, 97, 1_024],
+      [115, 97, 1_024],
+      [1_080, 348, 128],
+      [312, 206, 896],
+      [1_080, 186, 128],
+      [1_139, 512, 128],
+      [115, 398, 1_152],
+      [115, 801, 1_152],
+    ] as const;
+    const formalTotal = formalUsages.reduce((total, [inputTokens, outputTokens, cacheReadInputTokens]) => {
+      const cost = computeCostRmbFromPricing({
+        inputTokens,
+        outputTokens,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens,
+      }, pricing);
+      expect(cost).not.toBeNull();
+      return total + cost!;
+    }, 0);
+    expect(formalTotal).toBeCloseTo(0.0282000, 12);
+  });
+
+  it('keeps the frozen Qualification Identity fingerprint across the pricing-only change', () => {
+    const profile = loadProfile();
+    const adapter = createProductionAdapterRegistry().resolve(profile.transport);
+    expect(adapter?.qualificationContract).toBeDefined();
+    const identity = resolveWriterQualificationIdentitySnapshot({
+      profile,
+      logicalModelName: LOGICAL_MODEL_NAME,
+      adapterContract: adapter!.qualificationContract!,
+    });
+    expect(identity.qualificationIdentityFingerprint)
+      .toBe('a4b682d19a60767bcddf753e6559b92d75aaef022ab023b38f6c8220f1f7cc47');
   });
 
   it('freezes Gateway semantics in v3 identity without including credential values', () => {

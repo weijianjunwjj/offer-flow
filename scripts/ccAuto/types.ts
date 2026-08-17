@@ -159,15 +159,42 @@ export interface ModelIdentity {
   displayName: string;
 }
 
-export interface ModelPricing {
+export interface TokenPricingRates {
   inputPerMTokens: number;
   outputPerMTokens: number;
   cacheCreationPerMTokens: number;
   cacheReadPerMTokens: number;
+}
+
+/** Existing flat pricing remains valid without adding a discriminator. */
+export interface FlatModelPricing extends TokenPricingRates {
+  pricingType?: 'flat';
   currency: 'CNY';
   source: string;
   updatedAt: string;
 }
+
+export type PricingThresholdBasis = 'REQUEST_CONTEXT_TOKENS';
+
+export interface ContextPricingTier {
+  id: string;
+  fromInclusive: number;
+  /** null is the required final catch-all upper bound. */
+  upToInclusive: number | null;
+  rates: TokenPricingRates;
+}
+
+export interface ContextTieredModelPricing {
+  pricingType: 'context-tiered';
+  thresholdBasis: PricingThresholdBasis;
+  tiers: ContextPricingTier[];
+  currency: 'CNY';
+  source: string;
+  updatedAt: string;
+}
+
+/** Provider-neutral union; existing profiles continue to use the flat member. */
+export type ModelPricing = FlatModelPricing | ContextTieredModelPricing;
 
 export interface ProviderProfile {
   id: string;

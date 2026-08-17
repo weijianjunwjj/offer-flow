@@ -44,11 +44,108 @@ const validProfile = {
   },
 };
 
+const validTieredPricing = {
+  pricingType: 'context-tiered' as const,
+  thresholdBasis: 'REQUEST_CONTEXT_TOKENS' as const,
+  tiers: [{
+    id: 'base',
+    fromInclusive: 0,
+    upToInclusive: 200_000,
+    rates: {
+      inputPerMTokens: 2,
+      outputPerMTokens: 6,
+      cacheCreationPerMTokens: 0,
+      cacheReadPerMTokens: 0.3,
+    },
+  }, {
+    id: 'high',
+    fromInclusive: 200_001,
+    upToInclusive: null,
+    rates: {
+      inputPerMTokens: 4,
+      outputPerMTokens: 12,
+      cacheCreationPerMTokens: 0,
+      cacheReadPerMTokens: 0.6,
+    },
+  }],
+  currency: 'CNY' as const,
+  source: 'provider-a enterprise pricing',
+  updatedAt: '2026-08-17',
+};
+
 describe('validateProviderProfile', () => {
   it('accepts a valid ProviderProfile', () => {
     const result = validateProviderProfile('test', validProfile);
     expect(result.ok).toBe(true);
     expect(result.profile!.id).toBe('test');
+  });
+
+  it('accepts a complete context-tiered pricing schedule while retaining flat compatibility', () => {
+    const tiered = {
+      ...validProfile,
+      pricing: { 'deepseek-chat': validTieredPricing },
+    };
+    const result = validateProviderProfile('provider-a', tiered);
+    expect(result.ok).toBe(true);
+    expect(result.profile?.pricing['deepseek-chat']).toEqual(validTieredPricing);
+    expect(validateProviderProfile('provider-a', validProfile).ok).toBe(true);
+  });
+
+  it('rejects tier overlap', () => {
+    const tiers = structuredClone(validTieredPricing.tiers);
+    tiers[1].fromInclusive = 200_000;
+    const result = validateProviderProfile('provider-a', {
+      ...validProfile,
+      pricing: { 'deepseek-chat': { ...validTieredPricing, tiers } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('overlap');
+  });
+
+  it('rejects tier gap', () => {
+    const tiers = structuredClone(validTieredPricing.tiers);
+    tiers[1].fromInclusive = 200_002;
+    const result = validateProviderProfile('provider-a', {
+      ...validProfile,
+      pricing: { 'deepseek-chat': { ...validTieredPricing, tiers } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('gap');
+  });
+
+  it('rejects a context-tiered schedule without a final catch-all', () => {
+    const result = validateProviderProfile('provider-a', {
+      ...validProfile,
+      pricing: {
+        'deepseek-chat': {
+          ...validTieredPricing,
+          tiers: [validTieredPricing.tiers[0]],
+        },
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('catch-all');
+  });
+
+  it('rejects duplicate tier IDs, unknown threshold basis, and invalid tier rates', () => {
+    const duplicateIds = structuredClone(validTieredPricing.tiers);
+    duplicateIds[1].id = duplicateIds[0].id;
+    const invalidCases = [
+      { ...validTieredPricing, tiers: duplicateIds },
+      { ...validTieredPricing, thresholdBasis: 'TOTAL_TOKENS' },
+      {
+        ...validTieredPricing,
+        tiers: validTieredPricing.tiers.map((tier, index) => index === 1
+          ? { ...tier, rates: { ...tier.rates, outputPerMTokens: Number.NaN } }
+          : tier),
+      },
+    ];
+    for (const pricing of invalidCases) {
+      expect(validateProviderProfile('provider-a', {
+        ...validProfile,
+        pricing: { 'deepseek-chat': pricing },
+      }).ok).toBe(false);
+    }
   });
 
   it('rejects when defaultModelId is not in any model logicalName', () => {

@@ -202,6 +202,35 @@ interface ProviderProfile {
 }
 ```
 
+`ModelPricing` 支持两种 Provider-neutral 契约：
+
+```typescript
+type ModelPricing = FlatModelPricing | ContextTieredModelPricing;
+
+interface ContextTieredModelPricing {
+  pricingType: 'context-tiered';
+  thresholdBasis: 'REQUEST_CONTEXT_TOKENS';
+  tiers: Array<{
+    id: string;
+    fromInclusive: number;
+    upToInclusive: number | null;
+    rates: {
+      inputPerMTokens: number;
+      outputPerMTokens: number;
+      cacheCreationPerMTokens: number;
+      cacheReadPerMTokens: number;
+    };
+  }>;
+  currency: 'CNY';
+  source: string;
+  updatedAt: string;
+}
+```
+
+现有无 `pricingType` 的四维费率继续解释为 flat pricing。Context tiers 必须从 0 连续覆盖到最终
+catch-all，不允许 gap、overlap、重复 ID、负数/非有限费率或未知 threshold basis。每档保存完整实际
+费率，不使用 multiplier 作为核心持久化语义。
+
 ### 4.2 ModelIdentity
 
 ```typescript
@@ -419,6 +448,11 @@ interface UsageRecord {
 - usage 部分缺失 → 可用字段记录值，缺失字段记录 null（`usageStatus = 'PARTIAL'`）；
 - 报告不得把 null 显示为 `¥0.00`；
 - 存在 null 费用调用且任务已停止时，报告可标注"已知下限"，但不得作为继续运行的依据。**运行期出现 costStatus='UNAVAILABLE' 必须立即 COST_UNAVAILABLE 停止。**
+
+Context-tiered 定价在 usage normalization 之后执行。`REQUEST_CONTEXT_TOKENS` 使用
+`inputTokens + cacheReadInputTokens`，不包含 output；选中一个 tier 后，其 input、output、cache read、
+cache creation 完整 rates 统一应用于本次 invocation。无法确定 request context 时返回
+`PRICING_CONTEXT_TOKENS_UNAVAILABLE`，不得默认低档。
 
 ---
 
