@@ -1127,7 +1127,8 @@ export interface TaskBudgetPolicy {
 
 /** 单模型预估调用 */
 export interface EstimatedCall {
-  role: ExecutionModelRole;
+  /** 预算归属角色。legacy 为 FAST/STRONG/ARBITER；Writer 为 WRITER（不得伪装成 FAST）。 */
+  role: RuntimeExecutionRole;
   provider: string;
   modelLogicalName: string;
   minCalls: number;

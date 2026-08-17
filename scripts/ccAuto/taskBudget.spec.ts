@@ -1,7 +1,7 @@
 /** taskBudget.spec.ts — 任务前预算估算测试 */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { estimateTaskBudget, resetEstimateSequence, checkBudgetLimits, estimateTokensFromCharacters } from './taskBudget';
-import type { ModelSelection, ModelRoutingConfig, TaskBudgetPolicy } from './types';
+import type { ModelSelection, ModelRoutingConfig, TaskBudgetPolicy, ProviderProfile } from './types';
 import type { ModelPricing } from './types';
 
 const FLASH_SELECTION: ModelSelection = {
@@ -52,6 +52,57 @@ const OPUS_PRICING: ModelPricing = {
   currency: 'CNY',
   source: 'test',
   updatedAt: '2026-08-04',
+};
+
+const WRITER_CONTEXT_TIERED_PROFILE: ProviderProfile = {
+  id: 'writer-profile',
+  displayName: 'Writer',
+  vendor: 'anthropic',
+  transport: 'claude-cli',
+  credentialEnvVars: [],
+  runtimeEnvAllowlist: [],
+  defaultModelId: 'writer-model-v1',
+  models: [{
+    logicalName: 'writer-model',
+    requestedModelId: 'writer-model-v1',
+    acceptedReportedModelIds: ['writer-model-v1'],
+    displayName: 'Writer Model',
+  }],
+  pricing: {
+    'writer-model-v1': {
+      pricingType: 'context-tiered',
+      thresholdBasis: 'REQUEST_CONTEXT_TOKENS',
+      tiers: [{
+        id: 'base',
+        fromInclusive: 0,
+        upToInclusive: 200_000,
+        rates: { inputPerMTokens: 2, outputPerMTokens: 6, cacheCreationPerMTokens: 0, cacheReadPerMTokens: 0.3 },
+      }, {
+        id: 'high',
+        fromInclusive: 200_001,
+        upToInclusive: null,
+        rates: { inputPerMTokens: 4, outputPerMTokens: 12, cacheCreationPerMTokens: 0, cacheReadPerMTokens: 0.6 },
+      }],
+      currency: 'CNY',
+      source: 'test',
+      updatedAt: '2026-08-17',
+    },
+  },
+};
+
+const WRITER_FLAT_PROFILE: ProviderProfile = {
+  ...WRITER_CONTEXT_TIERED_PROFILE,
+  pricing: {
+    'writer-model-v1': {
+      inputPerMTokens: 2,
+      outputPerMTokens: 6,
+      cacheCreationPerMTokens: 0,
+      cacheReadPerMTokens: 0.3,
+      currency: 'CNY',
+      source: 'test',
+      updatedAt: '2026-08-17',
+    },
+  },
 };
 
 const ROUTING_CONFIG: ModelRoutingConfig = {
@@ -183,6 +234,96 @@ describe('estimateTaskBudget — 预算', () => {
     expect(arch.estimatedCalls[0].estimatedOutputTokens.expected).toBeGreaterThanOrEqual(
       simple.estimatedCalls[0].estimatedOutputTokens.expected,
     );
+  });
+});
+
+// ============================================================================
+// v0.9 Writer 预算路径
+// ============================================================================
+
+describe('estimateTaskBudget — Writer 路径', () => {
+  it('Writer 使用 selected Profile 定价，role=WRITER，无 FAST/STRONG fallback', () => {
+    const est = estimateTaskBudget(baseInput({
+      selectedProfile: WRITER_FLAT_PROFILE,
+      selectedLogicalModel: 'writer-model',
+    }));
+    expect(est.estimatedCalls).toHaveLength(1);
+    expect(est.estimatedCalls[0].role).toBe('WRITER');
+    expect(est.estimatedCalls[0].provider).toBe('anthropic');
+    expect(est.estimatedCalls[0].modelLogicalName).toBe('writer-model');
+    expect(est.totalEstimatedCostRmb.expected).not.toBeNull();
+    expect(est.estimatedCalls.some((c) => c.role === 'STRONG_EXECUTOR' || c.role === 'ARBITER')).toBe(false);
+  });
+
+  it('context-tiered 档位边界：200000 base，200001 high（按估算上下文选档）', () => {
+    const base = estimateTaskBudget(baseInput({
+      selectedProfile: WRITER_CONTEXT_TIERED_PROFILE,
+      selectedLogicalModel: 'writer-model',
+      affectedFileCount: 0,
+      systemPromptChars: 0,
+      userPromptChars: 600_000, // ceil(600000/3) = 200000
+    }));
+    const high = estimateTaskBudget(baseInput({
+      selectedProfile: WRITER_CONTEXT_TIERED_PROFILE,
+      selectedLogicalModel: 'writer-model',
+      affectedFileCount: 0,
+      systemPromptChars: 0,
+      userPromptChars: 600_001, // ceil(600001/3) = 200001
+    }));
+    // base：input 200000×2 + output 4000×6 = 0.4 + 0.024 = 0.424
+    expect(base.estimatedCalls[0].estimatedCostRmb.expected).toBeCloseTo(0.424, 6);
+    // high：input 200001×4 + output 4000×12 = 0.800004 + 0.048 = 0.848004
+    expect(high.estimatedCalls[0].estimatedCostRmb.expected).toBeCloseTo(0.848004, 6);
+  });
+
+  it('显式上下文 200001 进入 high 档位（高于 200000 base）', () => {
+    const base = estimateTaskBudget(baseInput({
+      selectedProfile: WRITER_CONTEXT_TIERED_PROFILE,
+      selectedLogicalModel: 'writer-model',
+      selectedWriterRequestContextTokens: 200_000,
+    }));
+    const high = estimateTaskBudget(baseInput({
+      selectedProfile: WRITER_CONTEXT_TIERED_PROFILE,
+      selectedLogicalModel: 'writer-model',
+      selectedWriterRequestContextTokens: 200_001,
+    }));
+    expect(high.estimatedCalls[0].estimatedCostRmb.expected).toBeGreaterThan(
+      base.estimatedCalls[0].estimatedCostRmb.expected!,
+    );
+  });
+
+  it('context-tiered 上下文未知 → 预算 unavailable', () => {
+    const est = estimateTaskBudget(baseInput({
+      selectedProfile: WRITER_CONTEXT_TIERED_PROFILE,
+      selectedLogicalModel: 'writer-model',
+      selectedWriterRequestContextTokens: null,
+    }));
+    expect(est.estimatedCalls[0].role).toBe('WRITER');
+    expect(est.estimatedCalls[0].estimatedCostRmb.expected).toBeNull();
+    expect(est.totalEstimatedCostRmb.expected).toBeNull();
+    expect(est.maxNullReason).toContain('context');
+  });
+
+  it('flat 定价不受上下文未知影响', () => {
+    const est = estimateTaskBudget(baseInput({
+      selectedProfile: WRITER_FLAT_PROFILE,
+      selectedLogicalModel: 'writer-model',
+      selectedWriterRequestContextTokens: null,
+    }));
+    expect(est.estimatedCalls[0].role).toBe('WRITER');
+    expect(est.totalEstimatedCostRmb.expected).not.toBeNull();
+  });
+
+  it('Writer 缺少 pricing → 预算 unavailable，且不 fallback FAST/STRONG', () => {
+    const noPriceProfile: ProviderProfile = { ...WRITER_CONTEXT_TIERED_PROFILE, pricing: {} };
+    const est = estimateTaskBudget(baseInput({
+      selectedProfile: noPriceProfile,
+      selectedLogicalModel: 'writer-model',
+    }));
+    expect(est.estimatedCalls[0].role).toBe('WRITER');
+    expect(est.totalEstimatedCostRmb.expected).toBeNull();
+    expect(est.maxNullReason).toBeTruthy();
+    expect(est.estimatedCalls.some((c) => c.role === 'STRONG_EXECUTOR' || c.role === 'ARBITER')).toBe(false);
   });
 });
 

@@ -16,6 +16,8 @@ import type {
   RoutingTaskType,
   ModelRoutingConfig,
   TaskBudgetPolicy,
+  ProviderProfile,
+  RawProviderUsage,
 } from './types';
 import type { ModelPricing } from './types';
 import { computeCostRmbFromPricing } from './cost';
@@ -41,6 +43,20 @@ export interface BudgetEstimateInput {
   pricingByModel: Record<string, ModelPricing>;
   /** 是否存在可用 Opus Provider */
   hasOpusProvider: boolean;
+  /**
+   * v0.9 Writer 预算路径：选中 Provider Profile（其 pricing 即 Pricing Contract）。
+   * 与 selectedLogicalModel 同时存在时，走 Writer 定价路径，不复用 FAST/STRONG legacy lane。
+   */
+  selectedProfile?: ProviderProfile | null;
+  /** v0.9 Writer 预算路径：选中逻辑模型名（映射到 profile.models[].requestedModelId 的定价）。 */
+  selectedLogicalModel?: string | null;
+  /**
+   * v0.9 Writer 预算路径：请求上下文 token 数（决定 context-tiered 档位，base ≤ 200000 < high）。
+   * - undefined：从 prompt / 文件数估算（默认）
+   * - number：显式已知上下文
+   * - null：上下文未知 → context-tiered 预算 unavailable（绝不 fallback FAST/STRONG）
+   */
+  selectedWriterRequestContextTokens?: number | null;
 }
 
 const ESTIMATE_ID_PREFIX = 'est';
@@ -69,6 +85,12 @@ export function estimateTaskBudget(input: BudgetEstimateInput): TaskBudgetEstima
     systemPromptChars, userPromptChars,
     routingConfig, pricingByModel, hasOpusProvider,
   } = input;
+
+  // Writer 路径：选中 Profile + 逻辑模型同时存在时，预算来自 selected Profile Pricing Contract。
+  // 不得 fallback 到 FAST/STRONG legacy lane。
+  if (input.selectedProfile != null && input.selectedLogicalModel != null) {
+    return estimateWriterTaskBudget(input);
+  }
 
   const estimateId = nextEstimateId();
   const assumptions: string[] = [];
@@ -231,6 +253,125 @@ export function estimateTaskBudget(input: BudgetEstimateInput): TaskBudgetEstima
     assumptions,
     createdAt: new Date().toISOString(),
   };
+}
+
+/**
+ * estimateWriterTaskBudget —— v0.9 Writer 预算路径。
+ *
+ * Writer pricing 只来自 selected Profile Pricing Contract（profile.pricing），
+ * 不读 pricingByModel、不回退 FAST/STRONG、不生成升级链。
+ * context-tiered 定价复用 computeCostRmbFromPricing（Pricing v1）。
+ */
+function estimateWriterTaskBudget(input: BudgetEstimateInput): TaskBudgetEstimate {
+  const {
+    runId, taskId, initialSelection, taskType, affectedFileCount,
+    usesToolLoop, maxToolLoopTurns, maxToolCalls,
+    systemPromptChars, userPromptChars,
+  } = input;
+  const profile = input.selectedProfile!;
+  const logicalModelName = input.selectedLogicalModel!;
+  const requestContextTokens = input.selectedWriterRequestContextTokens;
+
+  const estimateId = nextEstimateId();
+  const assumptions: string[] = [];
+  const estimatedCalls: EstimatedCall[] = [];
+
+  // 定价解析：logicalName → models[].requestedModelId → profile.pricing[...]
+  const model = profile.models.find((item) => item.logicalName === logicalModelName);
+  const modelLogicalName = model?.logicalName ?? logicalModelName;
+  const pricingKey = model?.requestedModelId ?? logicalModelName;
+  const pricing = profile.pricing[pricingKey] ?? null;
+
+  const primaryTokens = estimateTokensForTask(
+    taskType, affectedFileCount, usesToolLoop, maxToolLoopTurns, maxToolCalls,
+    systemPromptChars, userPromptChars,
+  );
+  const primaryCallCount = estimateCallCount(taskType, usesToolLoop, maxToolLoopTurns, affectedFileCount);
+
+  const primaryCostMin = computeWriterScenarioCost(primaryTokens.min.input, primaryTokens.min.output, pricing, requestContextTokens);
+  const primaryCostExp = computeWriterScenarioCost(primaryTokens.expected.input, primaryTokens.expected.output, pricing, requestContextTokens);
+  const primaryCostMax = computeWriterScenarioCost(primaryTokens.max.input, primaryTokens.max.output, pricing, requestContextTokens);
+
+  let primaryCostNullReason: string | null = null;
+  if (pricing === null) {
+    primaryCostNullReason = `${modelLogicalName} 缺少 selected Profile Pricing Contract 中的 pricing`;
+  } else if (pricing.pricingType === 'context-tiered' && requestContextTokens === null) {
+    primaryCostNullReason = 'context-tiered pricing 缺少请求上下文 token（context unknown），预算 unavailable';
+  }
+
+  estimatedCalls.push({
+    role: 'WRITER',
+    provider: profile.vendor,
+    modelLogicalName,
+    minCalls: primaryCallCount.min,
+    expectedCalls: primaryCallCount.expected,
+    maxCalls: primaryCallCount.max,
+    estimatedInputTokens: primaryTokens.min.input > 0
+      ? { min: primaryTokens.min.input, expected: primaryTokens.expected.input, max: primaryTokens.max.input }
+      : { min: 0, expected: 0, max: 0 },
+    estimatedOutputTokens: primaryTokens.min.output > 0
+      ? { min: primaryTokens.min.output, expected: primaryTokens.expected.output, max: primaryTokens.max.output }
+      : { min: 0, expected: 0, max: 0 },
+    estimatedCostRmb: {
+      min: primaryCostMin !== null ? primaryCostMin * primaryCallCount.min : null,
+      expected: primaryCostExp !== null ? primaryCostExp * primaryCallCount.expected : null,
+      max: primaryCostMax !== null ? primaryCostMax * primaryCallCount.max : null,
+    },
+    costNullReason: primaryCostNullReason,
+  });
+
+  if (primaryCostNullReason !== null) {
+    assumptions.push('Writer 预算不可用：定价缺失或上下文未知，不回退 FAST/STRONG');
+  }
+
+  const totalMinCost = primaryCostMin !== null ? primaryCostMin * primaryCallCount.min : null;
+  const totalExpectedCost = primaryCostExp !== null ? primaryCostExp * primaryCallCount.expected : null;
+  const totalMaxCost = primaryCostMax !== null ? primaryCostMax * primaryCallCount.max : null;
+
+  return {
+    estimateId,
+    runId,
+    taskId,
+    routingPolicyVersion: 'cc-auto-model-routing-v1',
+    initialSelection,
+    currency: 'CNY',
+    estimatedCalls,
+    totalEstimatedCostRmb: {
+      min: totalMinCost !== null ? roundCost(totalMinCost) : null,
+      expected: totalExpectedCost !== null ? roundCost(totalExpectedCost) : null,
+      max: totalMaxCost !== null ? roundCost(totalMaxCost) : null,
+    },
+    maxNullReason: totalMaxCost === null ? (primaryCostNullReason ?? 'Writer 成本无法估算') : null,
+    assumptions,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 计算 Writer 单次调用成本。pricing 为 null 或 context-tiered 且上下文未知时返回 null。
+ * 复用 computeCostRmbFromPricing：flat 与 context-tiered 走同一套 Pricing v1。
+ * 预算期 cacheCreation / cacheRead 默认为 0；显式上下文通过 cacheRead 差额补齐档位选择。
+ */
+function computeWriterScenarioCost(
+  inputTokens: number,
+  outputTokens: number,
+  pricing: ModelPricing | null,
+  requestContextTokens: number | null | undefined,
+): number | null {
+  if (pricing === null) return null;
+  if (pricing.pricingType === 'context-tiered' && requestContextTokens === null) {
+    return null; // context unknown → unavailable
+  }
+  const cacheReadInputTokens = pricing.pricingType === 'context-tiered' && typeof requestContextTokens === 'number'
+    ? Math.max(0, requestContextTokens - inputTokens)
+    : 0;
+  const usage: RawProviderUsage = {
+    inputTokens,
+    outputTokens,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens,
+  };
+  return computeCostRmbFromPricing(usage, pricing);
 }
 
 /**
