@@ -4,7 +4,7 @@ import { executeProviderCall } from './executor';
 import { MockProviderAdapter, AdapterRegistry } from './adapter';
 import { TimeoutError, TransportError, ProviderProtocolError } from './providerErrors';
 import { loadRunState, createRunState } from './store';
-import type { ProviderProfile, MockProviderScenario } from './types';
+import type { ProviderCallResponse, ProviderProfile, MockProviderScenario } from './types';
 import { mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
@@ -730,6 +730,117 @@ describe('executeProviderCall — stable error classification', () => {
       const state = loadRunState(FIXTURE_CWD, runId);
       expect(state.pendingCall!.status).toBe('UNKNOWN_AFTER_CRASH');
       expect(state.calls.length).toBe(0);
+    }
+  });
+});
+
+describe('executeProviderCall — bounded connect-timeout retry audit', () => {
+  beforeEach(setupFixture);
+  afterEach(cleanupFixture);
+
+  const retryProfile: ProviderProfile = {
+    ...testProfile,
+    id: 'provider-a',
+    displayName: 'Provider A',
+    vendor: 'third-party',
+    credentialEnvVars: ['PROVIDER_A_API_KEY'],
+    defaultModelId: 'model-a',
+    models: [{
+      logicalName: 'model-a',
+      requestedModelId: 'model-a',
+      acceptedReportedModelIds: ['model-a'],
+      displayName: 'Model A',
+    }],
+    pricing: {
+      'model-a': { ...testProfile.pricing['deepseek-chat'] },
+    },
+  };
+  const retryParentEnv = (): NodeJS.ProcessEnv => ({
+    PATH: process.env.PATH ?? '/usr/bin',
+    HOME: process.env.HOME ?? '/home/test',
+    PROVIDER_A_API_KEY: 'provider-a-test-secret',
+  });
+  const connectTimeout = () => new TransportError('safe transport failure', {
+    transient: true,
+    cause: Object.assign(new Error('safe cause'), { code: 'UND_ERR_CONNECT_TIMEOUT' }),
+  });
+  const successResponse = (): ProviderCallResponse => ({
+    callId: 'retry-call',
+    providerId: retryProfile.id,
+    requestedModelId: 'model-a',
+    reportedModel: 'model-a',
+    content: 'ok',
+    usage: {
+      inputTokens: 1,
+      outputTokens: 1,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+    },
+    durationMs: 1,
+    numTurns: 1,
+    subtype: 'success',
+    isError: false,
+    error: null,
+  });
+
+  it('keeps one logical invocation while auditing two transport attempts', async () => {
+    let attempts = 0;
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat',
+      execute: async () => {
+        attempts += 1;
+        if (attempts === 1) throw connectTimeout();
+        return successResponse();
+      },
+    });
+
+    const result = await executeProviderCall({
+      profile: retryProfile, logicalModelName: 'model-a', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: retryParentEnv(), cwd: FIXTURE_CWD,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(attempts).toBe(2);
+    expect(result.transportAudit).toEqual({
+      transportRetryPolicyVersion: 'connect-timeout-retry-v1',
+      transportAttempts: 2,
+      transportRetryCount: 1,
+      transportRetryReasons: ['UND_ERR_CONNECT_TIMEOUT'],
+    });
+    expect(JSON.stringify(result)).not.toContain('provider-a-test-secret');
+  });
+
+  it('returns the final safe error after the second connect timeout', async () => {
+    let attempts = 0;
+    const registry = new AdapterRegistry();
+    registry.register({
+      transport: 'openai-chat',
+      execute: async () => {
+        attempts += 1;
+        throw connectTimeout();
+      },
+    });
+
+    const result = await executeProviderCall({
+      profile: retryProfile, logicalModelName: 'model-a', role: 'builder',
+      systemPrompt: 't', userPrompt: 't', maxOutputTokens: 4096, timeoutMs: 30_000,
+      adapterRegistry: registry, parentEnv: retryParentEnv(), cwd: FIXTURE_CWD,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(attempts).toBe(2);
+    expect(result.transportAudit).toMatchObject({
+      transportAttempts: 2,
+      transportRetryCount: 1,
+      transportRetryReasons: ['UND_ERR_CONNECT_TIMEOUT'],
+    });
+    if (!result.ok) {
+      expect(result.failureDetail?.networkErrorCode).toBe('UND_ERR_CONNECT_TIMEOUT');
+      expect(result.usageRecord).toBeNull();
+      expect(result.transientTransportError).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain('provider-a-test-secret');
     }
   });
 });

@@ -95,6 +95,12 @@ describe('Writer benchmark sample persistence', () => {
               executionRole: 'FAST_EXECUTOR',
             },
             content: '',
+            transportAudit: {
+              transportRetryPolicyVersion: 'connect-timeout-retry-v1',
+              transportAttempts: 2,
+              transportRetryCount: 1,
+              transportRetryReasons: ['UND_ERR_CONNECT_TIMEOUT'],
+            },
             toolCalls: [{
               id: 'call-safe-1',
               type: 'function',
@@ -122,6 +128,10 @@ describe('Writer benchmark sample persistence', () => {
     expect(parsed.totalTokens).toBe(35);
     expect(parsed.verdict).toBe('PASS_STRICT');
     expect(parsed.passed).toBe(true);
+    expect(parsed.transportRetryPolicyVersion).toBe('connect-timeout-retry-v1');
+    expect(parsed.transportAttempts).toBe(2);
+    expect(parsed.transportRetryCount).toBe(1);
+    expect(parsed.transportRetryReasons).toEqual(['UND_ERR_CONNECT_TIMEOUT']);
     expect(parsed.qualificationIdentity).toEqual(expect.objectContaining({
       benchmarkContractVersion: 'writer-model-profile-benchmark-v3',
       profileId: 'profile-safe-store',

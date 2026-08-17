@@ -470,6 +470,14 @@ export interface ProviderFailureDetail {
   callId: string;
 }
 
+/** Safe operational audit for one logical Provider invocation. */
+export interface ProviderTransportAudit {
+  transportRetryPolicyVersion: 'connect-timeout-retry-v1';
+  transportAttempts: number;
+  transportRetryCount: number;
+  transportRetryReasons: string[];
+}
+
 /** Provider 执行失败原因（非 stopReason 的领域枚举） */
 export type ProviderExecutionStopReason =
   | 'PRICING_NOT_FOUND'
@@ -491,6 +499,8 @@ export type ProviderExecutionResult =
       toolCalls?: ModelToolCall[];
       /** v0.2.0 Slice 1E-W：DeepSeek reasoning_content 保真传递 */
       reasoningContent?: string | null;
+      /** Operational reliability metadata; not part of capability identity. */
+      transportAudit?: ProviderTransportAudit;
     }
   | {
       ok: false;
@@ -507,6 +517,8 @@ export type ProviderExecutionResult =
       transientTransportError?: boolean;
       /** v0.8.x 诊断修复：安全结构化失败摘要 */
       failureDetail?: ProviderFailureDetail;
+      /** Operational reliability metadata; not part of capability identity. */
+      transportAudit?: ProviderTransportAudit;
     };
 
 // ============================================================================

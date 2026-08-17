@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type {
   ModelToolCall,
-  ProviderAdapter,
   ProviderAdapterQualificationContract,
   ProviderAdapterResolver,
   ProviderExecutionResult,
   ProviderProfile,
+  ProviderTransportAudit,
   ProviderToolDefinition,
   WriterExecutionRole,
 } from './types';
@@ -108,6 +108,10 @@ export interface WriterModelProfileBenchmarkResult {
   outputTokenLimitHit: boolean | null;
   providerErrorCategory: string | null;
   providerErrorCode: string | null;
+  transportRetryPolicyVersion: string | null;
+  transportAttempts: number;
+  transportRetryCount: number;
+  transportRetryReasons: string[];
   invalidToolCall: boolean;
   toolProtocolValid: boolean | null;
   protocolError: string | null;
@@ -282,6 +286,7 @@ export async function runWriterModelProfileBenchmark(
       completedAt: completed.toISOString(),
       providerCallCount: invocation.providerCallCount,
       providerCompletion,
+      transportAudit: invocation.executionResult.transportAudit,
       usage,
       classified: {
         toolCallCount: 0,
@@ -306,6 +311,7 @@ export async function runWriterModelProfileBenchmark(
     completedAt: completed.toISOString(),
     providerCallCount: invocation.providerCallCount,
     providerCompletion,
+    transportAudit: invocation.executionResult.transportAudit,
     usage,
     classified: classifyResponseAction(
       invocation.executionResult.toolCalls ?? [],
@@ -329,27 +335,6 @@ export function createProviderBenchmarkInvocation(
       return { ...adapter.qualificationContract };
     },
     async invoke(request) {
-      let providerCallCount = 0;
-      const countingRegistry: ProviderAdapterResolver = {
-        resolve(transport: string): ProviderAdapter | null {
-          const adapter = options.adapterRegistry.resolve(transport);
-          if (!adapter) return null;
-          return {
-            transport: adapter.transport,
-            ...(adapter.qualificationContract
-              ? { qualificationContract: { ...adapter.qualificationContract } }
-              : {}),
-            ...(adapter.validateProfile
-              ? { validateProfile: (profile) => adapter.validateProfile!(profile) }
-              : {}),
-            execute: async (providerRequest, context) => {
-              providerCallCount += 1;
-              return adapter.execute(providerRequest, context);
-            },
-          };
-        },
-      };
-
       const executionResult = await executeProviderCall({
         profile: request.profile,
         logicalModelName: request.logicalModelName,
@@ -358,7 +343,7 @@ export function createProviderBenchmarkInvocation(
         userPrompt: request.userPrompt,
         maxOutputTokens: request.maxOutputTokens,
         timeoutMs: request.timeoutMs,
-        adapterRegistry: countingRegistry,
+        adapterRegistry: options.adapterRegistry,
         parentEnv: options.parentEnv,
         cwd: options.cwd,
         callId: options.callIdFactory?.() ?? newCallId(),
@@ -371,7 +356,9 @@ export function createProviderBenchmarkInvocation(
 
       return {
         executionResult,
-        providerCallCount,
+        // One benchmark sample represents one logical Provider invocation.
+        // Physical connection attempts live in transportAudit instead.
+        providerCallCount: executionResult.transportAudit ? 1 : 0,
         providerCompletion: deriveProviderCompletion(executionResult),
       };
     },
@@ -565,6 +552,7 @@ function buildResult(params: {
   completedAt: string;
   providerCallCount: number;
   providerCompletion: WriterBenchmarkProviderCompletion;
+  transportAudit?: ProviderTransportAudit;
   usage: ProviderExecutionResult['usageRecord'];
   classified: ClassifiedActions;
 }): WriterModelProfileBenchmarkResult {
@@ -612,6 +600,11 @@ function buildResult(params: {
     outputTokenLimitHit: params.providerCompletion.outputTokenLimitHit,
     providerErrorCategory: params.providerCompletion.providerErrorCategory,
     providerErrorCode: params.providerCompletion.providerErrorCode,
+    transportRetryPolicyVersion:
+      params.transportAudit?.transportRetryPolicyVersion ?? null,
+    transportAttempts: params.transportAudit?.transportAttempts ?? 0,
+    transportRetryCount: params.transportAudit?.transportRetryCount ?? 0,
+    transportRetryReasons: [...(params.transportAudit?.transportRetryReasons ?? [])],
     invalidToolCall: params.classified.invalidToolCall,
     toolProtocolValid: params.classified.toolProtocolValid,
     protocolError: params.classified.protocolError,

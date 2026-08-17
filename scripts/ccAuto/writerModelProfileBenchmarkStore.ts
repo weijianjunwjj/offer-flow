@@ -68,6 +68,11 @@ export interface PersistedWriterBenchmarkSampleV3
   extends PersistedWriterBenchmarkSampleBase {
   schemaVersion: typeof WRITER_BENCHMARK_SAMPLE_SCHEMA_VERSION;
   qualificationIdentity: WriterQualificationIdentitySnapshot;
+  /** Optional for backward compatibility with v3 samples created before retry audit v1. */
+  transportRetryPolicyVersion?: string | null;
+  transportAttempts?: number;
+  transportRetryCount?: number;
+  transportRetryReasons?: string[];
 }
 
 export type PersistedWriterBenchmarkSample =
@@ -147,6 +152,10 @@ export function toPersistedWriterBenchmarkSample(
     outputTokenLimitHit: result.outputTokenLimitHit,
     providerErrorCategory: result.providerErrorCategory,
     providerErrorCode: result.providerErrorCode,
+    transportRetryPolicyVersion: result.transportRetryPolicyVersion,
+    transportAttempts: result.transportAttempts,
+    transportRetryCount: result.transportRetryCount,
+    transportRetryReasons: [...result.transportRetryReasons],
   };
 }
 

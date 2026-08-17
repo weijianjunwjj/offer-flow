@@ -97,6 +97,14 @@ sample ID、时间戳、运行路径和 task observation 不进入 Writer system
 `timeoutMs` 属于 operational availability，不进入 capability identity；项目尚未控制 temperature、top_p、
 reasoning effort 或 parallel tool-call policy，因此不为未来字段预造 schema。
 
+同理，`connect-timeout-retry-v1` 只在尚未取得 HTTP response、且安全错误码精确为
+`UND_ERR_CONNECT_TIMEOUT` 时，为同一个 logical Provider invocation 增加一次有限 transport attempt。
+它不改变模型最终收到的 request、tools、system contract 或 inference settings，因此不进入 capability
+identity fingerprint。新生成的 v3 sample 通过可选 operational audit 字段保存
+`transportRetryPolicyVersion / transportAttempts / transportRetryCount / transportRetryReasons`；旧 v3 sample
+缺少这些字段仍然合法，不回填、不重写。若未来 retry 扩展到可能已经抵达 Provider 的失败，必须重新
+审计 identity 与 sample schema 边界，不能沿用本例外。
+
 ### 3.5 完整 Qualification Identity
 
 完整 fingerprint 由以下字段确定：

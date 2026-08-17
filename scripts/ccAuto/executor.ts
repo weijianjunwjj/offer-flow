@@ -12,7 +12,7 @@
  * 安全边界：
  * - 不使用 throw 作为正常领域分支
  * - 不输出密钥正文
- * - 不自动重试
+ * - 只对明确的连接建立超时做一次有限 transport retry
  * - 不自动切换 Provider
  * - 不自动降级
  */
@@ -35,6 +35,10 @@ import { computeCostRmbFromPricing } from './cost';
 import { redactSecretValues } from './redact';
 import type { ModelPricing } from './types';
 import { saveRunState, loadRunState, runStateExists } from './store';
+import {
+  executeWithConnectTimeoutRetry,
+  getSafeNetworkErrorCode,
+} from './transportRetryPolicy';
 
 /**
  * 构造安全结构化失败摘要——不含密钥/完整请求体/响应体/文件正文。
@@ -60,7 +64,7 @@ function buildProviderFailureDetail(opts: {
     if (secrets.some(s => causeName!.includes(s))) causeName = '<redacted>';
   }
 
-  // 安全提取网络错误码（复用 openaiChatAdapter 中的 getNetworkErrorCode 逻辑）
+  // 安全提取网络错误码（与 retry policy 复用同一有界提取逻辑）
   const networkErrorCode = getSafeNetworkErrorCode(err, secrets);
 
   let errorKind: ProviderFailureDetail['errorKind'];
@@ -94,57 +98,6 @@ function buildProviderFailureDetail(opts: {
     requestedModelId,
     callId,
   };
-}
-
-const MAX_NETWORK_ERROR_CAUSE_DEPTH = 4;
-const SAFE_NETWORK_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,63}$/;
-
-/**
- * 安全提取网络错误码——不依赖 openaiChatAdapter.ts 内部导出。
- * 有界遍历 error/cause 链，只保留短的 Node/Undici 风格 code；不持久化
- * message、stack、header、body 或 URL。
- */
-function getSafeNetworkErrorCode(err: unknown, secrets: readonly string[]): string | null {
-  let current = err;
-  const seen = new Set<object>();
-
-  for (let depth = 0; depth < MAX_NETWORK_ERROR_CAUSE_DEPTH; depth += 1) {
-    if (!current || typeof current !== 'object' || seen.has(current)) return null;
-    seen.add(current);
-    const error = current as Record<string, unknown>;
-    const cause = error.cause && typeof error.cause === 'object'
-      ? error.cause as Record<string, unknown>
-      : null;
-
-    // 保持既有优先级：优先读取当前错误的直接 cause code。
-    const causeCode = safeNetworkErrorCode(cause?.code, secrets);
-    if (causeCode) return causeCode;
-
-    const directCode = safeNetworkErrorCode(error.code, secrets);
-    if (directCode) return directCode;
-
-    const errnoCode = mapNetworkErrno(error.errno);
-    if (errnoCode) return errnoCode;
-
-    current = cause;
-  }
-
-  return null;
-}
-
-function safeNetworkErrorCode(value: unknown, secrets: readonly string[]): string | null {
-  if (typeof value !== 'string' || !SAFE_NETWORK_ERROR_CODE_PATTERN.test(value)) return null;
-  if (secrets.some((secret) => secret.length > 0 && value.includes(secret))) return null;
-  return value;
-}
-
-function mapNetworkErrno(value: unknown): string | null {
-  if (typeof value !== 'number') return null;
-  if (value === -4078 || value === -54) return 'ECONNRESET';
-  if (value === -4039 || value === -60) return 'ETIMEDOUT';
-  if (value === -3008 || value === -3000) return 'EAI_AGAIN';
-  if (value === -4073 || value === -61) return 'ECONNREFUSED';
-  return null;
 }
 
 /** 仅当 usage 所有 token 字段非 null 时计算费用，否则返回 null */
@@ -316,10 +269,17 @@ export async function executeProviderCall(
     updatedAt: new Date().toISOString(),
   });
 
-  let response: ProviderCallResponse;
-  try {
-    response = await adapter.execute(request, { childEnv, timeoutMs: opts.timeoutMs, profile });
-  } catch (err) {
+  const transportOutcome = await executeWithConnectTimeoutRetry(
+    () => adapter.execute(request, { childEnv, timeoutMs: opts.timeoutMs, profile }),
+  );
+  const transportAudit = transportOutcome.audit;
+  const audited = (result: ProviderExecutionResult): ProviderExecutionResult => ({
+    ...result,
+    transportAudit,
+  });
+
+  if (!transportOutcome.ok) {
+    const err = transportOutcome.error;
     // 通过 instanceof 稳定判断错误类别（不使用字符串 message 匹配）
     const isTimeout = err instanceof TimeoutError;
     const isDomainError = err instanceof TransportError || err instanceof ProviderProtocolError;
@@ -353,7 +313,7 @@ export async function executeProviderCall(
       credentialValues,
     });
 
-    return {
+    return audited({
       ok: false,
       stopReason,
       requiresHumanConfirmation: false,
@@ -363,17 +323,21 @@ export async function executeProviderCall(
         (marked ? '' : '（警告：无法更新 PendingCall 状态，内部状态可能不一致）'),
       errorKind: isTimeout ? 'HTTP' : undefined,
       httpStatus: null,
-      transientTransportError: isTransientTransport || undefined,
+      // A connect-timeout retry already consumed this logical invocation's
+      // only retry budget. Do not let an outer Tool Loop replay it again.
+      transientTransportError:
+        (isTransientTransport && transportAudit.transportRetryCount === 0) || undefined,
       failureDetail,
-    };
+    });
   }
+  const response: ProviderCallResponse = transportOutcome.value;
 
   // --- 8. 如果是 Error 响应，记录后根据 error.kind 分类返回 ---
   // Adapter 明确返回 isError=true → Provider 已知失败，是终态，应清除 pendingCall（不是 UNKNOWN_AFTER_CRASH）
   if (response.isError) {
     // unsupported_tool_calls：Provider 已返回模型和用量——做正常身份/Usage/费用计算
     if (response.subtype === 'unsupported_tool_calls') {
-      return handleUnsupportedToolCalls(response, profile, requestedModelId, role, opts);
+      return audited(handleUnsupportedToolCalls(response, profile, requestedModelId, role, opts));
     }
 
     // 普通 HTTP 错误：requestedModelId 已通过调用前定价检查
@@ -400,7 +364,7 @@ export async function executeProviderCall(
 
     completeKnownCall(cwd, opts.runId, errorRecord);
 
-    return {
+    return audited({
       ok: false,
       stopReason,
       requiresHumanConfirmation: false,
@@ -409,7 +373,7 @@ export async function executeProviderCall(
       message: `Provider "${profile.id}" 返回错误响应：${response.error?.message ?? response.subtype}`,
       errorKind,
       httpStatus: response.error?.httpStatus ?? null,
-    };
+    });
   }
 
   // --- 9. 模型身份判定 ---
@@ -465,14 +429,14 @@ export async function executeProviderCall(
     // MISMATCH → 立即失败，不把内容交给下游
     completeKnownCall(cwd, opts.runId, usageRecord);
 
-    return {
+    return audited({
       ok: false,
       stopReason: 'MODEL_IDENTITY_MISMATCH',
       requiresHumanConfirmation: false,
       usageRecord,
       identityConfirmationContext: null,
       message: `模型身份不匹配：${identityResult.detail}`,
-    };
+    });
   }
 
   if (identityResult.status === 'UNVERIFIED') {
@@ -485,14 +449,14 @@ export async function executeProviderCall(
       pendingResultId: callId,
     };
 
-    return {
+    return audited({
       ok: false,
       stopReason: null,
       requiresHumanConfirmation: true,
       usageRecord,
       identityConfirmationContext: identityCtx,
       message: `Provider 未返回实际模型 ID，需要人工确认模型身份`,
-    };
+    });
   }
 
   // --- 13. VERIFIED → 检查 Usage 完整性 → 检查定价完整性 ---
@@ -500,39 +464,39 @@ export async function executeProviderCall(
     // usage 非完整 → COST_UNAVAILABLE
     completeKnownCall(cwd, opts.runId, usageRecord);
 
-    return {
+    return audited({
       ok: false,
       stopReason: 'COST_UNAVAILABLE',
       requiresHumanConfirmation: false,
       usageRecord,
       identityConfirmationContext: null,
       message: `Usage 不完整（${usageRecord.usageStatus}），无法安全计算费用——COST_UNAVAILABLE`,
-    };
+    });
   }
 
   if (pricingStatus === 'UNPRICED') {
     completeKnownCall(cwd, opts.runId, usageRecord);
 
-    return {
+    return audited({
       ok: false,
       stopReason: 'COST_UNAVAILABLE',
       requiresHumanConfirmation: false,
       usageRecord,
       identityConfirmationContext: null,
       message: `模型身份已验证，但 reportedModel="${pricingModelId}" 不在定价表中——COST_UNAVAILABLE`,
-    };
+    });
   }
 
   // --- 14. 成功：追加 UsageRecord，清除 PendingCall ---
   completeKnownCall(cwd, opts.runId, usageRecord);
 
-  return {
+  return audited({
     ok: true,
     usageRecord,
     content: response.content ?? '',
     toolCalls: response.toolCalls,
     reasoningContent: response.reasoningContent,
-  };
+  });
 }
 
 // ======= PendingCall / Store 操作封装（切片 1B 最小实现） =======

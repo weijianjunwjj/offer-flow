@@ -7,6 +7,7 @@ import type {
   ProviderCallResponse,
   ProviderExecutionResult,
   ProviderProfile,
+  ProviderTransportAudit,
   UsageRecord,
 } from './types';
 import {
@@ -107,6 +108,7 @@ function successfulInvocation(
   calls: ModelToolCall[],
   content: string | null = '',
   providerCompletion?: WriterBenchmarkProviderCompletion,
+  transportAudit?: ProviderTransportAudit,
 ): WriterBenchmarkInvocationCapability {
   return {
     resolveAdapterContract: () => ({ ...ADAPTER_CONTRACT }),
@@ -118,6 +120,7 @@ function successfulInvocation(
         usageRecord: usage(),
         content,
         toolCalls: calls,
+        transportAudit,
       } satisfies ProviderExecutionResult,
     })),
   };
@@ -460,6 +463,48 @@ describe('Writer Model Profile Behavior Benchmark', () => {
       .toBe(before.qualificationIdentity.qualificationIdentityFingerprint);
     expect(JSON.stringify([before, after])).not.toContain(oldKey);
     expect(JSON.stringify([before, after])).not.toContain(newKey);
+  });
+
+  it('keeps retry policy operational audit outside capability identity', async () => {
+    const withoutRetry = await runWriterModelProfileBenchmark({
+      fixture: WRITER_DECISION_FIXTURE,
+      profile: PROFILE,
+      logicalModelName: 'model-a',
+      executionRole: 'FAST_EXECUTOR',
+      invocation: successfulInvocation([actionCall('WRITE')], '', undefined, {
+        transportRetryPolicyVersion: 'connect-timeout-retry-v1',
+        transportAttempts: 1,
+        transportRetryCount: 0,
+        transportRetryReasons: [],
+      }),
+    });
+    const withRetry = await runWriterModelProfileBenchmark({
+      fixture: WRITER_DECISION_FIXTURE,
+      profile: PROFILE,
+      logicalModelName: 'model-a',
+      executionRole: 'FAST_EXECUTOR',
+      invocation: successfulInvocation([actionCall('WRITE')], '', undefined, {
+        transportRetryPolicyVersion: 'connect-timeout-retry-v1',
+        transportAttempts: 2,
+        transportRetryCount: 1,
+        transportRetryReasons: ['UND_ERR_CONNECT_TIMEOUT'],
+      }),
+    });
+
+    expect(withRetry.qualificationIdentity.qualificationIdentityFingerprint)
+      .toBe(withoutRetry.qualificationIdentity.qualificationIdentityFingerprint);
+    expect(withRetry).toMatchObject({
+      providerCallCount: 1,
+      transportRetryPolicyVersion: 'connect-timeout-retry-v1',
+      transportAttempts: 2,
+      transportRetryCount: 1,
+      transportRetryReasons: ['UND_ERR_CONNECT_TIMEOUT'],
+    });
+    expect(toPersistedWriterBenchmarkSample(withRetry)).toMatchObject({
+      schemaVersion: 'writer-model-profile-benchmark-sample-v3',
+      transportAttempts: 2,
+      transportRetryCount: 1,
+    });
   });
 
   it('freezes identity before invocation and does not recompute it from later profile mutation', async () => {
