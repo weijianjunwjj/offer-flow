@@ -17,6 +17,9 @@ diagnostic 或 recheck 会改变 latest window，使已经完成的考试发生�
 历史 smoke 和 lifetime operational evidence 保持原样，不回写、不迁移，也不进入未引用它们的 Formal
 Batch。Runtime routing 与 Writer authorization 不消费这些 artifact。
 
+人工批准某个 Frozen Result 成为当前资格依据属于独立 Certificate 治理层，见
+`writer-qualification-certificate-v1.md`；它不改变 Batch 或 Result。
+
 ## 2. Batch Contract
 
 `WriterQualificationBatch` 保存：

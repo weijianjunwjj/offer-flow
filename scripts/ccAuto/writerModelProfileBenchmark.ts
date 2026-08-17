@@ -74,6 +74,12 @@ export interface WriterModelProfileBenchmarkInput {
   now?: () => Date;
 }
 
+export interface ResolveWriterQualificationIdentityInput {
+  profile: ProviderProfile;
+  logicalModelName: string;
+  adapterContract: ProviderAdapterQualificationContract;
+}
+
 export interface WriterModelProfileBenchmarkResult {
   benchmarkSampleId: string;
   fixtureId: string;
@@ -215,16 +221,10 @@ export async function runWriterModelProfileBenchmark(
   const tools = buildToolDefinitions(input.fixture);
   // Freeze the complete identity before any Provider execution. The resolver
   // exposes only versioned Adapter metadata and never receives parentEnv.
-  const qualificationIdentity = buildWriterQualificationIdentitySnapshot({
+  const qualificationIdentity = resolveWriterQualificationIdentitySnapshot({
     profile: input.profile,
     logicalModelName: input.logicalModelName,
-    qualificationFixtures: WRITER_DECISION_FIXTURES,
     adapterContract: input.invocation.resolveAdapterContract(input.profile),
-    tools,
-    toolMode: 'enabled',
-    writerSystemContract: BENCHMARK_SYSTEM_CONTRACT,
-    maxOutputTokens: BENCHMARK_MAX_OUTPUT_TOKENS,
-    qualificationPolicyVersion: WRITER_QUALIFICATION_POLICY_VERSION,
   });
   let invocation: WriterBenchmarkInvocationOutcome;
 
@@ -319,6 +319,23 @@ export async function runWriterModelProfileBenchmark(
       providerCompletion.outputTokenLimitHit === true,
       input.fixture.expectedNextActionClass,
     ),
+  });
+}
+
+/** Resolves the current qualification identity without invoking a Provider. */
+export function resolveWriterQualificationIdentitySnapshot(
+  input: ResolveWriterQualificationIdentityInput,
+): WriterQualificationIdentitySnapshot {
+  return buildWriterQualificationIdentitySnapshot({
+    profile: input.profile,
+    logicalModelName: input.logicalModelName,
+    qualificationFixtures: WRITER_DECISION_FIXTURES,
+    adapterContract: input.adapterContract,
+    tools: buildToolDefinitions(WRITER_DECISION_FIXTURES[0]),
+    toolMode: 'enabled',
+    writerSystemContract: BENCHMARK_SYSTEM_CONTRACT,
+    maxOutputTokens: BENCHMARK_MAX_OUTPUT_TOKENS,
+    qualificationPolicyVersion: WRITER_QUALIFICATION_POLICY_VERSION,
   });
 }
 
