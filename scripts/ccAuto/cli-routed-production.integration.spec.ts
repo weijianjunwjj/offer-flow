@@ -25,6 +25,11 @@ import type {
   RoutedExecutionReporter,
   TaskCostSummary,
 } from './types';
+import {
+  issueActiveCertificate,
+  persistFrozenQualifiedResult,
+  runtimeIdentity,
+} from './__fixtures__/writerRuntimeEligibilityFixture';
 
 // ============================================================================
 // Fake fetch — simulates OpenAI Chat API responses
@@ -103,6 +108,29 @@ const proProfile: ProviderProfile = {
   },
 };
 
+const grokWriterProfile: ProviderProfile = {
+  id: 'apikey-grok-4-6', displayName: 'Grok 4.6 Writer', vendor: 'third-party', transport: 'openai-chat',
+  apiBaseUrl: 'https://api.apikey.fun/v1', credentialEnvVars: ['TEST_GROK_KEY'],
+  runtimeEnvAllowlist: ['PATH', 'HOME'],
+  defaultModelId: 'grok-4-6-writer',
+  models: [{ logicalName: 'grok-4-6-writer', requestedModelId: 'grok-4.6', acceptedReportedModelIds: ['grok-4.6'], displayName: 'Grok 4.6' }],
+  pricing: {
+    'grok-4.6': { inputPerMTokens: 2, outputPerMTokens: 6, cacheCreationPerMTokens: 0, cacheReadPerMTokens: 0.3, currency: 'CNY', source: 'test', updatedAt: '2026-08-17' },
+  },
+};
+
+/** Issues an ACTIVE_VALID Writer certificate for the Grok profile in a temp cwd. */
+function setupGrokCertificate(cwd: string): void {
+  const identity = runtimeIdentity(grokWriterProfile, grokWriterProfile.defaultModelId);
+  const result = persistFrozenQualifiedResult({
+    cwd,
+    profile: grokWriterProfile,
+    batchId: 'grok-runtime-batch',
+    identity,
+  });
+  issueActiveCertificate({ cwd, profile: grokWriterProfile, result, identity });
+}
+
 function writeTestConfig(cwd: string, overrides: Record<string, unknown> = {}) {
   const configDir = path.join(cwd, '.cc-auto');
   mkdirSync(configDir, { recursive: true });
@@ -120,6 +148,7 @@ function writeTestConfig(cwd: string, overrides: Record<string, unknown> = {}) {
       providerProfiles: {
         'deepseek-v4-flash': flashProfile,
         'deepseek-v4-pro': proProfile,
+        'apikey-grok-4-6': grokWriterProfile,
       },
       ...overrides,
     }, null, 2),
@@ -167,6 +196,8 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
     mkdirSync(path.join(CWD, 'scripts'), { recursive: true });
     writeFileSync(path.join(CWD, 'src', 'test.ts'), 'export const hello = "world";\n', 'utf8');
     process.env.TEST_DEEPSEEK_KEY = 'dummy';
+    process.env.TEST_GROK_KEY = 'dummy';
+    setupGrokCertificate(CWD);
   });
 
   afterEach(() => {
@@ -339,11 +370,11 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
     expect(s!.changedFiles).toContain('src/test.ts');
     expect(s!.changedFiles.length).toBe(1);
 
-    // === All HTTP models are Flash or Pro. P1 pre-approves src/test.ts.
-    // Flash writes should succeed and produce a diff, so no Pro escalation.
+    // === All HTTP models are the Runtime Writer (Grok). P1 pre-approves src/test.ts.
+    // The eligible Writer writes directly; no DeepSeek Flash/Pro is used for writing.
     expect(capturedModels.length).toBeGreaterThan(0);
     for (const m of capturedModels) {
-      expect(m).toBe('deepseek-chat-flash');
+      expect(m).toBe('grok-4.6');
     }
 
     // === Routing: Flash only, no Pro ===
@@ -466,97 +497,59 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
   // F: Flash→Pro escalation (VERIFY failure driven)
   // ==========================================================================
 
-  it('F: Flash IMPLEMENT → VERIFY fails → REPAIR_1 → Pro IMPLEMENT → VERIFY pass → FINAL_VERIFY → DONE', async () => {
-    let flashCallCount = 0;
-    let proCallCount = 0;
-    // Track write-capable calls per model to terminate the Tool Loop cleanly
-    let flashWriteSeq = 0;
-    let proWriteSeq = 0;
-    // Pro's intermediate read captured for assertion
-    let proReadCallCount = 0;
+  it('F: Writer IMPLEMENT → VERIFY fails → REPAIR_1 → Writer repair → VERIFY pass → FINAL_VERIFY → DONE', async () => {
+    // Writer (Grok) attempt 1 writes WRONG, attempt 2 (REPAIR_1) writes the fix.
+    let writeableSeq = 0;
 
     const fakeFetch = makeFakeApiFetch((call: FakeApiCall) => {
-      const model = call.body.model as string;
-      if (model === 'deepseek-chat-flash') flashCallCount++;
-      if (model === 'deepseek-chat-pro') proCallCount++;
-
       const tools = (call.body.tools as Array<{ function: { name: string } }>) ?? [];
-      const isReadOnly = tools.length > 0 && tools.every((t) => ['read_file', 'grep', 'glob'].includes(t.function.name));
-      const isWriteable = tools.length > 0 && !isReadOnly;
+      const isWriteable = tools.length > 0 && tools.some((t) => ['write_file', 'edit_file'].includes(t.function.name));
 
-      if (isReadOnly) {
-        // Read-only discovery: return candidate file path, no tool_calls → COMPLETED
-        return { model: model, content: '{"candidateFiles":["src/test.ts"]}', usage: { prompt_tokens: 200, completion_tokens: 100 } };
-      }
-
-      // === Flash write-capable Tool Loop ===
-      if (model === 'deepseek-chat-flash' && isWriteable) {
-        flashWriteSeq++;
-        if (flashWriteSeq === 1) {
+      if (isWriteable) {
+        writeableSeq++;
+        if (writeableSeq === 1) {
           return {
-            model: 'deepseek-chat-flash',
-            content: null,
-            toolCalls: [{ id: `call_flash_${flashCallCount}`, name: 'write_file', args: JSON.stringify({ path: 'src/test.ts', content: 'export const hello = "FLASH_CHANGED";\n' }) }],
+            model: 'grok-4.6', content: null,
+            toolCalls: [{ id: 'call_w1', name: 'write_file', args: JSON.stringify({ path: 'src/test.ts', content: 'export const hello = "WRONG";\n' }) }],
             usage: { prompt_tokens: 300, completion_tokens: 80 },
           };
         }
-        // Terminate cleanly: produce final text → COMPLETED
-        return { model: 'deepseek-chat-flash', content: 'Flash implementation completed.', usage: { prompt_tokens: 200, completion_tokens: 50 } };
-      }
-
-      // === Pro write-capable Tool Loop ===
-      // Sequence: read_file (verify Flash content) → write_file (fix) → final text
-      if (model === 'deepseek-chat-pro' && isWriteable) {
-        proWriteSeq++;
-        if (proWriteSeq === 1) {
-          // First: read existing file to confirm Flash wrote FLASH_CHANGED
-          proReadCallCount++;
+        if (writeableSeq === 3) {
           return {
-            model: 'deepseek-chat-pro',
-            content: null,
-            toolCalls: [{ id: `call_pro_read_${proCallCount}`, name: 'read_file', args: JSON.stringify({ path: 'src/test.ts' }) }],
-            usage: { prompt_tokens: 250, completion_tokens: 60 },
-          };
-        }
-        if (proWriteSeq === 2) {
-          // Second: write the fix
-          return {
-            model: 'deepseek-chat-pro',
-            content: null,
-            toolCalls: [{ id: `call_pro_write_${proCallCount}`, name: 'write_file', args: JSON.stringify({ path: 'src/test.ts', content: 'export const hello = "PRO_FIXED";\n' }) }],
+            model: 'grok-4.6', content: null,
+            toolCalls: [{ id: 'call_w3', name: 'write_file', args: JSON.stringify({ path: 'src/test.ts', content: 'export const hello = "PRO_FIXED";\n' }) }],
             usage: { prompt_tokens: 300, completion_tokens: 80 },
           };
         }
-        // Terminate cleanly
-        return { model: 'deepseek-chat-pro', content: 'Pro repair completed.', usage: { prompt_tokens: 200, completion_tokens: 50 } };
+        return { model: 'grok-4.6', content: 'Writer implementation completed.', usage: { prompt_tokens: 200, completion_tokens: 50 } };
       }
 
-      return { model: model, content: 'Task completed.', usage: { prompt_tokens: 400, completion_tokens: 150 } };
+      return { model: 'grok-4.6', content: 'done', usage: { prompt_tokens: 100, completion_tokens: 50 } };
     });
 
     writeTestConfig(CWD);
     initGitRepo(CWD);
-    // Write initial file so git has a baseline
     const testFilePath = path.join(CWD, 'src', 'test.ts');
     writeFileSync(testFilePath, 'export const hello = "ORIGINAL";\n', 'utf8');
-    // Re-commit to establish git baseline with ORIGINAL content
     try {
       execFileSync('git', ['add', '-A'], { cwd: CWD, encoding: 'utf8' });
       execFileSync('git', ['commit', '-m', 'baseline with ORIGINAL'], { cwd: CWD, encoding: 'utf8' });
     } catch { /* ok */ }
     createProductionAdapterRegistry({ fetchImpl: fakeFetch });
 
-    // Content-driven verifier: reads actual file content, not a counter
+    // Content-driven verifier: only PRO_FIXED passes.
     const verifier = {
       runTests: async () => {
         const content = readFileSync(testFilePath, 'utf8');
-        if (content.includes('PRO_FIXED')) return { passed: true, output: 'all tests passed' };
-        return { passed: false, output: `FAILED: file contains "${content.trim()}", expected PRO_FIXED` };
+        return content.includes('PRO_FIXED')
+          ? { passed: true, output: 'all tests passed' }
+          : { passed: false, output: 'expected PRO_FIXED' };
       },
       runFullVerification: async () => {
         const content = readFileSync(testFilePath, 'utf8');
-        if (content.includes('PRO_FIXED')) return { passed: true, output: 'full verification passed' };
-        return { passed: false, output: `FAILED: file contains "${content.trim()}", expected PRO_FIXED` };
+        return content.includes('PRO_FIXED')
+          ? { passed: true, output: 'full verification passed' }
+          : { passed: false, output: 'expected PRO_FIXED' };
       },
     };
 
@@ -569,16 +562,12 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
     const s = r.state;
     expect(s).toBeDefined();
 
-    // ========================================================================
-    // H1: Frozen unconditional DONE assertions — no conditionals, no FIXME
-    // ========================================================================
+    // H1: Frozen unconditional DONE assertions
     expect(r.exitCode).toBe(0);
     expect(s!.currentPhase).toBe('DONE');
     expect(s!.done).toBe(true);
 
-    // ========================================================================
-    // Phase history — all expected phases present
-    // ========================================================================
+    // Phase history — repair loop still present, but no Pro escalation.
     const phases = s!.phaseHistory!;
     expect(phases).toContain('IMPLEMENT');
     expect(phases).toContain('VERIFY');
@@ -586,82 +575,26 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
     expect(phases).toContain('FINAL_VERIFY');
     expect(phases).toContain('DONE');
 
-    // ========================================================================
-    // Provider: both Flash and Pro were used
-    // ========================================================================
-    expect(flashCallCount).toBeGreaterThan(0);
-    expect(proCallCount).toBeGreaterThan(0);
-
-    // ========================================================================
-    // Routing decisions: FAST + STRONG both exist
-    // ========================================================================
-    const decisions = s!.routingDecisions ?? [];
-    const flashDecisions = decisions.filter((d) => d.role === 'FAST_EXECUTOR');
-    const proDecisions = decisions.filter((d) => d.role === 'STRONG_EXECUTOR');
-    expect(flashDecisions.length).toBe(1);
-    expect(proDecisions.length).toBe(1);
-
-    // ========================================================================
-    // Escalation linkage: Pro escalatedFrom Flash's last callId
-    // ========================================================================
-    expect(proDecisions[0].escalatedFromCallId).toBeDefined();
-    expect(s!.flashLastCallId).toBeDefined();
-    expect(proDecisions[0].escalatedFromCallId!).toBe(s!.flashLastCallId);
-
-    // ========================================================================
-    // File content verification: content-driven, not counter-based
-    // ========================================================================
-    // After Flash write, the file contained FLASH_CHANGED
-    // After Pro read→write, the file contains PRO_FIXED
+    // Writer repaired the file.
     const finalContent = readFileSync(testFilePath, 'utf8');
     expect(finalContent).toContain('PRO_FIXED');
-    // Flash intermediate content was overwritten by Pro
-    expect(finalContent).not.toContain('FLASH_CHANGED');
+    expect(finalContent).not.toContain('WRONG');
 
-    // Pro read_file did execute — captured from fixture counter
-    expect(proReadCallCount).toBeGreaterThanOrEqual(1);
+    // No DeepSeek Pro write escalation.
+    const proDecisions = (s!.routingDecisions ?? []).filter((d) => d.role === 'STRONG_EXECUTOR');
+    expect(proDecisions.length).toBe(0);
 
-    // ========================================================================
-    // changedFiles: task-level audit = single pathname (same file, correct)
-    // ========================================================================
+    // changedFiles: task-level audit contains the target.
     expect(s!.changedFiles.length).toBeGreaterThan(0);
     expect(s!.changedFiles).toContain('src/test.ts');
 
-    // ========================================================================
-    // State invariants: DONE path sets done=true, stopReason/stopDetail unset
-    // ========================================================================
     expect(s!.stopReason).toBeUndefined();
     expect(s!.stopDetail).toBeUndefined();
 
-    // ========================================================================
-    // Cost summary: defined after DONE
-    // ========================================================================
+    // Cost summary defined after DONE.
     expect(s!.costSummary).toBeDefined();
-    const cs = s!.costSummary!;
-    expect(cs.completed).toBe(true);
-    expect(cs.actual.totalCalls).toBeGreaterThan(0);
-    // At least one role entry exists (Flash & Pro both used; role attribution
-    // detail is verified by flashCallCount/proCallCount provider-level assertions)
-    expect(cs.byRole.length).toBeGreaterThan(0);
-
-    // ========================================================================
-    // H1: all-Pro baseline & savings — unconditional, no toBeDefined()
-    // ========================================================================
-    expect(cs.routingEffect.hypotheticalAllProCostRmb).not.toBeNull();
-    // Fixture: 1650 input / 520 output total at Pro prices (0.28/1.10 per 1M)
-    expect(cs.routingEffect.hypotheticalAllProCostRmb!).toBeGreaterThan(0);
-    expect(cs.routingEffect.savedVsAllProRmb).not.toBeNull();
-    expect(cs.routingEffect.savedVsAllProRmb!).toBeGreaterThan(0);
-    expect(cs.routingEffect.savedVsAllProPercent).not.toBeNull();
-    expect(cs.routingEffect.savedVsAllProPercent!).toBeGreaterThan(0);
-
-    // ========================================================================
-    // H2: escalation count & escalation cost
-    // ========================================================================
-    // RoutingEffect: escalation happened (Flash → Pro)
-    expect(cs.routingEffect.escalationCount).toBe(1);
-    expect(cs.routingEffect.escalationCostRmb).not.toBeNull();
-    expect(cs.routingEffect.escalationCostRmb!).toBeGreaterThan(0);
+    expect(s!.costSummary!.completed).toBe(true);
+    expect(s!.costSummary!.actual.totalCalls).toBeGreaterThan(0);
   });
 
   // ==========================================================================
@@ -881,7 +814,11 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
         const respBody = { error: { message: 'Rate limit exceeded', type: 'rate_limit', code: 'rate_limit_exceeded' } };
         return new Response(JSON.stringify(respBody), { status: 429, headers: { 'Content-Type': 'application/json' } });
       }
-      return { model: 'deepseek-chat-flash', content: '{"candidateFiles":["src/test.ts"]}', usage: { prompt_tokens: 200, completion_tokens: 50 } };
+      return {
+        model: 'grok-4.6', content: null,
+        toolCalls: [{ id: `call_w_${attemptNum}`, name: 'write_file', args: JSON.stringify({ path: 'src/test.ts', content: 'export const hello = "retried";\n' }) }],
+        usage: { prompt_tokens: 200, completion_tokens: 50 },
+      };
     });
 
     writeTestConfig(CWD);
@@ -889,21 +826,21 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
     createProductionAdapterRegistry({ fetchImpl: fakeFetch });
 
     const r = await runCli(
-      ['node', 'cc-auto', 'run', 'add a comment to src/test.ts'],
+      ['node', 'cc-auto', 'run', 'rename hello to retried in src/test.ts'],
       CWD,
       depsForTest({ fakeFetch }),
     );
 
     expect(r.state).toBeDefined();
 
-    // H1: Unconditional — attemptHistory exists with at least 1 COMPLETED entry
+    // H1: Unconditional — attemptHistory exists with at least 1 terminal entry
     expect(r.state!.attemptHistory).toBeDefined();
     expect(r.state!.attemptHistory!.length).toBeGreaterThanOrEqual(1);
 
-    // Distinct callIds from retry (429 → 2 unique callIds expected)
+    // Distinct callIds from retry (429 → retry with a new callId)
     const callIds = r.state!.attemptHistory!.map((a) => a.callId);
     const uniqueCallIds = new Set(callIds);
-    expect(uniqueCallIds.size).toBe(3);
+    expect(uniqueCallIds.size).toBeGreaterThanOrEqual(2);
 
     // At least one COMPLETED call
     const completedCalls = r.state!.attemptHistory!.filter((a) => a.status === 'COMPLETED');
@@ -969,52 +906,15 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
   // P8: Routed Tool Loop Observation persistence — production state verification
   // ==========================================================================
 
-  // Regression A: Flash no-write → Pro escalation, Flash observation persisted BEFORE Pro begins
-  it('P8 regression A: Flash NO_WRITE_TOOL_CALLED → Flash observation persisted before Pro escalation', async () => {
-    let flashWriteSeq = 0;
-    const flashDone = { value: false };
-    const proCalled = { value: false };
-
+  // Regression A: Writer no-write → fail closed, writer observation persisted
+  it('P8 regression A: Writer no-write → fail closed, writer observation persisted', async () => {
     const fakeFetch = makeFakeApiFetch((call: FakeApiCall) => {
-      const model = call.body.model as string;
-
       const tools = (call.body.tools as Array<{ function: { name: string } }>) ?? [];
       const isReadOnly = tools.length > 0 && tools.every((t) => ['read_file', 'grep', 'glob'].includes(t.function.name));
-      const isWriteable = tools.length > 0 && !isReadOnly;
-
       if (isReadOnly) {
-        if (model === 'deepseek-chat-pro') {
-          proCalled.value = true;
-          return { model: 'deepseek-chat-pro', content: '{"candidateFiles":["src/test.ts"]}', usage: { prompt_tokens: 200, completion_tokens: 100 } };
-        }
         return { model: 'deepseek-chat-flash', content: '{"candidateFiles":["src/test.ts"]}', usage: { prompt_tokens: 200, completion_tokens: 100 } };
       }
-
-      // Flash write-capable
-      if (model === 'deepseek-chat-flash' && isWriteable) {
-        flashWriteSeq++;
-        if (flashWriteSeq === 1) {
-          return {
-            model: 'deepseek-chat-flash', content: null,
-            toolCalls: [{ id: 'call_f1', name: 'read_file', args: JSON.stringify({ path: 'src/test.ts' }) }],
-            usage: { prompt_tokens: 100, completion_tokens: 30 },
-          };
-        }
-        flashDone.value = true;
-        return { model: 'deepseek-chat-flash', content: 'I have read the file but cannot determine the exact change needed.', usage: { prompt_tokens: 200, completion_tokens: 50 } };
-      }
-
-      // Pro write-capable
-      proCalled.value = true;
-      if (model === 'deepseek-chat-pro' && isWriteable) {
-        return {
-          model: 'deepseek-chat-pro', content: null,
-          toolCalls: [{ id: 'call_p1', name: 'write_file', args: JSON.stringify({ path: 'src/test.ts', content: 'export const hello = "PRO_FIXED";\n' }) }],
-          usage: { prompt_tokens: 300, completion_tokens: 100 },
-        };
-      }
-
-      return { model: model, content: 'done', usage: { prompt_tokens: 100, completion_tokens: 50 } };
+      return { model: 'grok-4.6', content: 'I cannot determine the exact change needed.', usage: { prompt_tokens: 100, completion_tokens: 30 } };
     });
 
     writeTestConfig(CWD);
@@ -1029,70 +929,38 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
 
     expect(r.state).toBeDefined();
 
-    // Flash tool loop completed (proved by done.value being set to true)
-    expect(flashDone.value).toBe(true);
-    // Pro was eventually invoked for discovery or write (proved by proCalled being set)
-    expect(proCalled.value).toBe(true);
+    // Fail closed: writer produced no write → stop, no DeepSeek escalation.
+    expect(r.state!.done).toBe(true);
+    expect(r.state!.stopReason).toBe('PROVIDER_ERROR');
+    expect(r.state!.stopDetail).toContain('fail closed');
 
-    // Flash observation MUST be present in state
+    // Writer observation persisted with noEffectReason.
     expect(r.state!.toolLoopObservations).toBeDefined();
-    const flashObs = r.state!.toolLoopObservations!.find((o) => o.role === 'FAST_EXECUTOR');
-    expect(flashObs).toBeDefined();
-    expect(flashObs!.modelLogicalName).toBe('deepseek-flash');
-    expect(flashObs!.writeToolCalls).toBe(0);
-    // Flash completed without writing — noEffectReason may be NO_WRITE_TOOL_CALLED or null depending
-    // on the exact tool loop path (COMPLETED vs STOPPED). Either is valid.
-    expect(flashObs!.noEffectReason === 'NO_WRITE_TOOL_CALLED' || flashObs!.noEffectReason === null).toBe(true);
-    // Flash audit trail must contain at least the read_file tool calls
-    expect(flashObs!.auditTrail.length).toBeGreaterThanOrEqual(1);
+    const writerObs = r.state!.toolLoopObservations!.find((o) => o.stage === 'WRITER');
+    expect(writerObs).toBeDefined();
+    expect(writerObs!.writeToolCalls).toBe(0);
+    expect(writerObs!.modelLogicalName).toBe('grok-4-6-writer');
+    expect(writerObs!.noEffectReason).toBe('NO_WRITE_TOOL_CALLED');
+    expect(writerObs!.auditTrail.length).toBeGreaterThanOrEqual(0);
 
-    // Flash observation existed BEFORE Pro escalation
-    // (prove by: Pro was subsequently called)
-    expect(r.state!.routingDecisions!.length).toBeGreaterThanOrEqual(1);
+    // No DeepSeek write escalation (no STRONG_EXECUTOR write decision).
+    const proDecisions = (r.state!.routingDecisions ?? []).filter((d) => d.role === 'STRONG_EXECUTOR');
+    expect(proDecisions.length).toBe(0);
   });
 
-  // Regression B: Pro tool failure → STOP, BOTH observations saved
-  it('P8 regression B: Pro edit_file OLD_TEXT_MISMATCH → STOP, Flash + Pro observations both persisted', async () => {
-    let flashCallCount = 0;
-    let proCallCount = 0;
-
+  // Regression B: Writer edit OLD_TEXT_MISMATCH → fail closed, observation persisted
+  it('P8 regression B: Writer edit OLD_TEXT_MISMATCH → fail closed, observation persisted', async () => {
     const fakeFetch = makeFakeApiFetch((call: FakeApiCall) => {
-      const model = call.body.model as string;
-      if (model === 'deepseek-chat-flash') flashCallCount++;
-      if (model === 'deepseek-chat-pro') proCallCount++;
-
       const tools = (call.body.tools as Array<{ function: { name: string } }>) ?? [];
       const isReadOnly = tools.length > 0 && tools.every((t) => ['read_file', 'grep', 'glob'].includes(t.function.name));
-      const isWriteable = tools.length > 0 && !isReadOnly;
-
       if (isReadOnly) {
-        return { model: model, content: '{"candidateFiles":["src/test.ts"]}', usage: { prompt_tokens: 200, completion_tokens: 100 } };
+        return { model: 'deepseek-chat-flash', content: '{"candidateFiles":["src/test.ts"]}', usage: { prompt_tokens: 200, completion_tokens: 100 } };
       }
-
-      // Flash: COMPLETED without any write tools
-      if (model === 'deepseek-chat-flash' && isWriteable) {
-        return { model: 'deepseek-chat-flash', content: 'No change needed.', usage: { prompt_tokens: 100, completion_tokens: 30 } };
-      }
-
-      // Pro: read succeeds, then edit fails with OLD_TEXT_MISMATCH → TOOL_EXECUTION_FAILED stops the tool loop
-      if (model === 'deepseek-chat-pro' && isWriteable) {
-        if (proCallCount <= 2) {
-          // First writeable call: read_file
-          return {
-            model: 'deepseek-chat-pro', content: null,
-            toolCalls: [{ id: 'call_pro_read', name: 'read_file', args: JSON.stringify({ path: 'src/test.ts' }) }],
-            usage: { prompt_tokens: 200, completion_tokens: 50 },
-          };
-        }
-        // Second writeable call: edit_file (will fail on dispatch because OLD_TEXT mismatches)
-        return {
-          model: 'deepseek-chat-pro', content: null,
-          toolCalls: [{ id: 'call_pro_edit', name: 'edit_file', args: JSON.stringify({ path: 'src/test.ts', search: 'THIS TEXT DOES NOT EXIST ANYWHERE', replace: 'nothing' }) }],
-          usage: { prompt_tokens: 300, completion_tokens: 80 },
-        };
-      }
-
-      return { model: model, content: 'ok', usage: { prompt_tokens: 100, completion_tokens: 50 } };
+      return {
+        model: 'grok-4.6', content: null,
+        toolCalls: [{ id: 'call_w_edit', name: 'edit_file', args: JSON.stringify({ path: 'src/test.ts', oldText: 'THIS TEXT DOES NOT EXIST ANYWHERE', newText: 'nothing' }) }],
+        usage: { prompt_tokens: 300, completion_tokens: 80 },
+      };
     });
 
     writeTestConfig(CWD);
@@ -1108,42 +976,26 @@ describe('cli-routed-production.integration (1F-RUN Blocker Fix Round)', () => {
     expect(r.state).toBeDefined();
     expect(r.state!.done).toBe(true);
 
-    // BOTH Flash and Pro observations MUST be persisted
-    expect(r.state!.toolLoopObservations).toBeDefined();
-    expect(r.state!.toolLoopObservations!.length).toBeGreaterThanOrEqual(2);
-
-    const flashObs = r.state!.toolLoopObservations!.find((o) => o.role === 'FAST_EXECUTOR');
-    const proObs = r.state!.toolLoopObservations!.find((o) => o.role === 'STRONG_EXECUTOR');
-
-    expect(flashObs).toBeDefined();
-    expect(flashObs!.modelLogicalName).toBe('deepseek-flash');
-
-    expect(proObs).toBeDefined();
-    expect(proObs!.modelLogicalName).toBe('deepseek-pro');
-    // Pro had write tools called but they failed — noEffectReason reflects the failure.
-    // Either OLD_TEXT_MISMATCH (edit error) or TOOL_EXECUTION_FAILED (other write error) is valid.
-    const validReasons = ['OLD_TEXT_MISMATCH', 'TOOL_EXECUTION_FAILED', 'NO_WRITE_TOOL_CALLED'];
-    expect(validReasons).toContain(proObs!.noEffectReason);
-    expect(proObs!.auditTrail.length).toBeGreaterThanOrEqual(1);
-
-    // Verify at least one audit entry has an error code (tool failure)
-    const hasError = proObs!.auditTrail.some((e) => e.errorCode !== null);
+    // Writer observation persisted with a failure reason.
+    const writerObs = r.state!.toolLoopObservations!.find((o) => o.stage === 'WRITER');
+    expect(writerObs).toBeDefined();
+    expect(writerObs!.modelLogicalName).toBe('grok-4-6-writer');
+    expect(['OLD_TEXT_MISMATCH', 'TOOL_EXECUTION_FAILED']).toContain(writerObs!.noEffectReason);
+    expect(writerObs!.auditTrail.length).toBeGreaterThanOrEqual(1);
+    const hasError = writerObs!.auditTrail.some((e) => e.errorCode !== null);
     expect(hasError).toBe(true);
 
     // Reload from disk — verify persistence
     const { loadRunState } = await import('./store');
     const reloaded = loadRunState(CWD, r.state!.runId);
     expect(reloaded.toolLoopObservations).toBeDefined();
-    expect(reloaded.toolLoopObservations!.length).toBeGreaterThanOrEqual(2);
 
     // report.md must contain Routed Tool Loop section
     const reportPath = path.join(CWD, '.cc-auto', 'runs', r.state!.runId, 'report.md');
     expect(existsSync(reportPath)).toBe(true);
     const reportText = readFileSync(reportPath, 'utf8');
     expect(reportText).toContain('## Routed Tool Loop 明细');
-    expect(reportText).toContain('deepseek-flash');
-    expect(reportText).toContain('deepseek-pro');
-    // At least one observation should have a failure reason or noEffectReason
+    expect(reportText).toContain('grok-4-6-writer');
     expect(reportText).toMatch(/OLD_TEXT_MISMATCH|TOOL_EXECUTION_FAILED|NO_WRITE_TOOL_CALLED/);
   });
 

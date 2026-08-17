@@ -15,7 +15,12 @@ import {
   isPathWithinRepo, resolveExplicitFileReferences, type PreparedFile,
 } from './directEdit';
 import type { ClaudeCallOptions, ClaudeCallResult } from './runner';
-import type { CallUsage, DeepSeekToolLoopResult, ToolLoopAuditRecord, ToolLoopTerminationReason } from './types';
+import type { CallUsage, DeepSeekToolLoopResult, ToolLoopAuditRecord, ToolLoopTerminationReason, ProviderProfile } from './types';
+import {
+  issueActiveCertificate,
+  persistFrozenQualifiedResult,
+  runtimeIdentity,
+} from './__fixtures__/writerRuntimeEligibilityFixture';
 
 let cwd: string;
 
@@ -1388,6 +1393,54 @@ function makeToolLoopResult(overrides: Partial<DeepSeekToolLoopResult> = {}): De
   };
 }
 
+const GROK_WRITER_PROFILE: ProviderProfile = {
+  id: 'apikey-grok-4-6',
+  displayName: 'Grok 4.6 Writer',
+  vendor: 'third-party',
+  transport: 'openai-chat',
+  apiBaseUrl: 'https://api.apikey.fun/v1',
+  credentialEnvVars: ['TEST_GROK_KEY'],
+  runtimeEnvAllowlist: ['PATH', 'HOME'],
+  defaultModelId: 'grok-4-6-writer',
+  models: [{
+    logicalName: 'grok-4-6-writer',
+    requestedModelId: 'grok-4.6',
+    acceptedReportedModelIds: ['grok-4.6'],
+    displayName: 'Grok 4.6',
+  }],
+  pricing: {
+    'grok-4.6': { inputPerMTokens: 2, outputPerMTokens: 6, cacheCreationPerMTokens: 0, cacheReadPerMTokens: 0.3, currency: 'CNY', source: 'test', updatedAt: '2026-08-17' },
+  },
+};
+
+const DS_FLASH_PROFILE: ProviderProfile = {
+  id: 'ds-flash', displayName: 'DS Flash', vendor: 'deepseek', transport: 'openai-chat',
+  apiBaseUrl: 'http://localhost', credentialEnvVars: [], runtimeEnvAllowlist: ['PATH'],
+  defaultModelId: 'deepseek-v4-flash',
+  models: [{ logicalName: 'deepseek-v4-flash', requestedModelId: 'deepseek-chat-flash', acceptedReportedModelIds: ['deepseek-chat-flash'], displayName: 'DS Flash' }],
+  pricing: { 'deepseek-chat-flash': { inputPerMTokens: 0.5, outputPerMTokens: 2, cacheCreationPerMTokens: 0, cacheReadPerMTokens: 0, currency: 'CNY', source: 'test', updatedAt: '2026-08-01' } },
+};
+
+const DS_PRO_PROFILE: ProviderProfile = {
+  id: 'ds-pro', displayName: 'DS Pro', vendor: 'deepseek', transport: 'openai-chat',
+  apiBaseUrl: 'http://localhost', credentialEnvVars: [], runtimeEnvAllowlist: ['PATH'],
+  defaultModelId: 'deepseek-v4-pro',
+  models: [{ logicalName: 'deepseek-v4-pro', requestedModelId: 'deepseek-chat-pro', acceptedReportedModelIds: ['deepseek-chat-pro'], displayName: 'DS Pro' }],
+  pricing: { 'deepseek-chat-pro': { inputPerMTokens: 1, outputPerMTokens: 4, cacheCreationPerMTokens: 0, cacheReadPerMTokens: 0, currency: 'CNY', source: 'test', updatedAt: '2026-08-01' } },
+};
+
+/** Issues an ACTIVE_VALID Writer certificate for the Grok profile in a temp cwd. */
+function setupGrokCertificate(cwd: string): void {
+  const identity = runtimeIdentity(GROK_WRITER_PROFILE, GROK_WRITER_PROFILE.defaultModelId);
+  const result = persistFrozenQualifiedResult({
+    cwd,
+    profile: GROK_WRITER_PROFILE,
+    batchId: 'grok-runtime-batch',
+    identity,
+  });
+  issueActiveCertificate({ cwd, profile: GROK_WRITER_PROFILE, result, identity });
+}
+
 function routedOrchDeps(cwd: string, overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
   return {
     cwd,
@@ -1401,16 +1454,9 @@ function routedOrchDeps(cwd: string, overrides: Partial<OrchestratorDeps> = {}):
         arbiterModel: { provider: 'anthropic', profileId: 'opus', modelLogicalName: 'opus-5', budgetMultiplier: 10 },
       },
       providerProfiles: {
-        'ds-flash': {
-          id: 'ds-flash', vendor: 'deepseek', apiKey: 'sk-test', baseUrl: 'http://localhost',
-          models: [{ requestedModelId: 'deepseek-chat-flash', logicalName: 'deepseek-v4-flash', maxInputTokens: 64000, maxOutputTokens: 8192 }],
-          pricing: { 'deepseek-chat-flash': { inputPricePerMTok: 0.5, outputPricePerMTok: 2, currency: 'CNY' } },
-        },
-        'ds-pro': {
-          id: 'ds-pro', vendor: 'deepseek', apiKey: 'sk-test', baseUrl: 'http://localhost',
-          models: [{ requestedModelId: 'deepseek-chat-pro', logicalName: 'deepseek-v4-pro', maxInputTokens: 64000, maxOutputTokens: 8192 }],
-          pricing: { 'deepseek-chat-pro': { inputPricePerMTok: 1, outputPricePerMTok: 4, currency: 'CNY' } },
-        },
+        'ds-flash': DS_FLASH_PROFILE,
+        'ds-pro': DS_PRO_PROFILE,
+        'apikey-grok-4-6': GROK_WRITER_PROFILE,
       },
       budgetPolicy: {
         softLimitRmb: 1, hardLimitRmb: 5, maxConsecutiveErrors: 3,
@@ -1437,6 +1483,8 @@ describe('P10 Partial Progress → VERIFY', () => {
     execFileSync('git', ['init', '-q'], { cwd: cwd2 });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: cwd2 });
     execFileSync('git', ['config', 'user.name', 'test'], { cwd: cwd2 });
+    process.env.TEST_GROK_KEY = 'dummy';
+    setupGrokCertificate(cwd2);
     vi.clearAllMocks();
   });
 
@@ -1487,12 +1535,12 @@ describe('P10 Partial Progress → VERIFY', () => {
     // Reload state from disk
     const reloaded = loadRunState(cwd2, state.runId);
 
-    // Flash should escalate to Pro REPAIR_1 (not VERIFY, not Arbitration)
-    expect(reloaded.stopReason).toBeFalsy();
-    expect(reloaded.done).toBe(false);
-    expect(reloaded.currentPhase).toBe('REPAIR_1');
-    expect(reloaded.nextRoutedRole).toBe('STRONG_EXECUTOR');
-    expect(reloaded.flashLastCallId).toBeTruthy();
+    // Writer produced no changes → fail closed (no Pro escalation, no DS fallback)
+    expect(reloaded.done).toBe(true);
+    expect(reloaded.currentPhase).toBe('STOPPED');
+    expect(reloaded.stopReason).toBe('PROVIDER_ERROR');
+    expect(reloaded.stopDetail).toContain('fail closed');
+    expect(reloaded.nextRoutedRole).toBeUndefined();
     expect(reloaded.arbitrationCapsule).toBeUndefined();
 
     // Writer observation should NOT have partialProgress=true

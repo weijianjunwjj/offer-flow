@@ -114,7 +114,10 @@ export type StopReason =
   | 'PROVIDER_TIMEOUT'
   | 'PROVIDER_AUTH_ERROR'
   // v0.2.0 P9: Windows state persistence EPERM
-  | 'STATE_PERSISTENCE_FAILED';
+  | 'STATE_PERSISTENCE_FAILED'
+  // v0.9: Writer Runtime Onboarding
+  | 'WRITER_ONBOARDING_FAILED'
+  | 'WRITER_PREFLIGHT_FAILED';
 
 // ============================================================================
 // v0.2.0 Dual Model Relay 新增类型（与 v0.1 共存）

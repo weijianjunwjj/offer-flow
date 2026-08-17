@@ -304,6 +304,57 @@ export function evaluatePersistedWriterQualificationCertificate(
   });
 }
 
+export interface CurrentWriterQualificationCertificateEvaluation {
+  certificate: WriterQualificationCertificate | null;
+  applicability: WriterQualificationCertificateApplicability | 'CERTIFICATE_NOT_FOUND';
+}
+
+/**
+ * Evaluates the *current* certificate for a profile without a caller-supplied
+ * certificateId. Read-only: it never scans results to choose a certificate and
+ * never edits governance artifacts.
+ *
+ * The revoked-but-no-longer-active case is reported distinctly from "never
+ * issued", so runtime eligibility can emit a precise reason code.
+ */
+export function evaluateCurrentWriterQualificationCertificate(
+  cwd: string,
+  profileId: string,
+  currentQualificationIdentity: WriterQualificationIdentitySnapshot,
+  requiredQualificationPolicyVersion: string,
+  requiredBenchmarkContractVersion: string,
+): CurrentWriterQualificationCertificateEvaluation {
+  const selection = loadSelection(cwd, profileId);
+  if (!selection || selection.activeCertificateId === null) {
+    const lastRevoke = [...(selection?.events ?? [])]
+      .reverse()
+      .find((event) => event.action === 'REVOKE');
+    if (lastRevoke) {
+      const revoked = loadWriterQualificationCertificate(
+        cwd,
+        profileId,
+        lastRevoke.certificateId,
+      );
+      return { certificate: revoked, applicability: 'REVOKED' };
+    }
+    return { certificate: null, applicability: 'CERTIFICATE_NOT_FOUND' };
+  }
+
+  const certificate = loadWriterQualificationCertificate(
+    cwd,
+    profileId,
+    selection.activeCertificateId,
+  );
+  const applicability = evaluatePersistedWriterQualificationCertificate(cwd, {
+    certificateId: selection.activeCertificateId,
+    profileId,
+    currentQualificationIdentity,
+    requiredQualificationPolicyVersion,
+    requiredBenchmarkContractVersion,
+  });
+  return { certificate, applicability };
+}
+
 function prepareCertificate(
   cwd: string,
   input: IssueWriterQualificationCertificateInput,

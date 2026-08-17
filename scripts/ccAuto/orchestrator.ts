@@ -811,6 +811,11 @@ import type {
 import type { ModelPricing } from './types';
 import { setWriter, acquireRunLease, releaseRunLease } from './runLease';
 import { computeWorktreeFingerprint } from './worktreeFingerprint';
+import {
+  resolveRuntimeWriter,
+  preflightRuntimeWriter,
+  type RuntimeWriterResolution,
+} from './writerRuntimeOnboarding';
 
 /**
  * Routed IMPLEMENT executor seam — SINGLE ATTEMPT.
@@ -1091,27 +1096,50 @@ export async function driveRoutedImplement(
 
   deps.log(`FileScope 批准文件：${fileScope.approvedFiles.join(', ') || '（无候选文件）'}`);
 
-  // --- 8. Write-capable Tool Loop ---
-  if (selection.role !== 'FAST_EXECUTOR' && selection.role !== 'STRONG_EXECUTOR') {
-    stop(state, 'PROVIDER_ERROR', `NON_WRITER_EXECUTION_ROLE:${selection.role}`);
+  // --- 8. Runtime Writer onboarding: eligibility → candidate pool → selection ---
+  const writerResolution = resolveRuntimeWriter({
+    cwd,
+    config,
+    adapterRegistry: registry,
+    parentEnv,
+  });
+  if (writerResolution.status !== 'RESOLVED') {
+    const detail = formatWriterResolutionFailure(writerResolution);
+    stop(state, 'WRITER_ONBOARDING_FAILED', detail);
+    deps.log(`Runtime Writer onboarding 失败：${detail}`);
     return;
   }
-  setWriter(cwd, runId, {
-    executionRole: selection.role,
-    profileId: selection.profileId,
-    providerIdentifier: selection.provider,
+
+  // Phase F: fail-closed preflight immediately before the first real invocation.
+  const writerPreflight = preflightRuntimeWriter({
+    cwd,
+    candidate: writerResolution.writer.candidate,
+    profile: writerResolution.writer.profile,
+    adapterRegistry: registry,
+    parentEnv,
   });
-  deps.log(`Writer 已授权：role=${selection.role}, profile=${selection.profileId}`);
+  if (!writerPreflight.ok) {
+    const detail = `WRITER_PREFLIGHT_FAILED: ${writerPreflight.reasonCodes.join(', ')}`;
+    stop(state, 'WRITER_PREFLIGHT_FAILED', detail);
+    deps.log(detail);
+    return;
+  }
+
+  const selectedWriter = writerResolution.writer;
+  setWriter(cwd, runId, selectedWriter.assignment);
+  deps.log(`Writer 已授权：executionRole=WRITER, profile=${selectedWriter.candidate.profileId}`);
 
   const executorContext = {
-    profile: currentProfile,
-    logicalModelName: selection.modelLogicalName,
+    profile: selectedWriter.profile,
+    logicalModelName: selectedWriter.candidate.logicalModelName,
     role: 'builder' as const,
     maxOutputTokens: 4096,
     timeoutMs: 300_000,
     adapterRegistry: registry,
     parentEnv,
-    executionRole: selection.role,  // FAST_EXECUTOR or STRONG_EXECUTOR for cost attribution
+    // The Writer is not a Flash/Pro/Arbiter routing role; cost attribution is
+    // carried by the profile/provider of the call itself, so executionRole is null.
+    executionRole: null as import('./types').ExecutionModelRole | null,
   };
 
   // 写入型 Tool Loop：把已批准文件列表显式注入 prompt，避免模型做宽泛探索。
@@ -1218,7 +1246,7 @@ export async function driveRoutedImplement(
   // P8: Build and report RoutedToolLoopObservation
   const observation: RoutedToolLoopObservation = {
     role: selection.role,
-    modelLogicalName: selection.modelLogicalName,
+    modelLogicalName: selectedWriter.candidate.logicalModelName,
     turns: toolLoopResult.turns,
     totalToolCalls: toolLoopResult.totalToolCalls,
     auditTrail: toolLoopResult.auditTrail.map((e) => ({
@@ -1302,10 +1330,8 @@ export async function driveRoutedImplement(
   }
 
   if (tolOk && state.changedFiles.length > 0) {
-    // Success: persist Flash lastCallId for M3 escalation linkage, advance to VERIFY
-    if (selection.role === 'FAST_EXECUTOR') {
-      state.flashLastCallId = toolLoopResult.callIds[toolLoopResult.callIds.length - 1] ?? undefined;
-    }
+    // Success: advance to VERIFY. No Flash→Pro escalation linkage — the Runtime
+    // Writer is a single deterministic selection with no unqualified fallback.
     deps.log('Tool Loop 完成，进入 VERIFY');
     state.currentPhase = 'VERIFY';
     saveRunState(cwd, state);
@@ -1325,64 +1351,35 @@ export async function driveRoutedImplement(
     return;
   }
 
-  // --- 11. Failure: no changed files or tool-loop stopped ---
-  if (selection.role === 'FAST_EXECUTOR') {
-    // Flash attempt produced no changes — persist flashLastCallId for attribution.
-    state.flashLastCallId = toolLoopResult.callIds[toolLoopResult.callIds.length - 1] ?? undefined;
+  // --- 11. Writer invocation failure → fail closed ---
+  // No fallback to an unqualified model (DeepSeek has no ACTIVE_VALID Writer
+  // certificate), no Flash→Pro escalation, no arbitration retry.
+  const writerFailureReason = noEffectReason
+    ?? (toolLoopResult.stopReason ? `TOOL_LOOP_${toolLoopResult.stopReason}` : 'WRITER_NO_WRITE');
+  stop(state, 'PROVIDER_ERROR', `Runtime Writer 未产生有效改动（${writerFailureReason}）——fail closed，不降级到未资格模型`);
+  deps.log(`Runtime Writer 失败（${writerFailureReason}）→ fail closed（不 fallback DS）`);
+  saveRunState(cwd, state);
+  return;
+}
 
-    if (mrConfig.allowStrongEscalation) {
-      // P2 fix: direct Pro escalation, skip VERIFY entirely.
-      // No full test suite when no changes exist.
-      // P8: persist escalation reason for observability
-      const escReason = noEffectReason ?? 'NO_WRITE_TOOL_CALLED';
-      deps.log(`Flash Tool Loop 未产生有效改动（${escReason}）→ 直接升级到 Pro STRONG_EXECUTOR`);
-      state.nextRoutedRole = 'STRONG_EXECUTOR';
-      state.repairCycles += 1;
-      state.currentPhase = 'REPAIR_1';
-      saveRunState(cwd, state);
-      return;
+/** Maps a non-RESOLVED writer resolution to a precise fail-closed stop detail. */
+function formatWriterResolutionFailure(resolution: RuntimeWriterResolution): string {
+  switch (resolution.status) {
+    case 'NO_ELIGIBLE_WRITER': {
+      const detail = resolution.assessments
+        .map((a) => `${a.profileId}=${a.reasonCodes.length > 0 ? a.reasonCodes.join('/') : 'ELIGIBLE'}`)
+        .join('; ');
+      return `WRITER_ELIGIBILITY_FAILED: 没有 ELIGIBLE Runtime Writer（${detail}）`;
     }
-
-    // Escalation disabled → fail closed, no VERIFY waste.
-    // P8 fix: use specific noEffectReason instead of generic IMPLEMENTATION_NO_EFFECT.
-    const reason = noEffectReason ?? 'NO_WRITE_TOOL_CALLED';
-    state.stopReason = 'PROVIDER_ERROR';
-    state.stopDetail = `Flash escalation disabled: ${reason} — Tool Loop 未产生有效改动`;
-    state.done = true;
-    deps.log(`Flash 无改动（${reason}）+ 不允许升级 → STOPPED`);
-    return;
+    case 'AMBIGUOUS_ELIGIBLE_WRITERS':
+      return `WRITER_SELECTION_FAILED: 存在多个 ELIGIBLE Writer（${resolution.candidates.map((c) => c.profileId).join(', ')}），缺少显式选择偏好`;
+    case 'PREFERENCE_NOT_ELIGIBLE':
+      return `WRITER_SELECTION_FAILED: 显式偏好指向未资格候选（${resolution.preferenceProfileId}）`;
+    case 'PROVIDER_PROFILES_UNAVAILABLE':
+      return `WRITER_ELIGIBILITY_FAILED: ${resolution.detail}`;
+    case 'RESOLVED':
+      return 'RESOLVED';
   }
-
-  if (selection.role === 'STRONG_EXECUTOR') {
-    // Pro failed → Arbitration Capsule
-    // P8: include specific failure reason
-    const proFailureReason = noEffectReason
-      ?? (toolLoopResult.stopReason ? `TOOL_LOOP_${toolLoopResult.stopReason}` : 'UNKNOWN');
-    deps.log(`Pro 失败（${proFailureReason}）→ 生成 ArbitrationCapsule → STOP`);
-    const capsule = {
-      taskGoal: state.taskDescription.slice(0, 2000),
-      hardConstraints: [],
-      attemptedModels: (state.routingDecisions ?? []).map((d) => ({
-        role: d.role,
-        modelLogicalName: d.modelLogicalName,
-        outcome: d.role === 'STRONG_EXECUTOR' ? 'FAILED: Tool Loop failure' : 'SUCCESS',
-        failureCategory: 'MODEL_QUALITY_FAILURE' as const,
-      })),
-      changedFiles: state.changedFiles,
-      verifierFailures: [toolLoopResult.stopReason ?? 'Tool Loop failure'],
-      relevantDiff: '',
-      unresolvedQuestions: ['Pro 无法完成可靠收口'],
-    };
-    saveArbitrationCapsule(cwd, runId, capsule);
-    state.arbitrationCapsule = capsule;
-    stop(state, 'ARBITRATION_FAILED', 'Opus 仲裁 Capsule 已生成，当前不自动调用 Opus');
-    return;
-  }
-
-  // Fallback
-  stop(state, 'PROVIDER_ERROR', toolLoopResult.stopReason
-    ? `TOOL_LOOP_${toolLoopResult.stopReason}`
-    : 'Tool Loop 无法完成（无明确停止原因）');
 }
 
 /**
