@@ -49,6 +49,23 @@ export interface SourceRunCoverageView {
   failedScopes: Array<{ queryKey: string; errorCode: string }>;
 }
 
+/**
+ * 阶段诊断（来自 progressJson.pipelineStages）。
+ * 宽松 number 计数，回答「Pipeline 卡在哪一层」；不含任何 secret / raw JSON。
+ */
+export type SourceRunDiagnostics = Record<string, number>;
+
+/** 从 progressJson 安全提取 pipelineStages 数字诊断（缺失/非对象返回 null）。 */
+function extractDiagnostics(progressJson: Record<string, unknown>): SourceRunDiagnostics | null {
+  const stages = progressJson['pipelineStages'];
+  if (stages === null || typeof stages !== 'object' || Array.isArray(stages)) return null;
+  const out: SourceRunDiagnostics = {};
+  for (const [key, value] of Object.entries(stages as Record<string, unknown>)) {
+    if (typeof value === 'number') out[key] = value;
+  }
+  return Object.keys(out).length === 0 ? null : out;
+}
+
 /** 列表/详情共用的 SourceRun 安全视图：不含 progressJson / costSummaryJson 等内部 raw JSON。 */
 export interface SourceRunView {
   id: string;
@@ -87,6 +104,7 @@ export interface SourceRunView {
   estimatedSearchCredits: number | null;
   actualSearchCredits: number | null;
   coverage: SourceRunCoverageView;
+  diagnostics: SourceRunDiagnostics | null;
   errorCode: string | null;
   errorMessage: string | null;
   createdAt: number;
@@ -194,6 +212,7 @@ export function registerSourceRunRoutes(app: FastifyInstance): void {
       estimatedSearchCredits: run.estimatedSearchCredits,
       actualSearchCredits: run.actualSearchCredits,
       coverage: toCoverageView(run.coverage),
+      diagnostics: extractDiagnostics(run.progressJson),
       errorCode: run.errorCode,
       errorMessage: run.errorMessage,
       createdAt: run.createdAt,

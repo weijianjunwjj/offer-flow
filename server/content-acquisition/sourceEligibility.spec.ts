@@ -53,21 +53,25 @@ describe('sourceEligibility — recruitment platforms (SEARCH_ONLY) → ineligib
   }
 });
 
-// ── unknown domain → 保守拒绝 ──────────────────────────────────────────────────
+// ── unknown public domain → eligible（P0：受控自动 fetch）───────────────────────
 
-describe('sourceEligibility — unknown domain → conservative deny', () => {
-  it('random-company.xyz → ineligible + unknown_domain_conservative', () => {
+describe('sourceEligibility — unknown public domain → eligible', () => {
+  it('random-company.xyz → eligible，sourcePolicy 窄化为 SEARCH_AND_FETCH', () => {
     const r = sourceEligibility('https://random-company.xyz/jobs/1');
-    expect(r.kind).toBe('ineligible');
-    if (r.kind === 'ineligible') {
-      expect(r.error.code).toBe('BLOCKED_BY_POLICY');
-      expect(r.error.reason).toBe('unknown_domain_conservative_manual_review_required');
+    expect(r.kind).toBe('eligible');
+    if (r.kind === 'eligible') {
+      expect(r.request.sourcePolicy).toBe('SEARCH_AND_FETCH');
+      expect(r.request.normalizedDomain).toBe('random-company.xyz');
     }
   });
 
-  it('empty input → ineligible (conservative)', () => {
+  it('empty input → ineligible (no URL to fetch)', () => {
     const r = sourceEligibility('');
     expect(r.kind).toBe('ineligible');
+    if (r.kind === 'ineligible') {
+      expect(r.error.code).toBe('BLOCKED_BY_POLICY');
+      expect(r.error.reason).toBe('empty_domain_manual_review_required');
+    }
   });
 });
 
@@ -87,7 +91,7 @@ describe('sourceEligibility — CONDITIONAL_FETCH → not automatically eligible
 // ── 不变量：被禁止来源永远拿不到 eligible 请求 ─────────────────────────────────
 
 describe('sourceEligibility — forbidden sources never yield an eligible request', () => {
-  it('招聘平台 / conditional / unknown 全部返回 ineligible', () => {
+  it('招聘平台 / conditional / empty 全部返回 ineligible', () => {
     const urls = [
       'https://www.zhipin.com/job_detail/1.html',
       'https://www.liepin.com/job/1',
@@ -95,10 +99,14 @@ describe('sourceEligibility — forbidden sources never yield an eligible reques
       'https://www.lagou.com/jobs/1.html',
       'https://search.51job.com/list/1.html',
       'https://juejin.cn/post/1',
-      'https://random-unknown.io/x',
+      '',
     ];
     for (const url of urls) {
       expect(sourceEligibility(url).kind).toBe('ineligible');
     }
+  });
+
+  it('unknown public domain → eligible（受控自动 fetch，非禁止来源）', () => {
+    expect(sourceEligibility('https://random-unknown.io/x').kind).toBe('eligible');
   });
 });

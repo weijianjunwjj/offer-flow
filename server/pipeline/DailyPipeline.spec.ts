@@ -829,4 +829,223 @@ describe('DailyPipeline', () => {
     expect(result.coverage.queriesFailed).toBe(1);
     expect(result.coverage.failedScopes[0].errorCode).toBe('TIMEOUT');
   });
+
+  // ── P0：unknown public fetch / budget / cross-source enrichment ─────────────
+
+  function recruitmentBridge(url: string, versionId: string): DiscoveryIngestionItemOutcome {
+    return makeBridgeOutcome(url, {
+      normalizedDomain: 'zhipin.com',
+      sourcePolicyDecision: {
+        policy: 'SEARCH_ONLY',
+        initialEvidenceLevel: 'MANUAL_REVIEW_REQUIRED',
+        fetchEligible: false,
+        targetEvidenceLevelAfterFetch: null,
+        reason: 'known_recruitment_platform_manual_review_required',
+        normalizedDomain: 'zhipin.com',
+      },
+      appliedEvidenceLevel: 'MANUAL_REVIEW_REQUIRED',
+      fetchEligible: false,
+      targetEvidenceLevelAfterFetch: null,
+      candidateVersionId: versionId,
+    });
+  }
+
+  function publicAltBridge(url: string, versionId: string, normalizedDomain = 'acme.com'): DiscoveryIngestionItemOutcome {
+    return makeBridgeOutcome(url, {
+      normalizedDomain,
+      sourcePolicyDecision: {
+        policy: 'SEARCH_AND_FETCH',
+        initialEvidenceLevel: 'SEARCH_EVIDENCE',
+        fetchEligible: true,
+        targetEvidenceLevelAfterFetch: 'FULL_EVIDENCE',
+        reason: 'unknown_public_fetch_eligible',
+        normalizedDomain,
+      },
+      candidateVersionId: versionId,
+    });
+  }
+
+  function ingestionSummary(total: number, fetchEligible: number) {
+    return { total, ingested: total, skipped: 0, byEvidenceLevel: {}, bySourcePolicy: {}, fetchEligibleCount: fetchEligible };
+  }
+
+  it('unknown public domain → SEARCH_EVIDENCE + fetchEligible → fetch → upgrade → analysis', async () => {
+    const url = 'https://acme.com/careers/1';
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem(url, { domain: 'acme.com' })])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [publicAltBridge(url, 'v1')],
+        summary: ingestionSummary(1, 1),
+      })),
+      getVersion: vi.fn(() => makeVersion('v1', 'SEARCH_EVIDENCE')),
+      upgrade: vi.fn(() => upgradedResult('v2')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[0].finalVersionId).toBe('v2');
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+    expect(deps.fetch).toHaveBeenCalledWith(expect.objectContaining({ url }));
+    expect(deps.upgrade).toHaveBeenCalledTimes(1);
+    expect(result.stageCounts.unknownPublic).toBe(1);
+    expect(result.stageCounts.fetchAttempted).toBe(1);
+    expect(result.stageCounts.fetchSucceeded).toBe(1);
+    expect(result.stageCounts.validationPassed).toBe(1);
+    expect(result.stageCounts.evidenceUpgraded).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(1);
+  });
+
+  it('unknown public fetch failure → fetchFailed, no upgrade / analysis', async () => {
+    const url = 'https://acme.com/x';
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem(url, { domain: 'acme.com' })])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [publicAltBridge(url, 'v1')],
+        summary: ingestionSummary(1, 1),
+      })),
+      getVersion: vi.fn(() => makeVersion('v1', 'SEARCH_EVIDENCE')),
+      fetch: vi.fn(async () => ({ status: 'ACCESS_DENIED', error: { code: 'ACCESS_DENIED', reason: 'login wall' } } as FetchResult)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('fetchFailed');
+    expect(result.items[0].reasonCode).toBe('ACCESS_DENIED');
+    expect(deps.upgrade).not.toHaveBeenCalled();
+    expect(deps.createTask).not.toHaveBeenCalled();
+    expect(result.stageCounts.fetchAttempted).toBe(1);
+    expect(result.stageCounts.fetchSucceeded).toBe(0);
+    expect(result.stageCounts.fetchFailed).toBe(1);
+  });
+
+  it('known recruitment without company identity → manualReview, never fetch (enrichment fail closed)', async () => {
+    const zhipinUrl = 'https://www.zhipin.com/job/1';
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem(zhipinUrl, { domain: 'zhipin.com', title: '高级前端工程师' })])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [recruitmentBridge(zhipinUrl, 'v-recruit')],
+        summary: ingestionSummary(1, 0),
+      })),
+      getVersion: vi.fn(() => makeVersion('v-recruit', 'MANUAL_REVIEW_REQUIRED')),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('manualReview');
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(deps.createTask).not.toHaveBeenCalled();
+    // 缺 company identity → 不触发 enrichment search（search 仅主搜索一次）。
+    expect(deps.search).toHaveBeenCalledTimes(1);
+    expect(result.stageCounts.recruitmentBlocked).toBe(1);
+    expect(result.stageCounts.crossSourceEnrichmentAttempted).toBe(0);
+    expect(result.stageCounts.crossSourceEnrichmentSucceeded).toBe(0);
+  });
+
+  it('recruitment enrichment finds same-company public alternative → only fetch alternative, original never fetched', async () => {
+    const zhipinUrl = 'https://www.zhipin.com/job/1';
+    const altUrl = 'https://jobs.bytedance.com/careers/1';
+    const deps = makeDeps({
+      search: vi.fn()
+        .mockResolvedValueOnce(makeSearchResult([makeSearchItem(zhipinUrl, { domain: 'zhipin.com', title: '高级前端工程师', company: '字节跳动' })]))
+        .mockResolvedValueOnce(makeSearchResult([makeSearchItem(altUrl, { domain: 'bytedance.com', title: '字节跳动 高级前端工程师' })])),
+      ingestDiscovery: vi.fn()
+        .mockResolvedValueOnce({
+          items: [recruitmentBridge(zhipinUrl, 'v-recruit')],
+          summary: ingestionSummary(1, 0),
+        })
+        .mockResolvedValueOnce({
+          items: [publicAltBridge(altUrl, 'v-alt', 'bytedance.com')],
+          summary: ingestionSummary(1, 1),
+        }),
+      getVersion: vi.fn((id) => (id === 'v-recruit' ? makeVersion(id, 'MANUAL_REVIEW_REQUIRED') : makeVersion(id, 'SEARCH_EVIDENCE'))),
+      upgrade: vi.fn(() => upgradedResult('v-alt-up')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t-alt', 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    const recruitment = result.items.find((i) => i.itemUrl === zhipinUrl);
+    const alt = result.items.find((i) => i.itemUrl === altUrl);
+    expect(recruitment?.finalOutcome).toBe('manualReview');
+    expect(alt?.finalOutcome).toBe('analysisCompleted');
+
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+    expect(deps.fetch).toHaveBeenCalledWith(expect.objectContaining({ url: altUrl }));
+    expect(deps.fetch).not.toHaveBeenCalledWith(expect.objectContaining({ url: zhipinUrl }));
+    expect(deps.upgrade).toHaveBeenCalledWith(expect.objectContaining({ sourceVersionId: 'v-alt' }));
+
+    expect(result.stageCounts.crossSourceEnrichmentAttempted).toBe(1);
+    expect(result.stageCounts.crossSourceEnrichmentSucceeded).toBe(1);
+  });
+
+  it('recruitment enrichment returns different-company alternative → rejected, no fetch / upgrade', async () => {
+    const zhipinUrl = 'https://www.zhipin.com/job/1';
+    const deps = makeDeps({
+      search: vi.fn()
+        .mockResolvedValueOnce(makeSearchResult([makeSearchItem(zhipinUrl, { domain: 'zhipin.com', title: '高级前端工程师', company: '字节跳动' })]))
+        .mockResolvedValueOnce(makeSearchResult([makeSearchItem('https://tencent.com/careers/1', { domain: 'tencent.com', title: '腾讯 高级前端工程师' })])),
+      ingestDiscovery: vi.fn().mockResolvedValueOnce({
+        items: [recruitmentBridge(zhipinUrl, 'v-recruit')],
+        summary: ingestionSummary(1, 0),
+      }),
+      getVersion: vi.fn(() => makeVersion('v-recruit', 'MANUAL_REVIEW_REQUIRED')),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items.map((i) => i.finalOutcome)).toEqual(['manualReview']);
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(deps.upgrade).not.toHaveBeenCalled();
+    expect(deps.createTask).not.toHaveBeenCalled();
+    expect(result.stageCounts.crossSourceEnrichmentAttempted).toBe(1);
+    expect(result.stageCounts.crossSourceEnrichmentSucceeded).toBe(0);
+  });
+
+  it('fetch budget → beyond-budget items kept discoveryOnly, run not failed', async () => {
+    const urls = ['https://jobs.zhiye.com/1', 'https://jobs.zhiye.com/2', 'https://jobs.zhiye.com/3'];
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult(urls.map((u) => makeSearchItem(u)))),
+      ingestDiscovery: vi.fn(async () => ({
+        items: urls.map((u, i) => makeBridgeOutcome(u, { candidateVersionId: `v${i}` })),
+        summary: ingestionSummary(3, 3),
+      })),
+      getVersion: vi.fn((id) => makeVersion(id, 'SEARCH_EVIDENCE')),
+      upgrade: vi.fn((input) => upgradedResult(`up-${input.sourceVersionId}`)),
+      createTask: vi.fn((id) => createTaskResult(makeTask(id, 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY], { fetchBudget: 2 });
+
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+    expect(result.items[0].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[1].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[2].finalOutcome).toBe('discoveryOnly');
+    expect(result.items[2].reasonCode).toBe('fetch_budget_exhausted');
+    expect(result.summary.total).toBe(3);
+    expect(result.stageCounts.fetchBudget).toBe(2);
+    expect(result.stageCounts.fetchBudgetExhausted).toBe(1);
+    expect(result.stageCounts.fetchAttempted).toBe(2);
+  });
+
+  it('enrichment budget → only N recruitment items enriched, no recursion', async () => {
+    const zhipinUrl = 'https://www.zhipin.com/job/1';
+    const liepinUrl = 'https://www.liepin.com/job/2';
+    const deps = makeDeps({
+      search: vi.fn()
+        .mockResolvedValueOnce(makeSearchResult([
+          makeSearchItem(zhipinUrl, { domain: 'zhipin.com', title: '前端', company: '字节跳动' }),
+          makeSearchItem(liepinUrl, { domain: 'liepin.com', title: '后端', company: '腾讯' }),
+        ]))
+        .mockResolvedValue(makeSearchResult([])),
+      ingestDiscovery: vi.fn().mockResolvedValueOnce({
+        items: [
+          recruitmentBridge(zhipinUrl, 'v1'),
+          recruitmentBridge(liepinUrl, 'v2'),
+        ],
+        summary: ingestionSummary(2, 0),
+      }),
+      getVersion: vi.fn((id) => makeVersion(id, 'MANUAL_REVIEW_REQUIRED')),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY], { enrichmentBudget: 1 });
+
+    expect(result.stageCounts.crossSourceEnrichmentAttempted).toBe(1);
+    expect(deps.search).toHaveBeenCalledTimes(2); // 1 main + 1 enrichment
+    expect(result.items.map((i) => i.finalOutcome)).toEqual(['manualReview', 'manualReview']);
+  });
 });

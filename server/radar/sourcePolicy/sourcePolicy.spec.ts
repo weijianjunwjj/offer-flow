@@ -127,19 +127,19 @@ describe('classifySourcePolicy — CONDITIONAL_FETCH', () => {
   });
 });
 
-// ── classifySourcePolicy: unknown / empty — conservative default ───────────────
+// ── classifySourcePolicy: unknown public / empty ──────────────────────────────
 
-describe('classifySourcePolicy — unknown / conservative default', () => {
-  it('empty string → SEARCH_ONLY (conservative)', () => {
+describe('classifySourcePolicy — unknown public / empty', () => {
+  it('empty string → SEARCH_ONLY (no URL to fetch)', () => {
     expect(classifySourcePolicy('')).toBe('SEARCH_ONLY');
   });
 
-  it('totally-unknown.example → SEARCH_ONLY (conservative)', () => {
-    expect(classifySourcePolicy('totally-unknown.example')).toBe('SEARCH_ONLY');
+  it('totally-unknown.example → SEARCH_AND_FETCH (unknown public controlled fetch)', () => {
+    expect(classifySourcePolicy('totally-unknown.example')).toBe('SEARCH_AND_FETCH');
   });
 
-  it('randomstartup.io → SEARCH_ONLY (conservative)', () => {
-    expect(classifySourcePolicy('randomstartup.io')).toBe('SEARCH_ONLY');
+  it('randomstartup.io → SEARCH_AND_FETCH (unknown public controlled fetch)', () => {
+    expect(classifySourcePolicy('randomstartup.io')).toBe('SEARCH_AND_FETCH');
   });
 });
 
@@ -177,24 +177,28 @@ describe('getSourcePolicyDecision — recruitment platforms', () => {
   });
 });
 
-// ── getSourcePolicyDecision: SEARCH_ONLY (unknown / conservative) ──────────────
+// ── getSourcePolicyDecision: SEARCH_ONLY (unknown / empty) ────────────────────
 
-describe('getSourcePolicyDecision — unknown domain conservative', () => {
-  it('unknown domain → reason=unknown_domain_conservative', () => {
-    const d = getSourcePolicyDecision('random-company.xyz');
+describe('getSourcePolicyDecision — empty domain', () => {
+  it('empty string → reason=empty_domain_manual_review_required', () => {
+    const d = getSourcePolicyDecision('');
     expect(d.policy).toBe('SEARCH_ONLY');
     expect(d.initialEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED');
     expect(d.fetchEligible).toBe(false);
-    expect(d.targetEvidenceLevelAfterFetch).toBeNull();
-    expect(d.reason).toBe('unknown_domain_conservative_manual_review_required');
-    expect(d.normalizedDomain).toBe('random-company.xyz');
-  });
-
-  it('empty string → reason=unknown_domain_conservative', () => {
-    const d = getSourcePolicyDecision('');
-    expect(d.policy).toBe('SEARCH_ONLY');
-    expect(d.reason).toBe('unknown_domain_conservative_manual_review_required');
+    expect(d.reason).toBe('empty_domain_manual_review_required');
     expect(d.normalizedDomain).toBe('');
+  });
+});
+
+describe('getSourcePolicyDecision — unknown public domain', () => {
+  it('unknown domain → SEARCH_AND_FETCH + reason=unknown_public_fetch_eligible', () => {
+    const d = getSourcePolicyDecision('random-company.xyz');
+    expect(d.policy).toBe('SEARCH_AND_FETCH');
+    expect(d.initialEvidenceLevel).toBe('SEARCH_EVIDENCE');
+    expect(d.fetchEligible).toBe(true);
+    expect(d.targetEvidenceLevelAfterFetch).toBe('FULL_EVIDENCE');
+    expect(d.reason).toBe('unknown_public_fetch_eligible');
+    expect(d.normalizedDomain).toBe('random-company.xyz');
   });
 });
 
@@ -287,12 +291,12 @@ describe('round-trip: domain → policy → evidenceLevel', () => {
     expect(d.targetEvidenceLevelAfterFetch).toBeNull();
   });
 
-  it('unknown → SEARCH_ONLY → MANUAL_REVIEW_REQUIRED → fetchEligible=false → target=null', () => {
+  it('unknown → SEARCH_AND_FETCH → SEARCH_EVIDENCE → fetchEligible=true → target=FULL_EVIDENCE', () => {
     const d = getSourcePolicyDecision('some-random-blog.cn');
-    expect(d.policy).toBe('SEARCH_ONLY');
-    expect(d.initialEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED');
-    expect(d.fetchEligible).toBe(false);
-    expect(d.targetEvidenceLevelAfterFetch).toBeNull();
+    expect(d.policy).toBe('SEARCH_AND_FETCH');
+    expect(d.initialEvidenceLevel).toBe('SEARCH_EVIDENCE');
+    expect(d.fetchEligible).toBe(true);
+    expect(d.targetEvidenceLevelAfterFetch).toBe('FULL_EVIDENCE');
   });
 });
 
@@ -325,9 +329,11 @@ describe('Data Quality Gate: canEnterAnalysis(initialEvidenceLevel) for all know
     }
   });
 
-  it('unknown domain → MANUAL_REVIEW_REQUIRED → should NOT enter analysis', () => {
+  it('unknown domain → SEARCH_EVIDENCE (fetch eligible, analysis gated until upgrade)', () => {
     const d = getSourcePolicyDecision('wowow.unknown');
-    expect(d.initialEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED');
-    expect(d.fetchEligible).toBe(false);
+    expect(d.initialEvidenceLevel).toBe('SEARCH_EVIDENCE');
+    expect(d.fetchEligible).toBe(true);
+    // SEARCH_EVIDENCE 仍不能直接进入 analysis，需 fetch + validation + evidence_upgrade。
+    expect(d.initialEvidenceLevel).not.toBe('FULL_EVIDENCE');
   });
 });

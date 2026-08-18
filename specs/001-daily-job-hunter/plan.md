@@ -388,7 +388,8 @@ P0 实现为：
 | `*.zhiye.com`（ATS） | SEARCH_AND_FETCH | FULL_EVIDENCE（Fetch + 完整性验证成功 → evidence_upgrade 后） |
 | `github.com` | SEARCH_AND_FETCH | FULL_EVIDENCE（Fetch + 完整性验证成功 → evidence_upgrade 后） |
 | `juejin.cn` | CONDITIONAL_FETCH | SEARCH_EVIDENCE（默认） |
-| (其他) UNKNOWN | CONDITIONAL_FETCH → SEARCH_ONLY | MANUAL_REVIEW_REQUIRED（默认保守） |
+| (其他) UNKNOWN public | SEARCH_AND_FETCH | SEARCH_EVIDENCE（受控 fetch；仍须 validation + evidence_upgrade 才 FULL_EVIDENCE） |
+| (空/无效 domain) | SEARCH_ONLY | MANUAL_REVIEW_REQUIRED |
 
 **这些域名不作为 Tavily Search `exclude_domains`。** Source Policy 在搜索结果返回之后生效，不在搜索前排除。
 
@@ -425,6 +426,10 @@ if CONDITIONAL_FETCH:
 ```
 
 **fetch success != FULL_EVIDENCE** —— HTTP 200 / 文本提取成功本身都不产生 FULL_EVIDENCE。FULL_EVIDENCE 只能来自“Content Acquisition 成功 + JD 完整性验证通过 + 显式 evidence_upgrade”，或 Manual Capture。
+
+**Per-run fetch budget（P0）**：单次 Daily Run 最多尝试自动 Content Acquisition 50 条（`DEFAULT_FETCH_BUDGET`，可经 `DailyPipelineRunOptions.fetchBudget` 覆盖）。超过预算的 item 保留 discovery / manual-review，不算 failure，不因单条 fetch 失败终止整个 SourceRun。
+
+**Cross-source enrichment（P0，identity-safe）**：已知招聘平台（SEARCH_ONLY）详情页禁止自动 Fetch，但允许对招聘平台搜索结果做有界 cross-source enrichment，通过 Open Web Search 寻找「同一公司同一岗位」的公开替代源。硬约束：缺结构化 company identity → 不做 enrichment（fail closed，保持 MANUAL_REVIEW_REQUIRED）；禁止 role-only 查询；public alternative 必须非招聘平台、非原 URL、company 一致、role/title 合理匹配；enrichment 预算默认每 run 最多 20 个原始招聘平台 item，禁止递归。当前 Tavily 不提供结构化 company，故 enrichment 在缺少 company 时 fail closed。
 
 **P0 Content Acquisition 技术候选（实施时研究决定）：**
 1. Direct `fetch()` + 简单 HTML parsing（最简单）

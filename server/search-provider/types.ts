@@ -83,6 +83,12 @@ export interface SearchEvidenceItem {
   content: string;
   /** Source domain parsed from url. */
   domain: string;
+  /**
+   * 结构化雇主公司身份（如有）。当前 Tavily 不提供该字段（恒 null/undefined）。
+   * cross-source enrichment 依赖它做 identity-safe 判定：缺 company 时禁止 enrichment，
+   * 不得用 role-only 查询猜测替代来源。
+   */
+  company?: string | null;
   /** Provider relevance score (if available). */
   providerScore?: number;
   /** Publication date (if available). */

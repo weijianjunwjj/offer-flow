@@ -33,8 +33,9 @@
 
 - **Source Policy（产品级）** — 不存在 TypeScript enum/class 级别的定义（留到设计阶段）。产品语义至少包含三种能力级别：
   - **Policy A — SEARCH_ONLY**：BOSS直聘、猎聘、智联、拉勾、前程无忧等专业招聘平台。允许：Search Discovery、保存搜索证据（title/snippet/url/domain/source/publishedAt/search score）、显示 URL、用户人工访问 → Manual Capture。禁止：自动 Fetch 完整 JD、后台批量抓岗位页面、自动翻页、模拟用户点击、使用用户 Cookie/Token 扫描、绕 CAPTCHA/风控、无限 retry。
-  - **Policy B — SEARCH_AND_FETCH**：满足规则的公司官网 careers、公开 ATS、GitHub、允许自动读取的 Open Web。允许：Search + 有限公开内容 Fetch + 结构化岗位事实。前提：公开可访问、网站规则允许、robots/Terms/usage policy 允许、有限频率、有限 Scan Budget、只读、无需绕登录、无需绕 CAPTCHA。
-  - **Policy C — CONDITIONAL_FETCH**：技术论坛、社区、博客等来源。是否 Fetch 取决于该来源的访问规则、公开程度、robots、Terms 和技术限制。无法确认时默认不自动 Fetch。
+  - **Policy B — SEARCH_AND_FETCH**：满足规则的公司官网 careers、公开 ATS、GitHub、允许自动读取的 Open Web，以及**普通 unknown public domain**（无法判明为专业招聘平台、也非 CONDITIONAL_FETCH 明确清单的来源）。允许：Search + 有限公开内容 Fetch + 结构化岗位事实。前提：公开可访问、网站规则允许、robots/Terms/usage policy 允许、有限频率、有限 Scan Budget（默认每 run 最多 50 条 Content Acquisition）、只读、无需绕登录、无需绕 CAPTCHA。**unknown public 是受控 fetch，不等于自动 FULL_EVIDENCE**——仍须经 Content Acquisition 成功 + JD 完整性验证通过 + 显式 evidence_upgrade 才产生 FULL_EVIDENCE。
+  - **Policy C — CONDITIONAL_FETCH**：技术论坛、社区、博客等来源（如 juejin.cn）。是否 Fetch 取决于该来源的访问规则、公开程度、robots、Terms 和技术限制。无法确认时默认不自动 Fetch。
+  - **Cross-source enrichment（identity-safe）**：专业招聘平台详情页禁止自动 Fetch，但允许对招聘平台搜索结果做一次有界 cross-source enrichment——通过 Open Web Search 寻找「同一公司同一岗位」的公开替代证据源（公司官网 careers / 公开 ATS / 普通 public web），再用替代源走 Policy B 的 Content Acquisition。**必须 identity-safe**：缺结构化 company identity → 不做 enrichment（保持 MANUAL_REVIEW_REQUIRED）；禁止 role-only 查询猜测替代来源；public alternative 必须非招聘平台、非原 URL、company 与原 item 一致、role/title 合理匹配，才允许进入 fetch。enrichment 有预算（默认每 run 最多 20 个原始招聘平台 item），禁止递归。当前 Tavily 不提供结构化 company，enrichment 在缺少 company 时 fail closed。
 
 - **Evidence Model（产品级）** — 一个岗位被发现 ≠ OfferFlow 已拥有完整 JD。至少存在三种证据等级：
   - **SEARCH_EVIDENCE**：只有搜索结果 title/snippet/url/source/domain/搜索时间。可以进入发现池、初筛、显示给用户、进入 Daily Brief。但不能假装拥有完整岗位事实。典型场景：BOSS 搜索结果。
@@ -49,7 +50,7 @@
 
 - **Company Career Provider 的新定位** — 从 P0 主入口降级为 Follow-up Provider / Deep Source。可能来源于 Open Web Search 发现某公司 Careers → Source Quality 高 → 未来持续 Follow。当前 v0.9 P0 不要求用户提前维护目标公司名单。
 
-- **完整的 Active Discovery 概念链**：DailySearchPlan → Open Web Search Provider → Search Result / Search Evidence → Source Policy（SEARCH_ONLY → 初始 Ingestion 产生 SEARCH_EVIDENCE 或 MANUAL_REVIEW_REQUIRED 版本 → Manual Review / Manual Capture；SEARCH_AND_FETCH → 初始 Ingestion 产生 SEARCH_EVIDENCE 版本 → Content Acquisition → 证据验证 → Evidence Upgrade 产生新 FULL_EVIDENCE 版本；CONDITIONAL_FETCH → Policy Decision）→ Data Quality Gate → Analysis → Recommendation → DailyJobBrief（T040）。
+- **完整的 Active Discovery 概念链**：DailySearchPlan → Open Web Search Provider → Search Result / Search Evidence → Source Policy（SEARCH_ONLY → 初始 Ingestion 产生 SEARCH_EVIDENCE 或 MANUAL_REVIEW_REQUIRED 版本 → Manual Review / Manual Capture，或 identity-safe cross-source enrichment 找公开替代源；SEARCH_AND_FETCH（公司官网/公开 ATS/普通 unknown public web）→ 初始 Ingestion 产生 SEARCH_EVIDENCE 版本 → Content Acquisition → 证据验证 → Evidence Upgrade 产生新 FULL_EVIDENCE 版本；CONDITIONAL_FETCH → Policy Decision）→ Data Quality Gate → Analysis → Recommendation → DailyJobBrief（T040）。
 
 ## 用户场景与测试 *(必填)*
 
@@ -330,7 +331,7 @@
 - **后端服务未运行**：无调度运行执行。UI 显示"OfferFlow 本地服务未运行。定时找岗不会执行。"不显示"从网页启动服务"按钮（一个已停止的进程无法通过 HTTP 启动自身）。
 - **Search API 返回 BOSS/猎聘/智联等专业招聘平台岗位（Source Policy A — SEARCH_ONLY）**：保存 Search Evidence（title、snippet、url、source、domain、搜索时间），标记为 MANUAL_REVIEW_REQUIRED。**不自动 Fetch BOSS/猎聘/智联等页面**。不将 snippet 当完整 JD 处理。允许用户点击原岗位链接打开确认。用户可通过 Manual Capture 将 SEARCH_EVIDENCE 升级为 FULL_EVIDENCE 后进入正式 MatchAnalysis。
 - **Search API 返回公司官网/公开 ATS 岗位（Source Policy B — SEARCH_AND_FETCH）**：在满足公开可访问、robots/Terms 允许、有限频率、只读、无需绕登录/CAPTCHA 等前提后，可自动 Fetch 并结构化岗位事实。岗位先经 Initial Discovery Ingestion 落为 SEARCH_EVIDENCE 的 CandidateVersion（Content Acquisition 本身不写 DB、不产生 FULL_EVIDENCE）；随后 Content Acquisition 的 Fetch 结果经 JD 完整性/证据验证，仅当验证通过并经显式 evidence_upgrade 后才创建新的 FULL_EVIDENCE 的 CandidateVersion（升级是版本事件，不原地覆写原 SEARCH_EVIDENCE 版本），进而 Analysis eligible。Fetch 成功本身不等于 FULL_EVIDENCE。
-- **Search API 返回来源未知网站（Source Policy C — CONDITIONAL_FETCH）**：无法确认自动 Fetch 是否允许时 → 默认不 Fetch → 保留 Search Evidence → 标记 MANUAL_REVIEW_REQUIRED（或后续 Policy Decision 更新）。
+- **Search API 返回来源未知网站（普通 public domain）**：走 Policy B（SEARCH_AND_FETCH）受控 fetch——保留 Search Evidence 落为 SEARCH_EVIDENCE，允许有限自动 Fetch，但仍须经 JD 完整性验证 + 显式 evidence_upgrade 才产生 FULL_EVIDENCE；Fetch 失败或验证不通过则保留 SEARCH_EVIDENCE / 标记 MANUAL_REVIEW_REQUIRED，不伪装成 FULL_EVIDENCE。CONDITIONAL_FETCH（如 juejin.cn）仍默认不 Fetch。
 - **Search Evidence 很匹配但信息不足**：保留 Candidate + SEARCH_EVIDENCE。标记 MANUAL_REVIEW_REQUIRED 并提示用户"打开原岗位确认"。**不得丢弃**。
 - **Search API 搜到同一岗位多个来源**：进入现有 Radar Identity / Relation 机制。不因为来源不同建立 Shadow Candidate。
 - **Content Acquisition 阶段遭遇验证码/安全验证**：Provider 记录明确的 CAPTCHA_DETECTED / SECURITY_CHECK_REQUIRED 错误码。不绕过验证。不无限重试。SourceRun 转为 WAITING_FOR_USER。注意：Open Web Search Provider（Search Discovery 阶段）本身不触发验证码——此场景适用于 Content Acquisition 阶段对 Policy B/C 来源做 Fetch 时遭遇防护。专业招聘平台（BOSS等）不通过 Crawler 做 Content Acquisition，此类风险主要存在于 Browser Manual Capture 场景（由用户人工完成验证后继续）。
@@ -459,8 +460,10 @@
 - **FR-061**：系统必须实现 Source Policy 机制，在 Search Discovery 之后、Content Acquisition 之前决定对某个来源可以自动做到哪一步。Source Policy 至少包含三种能力级别：Policy A（SEARCH_ONLY——仅搜索发现，不自动 Fetch）、Policy B（SEARCH_AND_FETCH——搜索 + 公开内容自动 Fetch）、Policy C（CONDITIONAL_FETCH——根据来源规则决定是否 Fetch，默认不 Fetch）。
 - **FR-062**：Policy A（SEARCH_ONLY）必须应用于专业招聘平台（BOSS直聘、猎聘、智联、拉勾、前程无忧等）。允许：保存 Search Evidence（title、snippet、url、source、domain、搜索时间）、显示 URL、用户人工访问 → Manual Capture。禁止：自动 Fetch 完整 JD、后台批量抓岗位页面、自动翻页、模拟用户点击、使用登录 Session 批量发现、绕 CAPTCHA/风控、无限重试。
 - **FR-063**：系统禁止在 Search Provider 层建立 zhipin.com、liepin.com、zhaopin.com、lagou.com、51job.com 等专业招聘平台域名的硬 denylist。Search Discovery 的结果不得因为来源是专业招聘平台而直接丢弃——仅根据 Source Policy 决定后续 Content Acquisition 行为。
-- **FR-064**：Policy B（SEARCH_AND_FETCH）可应用于公司官网 careers、公开 ATS、GitHub 以及允许自动读取的 Open Web 招聘来源。前提必须满足：公开可访问、网站规则允许（robots/Terms/usage policy）、有限频率、有限 Scan Budget、只读、无需绕登录、无需绕 CAPTCHA。
-- **FR-065**：Policy C（CONDITIONAL_FETCH）必须用于无法确认 Fetch 权限的来源（技术论坛、社区、博客等）。默认行为是不自动 Fetch，保留 Search Evidence。仅在后续 Source Policy Decision 明确允许后才可 Fetch。
+- **FR-064**：Policy B（SEARCH_AND_FETCH）可应用于公司官网 careers、公开 ATS、GitHub、允许自动读取的 Open Web 招聘来源，以及**普通 unknown public domain**（无法判明为专业招聘平台、也非 CONDITIONAL_FETCH 明确清单的来源）。前提必须满足：公开可访问、网站规则允许（robots/Terms/usage policy）、有限频率、有限 Scan Budget（默认每 run 最多 50 条自动 Content Acquisition，超过预算的 item 保留 discovery/manual-review，不算 failure）、只读、无需绕登录、无需绕 CAPTCHA。
+- **FR-065**：Policy C（CONDITIONAL_FETCH）必须用于无法确认 Fetch 权限的来源（技术论坛、社区、博客等，如 juejin.cn）。默认行为是不自动 Fetch，保留 Search Evidence。仅在后续 Source Policy Decision 明确允许后才可 Fetch。
+- **FR-065a**：unknown public domain 的受控 fetch 不改变证据安全边界——fetch success ≠ FULL_EVIDENCE，validation PASS ≠ 自动字段覆写，FULL_EVIDENCE 只能由 EvidenceUpgradeService 在 validation PASS 后显式产生。登录墙 / CAPTCHA / 401 / 403 / SSRF / 需要 Cookie/Auth / ContentFetcher 拒绝 / validation FAIL 一律 fail closed，回到 discovery / manual-review，不得伪造成 FULL_EVIDENCE。
+- **FR-065b**：cross-source enrichment 必须 identity-safe。只有能证明 public alternative 与原招聘平台 item 是「同一公司 / 同一岗位」时才允许 fetch alternative 并升级证据。缺结构化 company identity → 不做 enrichment（保持 MANUAL_REVIEW_REQUIRED）；禁止 role-only 查询猜测替代来源；禁止引入 LLM 猜测公司；public alternative 必须非招聘平台、非原 URL、company 与原 item 一致、role/title 合理匹配。enrichment 有预算（默认每 run 最多 20 个原始招聘平台 item），禁止 enrichment → enrichment 递归。
 - **FR-066**：系统必须区分三种 Evidence Level：SEARCH_EVIDENCE（只有搜索结果 title/snippet/url/source/domain/搜索时间，不可用于正式 MatchAnalysis）、FULL_EVIDENCE（完整岗位事实，可用于 MatchAnalysis/Recommendation reasoning）、MANUAL_REVIEW_REQUIRED（Search Evidence 值得查看但来源禁止自动 Fetch，提示用户打开原岗位确认，不得丢弃）。
 - **FR-067**：DailyJobBrief 必须能够同时呈现不同 Evidence Level 的岗位（FULL_EVIDENCE → 已做正式分析；SEARCH_EVIDENCE → 搜索发现，有限初筛；MANUAL_REVIEW_REQUIRED → 值得查看，需用户打开原站确认）。
 - **FR-068**：Search Provider 的职责仅限于搜索、发现 URL、返回 Search Evidence——不得定义为万能 Search + Crawl + Parse Provider。Content Acquisition 是后续独立能力，由 Source Policy 和 Content Fetcher（非 Search Provider）负责。这保证未来 Tavily、Brave 或其他 Search API 均可替换而不改变来源 Fetch Policy。

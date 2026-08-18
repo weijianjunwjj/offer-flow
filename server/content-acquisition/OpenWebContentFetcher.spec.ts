@@ -4,7 +4,7 @@
  * 全部使用注入 resolver / transport（node:http/https 的 seam）+ 确定性 stream，
  * 不发起任何真实网络。覆盖 Scope Lock v3 的运行时不变量：
  *   - forged request 无法绕过 Source Policy；policy blocked 时 DNS/transport 零调用。
- *   - private IP 无法连接；redirect 无法绕到 unknown / SEARCH_ONLY / private。
+ *   - private IP 无法连接；redirect 无法绕到 SEARCH_ONLY / private。
  *   - custom lookup 不重新 DNS；servername 保持原 hostname。
  *   - 30s 是总体 deadline（跨 redirect 不重置）；timeout 不二次映射 NETWORK_ERROR。
  *   - wire / decoded 双重有界；Content-Length 提前拒绝但 stream counter 仍权威。
@@ -97,13 +97,13 @@ describe('runtime Source Policy revalidation', () => {
     expect(resolver.lookup).not.toHaveBeenCalled();
   });
 
-  it('unknown domain → BLOCKED_BY_POLICY', async () => {
+  it('unknown domain → FETCHED（P0 受控自动 fetch，Source Policy 已放行）', async () => {
     const resolver = publicResolver();
     const transport = makeTransport(async () => htmlResponse());
     const fetcher = createOpenWebContentFetcher({ resolver, transport });
     const r = await fetcher.fetch(req('https://unknown-company.xyz/jobs/1'));
-    expect(r.status).toBe('BLOCKED_BY_POLICY');
-    expect(transport).not.toHaveBeenCalled();
+    expect(r.status).toBe('FETCHED');
+    expect(transport).toHaveBeenCalled();
   });
 });
 
@@ -155,7 +155,7 @@ describe('SSRF / DNS', () => {
 // ── Redirect ───────────────────────────────────────────────────────────────────
 
 describe('redirect', () => {
-  it('redirect 到 unknown domain → BLOCKED_BY_POLICY', async () => {
+  it('redirect 到 unknown domain → 受控 fetch（FETCHED，Source Policy 已放行）', async () => {
     const transport = makeTransport(async (opts) => {
       if (opts.url.hostname === 'jobs.zhiye.com') {
         return { statusCode: 302, headers: { location: 'https://unknown-company.xyz/jobs/1' }, body: chunks(), cancel: vi.fn() };
@@ -164,7 +164,7 @@ describe('redirect', () => {
     });
     const fetcher = createOpenWebContentFetcher({ resolver: publicResolver(), transport });
     const r = await fetcher.fetch(req());
-    expect(r.status).toBe('BLOCKED_BY_POLICY');
+    expect(r.status).toBe('FETCHED');
   });
 
   it('redirect 到 allowlisted 但解析 private → SSRF_BLOCKED', async () => {

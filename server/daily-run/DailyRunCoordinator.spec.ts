@@ -11,7 +11,7 @@ import { SourceRunRepository } from '../source-run/sourceRunRepository';
 import { DailyBriefRepository } from '../daily-brief/dailyBriefRepository';
 import { DailyRunCoordinator } from './DailyRunCoordinator';
 import type { DailyPipelineResult } from '../pipeline/types';
-import type { DailyPipeline } from '../pipeline/DailyPipeline';
+import { emptyPipelineStageCounts, type DailyPipeline } from '../pipeline/DailyPipeline';
 import type { SearchCoverage } from '../search-provider/types';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-coordinator-'));
@@ -42,6 +42,7 @@ function pipelineResultWithCoverage(
       ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
     },
     coverage: cov,
+    stageCounts: emptyPipelineStageCounts(),
   };
 }
 
@@ -100,6 +101,7 @@ function withCoordinator(run: (ctx: {
         ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
       },
       coverage: coverage(1),
+      stageCounts: emptyPipelineStageCounts(),
     });
 
     const pipelineRun = vi.fn(async () => emptyResult());
@@ -165,6 +167,7 @@ function pipelineResultWithBatch(batchId: string, scope: string[]): DailyPipelin
       ingestFailed: 0, aborted: 0, recommendationBatchId: batchId, recommendationBatchCreated: true,
     },
     coverage: coverage(1),
+    stageCounts: emptyPipelineStageCounts(),
   };
 }
 
@@ -194,6 +197,7 @@ function pipelineResultWithDiscovery(versionIds: string[]): DailyPipelineResult 
       ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
     },
     coverage: coverage(versionIds.length),
+    stageCounts: emptyPipelineStageCounts(),
   };
 }
 
@@ -203,7 +207,7 @@ describe('DailyRunCoordinator（T028 闭环核心）', () => {
       const order: string[] = [];
       pipelineRun.mockImplementationOnce(async () => {
         order.push('pipeline');
-        return { items: [], recommendationScope: [], recommendationBatchId: null, summary: { total: 0, analysisCompleted: 0, analysisFailed: 0, analysisBlocked: 0, analysisAlreadyRunning: 0, analysisCancelled: 0, manualReview: 0, discoveryOnly: 0, fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0, ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false }, coverage: coverage(1) };
+        return { items: [], recommendationScope: [], recommendationBatchId: null, summary: { total: 0, analysisCompleted: 0, analysisFailed: 0, analysisBlocked: 0, analysisAlreadyRunning: 0, analysisCancelled: 0, manualReview: 0, discoveryOnly: 0, fetchFailed: 0, validationFailed: 0, upgradeBlocked: 0, upgradeFailed: 0, ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false }, coverage: coverage(1), stageCounts: emptyPipelineStageCounts() };
       });
       const result = await coordinator.run({
         searchPlanVersionId: 'version-1', triggerType: 'SCHEDULED',

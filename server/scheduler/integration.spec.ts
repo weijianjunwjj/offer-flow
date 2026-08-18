@@ -12,7 +12,7 @@ import { DailyBriefRepository } from '../daily-brief/dailyBriefRepository';
 import { DailyRunCoordinator } from '../daily-run/DailyRunCoordinator';
 import { DailyJobScheduler } from './DailyJobScheduler';
 import type { DailyPipelineResult } from '../pipeline/types';
-import type { DailyPipeline } from '../pipeline/DailyPipeline';
+import { emptyPipelineStageCounts, type DailyPipeline } from '../pipeline/DailyPipeline';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'offerflow-integration-'));
 let seq = 0;
@@ -61,6 +61,7 @@ describe('T028 integration smoke（Scheduler → Coordinator → Pipeline → So
         ingestFailed: 0, aborted: 0, recommendationBatchId: null, recommendationBatchCreated: false,
       },
       coverage: { queriesCompleted: 1, queriesFailed: 0, failedScopes: [], queryResults: [] },
+      stageCounts: emptyPipelineStageCounts(),
     };
     const pipelineRun = vi.fn(async () => emptyResult);
     const pipeline = { run: pipelineRun } as unknown as DailyPipeline;

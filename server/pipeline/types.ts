@@ -49,6 +49,10 @@ export interface DailyPipelineDeps {
 export interface DailyPipelineRunOptions {
   config?: SearchProviderConfig;
   signal?: AbortSignal;
+  /** 单次 run 最多尝试的自动 Content Acquisition 条数（默认 50）。超过预算的 item 保留 discovery，不算 failure。 */
+  fetchBudget?: number;
+  /** 单次 run 最多尝试 cross-source enrichment 的原始招聘平台 item 数（默认 20）。 */
+  enrichmentBudget?: number;
 }
 
 // ── PipelineItemOutcome ───────────────────────────────────────────────────────
@@ -129,4 +133,40 @@ export interface DailyPipelineResult {
    * 供 DailyRunCoordinator 持久化 SourceRun 计数/终态——禁止在此丢失。
    */
   coverage: SearchCoverage;
+  /**
+   * 阶段级诊断计数（recruitment/unknown/fetch/validation/upgrade/enrichment/analysis）。
+   * 纯内存结构化观测，供 DailyRunCoordinator 写入 SourceRun.progressJson，不新增 DB 列。
+   */
+  stageCounts: PipelineStageCounts;
+}
+
+// ── 阶段诊断计数 ──────────────────────────────────────────────────────────────
+
+/**
+ * DailyPipeline 单次 run 的阶段统计（structured diagnostics）。
+ * 用于回答「Pipeline 卡在哪一层」，不替代 EvidenceValidation / EvidenceUpgrade。
+ * 持久化到 SourceRun.progressJson.pipelineStages，不新增 schema 列。
+ */
+export interface PipelineStageCounts {
+  discovered: number;
+  recruitmentBlocked: number;
+  unknownPublic: number;
+  fetchBudget: number;
+  fetchBudgetExhausted: number;
+  fetchAttempted: number;
+  fetchSucceeded: number;
+  fetchFailed: number;
+  validationPassed: number;
+  validationFailed: number;
+  evidenceUpgradeAttempted: number;
+  evidenceUpgraded: number;
+  evidenceUpgradeBlocked: number;
+  evidenceUpgradeFailed: number;
+  crossSourceEnrichmentAttempted: number;
+  crossSourceEnrichmentSucceeded: number;
+  analysisRequested: number;
+  analysisSucceeded: number;
+  recommendationEligible: number;
+  selected: number;
+  manualReview: number;
 }

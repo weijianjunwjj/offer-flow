@@ -644,10 +644,10 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 2. `determineSourcePolicy(domain, classification)` → `'SEARCH_ONLY' | 'SEARCH_AND_FETCH' | 'CONDITIONAL_FETCH'`
 3. Recruitment Platforms（zhipin.com/liepin.com/zhaopin.com/lagou.com/51job.com）→ `SEARCH_ONLY`
 4. Company Careers / ATS / GitHub → `SEARCH_AND_FETCH`
-5. Tech communities / blogs / UNKNOWN → default `CONDITIONAL_FETCH`（= 不自动 Fetch，手动确认后才可能升级）
+5. Tech communities / blogs（如 juejin.cn）→ `CONDITIONAL_FETCH`；普通 unknown public domain → `SEARCH_AND_FETCH`（受控 fetch，仍须 validation + evidence_upgrade 才 FULL_EVIDENCE）；空/无效 domain → `SEARCH_ONLY`
 6. **不在 Search Provider 层建立招聘平台 domain 硬 denylist**
 7. 配置可维护（code-based，不是 DB 表）
-8. 测试覆盖：all five recruitment platforms → SEARCH_ONLY；company careers → SEARCH_AND_FETCH；unknown → default
+8. 测试覆盖：all five recruitment platforms → SEARCH_ONLY；company careers → SEARCH_AND_FETCH；unknown public → SEARCH_AND_FETCH（受控 fetch）；empty → SEARCH_ONLY
 
 ---
 
@@ -661,7 +661,7 @@ origin_type IN ('captured', 'manual_correction', 'source_change', 'merge_resolut
 
 **完成条件：**
 1. `SEARCH_ONLY`（招聘平台）→ `evidenceLevel = 'MANUAL_REVIEW_REQUIRED'`
-2. `SEARCH_AND_FETCH`（Policy B 来源）→ 允许 Content Acquisition；仅当 fetch 成功 **且** JD 完整性/证据验证通过，并执行显式 `evidence_upgrade` 后 → `evidenceLevel = 'FULL_EVIDENCE'`（fetch 成功本身不直接产生 FULL_EVIDENCE）
+2. `SEARCH_AND_FETCH`（Policy B 来源，含普通 unknown public domain）→ 允许 Content Acquisition；仅当 fetch 成功 **且** JD 完整性/证据验证通过，并执行显式 `evidence_upgrade` 后 → `evidenceLevel = 'FULL_EVIDENCE'`（fetch 成功本身不直接产生 FULL_EVIDENCE）
 3. `CONDITIONAL_FETCH`（Fetch 权限未确认）→ `evidenceLevel = 'MANUAL_REVIEW_REQUIRED'`（默认不 Fetch）
 4. 所有初始 Search Evidence → `evidenceLevel = 'SEARCH_EVIDENCE'`（temporary——Source Policy 判定后可能升级为 MANUAL_REVIEW_REQUIRED 或 FULL_EVIDENCE）
 5. 测试覆盖：
@@ -792,6 +792,8 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 **Phase 5B 实施状态（2026-08-13，实现完成待人工 Gate）：** `DailyPipeline`（`server/pipeline/DailyPipeline.ts` + `types.ts` + `DailyPipeline.spec.ts`）已实现并验证。Canonical Flow 与本节一致：`DISCOVER → INITIAL_INGEST → per-item evidence resolve（getVersion 精确读取 evidenceLevel）→ optional CONTENT_ACQUISITION → optional EVIDENCE_UPGRADE → QUALITY_GATE → ANALYSIS → RECOMMENDATION（每次 run 至多一次 createBatch）`。32 个 contract tests 通过；回归 229 通过；typecheck delta 0（baseline 10 errors / 3 files 不变）。Existing FULL fast path 与 repeat-run 幂等已覆盖。停在本子阶段，不进入 T040 / DailyJobBrief。
 
 **从 T037 移除：** BUILDING_BRIEF / DailyJobBrief（归属 T040 / downstream，not implemented by T037）。
+
+**P0 追加（2026-08-18，公开来源自动证据获取链路修复）：** 在 Phase 5B 基础上追加三件事，均已在 `DailyPipeline` + `sourcePolicy` 落地：① unknown public domain → `SEARCH_AND_FETCH`（受控 fetch，不再一律 manual review），保留招聘平台 `SEARCH_ONLY` 硬边界；② per-run fetch budget（`DEFAULT_FETCH_BUDGET=50`）与 cross-source enrichment（`DEFAULT_ENRICHMENT_BUDGET=20`，identity-safe：缺结构化 company 即 fail closed，禁止 role-only 查询）；③ `DailyPipelineResult.stageCounts` 阶段诊断，经 `DailyRunCoordinator` 写入 `SourceRun.progressJson.pipelineStages`，由 `/source-runs/:id` 的 `diagnostics` 透出。FULL_EVIDENCE 仍只能经 Content Acquisition 成功 + validation PASS + EvidenceUpgradeService 显式产生。
 
 ---
 

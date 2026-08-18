@@ -186,6 +186,8 @@ export class DailyRunCoordinator {
       analysisSucceededCount: summary.analysisCompleted,
       selectedCount: pipelineResult.recommendationScope.length,
       failedCount: summary.fetchFailed + summary.validationFailed + summary.upgradeFailed + summary.ingestFailed,
+      // Phase 4：阶段诊断写入 progressJson（不新增 schema 列）。
+      progressJson: { pipelineStages: pipelineResult.stageCounts },
     });
 
     // 全部查询失败 → 明确失败终态 + 来源失败错误码；绝不生成业务意义上的空 Brief。

@@ -242,9 +242,9 @@ describe('Discovery Ingestion Bridge — CONDITIONAL_FETCH', () => {
   });
 });
 
-// ── UNKNOWN domain ────────────────────────────────────────────────────────────
+// ── UNKNOWN public domain ────────────────────────────────────────────────────
 
-describe('Discovery Ingestion Bridge — UNKNOWN domain (保守默认)', () => {
+describe('Discovery Ingestion Bridge — UNKNOWN public domain', () => {
   let db: Database.Database;
   let service: SearchEvidenceIngestionService;
 
@@ -254,7 +254,7 @@ describe('Discovery Ingestion Bridge — UNKNOWN domain (保守默认)', () => {
     service = createService(db);
   });
 
-  it('unknown domain → MANUAL_REVIEW_REQUIRED + reason=unknown_domain_conservative', async () => {
+  it('unknown domain → SEARCH_EVIDENCE + fetchEligible=true + reason=unknown_public_fetch_eligible', async () => {
     const providerItem = makeProviderItem({
       domain: 'totally-random-startup.io',
       url: 'https://totally-random-startup.io/careers',
@@ -265,14 +265,15 @@ describe('Discovery Ingestion Bridge — UNKNOWN domain (保守默认)', () => {
 
     const outcome = bridgeResult.items[0];
     expect(outcome.skipped).toBe(false);
-    expect(outcome.sourcePolicyDecision.policy).toBe('SEARCH_ONLY');
-    expect(outcome.appliedEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED');
-    expect(outcome.fetchEligible).toBe(false);
-    expect(outcome.sourcePolicyDecision.reason).toBe('unknown_domain_conservative_manual_review_required');
+    expect(outcome.sourcePolicyDecision.policy).toBe('SEARCH_AND_FETCH');
+    expect(outcome.appliedEvidenceLevel).toBe('SEARCH_EVIDENCE');
+    expect(outcome.fetchEligible).toBe(true);
+    expect(outcome.targetEvidenceLevelAfterFetch).toBe('FULL_EVIDENCE');
+    expect(outcome.sourcePolicyDecision.reason).toBe('unknown_public_fetch_eligible');
     expect(outcome.normalizedDomain).toBe('totally-random-startup.io');
 
     const version = new RadarCandidateRepository(db).getVersion(outcome.candidateVersionId!);
-    expect(version!.evidenceLevel).toBe('MANUAL_REVIEW_REQUIRED');
+    expect(version!.evidenceLevel).toBe('SEARCH_EVIDENCE');
   });
 
   it('empty domain with valid URL → extracts domain from URL (not empty)', async () => {
@@ -289,8 +290,8 @@ describe('Discovery Ingestion Bridge — UNKNOWN domain (保守默认)', () => {
     expect(outcome.skipped).toBe(false);
     // Domain is extracted from URL — correct behavior
     expect(outcome.normalizedDomain).toBe('some-site.example');
-    expect(outcome.appliedEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED');
-    expect(outcome.sourcePolicyDecision.reason).toBe('unknown_domain_conservative_manual_review_required');
+    expect(outcome.appliedEvidenceLevel).toBe('SEARCH_EVIDENCE');
+    expect(outcome.sourcePolicyDecision.reason).toBe('unknown_public_fetch_eligible');
   });
 });
 
@@ -348,11 +349,11 @@ describe('Discovery Ingestion Bridge — domain resolution from URL', () => {
     const bridgeResult = await ingestDiscoveryResults(result, service);
 
     const outcome = bridgeResult.items[0];
-    // Should still ingest — UNKNOWN conservative path
+    // Should still ingest — UNKNOWN empty domain → manual review
     expect(outcome.skipped).toBe(false);
     expect(outcome.normalizedDomain).toBe('');
     expect(outcome.appliedEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED');
-    expect(outcome.sourcePolicyDecision.reason).toBe('unknown_domain_conservative_manual_review_required');
+    expect(outcome.sourcePolicyDecision.reason).toBe('empty_domain_manual_review_required');
 
     // CandidateVersion should still be created
     expect(outcome.candidateId).toBeTruthy();
@@ -479,16 +480,16 @@ describe('Discovery Ingestion Bridge — mixed results', () => {
     expect(bridgeResult.items[2].appliedEvidenceLevel).toBe('SEARCH_EVIDENCE');        // zhiye
     expect(bridgeResult.items[3].appliedEvidenceLevel).toBe('SEARCH_EVIDENCE');        // github
     expect(bridgeResult.items[4].appliedEvidenceLevel).toBe('SEARCH_EVIDENCE');        // juejin
-    expect(bridgeResult.items[5].appliedEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED'); // unknown
+    expect(bridgeResult.items[5].appliedEvidenceLevel).toBe('SEARCH_EVIDENCE');        // unknown public
     expect(bridgeResult.items[6].appliedEvidenceLevel).toBe('MANUAL_REVIEW_REQUIRED'); // empty
 
     // Summary breakdown
-    expect(bridgeResult.summary.byEvidenceLevel['MANUAL_REVIEW_REQUIRED']).toBe(4);
-    expect(bridgeResult.summary.byEvidenceLevel['SEARCH_EVIDENCE']).toBe(3);
-    expect(bridgeResult.summary.bySourcePolicy['SEARCH_ONLY']).toBe(4); // zhipin+liepin+unknown+empty
-    expect(bridgeResult.summary.bySourcePolicy['SEARCH_AND_FETCH']).toBe(2); // zhiye+github
+    expect(bridgeResult.summary.byEvidenceLevel['MANUAL_REVIEW_REQUIRED']).toBe(3);
+    expect(bridgeResult.summary.byEvidenceLevel['SEARCH_EVIDENCE']).toBe(4);
+    expect(bridgeResult.summary.bySourcePolicy['SEARCH_ONLY']).toBe(3); // zhipin+liepin+empty
+    expect(bridgeResult.summary.bySourcePolicy['SEARCH_AND_FETCH']).toBe(3); // zhiye+github+unknown
     expect(bridgeResult.summary.bySourcePolicy['CONDITIONAL_FETCH']).toBe(1); // juejin
-    expect(bridgeResult.summary.fetchEligibleCount).toBe(2); // zhiye+github
+    expect(bridgeResult.summary.fetchEligibleCount).toBe(3); // zhiye+github+unknown
   });
 });
 
@@ -573,7 +574,7 @@ describe('Discovery Ingestion Bridge — error isolation', () => {
     expect(bridgeResult.items[1].candidateId).toBeNull();
     expect(bridgeResult.items[1].snapshotId).toBeNull();
     // SourcePolicyDecision 仍然被计算（用于 reporting）
-    expect(bridgeResult.items[1].sourcePolicyDecision.policy).toBe('SEARCH_ONLY');
+    expect(bridgeResult.items[1].sourcePolicyDecision.policy).toBe('SEARCH_AND_FETCH');
     expect(bridgeResult.items[1].fetchEligible).toBe(false);
 
     // Good item 2 — 仍然成功（不受 toxic 影响）

@@ -1,20 +1,34 @@
 /**
- * OfferFlow v0.9 — DailyPipeline 编排（Phase 5B 核心）。
+ * OfferFlow v0.9 — DailyPipeline 编排（Phase 5B + P0 公开来源自动证据获取）。
  *
- * 设计依据：Phase 5B Implementation Scope Lock FINAL v2。
+ * 编排既有能力，不重实现下层 domain logic：
+ *   search → ingest → optional cross-source enrichment → per-item resolve →
+ *   optional content acquisition → optional evidence upgrade → analysis → recommendation。
  *
- * DailyPipeline 只做 sequential orchestration，严格复用下层现有组件：
- *   SearchProviderAdapter → DiscoveryIngestionBridge → ContentFetcher →
- *   EvidenceUpgradeService → AnalysisService → RecommendationBatchService。
+ * P0 扩展（相对 Phase 5B）：
+ *   - unknown public domain 走受控 fetch（SourcePolicy 已改为 SEARCH_AND_FETCH）
+ *   - per-run fetch budget（默认 50，超预算保留 discovery，不算 failure）
+ *   - 招聘平台 cross-source enrichment（有界，默认 20 原始 item/run）
+ *   - 阶段级观测计数（stageCounts），供 SourceRun.progressJson 持久化
  *
- * 硬边界（本文件绝不越界）：
- *   - 不写 SQL、不做 identity resolution / material-change / URL dedupe；
- *   - 不做 Source Policy allowlist、不做 evidence-upgrade persistence；
- *   - 不做 analysis task dedupe、不做 recommendation batch dedupe；
- *   - 不实现 DailyJobBrief / Scheduler / Email / SourceRun / worker daemon / retry / queue；
- *   - 不修改下层任何契约或状态机。
+ * 硬不变量（不得破坏）：
+ *   - fetch success != FULL_EVIDENCE
+ *   - validation PASS != 自动字段覆写
+ *   - FULL_EVIDENCE 只能由 EvidenceUpgradeService 产生
+ *   - 招聘平台 URL 永不进入自动 fetch
  */
 
+import type {
+  SearchProviderConfig,
+  SearchProviderRequest,
+  SearchProviderResult,
+  SearchEvidenceItem,
+  SearchQuery,
+} from '../search-provider/types';
+import type { DiscoveryIngestionItemOutcome, DiscoveryIngestionResult } from '../radar/searchEvidence/DiscoveryIngestionBridge';
+import type { ContentFetchRequest } from '../content-acquisition/types';
+import type { AnalysisTask } from '../../src/domain/radar';
+import { AnalysisInputError } from '../radar/analysis/inputErrors';
 import type {
   DailyPipelineDeps,
   DailyPipelineResult,
@@ -23,12 +37,43 @@ import type {
   PipelineItemFinalOutcome,
   PipelineItemMilestones,
   PipelineItemOutcome,
+  PipelineStageCounts,
 } from './types';
-import type { SearchEvidenceItem, SearchProviderRequest, SearchQuery } from '../search-provider/types';
-import type { ContentFetchRequest } from '../content-acquisition/types';
-import type { DiscoveryIngestionItemOutcome } from '../radar/searchEvidence/DiscoveryIngestionBridge';
-import type { AnalysisTask } from '../../src/domain/radar';
-import { AnalysisInputError } from '../radar/analysis/inputErrors';
+import {
+  buildCrossSourceQueries,
+  extractCrossSourceIdentity,
+  filterCrossSourceCandidates,
+  isRecruitmentSource,
+} from './crossSourceEnrichment';
+
+export const DEFAULT_FETCH_BUDGET = 50;
+export const DEFAULT_ENRICHMENT_BUDGET = 20;
+
+export function emptyPipelineStageCounts(): PipelineStageCounts {
+  return {
+    discovered: 0,
+    recruitmentBlocked: 0,
+    unknownPublic: 0,
+    fetchBudget: 0,
+    fetchBudgetExhausted: 0,
+    fetchAttempted: 0,
+    fetchSucceeded: 0,
+    fetchFailed: 0,
+    validationPassed: 0,
+    validationFailed: 0,
+    evidenceUpgradeAttempted: 0,
+    evidenceUpgraded: 0,
+    evidenceUpgradeBlocked: 0,
+    evidenceUpgradeFailed: 0,
+    crossSourceEnrichmentAttempted: 0,
+    crossSourceEnrichmentSucceeded: 0,
+    analysisRequested: 0,
+    analysisSucceeded: 0,
+    recommendationEligible: 0,
+    selected: 0,
+    manualReview: 0,
+  };
+}
 
 function neverAborted(): AbortSignal {
   return new AbortController().signal;
@@ -111,11 +156,16 @@ function buildSummary(
   };
 }
 
+/** run 内部共享的 fetch budget 状态（跨主搜索与 enrichment items 统一记账）。 */
+interface FetchBudgetState {
+  fetchAttempted: number;
+}
+
 export class DailyPipeline {
   constructor(private readonly deps: DailyPipelineDeps) {}
 
   /**
-   * 执行一轮 Discovery Pipeline：search → ingest → per-item resolve/upgrade/analysis → recommendation。
+   * 执行一轮 Discovery Pipeline：search → ingest → enrichment → per-item resolve/upgrade/analysis → recommendation。
    * sequential orchestration：正确性优先，不做并发/worker/queue。
    */
   async run(
@@ -124,27 +174,51 @@ export class DailyPipeline {
   ): Promise<DailyPipelineResult> {
     const signal = options.signal ?? neverAborted();
     const config = options.config ?? {};
+    const fetchBudget = options.fetchBudget ?? DEFAULT_FETCH_BUDGET;
+    const enrichmentBudget = options.enrichmentBudget ?? DEFAULT_ENRICHMENT_BUDGET;
 
     const request: SearchProviderRequest = { queries, config, signal };
     const searchResult = await this.deps.search(request);
     const ingestion = await this.deps.ingestDiscovery(searchResult);
 
+    const stage = emptyPipelineStageCounts();
+    stage.discovered = ingestion.items.length;
+    stage.fetchBudget = fetchBudget;
+    for (const bridge of ingestion.items) {
+      if (bridge.skipped) continue;
+      if (isRecruitmentSource(bridge.normalizedDomain)) stage.recruitmentBlocked++;
+      else if (bridge.sourcePolicyDecision.reason === 'unknown_public_fetch_eligible') stage.unknownPublic++;
+    }
+
+    // Phase 3：招聘平台 cross-source enrichment（有界）
+    const enrichment = await this.runCrossSourceEnrichment(
+      searchResult, ingestion, config, signal, enrichmentBudget, stage,
+    );
+
     const items: PipelineItemOutcome[] = [];
     const recommendationScope: string[] = [];
+    const budget: FetchBudgetState = { fetchAttempted: 0 };
 
-    for (let i = 0; i < ingestion.items.length; i += 1) {
-      // 每个新 item 前检查 abort：已 abort 则不启动下一 item 的任何新阶段。
-      if (signal.aborted) break;
+    const processBatch = async (
+      searchItems: SearchEvidenceItem[],
+      bridgeItems: DiscoveryIngestionItemOutcome[],
+    ): Promise<void> => {
+      for (let i = 0; i < bridgeItems.length; i += 1) {
+        // 每个新 item 前检查 abort：已 abort 则不启动下一 item 的任何新阶段。
+        if (signal.aborted) break;
+        const outcome = await this.processItem(
+          i, bridgeItems[i], searchItems[i], signal, stage, budget, fetchBudget,
+        );
+        items.push(outcome);
 
-      const providerItem: SearchEvidenceItem | undefined = searchResult.items[i];
-      const bridge: DiscoveryIngestionItemOutcome = ingestion.items[i];
-      const outcome = await this.processItem(i, bridge, providerItem, signal);
-      items.push(outcome);
-
-      if (outcome.finalOutcome === 'analysisCompleted' && outcome.finalVersionId !== null) {
-        recommendationScope.push(outcome.finalVersionId);
+        if (outcome.finalOutcome === 'analysisCompleted' && outcome.finalVersionId !== null) {
+          recommendationScope.push(outcome.finalVersionId);
+        }
       }
-    }
+    };
+
+    await processBatch(searchResult.items, ingestion.items);
+    await processBatch(enrichment.searchItems, enrichment.bridgeItems);
 
     // Recommendation：整个 run 至多调用一次，scope 为空则跳过。
     let recommendationBatchId: string | null = null;
@@ -155,13 +229,78 @@ export class DailyPipeline {
       recommendationBatchCreated = batchResult.created;
     }
 
+    stage.recommendationEligible = recommendationScope.length;
+    stage.selected = recommendationScope.length;
+
     return {
       items,
       recommendationScope,
       recommendationBatchId,
       summary: buildSummary(items, recommendationBatchId, recommendationBatchCreated),
       coverage: searchResult.coverage,
+      stageCounts: stage,
     };
+  }
+
+  // ── Cross-source enrichment（Phase 3）────────────────────────────────────────
+
+  /**
+   * 对已知招聘平台 item 做有界 public enrichment：构造查询 → search → 过滤公开替代源 →
+   * ingest 为新的 SEARCH_EVIDENCE 候选，之后与主搜索 items 一样走 fetch/upgrade/analysis。
+   *
+   * 招聘平台 URL 本身永不进入 fetch；enrichment 只产出 public alternative 候选。
+   */
+  private async runCrossSourceEnrichment(
+    searchResult: SearchProviderResult,
+    ingestion: DiscoveryIngestionResult,
+    config: SearchProviderConfig,
+    signal: AbortSignal,
+    budget: number,
+    stage: PipelineStageCounts,
+  ): Promise<{ searchItems: SearchEvidenceItem[]; bridgeItems: DiscoveryIngestionItemOutcome[] }> {
+    const enrichedSearchItems: SearchEvidenceItem[] = [];
+    const enrichedBridgeItems: DiscoveryIngestionItemOutcome[] = [];
+    const seenUrls = new Set<string>(searchResult.items.map((i) => i.url));
+
+    let attempted = 0;
+    for (let i = 0; i < ingestion.items.length; i += 1) {
+      if (signal.aborted) break;
+      if (attempted >= budget) break;
+
+      const bridge = ingestion.items[i];
+      if (bridge.skipped || !isRecruitmentSource(bridge.normalizedDomain)) continue;
+
+      const providerItem = searchResult.items[i];
+      if (providerItem === undefined) continue;
+
+      // identity-safe：缺结构化 company identity → fail closed，不做 enrichment（保持 manual review）。
+      const identity = extractCrossSourceIdentity(providerItem);
+      if (identity === null) continue;
+
+      const queries = buildCrossSourceQueries(providerItem);
+      if (queries.length === 0) continue;
+
+      attempted += 1;
+      stage.crossSourceEnrichmentAttempted += 1;
+
+      const enrichResult = await this.deps.search({ queries, config, signal });
+      const candidates = filterCrossSourceCandidates(enrichResult.items, identity, seenUrls);
+      if (candidates.length === 0) continue;
+
+      stage.crossSourceEnrichmentSucceeded += 1;
+      const enrichIngestion = await this.deps.ingestDiscovery({ ...enrichResult, items: candidates });
+
+      for (let j = 0; j < candidates.length; j += 1) {
+        const candidate = candidates[j];
+        const bridgeItem = enrichIngestion.items[j];
+        if (bridgeItem === undefined) continue;
+        seenUrls.add(candidate.url);
+        enrichedSearchItems.push(candidate);
+        enrichedBridgeItems.push(bridgeItem);
+      }
+    }
+
+    return { searchItems: enrichedSearchItems, bridgeItems: enrichedBridgeItems };
   }
 
   // ── Per-item 主流程 ─────────────────────────────────────────────────────────
@@ -171,6 +310,9 @@ export class DailyPipeline {
     bridge: DiscoveryIngestionItemOutcome,
     providerItem: SearchEvidenceItem | undefined,
     signal: AbortSignal,
+    stage: PipelineStageCounts,
+    budget: FetchBudgetState,
+    fetchBudget: number,
   ): Promise<PipelineItemOutcome> {
     const milestones = emptyMilestones();
     const itemUrl = bridge.itemUrl;
@@ -202,7 +344,7 @@ export class DailyPipeline {
 
     // B7：已有 FULL_EVIDENCE fast path —— 跳过 fetch + upgrade，直接分析。
     if (evidenceLevel === 'FULL_EVIDENCE') {
-      return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, sourceVersionId, milestones, signal);
+      return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, sourceVersionId, milestones, signal, stage);
     }
 
     // B8：SEARCH_EVIDENCE fetch path。
@@ -211,10 +353,16 @@ export class DailyPipeline {
         // B10：SEARCH_EVIDENCE + fetchEligible=false → 不 fetch、不分析。
         return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'discoveryOnly', 'fetch_not_eligible', milestones);
       }
-      return this.fetchAndUpgrade(index, itemUrl, candidateId, sourceVersionId, bridge.normalizedDomain, milestones, signal);
+      // Phase 2：per-run fetch budget。超预算保留 discovery，不算 failure。
+      if (budget.fetchAttempted >= fetchBudget) {
+        stage.fetchBudgetExhausted += 1;
+        return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'discoveryOnly', 'fetch_budget_exhausted', milestones);
+      }
+      return this.fetchAndUpgrade(index, itemUrl, candidateId, sourceVersionId, bridge.normalizedDomain, milestones, signal, stage, budget);
     }
 
     // B10：MANUAL_REVIEW_REQUIRED → 不 fetch、不分析。
+    stage.manualReview += 1;
     return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'manualReview', 'manual_review_required', milestones);
   }
 
@@ -228,11 +376,15 @@ export class DailyPipeline {
     normalizedDomain: string,
     milestones: PipelineItemMilestones,
     signal: AbortSignal,
+    stage: PipelineStageCounts,
+    budget: FetchBudgetState,
   ): Promise<PipelineItemOutcome> {
     if (signal.aborted) {
       return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'aborted', 'ABORTED', milestones);
     }
     milestones.fetchAttempted = true;
+    budget.fetchAttempted += 1;
+    stage.fetchAttempted += 1;
 
     const request: ContentFetchRequest = {
       url: itemUrl,
@@ -243,18 +395,23 @@ export class DailyPipeline {
 
     // FetchResult 非 FETCHED → 当前 item terminal，按真实 status 记录。
     if (fetchResult.status !== 'FETCHED') {
+      stage.fetchFailed += 1;
       return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'fetchFailed', fetchResult.status, milestones);
     }
+    stage.fetchSucceeded += 1;
 
     // validation 不 eligible → validationFailed，不调用 EvidenceUpgrade。
     if (fetchResult.validation.status !== 'PASS') {
+      stage.validationFailed += 1;
       return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'validationFailed', fetchResult.validation.reasonCode, milestones);
     }
+    stage.validationPassed += 1;
 
     if (signal.aborted) {
       return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'aborted', 'ABORTED', milestones);
     }
 
+    stage.evidenceUpgradeAttempted += 1;
     const upgradeResult = this.deps.upgrade({
       sourceVersionId,
       content: fetchResult.content,
@@ -264,13 +421,17 @@ export class DailyPipeline {
     switch (upgradeResult.status) {
       case 'UPGRADED':
         milestones.upgraded = true;
-        return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, upgradeResult.versionId, milestones, signal);
+        stage.evidenceUpgraded += 1;
+        return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, upgradeResult.versionId, milestones, signal, stage);
       case 'ALREADY_UPGRADED':
         milestones.alreadyUpgraded = true;
-        return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, upgradeResult.existingVersionId, milestones, signal);
+        stage.evidenceUpgraded += 1;
+        return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, upgradeResult.existingVersionId, milestones, signal, stage);
       case 'BLOCKED':
+        stage.evidenceUpgradeBlocked += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'upgradeBlocked', upgradeResult.reasonCode, milestones);
       case 'FAILED':
+        stage.evidenceUpgradeFailed += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'upgradeFailed', upgradeResult.reasonCode, milestones);
     }
   }
@@ -285,6 +446,7 @@ export class DailyPipeline {
     finalVersionId: string,
     milestones: PipelineItemMilestones,
     signal: AbortSignal,
+    stage: PipelineStageCounts,
   ): Promise<PipelineItemOutcome> {
     if (signal.aborted) {
       return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'aborted', 'ABORTED', milestones);
@@ -295,6 +457,7 @@ export class DailyPipeline {
       const result = this.deps.createTask(finalVersionId);
       task = result.task;
       milestones.analysisTaskCreated = true;
+      stage.analysisRequested += 1;
     } catch (error) {
       if (error instanceof AnalysisInputError) {
         return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisBlocked', error.code, milestones);
@@ -312,6 +475,7 @@ export class DailyPipeline {
         if (runOutcome.kind === 'succeeded') {
           milestones.analysisCompleted = true;
           milestones.inRecommendationScope = true;
+          stage.analysisSucceeded += 1;
           return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisCompleted', null, milestones);
         }
         const reason = runOutcome.kind === 'failed' ? runOutcome.errorCode : runOutcome.kind;
@@ -321,6 +485,7 @@ export class DailyPipeline {
         // 幂等复用已有成功分析：不调用 runTask。
         milestones.analysisCompleted = true;
         milestones.inRecommendationScope = true;
+        stage.analysisSucceeded += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisCompleted', null, milestones);
       }
       case 'failed': {

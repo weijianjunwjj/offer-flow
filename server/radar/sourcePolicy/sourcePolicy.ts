@@ -53,7 +53,7 @@ const RECRUITMENT_PLATFORM_SUFFIXES = [
 ] as const;
 
 /** 判断 domain 是否匹配 recruitment platform suffix（包括任意子域名）。 */
-function isRecruitmentPlatform(normalized: string): boolean {
+export function isRecruitmentPlatform(normalized: string): boolean {
   return RECRUITMENT_PLATFORM_SUFFIXES.some((suffix) => {
     return normalized === suffix || normalized.endsWith('.' + suffix);
   });
@@ -93,7 +93,8 @@ const CONDITIONAL_FETCH_DOMAINS = [
 const REASON_KNOWN_RECRUITMENT = 'known_recruitment_platform_manual_review_required';
 const REASON_SEARCH_AND_FETCH = 'search_and_fetch_allowed_upgrade_to_full_evidence';
 const REASON_CONDITIONAL_DEFAULT = 'conditional_fetch_default_no_fetch';
-const REASON_UNKNOWN_CONSERVATIVE = 'unknown_domain_conservative_manual_review_required';
+const REASON_UNKNOWN_PUBLIC_FETCH_ELIGIBLE = 'unknown_public_fetch_eligible';
+const REASON_EMPTY_DOMAIN = 'empty_domain_manual_review_required';
 
 // ── Normalization ──────────────────────────────────────────────────────────────
 
@@ -124,9 +125,10 @@ export function normalizeDomain(raw: string | null | undefined): string {
  * 根据域名返回 SourcePolicy。
  *
  *   招聘平台（zhipin/liepin/zhaopin/lagou/51job）→ SEARCH_ONLY
+ *   空/无效域名 → SEARCH_ONLY（无可 fetch 的 URL）
  *   ATS / company careers / GitHub（*.zhiye.com / github.com）→ SEARCH_AND_FETCH
  *   juejin.cn → CONDITIONAL_FETCH
- *   其他（空/unknown）→ SEARCH_ONLY（保守默认）
+ *   其他 unknown public domain → SEARCH_AND_FETCH（受控自动 fetch，仍走 SSRF/redirect/validation 安全检查）
  */
 export function classifySourcePolicy(domain: string): SourcePolicy {
   const normalized = normalizeDomain(domain);
@@ -135,7 +137,7 @@ export function classifySourcePolicy(domain: string): SourcePolicy {
   // Recruitment platforms (SEARCH_ONLY) — highest priority
   if (isRecruitmentPlatform(normalized)) return 'SEARCH_ONLY';
 
-  // SEARCH_AND_FETCH domains
+  // SEARCH_AND_FETCH domains（显式白名单）
   if (isSearchAndFetchDomain(normalized)) return 'SEARCH_AND_FETCH';
 
   // CONDITIONAL_FETCH domains
@@ -143,8 +145,8 @@ export function classifySourcePolicy(domain: string): SourcePolicy {
     return 'CONDITIONAL_FETCH';
   }
 
-  // 保守默认：未知域名一律 SEARCH_ONLY
-  return 'SEARCH_ONLY';
+  // 普通 unknown public domain → 受控自动 fetch（ContentFetcher 内部仍有 SSRF/redirect/校验兜底）
+  return 'SEARCH_AND_FETCH';
 }
 
 // ── getSourcePolicyDecision ────────────────────────────────────────────────────
@@ -154,8 +156,8 @@ export function classifySourcePolicy(domain: string): SourcePolicy {
  *   - 策略 → 初始证据等级 → 是否允许 fetch → fetch 后的目标等级 → 理由 → 规范化域名
  *
  * 核心语义：
- *   - SEARCH_ONLY → MANUAL_REVIEW_REQUIRED，禁止 fetch（招聘平台 / 未知保守）
- *   - SEARCH_AND_FETCH → SEARCH_EVIDENCE，允许 fetch，目标 FULL_EVIDENCE
+ *   - SEARCH_ONLY → MANUAL_REVIEW_REQUIRED，禁止 fetch（招聘平台 / 空无效域名）
+ *   - SEARCH_AND_FETCH → SEARCH_EVIDENCE，允许 fetch，目标 FULL_EVIDENCE（显式白名单或 unknown public）
  *   - CONDITIONAL_FETCH → SEARCH_EVIDENCE，默认不 fetch，fetch 后目标 FULL_EVIDENCE
  *
  * 无论什么 policy，initialEvidenceLevel 永远不是 FULL_EVIDENCE。
@@ -166,10 +168,10 @@ export function getSourcePolicyDecision(domain: string): SourcePolicyDecision {
 
   switch (policy) {
     case 'SEARCH_ONLY': {
-      // 区分 reason：已知招聘平台 vs 未知保守默认
+      // 区分 reason：已知招聘平台 vs 空/无效域名（两者都禁止 fetch）
       const reason = normalizedDomain !== '' && isRecruitmentPlatform(normalizedDomain)
         ? REASON_KNOWN_RECRUITMENT
-        : REASON_UNKNOWN_CONSERVATIVE;
+        : REASON_EMPTY_DOMAIN;
       return {
         policy,
         initialEvidenceLevel: 'MANUAL_REVIEW_REQUIRED',
@@ -181,12 +183,16 @@ export function getSourcePolicyDecision(domain: string): SourcePolicyDecision {
     }
 
     case 'SEARCH_AND_FETCH': {
+      // 区分 reason：显式白名单 vs 普通 unknown public domain（都为受控 fetch）
+      const reason = isSearchAndFetchDomain(normalizedDomain)
+        ? REASON_SEARCH_AND_FETCH
+        : REASON_UNKNOWN_PUBLIC_FETCH_ELIGIBLE;
       return {
         policy,
         initialEvidenceLevel: 'SEARCH_EVIDENCE',
         fetchEligible: true,
         targetEvidenceLevelAfterFetch: 'FULL_EVIDENCE',
-        reason: REASON_SEARCH_AND_FETCH,
+        reason,
         normalizedDomain,
       };
     }
