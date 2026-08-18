@@ -65,6 +65,7 @@ export function emptyPipelineStageCounts(): PipelineStageCounts {
     evidenceUpgraded: 0,
     evidenceUpgradeBlocked: 0,
     evidenceUpgradeFailed: 0,
+    evidenceUpgradeBlockedBy: {},
     crossSourceEnrichmentAttempted: 0,
     crossSourceEnrichmentSucceeded: 0,
     analysisRequested: 0,
@@ -198,6 +199,9 @@ export class DailyPipeline {
     const items: PipelineItemOutcome[] = [];
     const recommendationScope: string[] = [];
     const budget: FetchBudgetState = { fetchAttempted: 0 };
+    // P0.1：run 内 candidate-level dedupe —— 同一 candidate 在一次 run 中
+    // 最多进入一次 ContentFetcher / EvidenceUpgrade / Analysis。
+    const processedCandidates = new Set<string>();
 
     const processBatch = async (
       searchItems: SearchEvidenceItem[],
@@ -207,7 +211,7 @@ export class DailyPipeline {
         // 每个新 item 前检查 abort：已 abort 则不启动下一 item 的任何新阶段。
         if (signal.aborted) break;
         const outcome = await this.processItem(
-          i, bridgeItems[i], searchItems[i], signal, stage, budget, fetchBudget,
+          i, bridgeItems[i], searchItems[i], signal, stage, budget, fetchBudget, processedCandidates,
         );
         items.push(outcome);
 
@@ -313,6 +317,7 @@ export class DailyPipeline {
     stage: PipelineStageCounts,
     budget: FetchBudgetState,
     fetchBudget: number,
+    processedCandidates: Set<string>,
   ): Promise<PipelineItemOutcome> {
     const milestones = emptyMilestones();
     const itemUrl = bridge.itemUrl;
@@ -334,6 +339,20 @@ export class DailyPipeline {
       return terminal(index, itemUrl, candidateId, null, null, 'discoveryOnly', bridge.decisionType ?? 'no_version', milestones);
     }
 
+    // P0.1 active-version handoff gate：同一 candidate 在 batch ingest 后可能产生多个版本，
+    // 只有引用当前 active version 的 outcome 才允许进入昂贵流程（fetch/upgrade/analysis）。
+    // 已被新版本取代的 sourceVersionId 跳过，不 mark processed，让后续真正 active 的 outcome 有机会处理。
+    if (candidateId !== null) {
+      const candidate = this.deps.getCandidate(candidateId);
+      if (candidate === null) {
+        return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'analysisBlocked', 'CANDIDATE_NOT_FOUND', milestones);
+      }
+      if (candidate.activeVersionId !== sourceVersionId) {
+        // sourceVersionId 已非 active（stale handoff）：不消耗 budget、不 mark processed、不进入昂贵流程。
+        return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'discoveryOnly', 'candidate_version_not_active_for_processing', milestones);
+      }
+    }
+
     // 精确读取返回版本的真实 evidence state，不猜 active、不 find latest。
     const version = this.deps.getVersion(sourceVersionId);
     if (version === null) {
@@ -342,8 +361,20 @@ export class DailyPipeline {
 
     const evidenceLevel = version.evidenceLevel;
 
+    // P0.1：candidate-level dedupe。同一 candidate 在一次 run 中最多进入一次
+    // ContentFetcher / EvidenceUpgrade / Analysis；重复命中仅保留 discovery（source provenance）。
+    const markCandidateProcessed = (): boolean => {
+      if (candidateId === null) return false;
+      if (processedCandidates.has(candidateId)) return true;
+      processedCandidates.add(candidateId);
+      return false;
+    };
+
     // B7：已有 FULL_EVIDENCE fast path —— 跳过 fetch + upgrade，直接分析。
     if (evidenceLevel === 'FULL_EVIDENCE') {
+      if (markCandidateProcessed()) {
+        return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'discoveryOnly', 'candidate_already_processed', milestones);
+      }
       return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, sourceVersionId, milestones, signal, stage);
     }
 
@@ -357,6 +388,9 @@ export class DailyPipeline {
       if (budget.fetchAttempted >= fetchBudget) {
         stage.fetchBudgetExhausted += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'discoveryOnly', 'fetch_budget_exhausted', milestones);
+      }
+      if (markCandidateProcessed()) {
+        return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'discoveryOnly', 'candidate_already_processed', milestones);
       }
       return this.fetchAndUpgrade(index, itemUrl, candidateId, sourceVersionId, bridge.normalizedDomain, milestones, signal, stage, budget);
     }
@@ -429,6 +463,8 @@ export class DailyPipeline {
         return this.analyzeFinalVersion(index, itemUrl, candidateId, sourceVersionId, upgradeResult.existingVersionId, milestones, signal, stage);
       case 'BLOCKED':
         stage.evidenceUpgradeBlocked += 1;
+        stage.evidenceUpgradeBlockedBy[upgradeResult.reasonCode] =
+          (stage.evidenceUpgradeBlockedBy[upgradeResult.reasonCode] ?? 0) + 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'upgradeBlocked', upgradeResult.reasonCode, milestones);
       case 'FAILED':
         stage.evidenceUpgradeFailed += 1;

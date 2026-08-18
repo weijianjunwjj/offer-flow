@@ -23,6 +23,7 @@ import type {
   AnalysisTask,
   AnalysisTaskErrorCode,
   AnalysisTaskStatus,
+  RadarCandidate,
   RadarCandidateNormalized,
   RadarCandidateVersion,
   RadarEvidenceLevel,
@@ -109,10 +110,10 @@ function makeBridgeOutcome(
   };
 }
 
-function makeVersion(id: string, evidenceLevel: RadarEvidenceLevel): RadarCandidateVersion {
+function makeVersion(id: string, evidenceLevel: RadarEvidenceLevel, candidateId?: string): RadarCandidateVersion {
   return {
     id,
-    candidateId: `cand-${id}`,
+    candidateId: candidateId ?? 'cand-1',
     versionNo: 1,
     normalized: emptyNormalized(),
     qualityIssues: [],
@@ -123,6 +124,18 @@ function makeVersion(id: string, evidenceLevel: RadarEvidenceLevel): RadarCandid
     correctionNote: null,
     supersedesVersionId: null,
     createdAt: 1_700_000_000,
+  };
+}
+
+function makeCandidate(id: string, activeVersionId: string): RadarCandidate {
+  return {
+    id,
+    primarySourceRecordId: `src-${id}`,
+    activeVersionId,
+    lifecycleStatus: 'active',
+    mergedIntoCandidateId: null,
+    createdAt: 1_700_000_000,
+    updatedAt: 1_700_000_000,
   };
 }
 
@@ -178,6 +191,13 @@ function upgradedResult(versionId: string): EvidenceUpgradeResult {
 }
 
 function makeDeps(overrides: Partial<DailyPipelineDeps> = {}): DailyPipelineDeps {
+  // 默认 getCandidate：返回 candidate，activeVersionId 与测试常用 pattern 匹配。
+  // 'cand-1' → 'v1', 'cand-v2' → 'v2', 'cand-v3' → 'v3', etc.
+  const defaultGetCandidate = vi.fn((candidateId: string) => {
+    const activeVersionId = candidateId === 'cand-1' ? 'v1' : candidateId.replace(/^cand-/, '');
+    return makeCandidate(candidateId, activeVersionId);
+  });
+
   return {
     search: vi.fn(async () => makeSearchResult([])),
     ingestDiscovery: vi.fn(async () => ({
@@ -186,6 +206,7 @@ function makeDeps(overrides: Partial<DailyPipelineDeps> = {}): DailyPipelineDeps
     })),
     fetch: vi.fn(async () => fetchedPass()),
     upgrade: vi.fn(() => upgradedResult('ver-up')),
+    getCandidate: defaultGetCandidate,
     getVersion: vi.fn(() => null),
     createTask: vi.fn(() => createTaskResult(makeTask('t1', 'queued'))),
     runTask: vi.fn(async () => succeededRun(makeTask('t1', 'succeeded'))),
@@ -279,7 +300,7 @@ describe('DailyPipeline', () => {
       ingestDiscovery: vi.fn(async () => ({
         items: [
           makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1' }),
-          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v2', candidateId: 'cand-v2' }),
         ],
         summary: { total: 2, ingested: 2, skipped: 0, byEvidenceLevel: {}, bySourcePolicy: {}, fetchEligibleCount: 2 },
       })),
@@ -405,7 +426,7 @@ describe('DailyPipeline', () => {
       ingestDiscovery: vi.fn(async () => ({
         items: [
           makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1' }),
-          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v2', candidateId: 'cand-v2' }),
         ],
         summary: { total: 2, ingested: 2, skipped: 0, byEvidenceLevel: {}, bySourcePolicy: {}, fetchEligibleCount: 2 },
       })),
@@ -446,9 +467,10 @@ describe('DailyPipeline', () => {
       ingestDiscovery: vi.fn(async () => ({
         items: [
           makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1' }),
-          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v2', candidateId: 'cand-v2' }),
           makeBridgeOutcome('https://zhipin.com/c', {
             candidateVersionId: 'v3',
+            candidateId: 'cand-v3',
             sourcePolicyDecision: {
               policy: 'SEARCH_ONLY',
               initialEvidenceLevel: 'MANUAL_REVIEW_REQUIRED',
@@ -556,6 +578,7 @@ describe('DailyPipeline', () => {
         items: [makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v2' })],
         summary: { total: 1, ingested: 1, skipped: 0, byEvidenceLevel: {}, bySourcePolicy: {}, fetchEligibleCount: 1 },
       })),
+      getCandidate: vi.fn((id) => makeCandidate(id, 'v2')),
       getVersion: vi.fn(() => makeVersion('v2', 'FULL_EVIDENCE')),
       createTask: vi.fn(() => createTaskResult(makeTask('t2', 'succeeded'), false)),
     });
@@ -832,7 +855,7 @@ describe('DailyPipeline', () => {
 
   // ── P0：unknown public fetch / budget / cross-source enrichment ─────────────
 
-  function recruitmentBridge(url: string, versionId: string): DiscoveryIngestionItemOutcome {
+  function recruitmentBridge(url: string, versionId: string, candidateId = 'cand-1'): DiscoveryIngestionItemOutcome {
     return makeBridgeOutcome(url, {
       normalizedDomain: 'zhipin.com',
       sourcePolicyDecision: {
@@ -846,11 +869,12 @@ describe('DailyPipeline', () => {
       appliedEvidenceLevel: 'MANUAL_REVIEW_REQUIRED',
       fetchEligible: false,
       targetEvidenceLevelAfterFetch: null,
+      candidateId,
       candidateVersionId: versionId,
     });
   }
 
-  function publicAltBridge(url: string, versionId: string, normalizedDomain = 'acme.com'): DiscoveryIngestionItemOutcome {
+  function publicAltBridge(url: string, versionId: string, normalizedDomain = 'acme.com', candidateId = 'cand-1'): DiscoveryIngestionItemOutcome {
     return makeBridgeOutcome(url, {
       normalizedDomain,
       sourcePolicyDecision: {
@@ -861,6 +885,7 @@ describe('DailyPipeline', () => {
         reason: 'unknown_public_fetch_eligible',
         normalizedDomain,
       },
+      candidateId,
       candidateVersionId: versionId,
     });
   }
@@ -926,6 +951,7 @@ describe('DailyPipeline', () => {
         items: [recruitmentBridge(zhipinUrl, 'v-recruit')],
         summary: ingestionSummary(1, 0),
       })),
+      getCandidate: vi.fn((id) => makeCandidate(id, 'v-recruit')),
       getVersion: vi.fn(() => makeVersion('v-recruit', 'MANUAL_REVIEW_REQUIRED')),
     });
     const result = await new DailyPipeline(deps).run([QUERY]);
@@ -953,9 +979,14 @@ describe('DailyPipeline', () => {
           summary: ingestionSummary(1, 0),
         })
         .mockResolvedValueOnce({
-          items: [publicAltBridge(altUrl, 'v-alt', 'bytedance.com')],
+          items: [publicAltBridge(altUrl, 'v-alt', 'bytedance.com', 'cand-alt')],
           summary: ingestionSummary(1, 1),
         }),
+      getCandidate: vi.fn((id) => {
+        if (id === 'cand-1') return makeCandidate(id, 'v-recruit');
+        if (id === 'cand-alt') return makeCandidate(id, 'v-alt');
+        return makeCandidate(id, id.replace(/^cand-/, ''));
+      }),
       getVersion: vi.fn((id) => (id === 'v-recruit' ? makeVersion(id, 'MANUAL_REVIEW_REQUIRED') : makeVersion(id, 'SEARCH_EVIDENCE'))),
       upgrade: vi.fn(() => upgradedResult('v-alt-up')),
       createTask: vi.fn(() => createTaskResult(makeTask('t-alt', 'succeeded'), false)),
@@ -986,6 +1017,7 @@ describe('DailyPipeline', () => {
         items: [recruitmentBridge(zhipinUrl, 'v-recruit')],
         summary: ingestionSummary(1, 0),
       }),
+      getCandidate: vi.fn((id) => makeCandidate(id, 'v-recruit')),
       getVersion: vi.fn(() => makeVersion('v-recruit', 'MANUAL_REVIEW_REQUIRED')),
     });
     const result = await new DailyPipeline(deps).run([QUERY]);
@@ -1003,9 +1035,10 @@ describe('DailyPipeline', () => {
     const deps = makeDeps({
       search: vi.fn(async () => makeSearchResult(urls.map((u) => makeSearchItem(u)))),
       ingestDiscovery: vi.fn(async () => ({
-        items: urls.map((u, i) => makeBridgeOutcome(u, { candidateVersionId: `v${i}` })),
+        items: urls.map((u, i) => makeBridgeOutcome(u, { candidateVersionId: `v${i}`, candidateId: `cand-${i}` })),
         summary: ingestionSummary(3, 3),
       })),
+      getCandidate: vi.fn((id) => makeCandidate(id, id.replace(/^cand-/, 'v'))),
       getVersion: vi.fn((id) => makeVersion(id, 'SEARCH_EVIDENCE')),
       upgrade: vi.fn((input) => upgradedResult(`up-${input.sourceVersionId}`)),
       createTask: vi.fn((id) => createTaskResult(makeTask(id, 'succeeded'), false)),
@@ -1035,10 +1068,15 @@ describe('DailyPipeline', () => {
         .mockResolvedValue(makeSearchResult([])),
       ingestDiscovery: vi.fn().mockResolvedValueOnce({
         items: [
-          recruitmentBridge(zhipinUrl, 'v1'),
-          recruitmentBridge(liepinUrl, 'v2'),
+          recruitmentBridge(zhipinUrl, 'v1', 'cand-1'),
+          recruitmentBridge(liepinUrl, 'v2', 'cand-2'),
         ],
         summary: ingestionSummary(2, 0),
+      }),
+      getCandidate: vi.fn((id) => {
+        if (id === 'cand-1') return makeCandidate(id, 'v1');
+        if (id === 'cand-2') return makeCandidate(id, 'v2');
+        return makeCandidate(id, id.replace(/^cand-/, ''));
       }),
       getVersion: vi.fn((id) => makeVersion(id, 'MANUAL_REVIEW_REQUIRED')),
     });
@@ -1047,5 +1085,236 @@ describe('DailyPipeline', () => {
     expect(result.stageCounts.crossSourceEnrichmentAttempted).toBe(1);
     expect(deps.search).toHaveBeenCalledTimes(2); // 1 main + 1 enrichment
     expect(result.items.map((i) => i.finalOutcome)).toEqual(['manualReview', 'manualReview']);
+  });
+
+  // ── P0.1：candidate-level dedupe + BLOCKED reason 聚合 ──────────────────────
+
+  it('同一 candidate 多 query 命中 → fetch/upgrade/analysis 各最多一次，budget 只消耗一次', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/a'),
+        makeSearchItem('https://jobs.zhiye.com/a'), // 同 URL 同 candidate 重复命中
+        makeSearchItem('https://jobs.zhiye.com/b'), // 不同 candidate
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1', candidateId: 'cand-A' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1', candidateId: 'cand-A' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v2', candidateId: 'cand-B' }),
+        ],
+        summary: ingestionSummary(3, 3),
+      })),
+      getCandidate: vi.fn((id) => makeCandidate(id, id === 'cand-A' ? 'v1' : 'v2')),
+      getVersion: vi.fn(() => makeVersion('v1', 'SEARCH_EVIDENCE')),
+      upgrade: vi.fn((input) => upgradedResult(`up-${input.sourceVersionId}`)),
+      createTask: vi.fn((id) => createTaskResult(makeTask(id, 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    // 同 candidate（cand-A）只 fetch / upgrade / analysis 一次；cand-B 各一次。
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+    expect(deps.upgrade).toHaveBeenCalledTimes(2);
+    expect(deps.createTask).toHaveBeenCalledTimes(2);
+    // fetchBudget 只消耗 2 条（不是 3 条）
+    expect(result.stageCounts.fetchAttempted).toBe(2);
+    // 第一个 cand-A item 正常完成；第二个 dedupe 为 discoveryOnly
+    expect(result.items[0].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[1].finalOutcome).toBe('discoveryOnly');
+    expect(result.items[1].reasonCode).toBe('candidate_already_processed');
+    expect(result.items[2].finalOutcome).toBe('analysisCompleted');
+    expect(result.recommendationScope).toEqual(['up-v1', 'up-v2']);
+  });
+
+  it('同一 candidate 多 query 命中（existing FULL）→ analysis 最多一次', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/a'),
+        makeSearchItem('https://jobs.zhiye.com/a'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1', candidateId: 'cand-A' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1', candidateId: 'cand-A' }),
+        ],
+        summary: ingestionSummary(2, 2),
+      })),
+      getCandidate: vi.fn((id) => makeCandidate(id, 'v1')),
+      getVersion: vi.fn(() => makeVersion('v1', 'FULL_EVIDENCE')),
+      createTask: vi.fn((id) => createTaskResult(makeTask(id, 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(deps.createTask).toHaveBeenCalledTimes(1);
+    expect(result.items[0].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[1].finalOutcome).toBe('discoveryOnly');
+    expect(result.items[1].reasonCode).toBe('candidate_already_processed');
+  });
+
+  it('EvidenceUpgrade BLOCKED reason → evidenceUpgradeBlockedBy 聚合', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/a')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getVersion: vi.fn(() => makeVersion('v1', 'SEARCH_EVIDENCE')),
+      upgrade: vi.fn(() => ({ status: 'BLOCKED', reasonCode: 'stale_source_version' } as EvidenceUpgradeResult)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('upgradeBlocked');
+    expect(result.items[0].reasonCode).toBe('stale_source_version');
+    expect(result.stageCounts.evidenceUpgradeBlocked).toBe(1);
+    expect(result.stageCounts.evidenceUpgradeBlockedBy).toEqual({ stale_source_version: 1 });
+  });
+
+  // ── P0.1：active-version handoff gate（防止 stale handoff 固化） ───────────
+
+  it('stale version 在前（同 candidate 多版本）→ stale 跳过不消耗 budget，active 正常处理', async () => {
+    // item A → V3 (stale), item B → V4 (active), process 顺序 A 在前
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/a'),
+        makeSearchItem('https://jobs.zhiye.com/b'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v3', candidateId: 'cand-X' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v4', candidateId: 'cand-X' }),
+        ],
+        summary: ingestionSummary(2, 2),
+      })),
+      getCandidate: vi.fn(() => makeCandidate('cand-X', 'v4')), // active = v4
+      getVersion: vi.fn((id) => makeVersion(id, 'SEARCH_EVIDENCE', 'cand-X')),
+      upgrade: vi.fn(() => upgradedResult('v4-up')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    // A (stale v3) → discoveryOnly, 不消耗 budget
+    expect(result.items[0].finalOutcome).toBe('discoveryOnly');
+    expect(result.items[0].reasonCode).toBe('candidate_version_not_active_for_processing');
+    // B (active v4) → 正常处理
+    expect(result.items[1].finalOutcome).toBe('analysisCompleted');
+    // 总 fetch = 1（只有 B）
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+    expect(deps.fetch).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://jobs.zhiye.com/b' }));
+  });
+
+  it('stale version 在后（active 先处理）→ active 正常处理，stale 后续被 skip', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/a'),
+        makeSearchItem('https://jobs.zhiye.com/b'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v4', candidateId: 'cand-X' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v3', candidateId: 'cand-X' }),
+        ],
+        summary: ingestionSummary(2, 2),
+      })),
+      getCandidate: vi.fn(() => makeCandidate('cand-X', 'v4')),
+      getVersion: vi.fn((id) => makeVersion(id, 'SEARCH_EVIDENCE', 'cand-X')),
+      upgrade: vi.fn(() => upgradedResult('v4-up')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[1].finalOutcome).toBe('discoveryOnly');
+    expect(result.items[1].reasonCode).toBe('candidate_version_not_active_for_processing');
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('同 candidate 多个 outcome 指向同一 active version → fetch=1, upgrade=1, analysis=1', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/a'),
+        makeSearchItem('https://jobs.zhiye.com/b'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v4', candidateId: 'cand-X' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v4', candidateId: 'cand-X' }),
+        ],
+        summary: ingestionSummary(2, 2),
+      })),
+      getCandidate: vi.fn(() => makeCandidate('cand-X', 'v4')),
+      getVersion: vi.fn(() => makeVersion('v4', 'SEARCH_EVIDENCE', 'cand-X')),
+      upgrade: vi.fn(() => upgradedResult('v4-up')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[1].finalOutcome).toBe('discoveryOnly');
+    expect(result.items[1].reasonCode).toBe('candidate_already_processed');
+    expect(deps.fetch).toHaveBeenCalledTimes(1);
+    expect(deps.upgrade).toHaveBeenCalledTimes(1);
+    expect(deps.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('active FULL_EVIDENCE → 不 fetch，正常进入 analysis fast path，后续 duplicate 不重复 analysis', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/a'),
+        makeSearchItem('https://jobs.zhiye.com/b'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v4', candidateId: 'cand-X' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/b', { candidateVersionId: 'v4', candidateId: 'cand-X' }),
+        ],
+        summary: ingestionSummary(2, 2),
+      })),
+      getCandidate: vi.fn(() => makeCandidate('cand-X', 'v4')),
+      getVersion: vi.fn(() => makeVersion('v4', 'FULL_EVIDENCE', 'cand-X')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'succeeded'), false)),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisCompleted');
+    expect(result.items[1].finalOutcome).toBe('discoveryOnly');
+    expect(result.items[1].reasonCode).toBe('candidate_already_processed');
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(deps.upgrade).not.toHaveBeenCalled();
+    expect(deps.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  it('active MRR → 不 fetch、不 upgrade、不 analysis', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/a')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1', candidateId: 'cand-M' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => makeCandidate('cand-M', 'v1')),
+      getVersion: vi.fn(() => makeVersion('v1', 'MANUAL_REVIEW_REQUIRED', 'cand-M')),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('manualReview');
+    expect(deps.fetch).not.toHaveBeenCalled();
+    expect(deps.upgrade).not.toHaveBeenCalled();
+    expect(deps.createTask).not.toHaveBeenCalled();
+  });
+
+  it('candidate not found → analysisBlocked', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/a')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v1', candidateId: 'cand-missing' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => null), // candidate 不存在
+      getVersion: vi.fn(() => makeVersion('v1', 'SEARCH_EVIDENCE')),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[0].reasonCode).toBe('CANDIDATE_NOT_FOUND');
+    expect(deps.fetch).not.toHaveBeenCalled();
   });
 });

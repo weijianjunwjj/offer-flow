@@ -29,6 +29,7 @@ import { normalizeCandidateFields } from '../fieldNormalization';
 import { normalizeSourceUrl } from '../normalize';
 import { resolveIdentity } from '../identityResolution';
 import { sha256RequestHash } from '../../job-memory/requestHash';
+import { computeEvidenceStateContentHash, evidenceRank } from '../evidenceStateHash';
 import type {
   RadarCandidate,
   RadarCandidateNormalized,
@@ -136,6 +137,11 @@ export class SearchEvidenceIngestionService {
       });
       const decisionType = decided.summary.decisionType;
 
+      // P0.1：版本 content_hash 采用 evidence-aware hash（材料指纹 + evidenceLevel）。
+      // 使「同材料 + 不同证据状态」可以创建独立版本，避免 historical reactivation
+      // 把 active 退回到旧 evidenceLevel 版本。材料指纹契约本身不变。
+      const contentHash = computeEvidenceStateContentHash(norm.normalized, evidenceLevel);
+
       const baseOutcome = (): SearchEvidenceIngestionOutcome => ({
         snapshotId: snapshot.id,
         candidateId: existingCandidate?.id ?? null,
@@ -165,7 +171,20 @@ export class SearchEvidenceIngestionService {
       if (existingCandidate !== null && previousVersion !== null) {
         if (decisionType === 'material_change') {
           const version = this.insertNewVersion(
-            existingCandidate, norm.normalized, decided.fingerprint,
+            existingCandidate, norm.normalized, contentHash,
+            [snapshot.id], now, 'source_change', evidenceLevel,
+          );
+          return { ...baseOutcome(), candidateVersionId: version.id };
+        }
+        // P0.1：材料无变化（no_change）时，仅当证据状态「提升」（active 等级 < 本次要求）
+        // 才创建 evidence-state 版本；同级保持幂等；ambiguous/regression 与降级都保持 active
+        //（绝不把较高可信证据状态倒退为较低状态，例如 FULL_EVIDENCE 不降回 SEARCH_EVIDENCE）。
+        if (
+          decisionType === 'no_change'
+          && evidenceRank(previousVersion.evidenceLevel) < evidenceRank(evidenceLevel)
+        ) {
+          const version = this.insertNewVersion(
+            existingCandidate, norm.normalized, contentHash,
             [snapshot.id], now, 'source_change', evidenceLevel,
           );
           return { ...baseOutcome(), candidateVersionId: version.id };
@@ -200,7 +219,7 @@ export class SearchEvidenceIngestionService {
       };
       this.candidates.insertCandidate(candidate);
       const version = this.insertNewVersion(
-        candidate, norm.normalized, decided.fingerprint,
+        candidate, norm.normalized, contentHash,
         [snapshot.id], now, 'captured', evidenceLevel,
       );
       this.candidates.linkSource({
@@ -270,6 +289,8 @@ export class SearchEvidenceIngestionService {
     evidenceLevel: RadarEvidenceLevel,
   ): RadarCandidateVersion {
     // Historical version reactivation：material change 提交前先查 (candidate_id, content_hash)。
+    // P0.1：contentHash 已含 evidenceLevel（evidence-state hash），命中即「同材料 + 同证据状态」，
+    // 因此 reactivate 不会把证据状态倒退；不同 evidenceLevel 的历史版本 hash 不同、不会被误命中。
     // 若历史已存在同 hash 版本（如 A→B→A 回退），复用并切回 active，绝不 INSERT 重复版本，
     // 否则会命中 UNIQUE(candidate_id, content_hash) 导致整条摄入失败。
     const historical = this.candidates.findVersionByContentHash(candidate.id, contentHash);

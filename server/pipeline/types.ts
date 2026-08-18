@@ -20,7 +20,7 @@ import type {
 import type { DiscoveryIngestionResult } from '../radar/searchEvidence/DiscoveryIngestionBridge';
 import type { ContentFetchRequest, FetchResult } from '../content-acquisition/types';
 import type { EvidenceUpgradeInput, EvidenceUpgradeResult } from '../radar/evidenceUpgrade/types';
-import type { RadarCandidateVersion } from '../../src/domain/radar';
+import type { RadarCandidate, RadarCandidateVersion } from '../../src/domain/radar';
 import type { CreateAnalysisTaskResult } from '../radar/analysis/analysisService';
 import type { RunOutcome } from '../radar/analysis/executor';
 import type { CreateBatchResult } from '../radar/recommendation/recommendationBatchService';
@@ -36,6 +36,8 @@ export interface DailyPipelineDeps {
   fetch(request: ContentFetchRequest): Promise<FetchResult>;
   /** EvidenceUpgradeService.upgrade —— validation PASS 后才调用。 */
   upgrade(input: EvidenceUpgradeInput): EvidenceUpgradeResult;
+  /** RadarCandidateRepository.getCandidate —— active-version handoff gate（P0.1）。 */
+  getCandidate(candidateId: string): RadarCandidate | null;
   /** RadarCandidateRepository.getVersion —— 精确读取返回版本的真实 evidenceLevel。 */
   getVersion(versionId: string): RadarCandidateVersion | null;
   /** AnalysisService.createTask —— 幂等，可能抛出 AnalysisInputError。 */
@@ -162,6 +164,8 @@ export interface PipelineStageCounts {
   evidenceUpgraded: number;
   evidenceUpgradeBlocked: number;
   evidenceUpgradeFailed: number;
+  /** BLOCKED reasonCode 分布（如 { stale_source_version: 1 }），无 migration 的 reason 聚合。 */
+  evidenceUpgradeBlockedBy: Record<string, number>;
   crossSourceEnrichmentAttempted: number;
   crossSourceEnrichmentSucceeded: number;
   analysisRequested: number;

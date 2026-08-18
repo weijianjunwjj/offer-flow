@@ -60,6 +60,7 @@ export function createDailyRunCoordinator(deps: DailyRunRuntimeDeps): DailyRunCo
     ingestDiscovery: (result) => ingestDiscoveryResults(result, ingestion),
     fetch: (request) => fetcher.fetch(request),
     upgrade: (input) => evidenceUpgrade.upgrade(input),
+    getCandidate: (id) => candidates.getCandidate(id),
     getVersion: (id) => candidates.getVersion(id),
     createTask: (id) => analysisService.createTask(id),
     runTask: (id) => analysisService.runTask(id),

@@ -51,9 +51,10 @@ export interface SourceRunCoverageView {
 
 /**
  * 阶段诊断（来自 progressJson.pipelineStages）。
- * 宽松 number 计数，回答「Pipeline 卡在哪一层」；不含任何 secret / raw JSON。
+ * 支持一级数字对象嵌套（如 evidenceUpgradeBlockedBy: { stale_source_version: 1 }）。
+ * 不含任何 secret / raw JSON。
  */
-export type SourceRunDiagnostics = Record<string, number>;
+export type SourceRunDiagnostics = Record<string, number | Record<string, number>>;
 
 /** 从 progressJson 安全提取 pipelineStages 数字诊断（缺失/非对象返回 null）。 */
 function extractDiagnostics(progressJson: Record<string, unknown>): SourceRunDiagnostics | null {
@@ -61,7 +62,15 @@ function extractDiagnostics(progressJson: Record<string, unknown>): SourceRunDia
   if (stages === null || typeof stages !== 'object' || Array.isArray(stages)) return null;
   const out: SourceRunDiagnostics = {};
   for (const [key, value] of Object.entries(stages as Record<string, unknown>)) {
-    if (typeof value === 'number') out[key] = value;
+    if (typeof value === 'number') {
+      out[key] = value;
+    } else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      const subOut: Record<string, number> = {};
+      for (const [subKey, subValue] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof subValue === 'number') subOut[subKey] = subValue;
+      }
+      if (Object.keys(subOut).length > 0) out[key] = subOut;
+    }
   }
   return Object.keys(out).length === 0 ? null : out;
 }

@@ -298,3 +298,83 @@ describe('SearchEvidenceIngestionService', () => {
   });
   });
 });
+
+describe('P0.1 — evidence-state reactivation（同材料 + 证据状态变化）', () => {
+  let db: Database.Database;
+  let service: SearchEvidenceIngestionService;
+  let now: number;
+
+  beforeEach(() => {
+    db = openDb(':memory:');
+    runMigrations(db, { targetVersion: DAILY_JOB_HUNTER_SCHEMA_VERSION });
+    now = Date.now();
+    service = new SearchEvidenceIngestionService(db, {
+      now: () => now,
+      createId: randomUUID,
+    });
+  });
+
+  it('historical MRR + current SEARCH_EVIDENCE + same material → 不倒退为 MRR（active 提升为 SEARCH 版本）', () => {
+    const item = makeItem({ url: 'https://acme.com/jobs/ev1' });
+    const first = service.ingest(item, 'MANUAL_REVIEW_REQUIRED');
+    const second = service.ingest(item, 'SEARCH_EVIDENCE');
+
+    const repo = new RadarCandidateRepository(db);
+    const cand = repo.getCandidate(first.candidateId!);
+    expect(second.candidateId).toBe(first.candidateId);
+    // 不得 reactivate 旧 MRR 版本：active 必须是 SEARCH_EVIDENCE 版本
+    expect(cand!.activeVersionId).not.toBe(first.candidateVersionId);
+    const active = repo.getVersion(cand!.activeVersionId!);
+    expect(active!.evidenceLevel).toBe('SEARCH_EVIDENCE');
+    // 同材料但 evidence 维度不同 → contentHash 不同
+    const firstVersion = repo.getVersion(first.candidateVersionId!);
+    expect(active!.contentHash).not.toBe(firstVersion!.contentHash);
+    // 新版本 versionNo 递增
+    expect(active!.versionNo).toBeGreaterThan(firstVersion!.versionNo);
+  });
+
+  it('historical SEARCH + current SEARCH + same content → reactivation 幂等（不创建重复版本）', () => {
+    const item = makeItem({ url: 'https://acme.com/jobs/ev2' });
+    const first = service.ingest(item, 'SEARCH_EVIDENCE');
+    const second = service.ingest(item, 'SEARCH_EVIDENCE');
+
+    const repo = new RadarCandidateRepository(db);
+    expect(second.candidateVersionId).toBe(first.candidateVersionId);
+    expect(repo.listVersionsByCandidate(first.candidateId!)).toHaveLength(1);
+    expect(repo.getCandidate(first.candidateId!)!.activeVersionId).toBe(first.candidateVersionId);
+  });
+
+  it('historical MRR + current MRR + same content → reactivation 幂等（同 evidence）', () => {
+    const item = makeItem({ url: 'https://acme.com/jobs/ev5' });
+    const first = service.ingest(item, 'MANUAL_REVIEW_REQUIRED');
+    const second = service.ingest(item, 'MANUAL_REVIEW_REQUIRED');
+
+    expect(second.candidateVersionId).toBe(first.candidateVersionId);
+    expect(new RadarCandidateRepository(db).listVersionsByCandidate(first.candidateId!)).toHaveLength(1);
+  });
+
+  it('material 真正变化 → 创建新版本并 active（evidence 单调性不挡材料变化）', () => {
+    const itemA = makeItem({ url: 'https://acme.com/jobs/ev3', title: '前端工程师' });
+    const first = service.ingest(itemA, 'SEARCH_EVIDENCE');
+    const itemB = makeItem({ url: 'https://acme.com/jobs/ev3', title: '高级前端工程师' });
+    const second = service.ingest(itemB, 'SEARCH_EVIDENCE');
+
+    const repo = new RadarCandidateRepository(db);
+    expect(second.candidateVersionId).not.toBe(first.candidateVersionId);
+    const cand = repo.getCandidate(first.candidateId!);
+    expect(cand!.activeVersionId).toBe(second.candidateVersionId);
+    expect(repo.getVersion(cand!.activeVersionId!)!.evidenceLevel).toBe('SEARCH_EVIDENCE');
+  });
+
+  it('existing FULL_EVIDENCE 不被降级（同材料 + SEARCH 摄入保持 FULL active）', () => {
+    const item = makeItem({ url: 'https://acme.com/jobs/ev4' });
+    const first = service.ingest(item, 'FULL_EVIDENCE');
+    const second = service.ingest(item, 'SEARCH_EVIDENCE');
+
+    const repo = new RadarCandidateRepository(db);
+    expect(second.candidateVersionId).toBe(first.candidateVersionId);
+    expect(repo.listVersionsByCandidate(first.candidateId!)).toHaveLength(1);
+    expect(repo.getCandidate(first.candidateId!)!.activeVersionId).toBe(first.candidateVersionId);
+    expect(repo.getVersion(first.candidateVersionId!)!.evidenceLevel).toBe('FULL_EVIDENCE');
+  });
+});
