@@ -35,6 +35,12 @@ export interface DailyRunCoordinatorDeps {
   /** 返回一个幂等空批次 id（Pipeline 无推荐 scope 时 brief 仍需引用 batch）。 */
   createEmptyBatch: () => string;
   /**
+   * 可选 runtime budget override（来自 env OFFERFLOW_DAILY_FETCH_BUDGET / OFFERFLOW_DAILY_ENRICHMENT_BUDGET）。
+   * undefined → 沿用 DailyPipeline 默认值；设置后由 coordinator 传给 pipeline.run()。
+   */
+  fetchBudget?: number;
+  enrichmentBudget?: number;
+  /**
    * 读取一个推荐批次以判断 empty/non-empty（DailyBrief reconciliation 用）。
    * 返回 null 表示批次不存在（视为 empty）。只暴露 selectedCandidateVersionIds 最小契约，
    * 不把完整 RadarRecommendationBatch 耦合进 coordinator；是否含推荐以真实 domain data

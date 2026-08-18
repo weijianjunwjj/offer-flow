@@ -46,16 +46,19 @@ function pipelineResultWithCoverage(
   };
 }
 
-function withCoordinator(run: (ctx: {
-  coordinator: DailyRunCoordinator;
-  db: Database.Database;
-  planRepo: SearchPlanRepository;
-  sourceRunRepo: SourceRunRepository;
-  briefRepo: DailyBriefRepository;
-  pipelineRun: ReturnType<typeof vi.fn>;
-  versionId: string;
-  planId: string;
-}) => Promise<void>): Promise<void> {
+function withCoordinator(
+  run: (ctx: {
+    coordinator: DailyRunCoordinator;
+    db: Database.Database;
+    planRepo: SearchPlanRepository;
+    sourceRunRepo: SourceRunRepository;
+    briefRepo: DailyBriefRepository;
+    pipelineRun: ReturnType<typeof vi.fn>;
+    versionId: string;
+    planId: string;
+  }) => Promise<void>,
+  budget: { fetchBudget?: number; enrichmentBudget?: number } = {},
+): Promise<void> {
   return (async () => {
     seq += 1;
     const db = openDb(path.join(tempDir, `scenario-${seq}.sqlite3`));
@@ -133,6 +136,7 @@ function withCoordinator(run: (ctx: {
       },
       createId: () => { idSeq += 1; return `run-${idSeq}`; },
       now: () => now,
+      ...budget,
     });
 
     await run({ coordinator, db, planRepo, sourceRunRepo, briefRepo, pipelineRun, versionId: 'version-1', planId: 'plan-1' });
@@ -842,5 +846,41 @@ describe('DailyRunCoordinator — Discovery Preservation Across Enrichment Failu
       assert.deepEqual(brief.discoveryItemIds, ['v-1']);
       assert.equal(brief.emptyReason, null);
     });
+  });
+});
+
+describe('DailyRunCoordinator — budget override passthrough（env override）', () => {
+  const manualInput = () => ({
+    searchPlanVersionId: 'version-1',
+    triggerType: 'MANUAL' as const,
+    scheduledFor: Date.UTC(2026, 7, 14, 2, 0),
+    scheduledDay: null,
+  });
+
+  it('fetchBudget/enrichmentBudget override → pipeline.run 收到 5/3', async () => {
+    await withCoordinator(async ({ coordinator, pipelineRun }) => {
+      await coordinator.run(manualInput());
+      const opts = pipelineRun.mock.calls[0]?.[1] as { fetchBudget?: number; enrichmentBudget?: number };
+      expect(opts?.fetchBudget).toBe(5);
+      expect(opts?.enrichmentBudget).toBe(3);
+    }, { fetchBudget: 5, enrichmentBudget: 3 });
+  });
+
+  it('无 budget override → pipeline.run 收到 undefined（沿用 Pipeline 默认）', async () => {
+    await withCoordinator(async ({ coordinator, pipelineRun }) => {
+      await coordinator.run(manualInput());
+      const opts = pipelineRun.mock.calls[0]?.[1] as { fetchBudget?: number; enrichmentBudget?: number };
+      expect(opts?.fetchBudget).toBeUndefined();
+      expect(opts?.enrichmentBudget).toBeUndefined();
+    });
+  });
+
+  it('0 → pipeline.run 收到 0（完全关闭对应真实调用）', async () => {
+    await withCoordinator(async ({ coordinator, pipelineRun }) => {
+      await coordinator.run(manualInput());
+      const opts = pipelineRun.mock.calls[0]?.[1] as { fetchBudget?: number; enrichmentBudget?: number };
+      expect(opts?.fetchBudget).toBe(0);
+      expect(opts?.enrichmentBudget).toBe(0);
+    }, { fetchBudget: 0, enrichmentBudget: 0 });
   });
 });

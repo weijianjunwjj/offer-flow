@@ -18,6 +18,7 @@ import { SearchPlanRepository } from '../search-plan/searchPlanRepository';
 import { SourceRunRepository } from '../source-run/sourceRunRepository';
 import { DailyBriefRepository } from '../daily-brief/dailyBriefRepository';
 import { DailyRunCoordinator } from './DailyRunCoordinator';
+import { resolveDailyBudgetOverrides } from './budgetEnv';
 
 /**
  * DailyRun runtime composition root（T028 闭环真实依赖组装）。
@@ -76,5 +77,6 @@ export function createDailyRunCoordinator(deps: DailyRunRuntimeDeps): DailyRunCo
     getBatch: (id) => recommendationService.getBatch(id),
     createId,
     now,
+    ...resolveDailyBudgetOverrides(process.env),
   });
 }

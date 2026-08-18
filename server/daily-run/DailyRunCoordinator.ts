@@ -146,6 +146,8 @@ export class DailyRunCoordinator {
       pipelineResult = await pipeline.run(queries, {
         config: buildProviderConfig(version),
         signal: input.signal,
+        fetchBudget: this.deps.fetchBudget,
+        enrichmentBudget: this.deps.enrichmentBudget,
       });
     } catch (error) {
       sourceRunRepo.updateProgress(runId, {
