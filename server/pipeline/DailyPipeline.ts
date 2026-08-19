@@ -29,6 +29,7 @@ import type { DiscoveryIngestionItemOutcome, DiscoveryIngestionResult } from '..
 import type { ContentFetchRequest } from '../content-acquisition/types';
 import type { AnalysisTask } from '../../src/domain/radar';
 import { AnalysisInputError } from '../radar/analysis/inputErrors';
+import { AnalysisContractError } from '../radar/analysis/contractErrors';
 import type {
   DailyPipelineDeps,
   DailyPipelineResult,
@@ -70,6 +71,8 @@ export function emptyPipelineStageCounts(): PipelineStageCounts {
     crossSourceEnrichmentSucceeded: 0,
     analysisRequested: 0,
     analysisSucceeded: 0,
+    analysisBlocked: 0,
+    analysisBlockedBy: {},
     recommendationEligible: 0,
     selected: 0,
     manualReview: 0,
@@ -496,9 +499,16 @@ export class DailyPipeline {
       stage.analysisRequested += 1;
     } catch (error) {
       if (error instanceof AnalysisInputError) {
+        stage.analysisBlocked += 1;
+        stage.analysisBlockedBy[error.code] = (stage.analysisBlockedBy[error.code] ?? 0) + 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisBlocked', error.code, milestones);
       }
-      // 非 AnalysisInputError 视为 run-level 异常（DB fatal 等），向上抛出终止 run。
+      if (error instanceof AnalysisContractError) {
+        stage.analysisBlocked += 1;
+        stage.analysisBlockedBy[error.code] = (stage.analysisBlockedBy[error.code] ?? 0) + 1;
+        return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisBlocked', error.code, milestones);
+      }
+      // 非 item-level 异常（DB fatal 等），向上抛出终止 run。
       throw error;
     }
 

@@ -33,6 +33,7 @@ import type { CreateAnalysisTaskResult } from '../radar/analysis/analysisService
 import type { RunOutcome } from '../radar/analysis/executor';
 import type { CreateBatchResult } from '../radar/recommendation/recommendationBatchService';
 import { AnalysisInputError } from '../radar/analysis/inputErrors';
+import { AnalysisContractError } from '../radar/analysis/contractErrors';
 
 // ── Fixtures / builders ────────────────────────────────────────────────────────
 
@@ -1316,5 +1317,151 @@ describe('DailyPipeline', () => {
     expect(result.items[0].finalOutcome).toBe('analysisBlocked');
     expect(result.items[0].reasonCode).toBe('CANDIDATE_NOT_FOUND');
     expect(deps.fetch).not.toHaveBeenCalled();
+  });
+
+  it('LLM_INPUT_SENSITIVE_CONTENT → analysisBlocked (CONTRACT error)', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/sensitive')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/sensitive', { candidateVersionId: 'v2', candidateId: 'c2' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c2', activeVersionId: 'v2' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v2', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => {
+        throw new AnalysisContractError('LLM_INPUT_SENSITIVE_CONTENT', 'Sensitive content detected');
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[0].reasonCode).toBe('LLM_INPUT_SENSITIVE_CONTENT');
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['LLM_INPUT_SENSITIVE_CONTENT']).toBe(1);
+    expect(deps.runTask).not.toHaveBeenCalled();
+    expect(deps.createBatch).not.toHaveBeenCalled();
+  });
+
+  it('SNAPSHOT_INVALID → analysisBlocked (CONTRACT error)', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/invalid')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/invalid', { candidateVersionId: 'v3', candidateId: 'c3' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c3', activeVersionId: 'v3' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v3', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => {
+        throw new AnalysisContractError('SNAPSHOT_INVALID', 'Snapshot validation failed');
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[0].reasonCode).toBe('SNAPSHOT_INVALID');
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['SNAPSHOT_INVALID']).toBe(1);
+    expect(deps.runTask).not.toHaveBeenCalled();
+  });
+
+  it('SNAPSHOT_TOO_LARGE → analysisBlocked (CONTRACT error)', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/large')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/large', { candidateVersionId: 'v4', candidateId: 'c4' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c4', activeVersionId: 'v4' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v4', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => {
+        throw new AnalysisContractError('SNAPSHOT_TOO_LARGE', 'Snapshot exceeds size limit');
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[0].reasonCode).toBe('SNAPSHOT_TOO_LARGE');
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['SNAPSHOT_TOO_LARGE']).toBe(1);
+  });
+
+  it('multiple items with different CONTRACT errors → aggregated analysisBlockedBy', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/s1'),
+        makeSearchItem('https://jobs.zhiye.com/s2'),
+        makeSearchItem('https://jobs.zhiye.com/s3'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/s1', { candidateVersionId: 'v5', candidateId: 'c5' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s2', { candidateVersionId: 'v6', candidateId: 'c6' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s3', { candidateVersionId: 'v7', candidateId: 'c7' }),
+        ],
+        summary: ingestionSummary(3, 3),
+      })),
+      getCandidate: vi.fn((id) => ({ id, activeVersionId: id.replace('c', 'v') } as RadarCandidate)),
+      getVersion: vi.fn((id) => makeVersion(id, 'FULL_EVIDENCE')),
+      createTask: vi.fn((versionId) => {
+        if (versionId === 'v5') throw new AnalysisContractError('LLM_INPUT_SENSITIVE_CONTENT', 'Sensitive');
+        if (versionId === 'v6') throw new AnalysisContractError('LLM_INPUT_SENSITIVE_CONTENT', 'Sensitive');
+        if (versionId === 'v7') throw new AnalysisContractError('SNAPSHOT_INVALID', 'Invalid');
+        throw new Error('Unexpected versionId');
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.stageCounts.analysisBlocked).toBe(3);
+    expect(result.stageCounts.analysisBlockedBy['LLM_INPUT_SENSITIVE_CONTENT']).toBe(2);
+    expect(result.stageCounts.analysisBlockedBy['SNAPSHOT_INVALID']).toBe(1);
+    expect(result.items.every(item => item.finalOutcome === 'analysisBlocked')).toBe(true);
+  });
+
+  it('CONTRACT error + normal item → blocked item + succeeded item (pipeline continues)', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/bad'),
+        makeSearchItem('https://jobs.zhiye.com/good'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/bad', { candidateVersionId: 'v8', candidateId: 'c8' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/good', { candidateVersionId: 'v9', candidateId: 'c9' }),
+        ],
+        summary: ingestionSummary(2, 2),
+      })),
+      getCandidate: vi.fn((id) => ({ id, activeVersionId: id.replace('c', 'v') } as RadarCandidate)),
+      getVersion: vi.fn((id) => makeVersion(id, 'FULL_EVIDENCE')),
+      createTask: vi.fn((versionId) => {
+        if (versionId === 'v8') throw new AnalysisContractError('LLM_INPUT_SENSITIVE_CONTENT', 'Sensitive');
+        return createTaskResult(makeTask('t9', 'queued'));
+      }),
+      runTask: vi.fn(async () => succeededRun(makeTask('t9', 'succeeded'))),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[0].reasonCode).toBe('LLM_INPUT_SENSITIVE_CONTENT');
+    expect(result.items[1].finalOutcome).toBe('analysisCompleted');
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(1);
+    expect(result.recommendationScope).toEqual(['v9']);
+  });
+
+  it('unknown Error in createTask → run-level fatal (not caught by item-level handlers)', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/fatal')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/fatal', { candidateVersionId: 'v10', candidateId: 'c10' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c10', activeVersionId: 'v10' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v10', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => {
+        throw new Error('Unexpected database connection failure');
+      }),
+    });
+
+    await expect(new DailyPipeline(deps).run([QUERY])).rejects.toThrow('Unexpected database connection failure');
   });
 });
