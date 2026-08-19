@@ -2,12 +2,28 @@
 
 > **版本名称：** 每日岗位猎手  
 > **产品版本：** v0.9.0  
-> **PRD 版本：** 2.3 Final Candidate  
+> **PRD 版本：** 2.4 FROZEN  
 > **编制日期：** 2026-08-11  
+> **最终冻结日期：** 2026-08-19  
 > **前置版本：** OfferFlow v0.8.0 GA  
-> **状态：** Final 候选稿；P0 真实岗位来源在 V9-0 冻结后转正式 Final  
+> **状态：** FROZEN / RELEASE CANDIDATE  
 > **基线约束：** v0.7 / v0.8 已冻结事实、数据模型和领域语义不得被 v0.9 反向改写  
-> **一句话定位：** OfferFlow 在电脑端每天主动替用户寻找可能合适的真实岗位，复用 v0.8 Radar 完成可信分析与有限推荐，把高优先级机会和每日汇报发送到 QQ 邮箱，再由用户像老板审批下属汇报一样逐条判断；系统记住理由，并让下一轮少犯同类错误。
+> **一句话定位：** OfferFlow 在电脑端每天主动替用户寻找可能合适的真实岗位，复用 v0.8 Radar 完成可信分析与有限推荐，把主动发现的机会汇总到每日简报；用户在电脑端查看推荐结果并做出决策。  
+> **Scope Amendment：** Notification / JobJudgment / Preference Learning 已迁移至 v1.0（详见 §28 和 `docs/prd/offerflow-v1.0.md`）
+
+---
+
+**Final Scope Amendment — 2026-08-19**
+
+v0.9 最终冻结范围已从初始规划中移除以下能力，迁移至 v1.0：
+
+1. **Notification / QQ SMTP** — NotificationChannel、HIGH_PRIORITY_ALERT、DAILY_BRIEF 邮件等
+2. **JobJudgment / 四档审批** — VERY_SUITABLE/SOMEWHAT_SUITABLE/NOT_VERY_SUITABLE/VERY_UNSUITABLE 判断
+3. **Preference Learning** — PreferenceSignal、PreferenceRule、Repeated Mistake Protection 等
+
+**v0.9 最终交付：** Discovery + Analysis + Recommendation + DailyJobBrief + 前端展示。用户可在电脑端查看推荐，使用现有 RadarAction 标记岗位。
+
+详细迁移记录见 `docs/prd/offerflow-v1.0.md` 和本文档 §28。
 
 ---
 
@@ -38,28 +54,18 @@ Snapshot
 → MatchAnalysis
 → RecommendationBatch
   ↓
-高优先级机会即时 QQ 邮件
+DailyJobBrief
   ↓
-DailyJobBrief + 每日 QQ 邮件
+电脑端查看推荐结果
   ↓
-电脑端逐条审批
-  ↓
-非常合适 / 有点合适 / 不太合适 / 非常不合适
-  ↓
-必要时只追问一个具体理由
-  ↓
-JobJudgment / PreferenceSignal / PreferenceRule
-  ↓
-下一轮搜索扩展、候选抑制、推荐排序和解释修正
+使用现有 RadarAction（收藏/忽略/重点/已投递）标记岗位
 ```
 
-v0.9 的“学习”只优先解决：
+v0.9 的核心价值：
 
-- 用户为什么认为某类岗位合适或不合适；
-- 哪些理由只属于单个岗位；
-- 哪些理由已经重复出现，可以成为稳定偏好；
-- 哪类 false positive 下一次应该少出现；
-- 哪类正向特征下一次应该更容易被发现或排到前面。
+- **主动发现真实岗位**：系统根据计划在公开 Web 搜索，无需用户手动查找
+- **有限高质量推荐**：每日 0～8 条精选推荐，不凑数
+- **完整覆盖追踪**：哪些成功、哪些失败，来源失败不伪装成"0 个新岗位"
 
 v0.9 **不以自动投递、移动 App、长期人格记忆、HR 回复分析、公司情报平台或通用 Agent Runtime 为核心主题。**
 
@@ -3258,3 +3264,110 @@ V9-0
 → V9-1
 → v0.9 开发
 ```
+---
+
+# 28. v0.9 Final Scope Summary（2026-08-19 Final Freeze）
+
+## 28.1 Included in v0.9
+
+v0.9 最终交付以下完整能力：
+
+### Discovery
+- DailySearchPlan 配置与版本化
+- Scheduler 自动调度（SCHEDULED / CATCH_UP / MANUAL / RETRY）
+- Tavily Search API（P0 Open Web Search Provider）
+- query expansion（城市 × 岗位方向 × 关键词）
+- query budget 控制
+- coverage tracking
+
+### Source Policy
+- SEARCH_ONLY（招聘平台）
+- SEARCH_AND_FETCH（公司官网 / 公开 ATS / unknown public）
+- CONDITIONAL_FETCH（技术社区）
+
+### Evidence Model
+- SEARCH_EVIDENCE（只有搜索结果）
+- FULL_EVIDENCE（完整岗位事实）
+- MANUAL_REVIEW_REQUIRED（值得看但禁止自动 Fetch）
+
+### Content Acquisition & Evidence Upgrade
+- 公开 Web 有界 fetch
+- SEARCH_EVIDENCE → validation PASS → evidence_upgrade → FULL_EVIDENCE
+
+### Analysis & Recommendation
+- 仅 FULL_EVIDENCE 可进入正式 Analysis（复用 v0.8）
+- RecommendationBatch（0～8 条）
+- SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED 不进入正式推荐
+
+### DailyJobBrief
+- 正式推荐（引用 RecommendationBatch）
+- supplementary discovery items
+- coverage / diagnostics / empty-state
+
+### 前端最小闭环
+- DailySearchPlan Page
+- DailyJobBrief Page
+
+---
+
+## 28.2 Deferred to v1.0
+
+以下能力明确不属于 v0.9 最终 GA Scope，已迁移至 v1.0：
+
+### Notification / QQ SMTP
+- NotificationChannel / NotificationOutbox
+- HIGH_PRIORITY_ALERT / DAILY_BRIEF / RUN_FAILED / ACTION_REQUIRED 邮件
+
+### JobJudgment / 四档审批
+- VERY_SUITABLE / SOMEWHAT_SUITABLE / NOT_VERY_SUITABLE / VERY_UNSUITABLE
+- JudgmentCard / Judgment Repository / 智能追问
+
+### Preference Learning
+- PreferenceSignal / PreferenceRule
+- Search / Recommendation preference influence
+- Repeated Mistake Protection / Exploration
+
+详细迁移记录见 `docs/prd/offerflow-v1.0.md`。
+
+---
+
+## 28.3 Production Evidence
+
+v0.9 核心链路已通过真实生产验证。
+
+**真实 Run ID：** 98ab9fc3-8fd0-4215-832e-b352fc01f223
+**验证时间：** 2026-08-18
+
+核心数据：discovered=277, fetchSucceeded=27, validationPassed=19, evidenceUpgraded=19, analysisSucceeded=6, selected=6
+
+完整链路：Discovery → Evidence → Analysis → Recommendation → Brief ✅
+
+---
+
+## 28.4 Known Limitations
+
+v0.9 用户需要接受以下限制（将在 v1.0 解决）：
+
+1. **无邮件推送**：只能在电脑端查看，无法通过邮箱在手机端接收
+2. **无四档快速判断**：需通过现有 RadarAction 标记岗位
+3. **无偏好学习**：推荐质量依赖初始配置，不从反馈中学习
+4. **无同类错误保护**：可能看到重复类型的不合适岗位
+5. **成本可见性有限**：只能看到 API 调用次数，无真实成本趋势
+
+---
+
+## 28.5 v0.9 Final Success Definition
+
+v0.9 成功的标志是：
+
+> **OfferFlow 已经从"我把岗位交给它分析"，跨到了"它每天主动替我寻找并汇报岗位"。我只需要在电脑端查看少量真正值得看的机会。**
+
+v1.0 将补充：
+
+> **我明确指出过的错误，它下一轮会少犯；我明确喜欢的特征，它下一轮更容易找到。**
+
+---
+
+**PRD 冻结日期：** 2026-08-19
+**冻结批准：** 项目负责人
+**状态：** FROZEN / RELEASE CANDIDATE

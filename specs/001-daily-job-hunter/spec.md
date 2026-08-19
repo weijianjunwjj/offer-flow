@@ -4,9 +4,11 @@
 
 **Created**: 2026-08-11
 
-**Status**: Draft
+**Status**: Frozen — v0.9 Final Scope
 
-**Input**: 用户描述："OfferFlow v0.9 — 每日岗位猎手：系统在电脑端每天主动替用户寻找可能合适的真实岗位，复用 v0.8 Radar 完成可信分析与有限推荐，把高优先级机会和每日汇报发送到 QQ 邮箱，再由用户像老板审批下属汇报一样逐条判断；系统记住理由，并让下一轮少犯同类错误。"
+**Final Scope Amendment**: 2026-08-19
+
+**Input**: 用户描述："OfferFlow v0.9 — 每日岗位猎手：系统在电脑端每天主动替用户寻找可能合适的真实岗位，复用 v0.8 Radar 完成可信分析与有限推荐，把主动发现的机会汇总到每日简报，用户在电脑端查看推荐结果并做出决策。"
 
 ## Clarifications
 
@@ -51,6 +53,63 @@
 - **Company Career Provider 的新定位** — 从 P0 主入口降级为 Follow-up Provider / Deep Source。可能来源于 Open Web Search 发现某公司 Careers → Source Quality 高 → 未来持续 Follow。当前 v0.9 P0 不要求用户提前维护目标公司名单。
 
 - **完整的 Active Discovery 概念链**：DailySearchPlan → Open Web Search Provider → Search Result / Search Evidence → Source Policy（SEARCH_ONLY → 初始 Ingestion 产生 SEARCH_EVIDENCE 或 MANUAL_REVIEW_REQUIRED 版本 → Manual Review / Manual Capture，或 identity-safe cross-source enrichment 找公开替代源；SEARCH_AND_FETCH（公司官网/公开 ATS/普通 unknown public web）→ 初始 Ingestion 产生 SEARCH_EVIDENCE 版本 → Content Acquisition → 证据验证 → Evidence Upgrade 产生新 FULL_EVIDENCE 版本；CONDITIONAL_FETCH → Policy Decision）→ Data Quality Gate → Analysis → Recommendation → DailyJobBrief（T040）。
+
+---
+
+## Final Scope Amendment — 2026-08-19
+
+本 Spec 原始规划包含完整的"Discovery → Notification → Judgment → Preference Learning"闭环。
+
+经过开发和评估，v0.9 最终冻结范围已从初始规划中移除以下 Functional Requirements，迁移至 v1.0：
+
+### Deferred to v1.0
+
+**FR-026～FR-035：Notification / QQ SMTP**
+- NotificationChannel / NotificationOutbox / SMTP 配置与发送
+- HIGH_PRIORITY_ALERT / DAILY_BRIEF / RUN_FAILED / ACTION_REQUIRED 邮件
+- 邮件模板、重试、幂等性保护
+- 邮件配置管理页面
+- Notifications 历史与状态页面
+
+**FR-036～FR-042：JobJudgment / 四档审批**
+- VERY_SUITABLE / SOMEWHAT_SUITABLE / NOT_VERY_SUITABLE / VERY_UNSUITABLE 判断
+- JudgmentCard / Judgment Repository / Judgment API
+- 审批进度追踪
+- 智能追问（最多 1 次 / 岗位）
+- JudgmentReason 理由记录
+
+**FR-043～FR-048：Preference Learning**
+- PreferenceSignal / PreferenceRule / Rule Proposal / Rule Activation
+- Search Preference Influence（关键词扩展）
+- Recommendation Preference Influence（排序、抑制）
+- Repeated Mistake Protection / Exploration
+- Preference UI 偏好管理页面
+
+### v0.9 Final Scope
+
+v0.9 最终交付范围专注于：
+
+**FR-001～FR-025：Core Discovery & Recommendation**
+- DailySearchPlan 配置与版本化
+- Scheduler 自动调度
+- Tavily Search API（P0 Open Web Search Provider）
+- Source Policy（SEARCH_ONLY / SEARCH_AND_FETCH / CONDITIONAL_FETCH）
+- Evidence Model（SEARCH_EVIDENCE / FULL_EVIDENCE / MANUAL_REVIEW_REQUIRED）
+- Content Acquisition / Evidence Upgrade
+- Analysis（复用 v0.8）
+- Recommendation（复用 v0.8 Batch）
+- DailyJobBrief 汇总
+- 前端最小闭环
+
+用户可以在电脑端查看每日推荐，使用现有 RadarAction 标记岗位。
+
+### Rationale
+
+将 Notification / Judgment / Preference 迁移至 v1.0，可以让 v0.9 更专注于"主动发现→推荐→展示"核心闭环的稳定性和交付质量。
+
+详细迁移记录见 `docs/prd/offerflow-v1.0.md`。
+
+---
 
 ## 用户场景与测试 *(必填)*
 

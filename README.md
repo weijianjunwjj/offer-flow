@@ -6,27 +6,72 @@ OfferFlow 将分散的岗位信息、个人履历、能力证据、求职反馈�
 
 ## 当前版本
 
-**v0.8.0 GA（正式发布，发布日期 2026-07-30）。**
+**v0.9.0 RC（Release Candidate，冻结日期 2026-08-19）。**
 
-- 经项目负责人完成核心主流程人工冒烟并明确批准发布
-- 真实运行库已受控升级至 **schema v8**（migration 1..8）
-- 可解释岗位雷达、当前页采集桥、单岗位分析、推荐批次、雷达动作与正式晋升等能力**随 v0.8.0 发布但默认关闭**，按功能开关启用（见下方「功能开关」）
-- 部分原 GA 前置项（RC-09、RC-12、30 条真实评测、核心页面真实截图与产品文案验收）**未完成，经负责人明确豁免、接受风险后发布并转入 v0.9**，不得标记为已完成（见 [Release Notes §0](docs/release/v0.8.0.md)）
-- 遗留验证与体验优化转入 v0.9；发布后新发现的阻断问题走 v0.8.x 补丁
+- v0.9 核心 Discovery + Analysis + Recommendation 链路已完成并通过真实生产验证
+- 真实运行库已升级至 **schema v9**（migration 1..9）
+- 每日岗位猎手核心能力：DailySearchPlan、Scheduler、Tavily Search API、Source Policy、Evidence Model、Content Acquisition、Evidence Upgrade、Analysis（复用 v0.8）、Recommendation（复用 v0.8）、DailyJobBrief
+- 前端页面：DailySearchPlan Page、DailyJobBrief Page
+- 部分初始规划能力（Notification / JobJudgment / Preference Learning）**已明确迁移至 v1.0**，以保持 v0.9 核心闭环的完整性和可交付性
 
-正式发布说明见 [docs/release/v0.8.0.md](docs/release/v0.8.0.md)。
+v0.9 权威文档：
 
-v0.8 权威文档：
+- [docs/prd/offerflow-v0.9.md](docs/prd/offerflow-v0.9.md)（v2.4 FROZEN）
+- [docs/prd/offerflow-v1.0.md](docs/prd/offerflow-v1.0.md)（Deferred Scope Backlog）
+- [specs/001-daily-job-hunter/spec.md](specs/001-daily-job-hunter/spec.md)
+- [specs/001-daily-job-hunter/plan.md](specs/001-daily-job-hunter/plan.md)（v3.0）
 
-- [docs/release/v0.8.0.md](docs/release/v0.8.0.md)
-- [docs/prd/offerflow-v0.8.md](docs/prd/offerflow-v0.8.md)
-- [docs/product/offerflow-v0.8-release-contract.md](docs/product/offerflow-v0.8-release-contract.md)
-- [docs/technical/offerflow-v0.8-technical-design.md](docs/technical/offerflow-v0.8-technical-design.md)
-- [docs/product/offerflow-v0.8-traceability.md](docs/product/offerflow-v0.8-traceability.md)
+以下「核心能力」章节描述的是 v0.7～v0.8 已开放的正式能力；v0.9 新增的 Daily Job Hunter 能力见上方「当前版本」说明。
 
-以下「核心能力」章节描述的是 v0.7 起已开放的正式能力；v0.8 新增的雷达类能力默认关闭、按开关启用，不要当作默认开放能力。
+## v0.9 核心能力：每日岗位猎手
 
-## 核心产品闭环
+v0.9 新增以下完整闭环：
+
+```txt
+DailySearchPlan（用户配置）
+        ↓
+Scheduler（自动调度）
+        ↓
+Tavily Search API（主动发现）
+        ↓
+Source Policy（来源权限分级）
+        ↓
+Evidence Model（证据等级分层）
+        ↓
+Content Acquisition（有界 fetch）
+        ↓
+Evidence Upgrade（证据升级）
+        ↓
+Analysis（复用 v0.8）
+        ↓
+Recommendation（复用 v0.8 Batch，0～8 条）
+        ↓
+DailyJobBrief（每日汇总）
+        ↓
+用户在电脑端查看推荐结果
+        ↓
+使用现有 RadarAction 标记岗位
+```
+
+**v0.9 核心价值：**
+
+- **主动发现**：系统每天自动在公开 Web 搜索真实岗位，无需用户手动查找
+- **来源权限分级**：SEARCH_ONLY（招聘平台）/ SEARCH_AND_FETCH（公司官网）/ CONDITIONAL_FETCH（技术社区）
+- **证据等级分层**：SEARCH_EVIDENCE（只有搜索结果）/ FULL_EVIDENCE（完整岗位事实）/ MANUAL_REVIEW_REQUIRED（值得看但禁止自动 Fetch）
+- **有限推荐**：每日 0～8 条精选推荐，不凑数
+- **完整覆盖追踪**：planned / completed / failed / waiting，来源失败不伪装成"0 个新岗位"
+
+**v0.9 Known Limitations：**
+
+v0.9 专注于"发现→推荐→展示"核心闭环，以下能力已迁移至 v1.0：
+
+- 邮件通知（QQ SMTP / HIGH_PRIORITY_ALERT / DAILY_BRIEF）
+- 四档审批（VERY_SUITABLE / SOMEWHAT_SUITABLE / NOT_VERY_SUITABLE / VERY_UNSUITABLE）
+- 偏好学习（PreferenceSignal / PreferenceRule / Repeated Mistake Protection）
+
+详细说明见 `docs/prd/offerflow-v1.0.md`。
+
+## 核心产品闭环（v0.7～v0.8）
 
 ```txt
 个人资料与履历

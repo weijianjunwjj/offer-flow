@@ -2,11 +2,53 @@
 
 > **对应 Spec：** `specs/001-daily-job-hunter/spec.md`
 > **对应 Plan：** `specs/001-daily-job-hunter/plan.md` (v3.0 — Plan Amendment: Tavily Search API)
-> **对应 PRD：** `docs/prd/offerflow-v0.9.md` (v2.3 Final Candidate)
+> **对应 PRD：** `docs/prd/offerflow-v0.9.md` (v2.4 FROZEN)
 > **创建日期：** 2026-08-11
-> **最后修订：** 2026-08-11（Tasks Amendment：Jooble → Tavily，新增 Evidence / Source Policy / Content Acquisition / Terms Compliance 任务）
-> **状态：** Tasks Amendment 完成 —— 等待 `/speckit.analyze`
-> **前置阶段：** PRD ✅ → Constitution ✅ → Specification ✅ → Clarify ✅ → Plan ✅ → Plan Amendment ✅ → **Tasks Amendment ← 本轮**
+> **最后修订：** 2026-08-19（Final Scope Freeze）
+> **状态：** v0.9 CORE = IMPLEMENTED / v0.9 SCOPE = FROZEN / Deferred work = v1.0
+> **前置阶段：** PRD ✅ → Constitution ✅ → Specification ✅ → Clarify ✅ → Plan ✅ → Plan Amendment ✅ → Tasks Amendment ✅ → **Final Scope Freeze ← 本轮**
+
+---
+
+## Final Implementation Status — 2026-08-19
+
+### v0.9 Core Implementation
+
+**状态：** IMPLEMENTED
+
+v0.9 核心 Discovery + Analysis + Recommendation 链路已实现并通过真实生产验证：
+
+- Phase 0：Tavily Search API Smoke Gate ✅
+- Phase 1：Shared Radar Ingestion Core ✅
+- Phase 2：Source Policy & Evidence Model ✅
+- Phase 3：DailySearchPlan & SourceRun ✅
+- Phase 4：DailyPipeline & DailyJobBrief ✅
+
+**生产验证：** Run 98ab9fc3 (2026-08-18) — SUCCEEDED，完整链路通过。
+
+### v0.9 Final Scope
+
+**状态：** FROZEN
+
+v0.9 最终交付范围专注于 Core Discovery & Recommendation（Phase 0–4）。
+
+### Deferred to v1.0
+
+**Phase 5：Notification / QQ SMTP（T044–T051）** → DEFERRED_TO_V1_0
+
+**Phase 6：JobJudgment / 四档审批（T052–T056）** → DEFERRED_TO_V1_0
+
+**Phase 7：Preference Learning（T057–T063）** → DEFERRED_TO_V1_0
+
+**理由：** v0.9 已建立完整的"发现→推荐→展示"基础闭环，用户可以在电脑端查看每日推荐并使用现有 RadarAction 标记岗位。将 Notification / Judgment / Preference 迁移至 v1.0，可以让 v0.9 更专注于核心流程的稳定性和交付质量。
+
+详细迁移记录见 `docs/prd/offerflow-v1.0.md`。
+
+### Historical Note
+
+本文件保留完整的 T001–T063 任务历史记录，包括已实施、未实施和已迁移的任务。这些记录对于理解设计决策和未来 v1.0 实施具有价值。
+
+tasks.md 末尾的"未执行 implement / 等待 analyze"说明已过时（见下方最后修订说明）。
 
 ---
 
@@ -851,13 +893,19 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ## Phase 5 — QQ SMTP + NotificationOutbox
 
-**目标：** Provider 无关组件。Secret 引用 `TAVILY_API_KEY`（替换 `OFFERFLOW_JOOLE_API_KEY`）。完整任务描述如下——邮件模板中 SourceRun reference 更新为 Provider-neutral 字段。
+**状态：** DEFERRED_TO_V1_0（2026-08-19）
 
-**前置：** Phase 4 完成
+**原目标：** Provider 无关组件。Secret 引用 `TAVILY_API_KEY`（替换 `OFFERFLOW_JOOLE_API_KEY`）。完整任务描述如下——邮件模板中 SourceRun reference 更新为 Provider-neutral 字段。
+
+**Defer Reason：** v0.9 已建立完整的"发现→推荐→展示"基础闭环，用户可以在电脑端查看 DailyJobBrief。邮件通知作为"推送到手机"的便利性增强，其重要性不足以阻塞 v0.9 GA。将其迁移至 v1.0 可以让 v0.9 更专注于核心发现流程的稳定性。
+
+详细迁移记录见 `docs/prd/offerflow-v1.0.md` § 1.1。
+
+**前置（已废弃）：** Phase 4 完成
 
 ---
 
-### T044 [P] NotificationChannel 数据模型与 Repository
+### T044 [P] NotificationChannel 数据模型与 Repository — DEFERRED_TO_V1_0
 
 **目标：** 实现 `notification_channels` 表 Repository。
 
@@ -877,7 +925,7 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T045 [P] NotificationChannel API 与测试邮件
+### T045 [P] NotificationChannel API 与测试邮件 — DEFERRED_TO_V1_0
 
 **目标：** 实现 NotificationChannel REST API + 测试邮件发送。
 
@@ -902,7 +950,7 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T046 [P] [US9] [US10] NotificationOutbox 数据模型与 Repository
+### T046 [P] [US9] [US10] NotificationOutbox 数据模型与 Repository — DEFERRED_TO_V1_0
 
 **目标：** 实现 `notification_outbox` + `notification_links` 表 Repository。
 
@@ -922,7 +970,7 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T047 [P] [US9] [US10] SMTP Sender 实现
+### T047 [P] [US9] [US10] SMTP Sender 实现 — DEFERRED_TO_V1_0
 
 **目标：** QQ SMTP 邮件发送 Worker（新增依赖 `nodemailer`）。
 
@@ -942,7 +990,7 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T048 [P] [US9] [US10] 通知触发逻辑
+### T048 [P] [US9] [US10] 通知触发逻辑 — DEFERRED_TO_V1_0
 
 **目标：** Pipeline 中触发通知：高优先级提醒、日报、失败、需操作。
 
@@ -960,7 +1008,7 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T049 [P] [US9] 高优先级邮件内容构建
+### T049 [P] [US9] 高优先级邮件内容构建 — DEFERRED_TO_V1_0
 
 **目标：** HIGH_PRIORITY_ALERT 邮件内容。
 
@@ -976,7 +1024,7 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T050 [P] [US10] 日报邮件内容构建
+### T050 [P] [US10] 日报邮件内容构建 — DEFERRED_TO_V1_0
 
 **目标：** DAILY_BRIEF 邮件（含推荐和空汇报两种）。
 
@@ -992,7 +1040,7 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T051 [P] 通知中心前端页面
+### T051 [P] 通知中心前端页面 — DEFERRED_TO_V1_0
 
 **目标：** 通知中心 + 邮箱配置 UI。
 
@@ -1010,25 +1058,31 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ## Phase 6 — JobJudgment（四档审批）+ Evidence-aware 审批
 
-**目标：** 同旧 Plan Phase 5。新增 evidenceLevel-aware 审批行为。
+**状态：** DEFERRED_TO_V1_0（2026-08-19）
 
-**前置：** Phase 4 完成
+**原目标：** 同旧 Plan Phase 5。新增 evidenceLevel-aware 审批行为。
+
+**Defer Reason：** v0.9 已通过 DailyJobBrief 展示推荐结果，用户可以使用现有 RadarAction（收藏、忽略、重点、已投递）标记岗位。四档审批的独特价值在于"捕捉用户对推荐质量的细粒度反馈"，为后续 Preference Learning 提供训练信号。将其迁移至 v1.0，可以让 v0.9 更专注于发现质量和推荐准确性的基础能力打磨。
+
+详细迁移记录见 `docs/prd/offerflow-v1.0.md` § 1.2。
+
+**前置（已废弃）：** Phase 4 完成
 
 ---
 
-### T052 [P] [US11] JobJudgment 数据模型与 Repository
+### T052 [P] [US11] JobJudgment 数据模型与 Repository — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T044。无实质变化。
 
 ---
 
-### T053 [US11] JobJudgment API 路由
+### T053 [US11] JobJudgment API 路由 — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T045。新增 `candidateEvidenceLevel` 在 response 中。
 
 ---
 
-### T054 [US11] [EVIDENCE] 四档审批前端页面（日报审批卡 + evidenceLevel context）
+### T054 [US11] [EVIDENCE] 四档审批前端页面（日报审批卡 + evidenceLevel context）— DEFERRED_TO_V1_0
 
 **目标：** 在日报页面中实现逐条审批 UI。SEARCH_EVIDENCE / MANUAL_REVIEW_REQUIRED discovery items 展示为"需人工核实"。
 
@@ -1050,13 +1104,13 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T055 [US11] 审批进度派生逻辑
+### T055 [US11] 审批进度派生逻辑 — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T047。无实质变化。
 
 ---
 
-### T056 [US12] 智能追问生成（evidenceLevel-aware 抑制）
+### T056 [US12] 智能追问生成（evidenceLevel-aware 抑制）— DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T048。新增约束：MANUAL_REVIEW_REQUIRED 候选不触发追问（信息不足时追问无意义）。
 
@@ -1069,13 +1123,19 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ## Phase 7 — Preference Learning
 
-**目标：** 同旧 Plan Phase 6。新增 evidenceLevel-aware signal 生成约束。
+**状态：** DEFERRED_TO_V1_0（2026-08-19）
 
-**前置：** Phase 6 完成
+**原目标：** 同旧 Plan Phase 6。新增 evidenceLevel-aware signal 生成约束。
+
+**Defer Reason：** Preference Learning 依赖于用户真实使用产生足够多的 JobJudgment 样本，以及系统能够识别重复模式。如果 v0.9 同时开发 Discovery + Judgment + Preference，会面临初期样本不足、规则激活逻辑复杂、用户还未建立对推荐质量的信任等风险。将 Preference Learning 迁移至 v1.0，让 v0.9 先建立稳定的发现和推荐基础，积累真实用户反馈数据，再在 v1.0 基于真实数据训练和优化偏好学习算法。
+
+详细迁移记录见 `docs/prd/offerflow-v1.0.md` § 1.3。
+
+**前置（已废弃）：** Phase 6 完成
 
 ---
 
-### T057 [US13] PreferenceSignal 提取与 Repository
+### T057 [US13] PreferenceSignal 提取与 Repository — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T049。新增 evidenceLevel context in signal generation。
 
@@ -1086,37 +1146,37 @@ DISCOVER → SOURCE_POLICY → INITIAL_INGEST → optional CONTENT_ACQUISITION �
 
 ---
 
-### T058 [US13] PreferenceRule 数据模型与 Repository
+### T058 [US13] PreferenceRule 数据模型与 Repository — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T050。无实质变化。
 
 ---
 
-### T059 [US13] PreferenceRule 提案与激活逻辑
+### T059 [US13] PreferenceRule 提案与激活逻辑 — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T051。无实质变化。
 
 ---
 
-### T060 [US13] [US14] PreferenceRule 对推荐与搜索的影响
+### T060 [US13] [US14] PreferenceRule 对推荐与搜索的影响 — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T052。无实质变化。
 
 ---
 
-### T061 [US14] [US15] Repeated Mistake Protection 与 Exploration 位
+### T061 [US14] [US15] Repeated Mistake Protection 与 Exploration 位 — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T053。无实质变化。
 
 ---
 
-### T062 [US13] PreferenceRule API 与用户确认
+### T062 [US13] PreferenceRule API 与用户确认 — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T054。无实质变化。
 
 ---
 
-### T063 [US13] [US14] [US15] 偏好记忆前端页面
+### T063 [US13] [US14] [US15] 偏好记忆前端页面 — DEFERRED_TO_V1_0
 
 **目标：** 同旧 Plan T055。无实质变化。
 
