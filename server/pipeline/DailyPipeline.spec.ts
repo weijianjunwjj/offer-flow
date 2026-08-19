@@ -1305,7 +1305,7 @@ describe('DailyPipeline', () => {
     expect(deps.createTask).not.toHaveBeenCalled();
   });
 
-  it('candidate not found → analysisBlocked', async () => {
+  it('candidate not found → analysisBlocked with counter increments', async () => {
     const deps = makeDeps({
       search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/a')])),
       ingestDiscovery: vi.fn(async () => ({
@@ -1319,6 +1319,29 @@ describe('DailyPipeline', () => {
 
     expect(result.items[0].finalOutcome).toBe('analysisBlocked');
     expect(result.items[0].reasonCode).toBe('CANDIDATE_NOT_FOUND');
+    expect(result.stageCounts.analysisRequested).toBe(1);
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['CANDIDATE_NOT_FOUND']).toBe(1);
+    expect(deps.fetch).not.toHaveBeenCalled();
+  });
+
+  it('version not found → analysisBlocked with counter increments', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/a')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/a', { candidateVersionId: 'v-missing', candidateId: 'cand-1' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => makeCandidate('cand-1', 'v-missing')),
+      getVersion: vi.fn(() => null), // version 不存在
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[0].reasonCode).toBe('CANDIDATE_VERSION_NOT_FOUND');
+    expect(result.stageCounts.analysisRequested).toBe(1);
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['CANDIDATE_VERSION_NOT_FOUND']).toBe(1);
     expect(deps.fetch).not.toHaveBeenCalled();
   });
 
@@ -1735,5 +1758,132 @@ describe('DailyPipeline', () => {
         result.stageCounts.analysisCancelled +
         result.stageCounts.analysisAborted,
     );
+  });
+
+  it('early-stage blocked (CANDIDATE_NOT_FOUND) + contract-error blocked → consistent counting', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/not-found'),
+        makeSearchItem('https://jobs.zhiye.com/contract-error'),
+        makeSearchItem('https://jobs.zhiye.com/success'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/not-found', { candidateVersionId: 'v1', candidateId: 'cand-missing' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/contract-error', { candidateVersionId: 'v2', candidateId: 'cand-2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/success', { candidateVersionId: 'v3', candidateId: 'cand-3' }),
+        ],
+        summary: ingestionSummary(3, 3),
+      })),
+      getCandidate: vi.fn((id) => {
+        if (id === 'cand-missing') return null;
+        return makeCandidate(id, id.replace('cand-', 'v'));
+      }),
+      getVersion: vi.fn((id) => makeVersion(id, 'FULL_EVIDENCE')),
+      createTask: vi.fn((versionId) => {
+        if (versionId === 'v2') throw new AnalysisContractError('LLM_INPUT_SENSITIVE_CONTENT', 'Sensitive');
+        return createTaskResult(makeTask('t3', 'succeeded'), false);
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.items[0].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[0].reasonCode).toBe('CANDIDATE_NOT_FOUND');
+    expect(result.items[1].finalOutcome).toBe('analysisBlocked');
+    expect(result.items[1].reasonCode).toBe('LLM_INPUT_SENSITIVE_CONTENT');
+    expect(result.items[2].finalOutcome).toBe('analysisCompleted');
+
+    expect(result.stageCounts.analysisRequested).toBe(3);
+    expect(result.stageCounts.analysisBlocked).toBe(2);
+    expect(result.stageCounts.analysisSucceeded).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['CANDIDATE_NOT_FOUND']).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['LLM_INPUT_SENSITIVE_CONTENT']).toBe(1);
+
+    // 验证计数一致性：analysisRequested = analysisBlocked + analysisSucceeded
+    expect(result.stageCounts.analysisRequested).toBe(
+      result.stageCounts.analysisBlocked + result.stageCounts.analysisSucceeded,
+    );
+  });
+
+  it('realistic scenario: 12 requested, 6 succeeded, 7 blocked with mixed reasons', async () => {
+    // 模拟真实场景：analysisRequested=12, analysisSucceeded=6, analysisBlocked=7 的可能组合
+    // 其中包含多种 blocked 原因：CANDIDATE_NOT_FOUND, CANDIDATE_VERSION_NOT_FOUND, CONTRACT errors
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/s1'),
+        makeSearchItem('https://jobs.zhiye.com/s2'),
+        makeSearchItem('https://jobs.zhiye.com/s3'),
+        makeSearchItem('https://jobs.zhiye.com/s4'),
+        makeSearchItem('https://jobs.zhiye.com/s5'),
+        makeSearchItem('https://jobs.zhiye.com/s6'),
+        makeSearchItem('https://jobs.zhiye.com/s7'),
+        makeSearchItem('https://jobs.zhiye.com/s8'),
+        makeSearchItem('https://jobs.zhiye.com/s9'),
+        makeSearchItem('https://jobs.zhiye.com/s10'),
+        makeSearchItem('https://jobs.zhiye.com/s11'),
+        makeSearchItem('https://jobs.zhiye.com/s12'),
+        makeSearchItem('https://jobs.zhiye.com/s13'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/s1', { candidateVersionId: 'v1', candidateId: 'c1' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s2', { candidateVersionId: 'v2', candidateId: 'c2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s3', { candidateVersionId: 'v3', candidateId: 'c3' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s4', { candidateVersionId: 'v4', candidateId: 'c4' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s5', { candidateVersionId: 'v5', candidateId: 'c5' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s6', { candidateVersionId: 'v6', candidateId: 'c6' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/s7', { candidateVersionId: 'v-missing-1', candidateId: 'c7' }), // version not found
+          makeBridgeOutcome('https://jobs.zhiye.com/s8', { candidateVersionId: 'v8', candidateId: 'c-missing-1' }), // candidate not found
+          makeBridgeOutcome('https://jobs.zhiye.com/s9', { candidateVersionId: 'v9', candidateId: 'c9' }), // contract error
+          makeBridgeOutcome('https://jobs.zhiye.com/s10', { candidateVersionId: 'v10', candidateId: 'c10' }), // contract error
+          makeBridgeOutcome('https://jobs.zhiye.com/s11', { candidateVersionId: 'v-missing-2', candidateId: 'c11' }), // version not found
+          makeBridgeOutcome('https://jobs.zhiye.com/s12', { candidateVersionId: 'v12', candidateId: 'c-missing-2' }), // candidate not found
+          makeBridgeOutcome('https://jobs.zhiye.com/s13', { candidateVersionId: 'v13', candidateId: 'c13' }), // input error
+        ],
+        summary: ingestionSummary(13, 13),
+      })),
+      getCandidate: vi.fn((id) => {
+        if (id === 'c-missing-1' || id === 'c-missing-2') return null;
+        // s7 和 s11 的 activeVersionId 应该匹配它们的 sourceVersionId，才能触发 version not found
+        if (id === 'c7') return makeCandidate('c7', 'v-missing-1');
+        if (id === 'c11') return makeCandidate('c11', 'v-missing-2');
+        return makeCandidate(id, id.replace('c', 'v'));
+      }),
+      getVersion: vi.fn((id) => {
+        if (id === 'v-missing-1' || id === 'v-missing-2') return null;
+        return makeVersion(id, 'FULL_EVIDENCE');
+      }),
+      createTask: vi.fn((versionId) => {
+        if (versionId === 'v9') throw new AnalysisContractError('LLM_INPUT_SENSITIVE_CONTENT', 'Sensitive');
+        if (versionId === 'v10') throw new AnalysisContractError('SNAPSHOT_INVALID', 'Invalid');
+        if (versionId === 'v13') throw new AnalysisInputError('INPUT_NOT_READY', 'Not ready');
+        return createTaskResult(makeTask(versionId.replace('v', 't'), 'succeeded'), false);
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    // 验证总数
+    expect(result.items).toHaveLength(13);
+
+    // 验证计数
+    expect(result.stageCounts.analysisRequested).toBe(13); // 所有 13 个都尝试分析
+    expect(result.stageCounts.analysisSucceeded).toBe(6); // s1-s6 成功
+    expect(result.stageCounts.analysisBlocked).toBe(7); // s7-s13 被阻塞
+
+    // 验证 blocked 原因分布
+    expect(result.stageCounts.analysisBlockedBy['CANDIDATE_VERSION_NOT_FOUND']).toBe(2); // s7, s11
+    expect(result.stageCounts.analysisBlockedBy['CANDIDATE_NOT_FOUND']).toBe(2); // s8, s12
+    expect(result.stageCounts.analysisBlockedBy['LLM_INPUT_SENSITIVE_CONTENT']).toBe(1); // s9
+    expect(result.stageCounts.analysisBlockedBy['SNAPSHOT_INVALID']).toBe(1); // s10
+    expect(result.stageCounts.analysisBlockedBy['INPUT_NOT_READY']).toBe(1); // s13
+
+    // 验证核心不变量：analysisRequested = analysisBlocked + analysisSucceeded
+    expect(result.stageCounts.analysisRequested).toBe(
+      result.stageCounts.analysisBlocked + result.stageCounts.analysisSucceeded,
+    );
+
+    // 验证 summary 与 stageCounts 一致
+    expect(result.summary.analysisCompleted).toBe(6);
+    expect(result.summary.analysisBlocked).toBe(7);
   });
 });

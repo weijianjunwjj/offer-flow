@@ -352,6 +352,9 @@ export class DailyPipeline {
     if (candidateId !== null) {
       const candidate = this.deps.getCandidate(candidateId);
       if (candidate === null) {
+        stage.analysisRequested += 1;
+        stage.analysisBlocked += 1;
+        stage.analysisBlockedBy['CANDIDATE_NOT_FOUND'] = (stage.analysisBlockedBy['CANDIDATE_NOT_FOUND'] ?? 0) + 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'analysisBlocked', 'CANDIDATE_NOT_FOUND', milestones);
       }
       if (candidate.activeVersionId !== sourceVersionId) {
@@ -363,6 +366,9 @@ export class DailyPipeline {
     // 精确读取返回版本的真实 evidence state，不猜 active、不 find latest。
     const version = this.deps.getVersion(sourceVersionId);
     if (version === null) {
+      stage.analysisRequested += 1;
+      stage.analysisBlocked += 1;
+      stage.analysisBlockedBy['CANDIDATE_VERSION_NOT_FOUND'] = (stage.analysisBlockedBy['CANDIDATE_VERSION_NOT_FOUND'] ?? 0) + 1;
       return terminal(index, itemUrl, candidateId, sourceVersionId, null, 'analysisBlocked', 'CANDIDATE_VERSION_NOT_FOUND', milestones);
     }
 
