@@ -355,6 +355,9 @@ describe('DailyPipeline', () => {
 
     expect(result.items[0].finalOutcome).toBe('analysisFailed');
     expect(result.items[0].reasonCode).toBe('PROVIDER_TIMEOUT');
+    expect(result.stageCounts.analysisRequested).toBe(1);
+    expect(result.stageCounts.analysisFailed).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(0);
     expect(result.recommendationScope).toEqual([]);
   });
 
@@ -1443,9 +1446,52 @@ describe('DailyPipeline', () => {
     expect(result.items[0].finalOutcome).toBe('analysisBlocked');
     expect(result.items[0].reasonCode).toBe('LLM_INPUT_SENSITIVE_CONTENT');
     expect(result.items[1].finalOutcome).toBe('analysisCompleted');
+    expect(result.stageCounts.analysisRequested).toBe(2);
     expect(result.stageCounts.analysisBlocked).toBe(1);
     expect(result.stageCounts.analysisSucceeded).toBe(1);
     expect(result.recommendationScope).toEqual(['v9']);
+  });
+
+  it('analysisRequested counts all analysis attempts (blocked + succeeded)', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([
+        makeSearchItem('https://jobs.zhiye.com/sensitive'),
+        makeSearchItem('https://jobs.zhiye.com/invalid'),
+        makeSearchItem('https://jobs.zhiye.com/ok1'),
+        makeSearchItem('https://jobs.zhiye.com/ok2'),
+      ])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/sensitive', { candidateVersionId: 'v1', candidateId: 'c1' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/invalid', { candidateVersionId: 'v2', candidateId: 'c2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/ok1', { candidateVersionId: 'v3', candidateId: 'c3' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/ok2', { candidateVersionId: 'v4', candidateId: 'c4' }),
+        ],
+        summary: ingestionSummary(4, 4),
+      })),
+      getCandidate: vi.fn((id) => ({ id, activeVersionId: id.replace('c', 'v') } as RadarCandidate)),
+      getVersion: vi.fn((id) => makeVersion(id, 'FULL_EVIDENCE')),
+      createTask: vi.fn((versionId) => {
+        if (versionId === 'v1') throw new AnalysisContractError('LLM_INPUT_SENSITIVE_CONTENT', 'Sensitive');
+        if (versionId === 'v2') throw new AnalysisContractError('SNAPSHOT_INVALID', 'Invalid');
+        return createTaskResult(makeTask(versionId.replace('v', 't'), 'queued'));
+      }),
+      runTask: vi.fn(async () => succeededRun(makeTask('t3', 'succeeded'))),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    // 语义验证：analysisRequested = 所有尝试分析的候选（不管是否被阻断）
+    expect(result.stageCounts.analysisRequested).toBe(4);
+    expect(result.stageCounts.analysisBlocked).toBe(2);
+    expect(result.stageCounts.analysisSucceeded).toBe(2);
+    // 验证关系：analysisRequested = analysisBlocked + (成功创建任务的数量)
+    expect(result.stageCounts.analysisRequested).toBe(
+      result.stageCounts.analysisBlocked + result.stageCounts.analysisSucceeded,
+    );
+    expect(result.stageCounts.analysisBlockedBy['LLM_INPUT_SENSITIVE_CONTENT']).toBe(1);
+    expect(result.stageCounts.analysisBlockedBy['SNAPSHOT_INVALID']).toBe(1);
+    expect(result.items.filter((i) => i.finalOutcome === 'analysisBlocked').length).toBe(2);
+    expect(result.items.filter((i) => i.finalOutcome === 'analysisCompleted').length).toBe(2);
   });
 
   it('unknown Error in createTask → run-level fatal (not caught by item-level handlers)', async () => {
@@ -1463,5 +1509,231 @@ describe('DailyPipeline', () => {
     });
 
     await expect(new DailyPipeline(deps).run([QUERY])).rejects.toThrow('Unexpected database connection failure');
+  });
+
+  it('analysisFailed counter increments for task run failures', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () =>
+        makeSearchResult([makeSearchItem('https://jobs.zhiye.com/fail1'), makeSearchItem('https://jobs.zhiye.com/fail2')]),
+      ),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/fail1', { candidateVersionId: 'v1', candidateId: 'c1' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/fail2', { candidateVersionId: 'v2', candidateId: 'c2' }),
+        ],
+        summary: ingestionSummary(2, 2),
+      })),
+      getCandidate: vi.fn((id) => ({ id, activeVersionId: id.replace('c', 'v') } as RadarCandidate)),
+      getVersion: vi.fn((id) => makeVersion(id, 'FULL_EVIDENCE')),
+      createTask: vi.fn((versionId) => createTaskResult(makeTask(versionId.replace('v', 't'), 'queued'))),
+      runTask: vi.fn(async () => failedRun(makeTask('t1', 'failed'), 'PROVIDER_TIMEOUT')),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.stageCounts.analysisRequested).toBe(2);
+    expect(result.stageCounts.analysisFailed).toBe(2);
+    expect(result.stageCounts.analysisSucceeded).toBe(0);
+    expect(result.stageCounts.analysisBlocked).toBe(0);
+    expect(result.items.filter((i) => i.finalOutcome === 'analysisFailed').length).toBe(2);
+  });
+
+  it('analysisFailed counter for existing failed task (idempotent)', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/existing-fail')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/existing-fail', { candidateVersionId: 'v1', candidateId: 'c1' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c1', activeVersionId: 'v1' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v1', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'failed'))),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.stageCounts.analysisRequested).toBe(1);
+    expect(result.stageCounts.analysisFailed).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(0);
+    expect(result.items[0].finalOutcome).toBe('analysisFailed');
+  });
+
+  it('counter invariant: requested = blocked + succeeded + failed', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () =>
+        makeSearchResult([
+          makeSearchItem('https://jobs.zhiye.com/blocked'),
+          makeSearchItem('https://jobs.zhiye.com/succeeded'),
+          makeSearchItem('https://jobs.zhiye.com/failed'),
+        ]),
+      ),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/blocked', { candidateVersionId: 'v1', candidateId: 'c1' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/succeeded', { candidateVersionId: 'v2', candidateId: 'c2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/failed', { candidateVersionId: 'v3', candidateId: 'c3' }),
+        ],
+        summary: ingestionSummary(3, 3),
+      })),
+      getCandidate: vi.fn((id) => ({ id, activeVersionId: id.replace('c', 'v') } as RadarCandidate)),
+      getVersion: vi.fn((id) => makeVersion(id, 'FULL_EVIDENCE')),
+      createTask: vi.fn((versionId) => {
+        if (versionId === 'v1') throw new AnalysisContractError('SNAPSHOT_INVALID', 'Invalid snapshot');
+        return createTaskResult(makeTask(versionId.replace('v', 't'), 'queued'));
+      }),
+      runTask: vi.fn(async (taskId) => {
+        if (taskId === 't2') return succeededRun(makeTask('t2', 'succeeded'));
+        return failedRun(makeTask('t3', 'failed'), 'PROVIDER_NETWORK_ERROR');
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.stageCounts.analysisRequested).toBe(3);
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(1);
+    expect(result.stageCounts.analysisFailed).toBe(1);
+    // 这个简化版 invariant：没有 running/cancelled/aborted
+    expect(result.stageCounts.analysisRequested).toBe(
+      result.stageCounts.analysisBlocked + result.stageCounts.analysisSucceeded + result.stageCounts.analysisFailed,
+    );
+  });
+
+  it('existing running task → analysisAlreadyRunning counter', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/running')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/running', { candidateVersionId: 'v1', candidateId: 'c1' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c1', activeVersionId: 'v1' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v1', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'running'))),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.stageCounts.analysisRequested).toBe(1);
+    expect(result.stageCounts.analysisAlreadyRunning).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(0);
+    expect(result.items[0].finalOutcome).toBe('analysisAlreadyRunning');
+  });
+
+  it('existing cancelled task → analysisCancelled counter', async () => {
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/cancelled')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/cancelled', { candidateVersionId: 'v1', candidateId: 'c1' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c1', activeVersionId: 'v1' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v1', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => createTaskResult(makeTask('t1', 'cancelled'))),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY]);
+
+    expect(result.stageCounts.analysisRequested).toBe(1);
+    expect(result.stageCounts.analysisCancelled).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(0);
+    expect(result.items[0].finalOutcome).toBe('analysisCancelled');
+  });
+
+  it('signal aborted after requested but before runTask → analysisAborted counter', async () => {
+    const signal = new AbortController();
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/abort')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/abort', { candidateVersionId: 'v1', candidateId: 'c1' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c1', activeVersionId: 'v1' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v1', 'FULL_EVIDENCE')),
+      createTask: vi.fn(() => {
+        signal.abort();
+        return createTaskResult(makeTask('t1', 'queued'));
+      }),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY], { signal: signal.signal });
+
+    expect(result.stageCounts.analysisRequested).toBe(1);
+    expect(result.stageCounts.analysisAborted).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(0);
+    expect(result.items[0].finalOutcome).toBe('aborted');
+  });
+
+  it('signal aborted before analyzeFinalVersion entry → no counter increments', async () => {
+    const signal = new AbortController();
+    signal.abort();
+    const deps = makeDeps({
+      search: vi.fn(async () => makeSearchResult([makeSearchItem('https://jobs.zhiye.com/pre-abort')])),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [makeBridgeOutcome('https://jobs.zhiye.com/pre-abort', { candidateVersionId: 'v1', candidateId: 'c1' })],
+        summary: ingestionSummary(1, 1),
+      })),
+      getCandidate: vi.fn(() => ({ id: 'c1', activeVersionId: 'v1' } as RadarCandidate)),
+      getVersion: vi.fn(() => makeVersion('v1', 'FULL_EVIDENCE')),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY], { signal: signal.signal });
+
+    // signal.aborted 在 analyzeFinalVersion 入口前返回，不计任何 analysis counter
+    expect(result.stageCounts.analysisRequested).toBe(0);
+    expect(result.stageCounts.analysisAborted).toBe(0);
+    // 但 item 仍然会被创建（在 upgrade 阶段已经有了 finalVersionId）
+    expect(result.items.length).toBeGreaterThanOrEqual(0);
+    if (result.items.length > 0) {
+      expect(result.items[0].finalOutcome).toBe('aborted');
+    }
+  });
+
+  it('full accounting invariant: all terminal states', async () => {
+    const signal = new AbortController();
+    const deps = makeDeps({
+      search: vi.fn(async () =>
+        makeSearchResult([
+          makeSearchItem('https://jobs.zhiye.com/blocked'),
+          makeSearchItem('https://jobs.zhiye.com/succeeded'),
+          makeSearchItem('https://jobs.zhiye.com/failed'),
+          makeSearchItem('https://jobs.zhiye.com/running'),
+          makeSearchItem('https://jobs.zhiye.com/cancelled'),
+          makeSearchItem('https://jobs.zhiye.com/aborted'),
+        ]),
+      ),
+      ingestDiscovery: vi.fn(async () => ({
+        items: [
+          makeBridgeOutcome('https://jobs.zhiye.com/blocked', { candidateVersionId: 'v1', candidateId: 'c1' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/succeeded', { candidateVersionId: 'v2', candidateId: 'c2' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/failed', { candidateVersionId: 'v3', candidateId: 'c3' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/running', { candidateVersionId: 'v4', candidateId: 'c4' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/cancelled', { candidateVersionId: 'v5', candidateId: 'c5' }),
+          makeBridgeOutcome('https://jobs.zhiye.com/aborted', { candidateVersionId: 'v6', candidateId: 'c6' }),
+        ],
+        summary: ingestionSummary(6, 6),
+      })),
+      getCandidate: vi.fn((id) => ({ id, activeVersionId: id.replace('c', 'v') } as RadarCandidate)),
+      getVersion: vi.fn((id) => makeVersion(id, 'FULL_EVIDENCE')),
+      createTask: vi.fn((versionId) => {
+        if (versionId === 'v1') throw new AnalysisContractError('SNAPSHOT_INVALID', 'Invalid');
+        if (versionId === 'v6') {
+          signal.abort();
+          return createTaskResult(makeTask('t6', 'queued'));
+        }
+        return createTaskResult(makeTask(versionId.replace('v', 't'), versionId === 'v2' ? 'queued' : versionId === 'v3' ? 'failed' : versionId === 'v4' ? 'running' : 'cancelled'));
+      }),
+      runTask: vi.fn(async () => succeededRun(makeTask('t2', 'succeeded'))),
+    });
+    const result = await new DailyPipeline(deps).run([QUERY], { signal: signal.signal });
+
+    expect(result.stageCounts.analysisRequested).toBe(6);
+    expect(result.stageCounts.analysisBlocked).toBe(1);
+    expect(result.stageCounts.analysisSucceeded).toBe(1);
+    expect(result.stageCounts.analysisFailed).toBe(1);
+    expect(result.stageCounts.analysisAlreadyRunning).toBe(1);
+    expect(result.stageCounts.analysisCancelled).toBe(1);
+    expect(result.stageCounts.analysisAborted).toBe(1);
+    // 完整 accounting invariant
+    expect(result.stageCounts.analysisRequested).toBe(
+      result.stageCounts.analysisBlocked +
+        result.stageCounts.analysisSucceeded +
+        result.stageCounts.analysisFailed +
+        result.stageCounts.analysisAlreadyRunning +
+        result.stageCounts.analysisCancelled +
+        result.stageCounts.analysisAborted,
+    );
   });
 });

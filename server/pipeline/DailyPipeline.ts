@@ -72,6 +72,10 @@ export function emptyPipelineStageCounts(): PipelineStageCounts {
     analysisRequested: 0,
     analysisSucceeded: 0,
     analysisBlocked: 0,
+    analysisFailed: 0,
+    analysisAlreadyRunning: 0,
+    analysisCancelled: 0,
+    analysisAborted: 0,
     analysisBlockedBy: {},
     recommendationEligible: 0,
     selected: 0,
@@ -491,12 +495,14 @@ export class DailyPipeline {
       return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'aborted', 'ABORTED', milestones);
     }
 
+    // analysisRequested 统计所有尝试分析的候选（不管是否被阻断）
+    stage.analysisRequested += 1;
+
     let task: AnalysisTask;
     try {
       const result = this.deps.createTask(finalVersionId);
       task = result.task;
       milestones.analysisTaskCreated = true;
-      stage.analysisRequested += 1;
     } catch (error) {
       if (error instanceof AnalysisInputError) {
         stage.analysisBlocked += 1;
@@ -515,6 +521,7 @@ export class DailyPipeline {
     switch (task.status) {
       case 'queued': {
         if (signal.aborted) {
+          stage.analysisAborted += 1;
           return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'aborted', 'ABORTED', milestones);
         }
         const runOutcome = await this.deps.runTask(task.id);
@@ -525,6 +532,7 @@ export class DailyPipeline {
           return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisCompleted', null, milestones);
         }
         const reason = runOutcome.kind === 'failed' ? runOutcome.errorCode : runOutcome.kind;
+        stage.analysisFailed += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisFailed', reason, milestones);
       }
       case 'succeeded': {
@@ -536,14 +544,17 @@ export class DailyPipeline {
       }
       case 'failed': {
         // 不 retry。
+        stage.analysisFailed += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisFailed', task.errorCode ?? 'failed', milestones);
       }
       case 'running': {
         // 不重复执行、不轮询。
+        stage.analysisAlreadyRunning += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisAlreadyRunning', null, milestones);
       }
       case 'cancelled': {
         // 不 resurrect。
+        stage.analysisCancelled += 1;
         return terminal(index, itemUrl, candidateId, sourceVersionId, finalVersionId, 'analysisCancelled', null, milestones);
       }
     }

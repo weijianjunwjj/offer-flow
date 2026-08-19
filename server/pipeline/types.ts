@@ -171,6 +171,10 @@ export interface PipelineStageCounts {
   analysisRequested: number;
   analysisSucceeded: number;
   analysisBlocked: number;
+  analysisFailed: number;
+  analysisAlreadyRunning: number;
+  analysisCancelled: number;
+  analysisAborted: number;
   /** BLOCKED reasonCode 分布（如 { SNAPSHOT_INVALID: 1, LLM_INPUT_SENSITIVE_CONTENT: 2 }），无 migration 的 reason 聚合。 */
   analysisBlockedBy: Record<string, number>;
   recommendationEligible: number;
