@@ -20,6 +20,7 @@ v0.9 权威文档：
 - [docs/prd/offerflow-v1.0.md](docs/prd/offerflow-v1.0.md)（Deferred Scope Backlog）
 - [specs/001-daily-job-hunter/spec.md](specs/001-daily-job-hunter/spec.md)
 - [specs/001-daily-job-hunter/plan.md](specs/001-daily-job-hunter/plan.md)（v3.0）
+- [specs/001-daily-job-hunter/tasks.md](specs/001-daily-job-hunter/tasks.md)
 
 以下「核心能力」章节描述的是 v0.7～v0.8 已开放的正式能力；v0.9 新增的 Daily Job Hunter 能力见上方「当前版本」说明。
 
@@ -56,14 +57,14 @@ DailyJobBrief（每日汇总）
 **v0.9 核心价值：**
 
 - **主动发现**：系统每天自动在公开 Web 搜索真实岗位，无需用户手动查找
-- **来源权限分级**：SEARCH_ONLY（招聘平台）/ SEARCH_AND_FETCH（公司官网）/ CONDITIONAL_FETCH（技术社区）
+- **来源权限分级**：SEARCH_ONLY（招聘平台）/ SEARCH_AND_FETCH（公司官网及受控公开来源）/ CONDITIONAL_FETCH（技术社区等）
 - **证据等级分层**：SEARCH_EVIDENCE（只有搜索结果）/ FULL_EVIDENCE（完整岗位事实）/ MANUAL_REVIEW_REQUIRED（值得看但禁止自动 Fetch）
 - **有限推荐**：每日 0～8 条精选推荐，不凑数
-- **完整覆盖追踪**：planned / completed / failed / waiting，来源失败不伪装成"0 个新岗位"
+- **完整覆盖追踪**：planned / completed / failed / waiting，来源失败不伪装成“0 个新岗位”
 
 **v0.9 Known Limitations：**
 
-v0.9 专注于"发现→推荐→展示"核心闭环，以下能力已迁移至 v1.0：
+v0.9 专注于“发现→推荐→展示”核心闭环，以下能力已迁移至 v1.0：
 
 - 邮件通知（QQ SMTP / HIGH_PRIORITY_ALERT / DAILY_BRIEF）
 - 四档审批（VERY_SUITABLE / SOMEWHAT_SUITABLE / NOT_VERY_SUITABLE / VERY_UNSUITABLE）
@@ -156,7 +157,8 @@ OfferFlow 采用分层自主权：
 
 当前版本明确不做：
 
-- 不爬取招聘平台
+- 不自动登录、自动翻页或批量抓取招聘平台
+- 不绕过验证码、登录校验或平台风控
 - 不自动打招呼或投递
 - 不让 AI 绕过人工确认
 - 不把模型建议直接变成现实动作
@@ -182,6 +184,7 @@ OfferFlow 采用分层自主权：
 - SQLite / better-sqlite3
 - Zod
 - DeepSeek Chat Completions 兼容接口
+- Tavily Search API
 - SSE 流式响应
 
 ### 工程治理
@@ -225,21 +228,16 @@ npm run db:doctor
 npm run db:backup
 ```
 
-Windows PowerShell 可能拦截 `npm.ps1`，可改用 `npm.cmd`：
-
-```bash
-npm.cmd run test
-npm.cmd run selftest
-```
+本项目主开发环境为 Windows 原生 Git Bash，命令默认按 Git Bash 执行。
 
 ### 本地地址
 
 - 本地前端：http://localhost:5173
 - 本地 API：http://127.0.0.1:17365
 
-## 岗位雷达功能开关（随 v0.8.0 发布，默认关闭）
+## 岗位雷达功能开关（v0.8.0 历史能力，默认关闭）
 
-岗位雷达、单岗位分析、推荐批次、雷达动作与正式晋升等 v0.8 能力**随 v0.8.0 一起发布，但默认关闭**，需要显式开关启用。前端为构建期开关，后端为运行期环境变量，两侧需成对开启，否则会出现「前端有入口、后端 404」。
+岗位雷达、单岗位分析、推荐批次、雷达动作与正式晋升等 v0.8 能力随 v0.8.0 一起发布但默认关闭，需要显式开关启用。v0.9 在此基础上复用 Radar / Analysis / Recommendation，并新增 Daily Job Hunter 主链。
 
 | 能力 | 前端（构建期） | 后端（运行期） | 默认 |
 |---|---|---|---|
@@ -248,7 +246,7 @@ npm.cmd run selftest
 | 推荐批次面板 | `VITE_OFFERFLOW_RADAR_RECOMMENDATIONS` | —（随雷达网关自动接线） | 关闭 |
 | NovaWing 分析上下文预接入 | —（无 UI） | `OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT` | 关闭 |
 
-- 后端启用 `OFFERFLOW_RADAR=true` 时，真实库 schema 必须 ≥ v8，否则服务**拒绝启动**并提示先经授权升级。
+- 后端启用 `OFFERFLOW_RADAR=true` 时，真实库 schema 必须满足当前服务门禁，否则服务拒绝启动并提示先经授权升级。
 - `OFFERFLOW_RADAR_ANALYSIS` 依赖 `OFFERFLOW_RADAR`；单独开启分析而未开雷达时，分析路由不注册。
 - NovaWing 上下文开关只控制分析快照与 stale 语义；OfferFlow 不动态加载真实 adapter，未注入时创建任务返回稳定错误。
 - 推荐 / 动作 / 晋升 / 追踪不新增开关，沿用雷达路由内既有 schema / analysis 门禁自动接线。
@@ -270,7 +268,7 @@ OfferFlow 采用本地数据优先：
 
 - `data/offerflow.sqlite3`：本地真实运行库，不进入 Git
 - `backups/`：本地一致性数据库备份目录，不进入 Git
-- 当前生产 schema：**v8**（migration 1..8）
+- 当前生产 schema：**v9**（migration 1..9）
 - 从任何旧版本升级前**必须**先创建一致性备份（`npm run db:backup`），并在真实库副本上演练迁移
 
 v0.7.0 正式恢复机制采用 Snapshot 方案 B：
@@ -281,18 +279,26 @@ v0.7.0 正式恢复机制采用 Snapshot 方案 B：
 - `PRAGMA foreign_key_check`
 - 实际恢复演练
 
-旧 JSON Snapshot 契约只支持 schema 2。schema v6 下旧 Snapshot 发布会被明确拒绝，它不再是当前版本的生产恢复机制。
+旧 JSON Snapshot 契约只支持 schema 2，已不再是当前版本的生产恢复机制。
 
 ## 工程质量
 
-### v0.8.0（当前发布状态）
+### v0.9.0（当前 RC 状态）
+
+- v0.9 Final Scope 已冻结为 Release Candidate
+- 核心 Discovery + Analysis + Recommendation 链路已完成并通过真实生产运行验证
+- 真实运行库已升级至 schema v9（migration 1..9）
+- DailySearchPlan / Scheduler / Tavily / Source Policy / Evidence Upgrade / Analysis / Recommendation / DailyJobBrief 主链已形成
+- Notification / JobJudgment / Preference Learning 已迁移至 v1.0，不作为 v0.9 未完成项
+
+### v0.8.0（历史发布状态）
 
 - `vue-tsc --noEmit` 类型检查通过
 - `npm run test`（全量 vitest）1506/1506 通过
 - 生产构建通过
 - `npm run db:doctor` integrity ok、0 外键违规、schema=v8
 - 生产库已受控升级至 schema v8（migration 1..8）
-- 30 条真实岗位评测、核心页面真实截图与产品文案人工验收**未完成**，经负责人明确豁免后发布并转入 v0.9（详见 [Release Notes §0](docs/release/v0.8.0.md)）
+- 30 条真实岗位评测、核心页面真实截图与产品文案人工验收未完成，经负责人明确豁免后发布并转入 v0.9（详见 [Release Notes §0](docs/release/v0.8.0.md)）
 
 ### v0.7.0（历史质量成果）
 
@@ -310,6 +316,16 @@ v0.7.0 发布前完成：
 
 ## 版本记录
 
+### v0.9.0
+
+- 主题：Daily Job Hunter Core
+- 新增 DailySearchPlan、Scheduler、Tavily Search API 与 SourceRun 主动发现链路
+- 新增 Source Policy、Evidence Model、Content Acquisition 与 Evidence Upgrade
+- 复用 v0.8 Analysis / Recommendation / RadarAction 基础能力
+- 新增 DailyJobBrief 与对应前端页面
+- 数据库升级至 schema v9（migration 1..9）
+- 最终范围冻结：Notification / JobJudgment / Preference Learning 迁移至 v1.0
+
 ### v0.8.0
 
 - 主题：可解释岗位雷达与 JD 采集桥
@@ -318,7 +334,7 @@ v0.7.0 发布前完成：
 - 新增推荐批次（0～8 条重点机会）、雷达动作（收藏/忽略/重点/已投待反馈）与正式晋升
 - 数据库升级至 schema v8（migration 1..8）
 - 岗位雷达类能力（采集桥、单岗位分析、推荐批次）随本版本发布但**默认关闭**，按功能开关启用
-- 30 条真实评测、核心页面真实截图与产品文案验收等原 GA 前置项**未完成**，经负责人明确豁免、接受风险后发布，转入 v0.9（详见 [Release Notes §0](docs/release/v0.8.0.md)）
+- 30 条真实评测、核心页面真实截图与产品文案验收等原 GA 前置项未完成，经负责人明确豁免、接受风险后发布，转入 v0.9（详见 [Release Notes §0](docs/release/v0.8.0.md)）
 
 ### v0.7.0
 
@@ -346,11 +362,10 @@ v0.7.0 发布前完成：
 
 ## 后续方向
 
-v0.9 计划推进（须复用 v0.8 已有快照、来源记录、候选版本、规则、分析、推荐批次、动作与晋升关系，不建立平行体系）：
+v1.0 当前作为 Deferred Scope Backlog，承接 v0.9 最终冻结时移出的能力：
 
-- 完整来源配置（`SourceConfig`）、增量扫描与自动翻页
-- 持续推荐收件箱
-- 从正式求职反馈自动提取能力证据，推动候选人能力基线与市场位置画像演进
-- 字段级画像 Diff
+- Notification / QQ SMTP
+- JobJudgment / 四档审批
+- Preference Learning / Repeated Mistake Protection
 
-以上方向未开始实施，具体范围以 [PRD v2.1 §6.3](docs/prd/offerflow-v0.8.md) 为准，可能随实际情况调整。
+后续新增能力必须以 [v1.0 Deferred Scope Backlog](docs/prd/offerflow-v1.0.md) 和用户最新明确指令为准，不反向修改 v0.9 已冻结范围。
