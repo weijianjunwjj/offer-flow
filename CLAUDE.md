@@ -43,21 +43,19 @@ Claude 执行任何任务前，必须按顺序读取：
 3. 与任务对应的权威文档；
 4. 相关源码和测试。
 
-所有 v0.8 任务至少读取：
+所有 v0.9 任务至少读取：
+
+* `docs/prd/offerflow-v0.9.md`
+* `specs/001-daily-job-hunter/spec.md`
+* `specs/001-daily-job-hunter/plan.md`
+* `specs/001-daily-job-hunter/tasks.md`
+
+涉及 v0.8 既有 Radar / Analysis / Recommendation 基础能力时，再按需读取：
 
 * `docs/product/offerflow-v0.8-release-contract.md`
 * `docs/product/offerflow-v0.8-traceability.md`
 * `docs/prd/offerflow-v0.8.md` 中的相关章节
-
-按任务追加读取：
-
-| 任务                        | 必读文档                                                                    |
-| ------------------------- | ----------------------------------------------------------------------- |
-| 数据模型、API、Repository、任务状态机 | `docs/technical/offerflow-v0.8-technical-design.md`                     |
-| migration、备份、恢复           | Technical Design + `docs/runbooks/offerflow-v0.8-migration-recovery.md` |
-| 浏览器扩展、BOSS 当前页采集          | Technical Design + `docs/security/browser-capture-security.md`          |
-| 标准化、规则、AI、推荐与评测           | Technical Design + `docs/evaluation/offerflow-v0.8-evaluation-plan.md`  |
-| 发布验收                      | Release Contract + Evaluation Plan + Runbook + Traceability             |
+* `docs/technical/offerflow-v0.8-technical-design.md`
 
 `docs/decisions/offerflow-v0.8-gemini-review-arbitration.md` 只在需要理解或挑战既有架构裁决时读取，不是日常必读。
 
@@ -203,6 +201,7 @@ CodeGraph / Graphify 属于代码探索增强工具，不是任务执行的硬�
 → Graphify CLI（若可用）
 → 已有 graphify-out/wiki / graph.json / GRAPH_REPORT
 → CodeGraph + 直接源码读取
+```
 
 ### 2.5 修改后的索引维护
 
@@ -223,27 +222,15 @@ graphify update .
 
 ## 3. 当前状态
 
-* 当前版本 **v0.8.0 GA（正式发布，2026-07-30）**——项目负责人已完成核心主流程人工冒烟并明确批准发布；
-* v0.8 定位为“可解释岗位雷达与 JD 采集桥”；
-* v0.8 PRD 当前版本为 v2.1；
-* V8-1～V8-6 功能开发完成；生产库已受控升级至 **schema v8**（migration 1..8）；
-* Radar 与 Analysis 正式入口**随 v0.8.0 发布但默认关闭**，按开关启用（不得写成默认全面开放）；
-* 部分原 GA 前置项（RC-09、RC-12、30 条真实评测、核心页面真实截图与产品文案验收）**未完成，经负责人明确豁免、接受风险后发布并转入 v0.9**，不得标记为已完成（见 Release Notes §0）；
-* 遗留验证与体验优化转入 v0.9；发布后阻断问题走 v0.8.x 补丁，普通优化与新能力进入 v0.9；
-* 推送 main / Tag / Release / 执行生产 migration / 启用生产 Radar 仍各自需要明确授权（本次 GA 仅更新文档口径，未 push / tag / release）。
-
-历史实施顺序（V8-1 起，已完成）：
-
-```text
-V8-1 领域模型与 migration
-V8-2 当前页采集桥与导入
-V8-3 标准化、重复、变化与规则
-V8-4 任务与单岗位 AI 分析
-V8-5 推荐批次、误区诊断与 RadarAction
-V8-6 正式晋升、评测与发布验收
-```
-
-不得跳波次或静默移动 P0 范围。
+* 当前版本：**v0.9.0 RC（Release Candidate，冻结日期 2026-08-19）**；
+* v0.9 定位为 Daily Job Hunter Core，聚焦 Discovery + Analysis + Recommendation 闭环；
+* v0.9 PRD 为 v2.4 FROZEN；
+* 真实运行库已升级至 **schema v9**（migration 1..9）；
+* 已实现 DailySearchPlan、Scheduler、Tavily Search API、Source Policy、Evidence Model、Content Acquisition、Evidence Upgrade、Analysis、Recommendation、DailyJobBrief；
+* v0.9 核心链路已通过真实生产运行验证；
+* Notification / JobJudgment / Preference Learning 已明确迁移至 v1.0，不属于 v0.9 最终冻结范围；
+* v0.8.0 已于 2026-07-30 GA，其 Radar / Analysis / Recommendation 能力继续作为 v0.9 复用基础；
+* 未经用户批准不得擅自修改真实生产数据库、push、merge、Tag、Release 或扩大 v0.9 冻结范围。
 
 ---
 
@@ -268,20 +255,20 @@ Claude 不得擅自：
 * 修改数据库结构；
 * 接入新 AI Provider；
 * 做 BYOK；
-* 做自动翻页、后台扫描或自动投递；
+* 做招聘平台自动翻页、批量抓取或自动投递；
 * 绕过 Human-in-the-loop；
 * 大范围重构无关代码；
 * 创建第二套 Application 或 Feedback 流程；
 * 承诺真正的 LLM 请求断点续跑；
 * 合并 main、推送 main、Tag 或 Release。
 
-用户明确批准后，数据库结构只能按照 Technical Design 和 Migration Runbook 修改。
+用户明确批准后，数据库结构只能按照当前版本文档和 migration 约束修改。
 
 ---
 
-## 5. v0.8 必须守住的架构边界
+## 5. v0.8 基础架构边界（v0.9 继续沿用）
 
-Claude 实施 v0.8 时必须确保：
+Claude 实施涉及 Radar / Analysis / Recommendation 的能力时必须确保：
 
 * `RadarCandidate` 只保存 `active / merged / archived` 生命周期；
 * 所有标准化事实版本进入不可变 `RadarCandidateVersion`；
@@ -299,7 +286,7 @@ Claude 实施 v0.8 时必须确保：
 * 误区证据不足时输出 `insufficient_evidence`；
 * 进程重启后的遗留任务从固定输入重新执行，不冒充断点续跑。
 
-详细规则以 `AGENTS.md` 和 Technical Design 为准。
+详细规则以 `AGENTS.md` 和相关历史 Technical Design 为准。
 
 ---
 
@@ -316,14 +303,15 @@ Claude 实施 v0.8 时必须确保：
 
 禁止：
 
-* 自动搜索；
+* 自动搜索招聘平台；
 * 自动翻页；
-* 批量遍历；
-* 后台扫描；
+* 批量遍历招聘平台；
 * 读取 Cookie、密码、Token 或浏览历史；
 * 绕过验证码或风控；
 * 自动打招呼、投递或发消息；
 * 未经确认写入正式求职记忆。
+
+v0.9 的公开 Web 主动发现与上述招聘平台自动化边界并不冲突：已知招聘平台仍遵守 Source Policy，不绕过登录、验证码或平台风控。
 
 ---
 
@@ -332,7 +320,7 @@ Claude 实施 v0.8 时必须确保：
 * 当前真实 AI Provider 仍为 DeepSeek；
 * 未经批准不接 OpenAI、Claude、Gemini 等新 API；
 * 不做 BYOK；
-* v0.8 不绑定 SSE；
+* v0.8 / v0.9 产品契约不绑定 SSE；
 * 已有 SSE 可以保留，但不得为了 SSE 扭曲任务模型；
 * 旧 `OFFER_FLOW_JSON` 和 v0.8 `JobMatchAiPayload` 是不同契约，不得静默混用；
 * AI 不得返回 Candidate ID、版本 ID、规则版本或输入 Hash；
@@ -344,10 +332,10 @@ Claude 实施 v0.8 时必须确保：
 
 开始修改前：
 
-1. 确认用户是否已授权当前波次；
+1. 确认用户是否已授权当前任务；
 2. 检查当前分支和工作区；
-3. 读取 Traceability；
-4. 明确本次对应的 PRD 和 Release Contract 条目；
+3. 读取当前版本权威文档；
+4. 明确本次对应的 PRD / Spec 条目；
 5. 定位相关源码和测试；
 6. 说明是否涉及 migration、依赖、AI 契约或正式记忆。
 
@@ -357,13 +345,12 @@ Claude 实施 v0.8 时必须确保：
 * 不顺手重构无关模块；
 * 同步补充测试；
 * 保留 Human-in-the-loop；
-* 不修改未授权波次；
 * 不静默改变产品文案和用户结果。
 
 修改完成后：
 
 * 运行对应测试、类型检查、构建、评测或演练；
-* 更新 Traceability；
+* 更新对应 Spec / Traceability；
 * 不得把技术测试通过等同于版本完成；
 * 核心页面需要真实截图和产品文案验收；
 * 未运行的验证必须明确说明；
@@ -391,7 +378,7 @@ Claude 实施 v0.8 时必须确保：
 7. 是否修改 AI Prompt、Schema、Provider、SSE 或任务机制；
 8. 是否保留 Human-in-the-loop；
 9. 实际运行的命令和关键结果；
-10. 是否更新 Traceability；
+10. 是否更新 Traceability / Spec；
 11. 是否触碰 BOSS 自动化、BYOK、新 Provider 或正式记忆边界；
 12. 是否 commit、merge、push、Tag 或 Release；
 13. 是否更新 Graphify 图谱；
