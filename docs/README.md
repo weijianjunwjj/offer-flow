@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-- 当前版本：v0.8.0 GA（正式发布，2026-07-30）
-- 生产 schema：v8（migration 1..8）
-- Radar / Analysis 正式入口：随 v0.8.0 发布但默认关闭，按开关启用
-- 发布判定：GA —— 负责人批准发布；部分原前置项（RC-09、RC-12、30 条评测、截图与文案验收）未完成，经负责人明确豁免、转入 v0.9
-- 正式发布说明：[release/v0.8.0.md](release/v0.8.0.md)（含 §0 发布决策与风险接受）
+- 当前版本：v0.9.0 RC（Release Candidate，冻结日期 2026-08-19）
+- 生产 schema：v9（migration 1..9）
+- v0.9 核心闭环：DailySearchPlan → Scheduler → Tavily Search API → Source Policy → Evidence Model → Content Acquisition → Evidence Upgrade → Analysis → Recommendation → DailyJobBrief
+- v0.9 最终范围已冻结；Notification / JobJudgment / Preference Learning 已明确迁移至 v1.0
+- v0.8.0 已于 2026-07-30 GA，相关发布说明与 v0.8 文档继续作为历史版本记录保留
 - 历史版本目录（`docs/v0.1/` ～ `docs/v0.5/`、`docs/architecture/`、`docs/release/` 等）只记录当年的产品和技术状态，不代表当前产品边界
 
 ## 目录结构
@@ -30,7 +30,15 @@ docs/
 └─ v0.1/ ~ v0.5/ 历史版本文档
 ```
 
-## v0.8 权威文档
+## v0.9 当前权威文档
+
+- [prd/offerflow-v0.9.md](prd/offerflow-v0.9.md)
+- [prd/offerflow-v1.0.md](prd/offerflow-v1.0.md)（Deferred Scope Backlog）
+- [`../specs/001-daily-job-hunter/spec.md`](../specs/001-daily-job-hunter/spec.md)
+- [`../specs/001-daily-job-hunter/plan.md`](../specs/001-daily-job-hunter/plan.md)
+- [`../specs/001-daily-job-hunter/tasks.md`](../specs/001-daily-job-hunter/tasks.md)
+
+## v0.8 历史权威文档
 
 - [prd/offerflow-v0.8.md](prd/offerflow-v0.8.md)
 - [product/offerflow-v0.8-release-contract.md](product/offerflow-v0.8-release-contract.md)
@@ -50,4 +58,4 @@ docs/
 ## 旧链路文档
 
 - [llm-eval.md](llm-eval.md) 记录既有 `OFFER_FLOW_JSON` / Prompt / Parser / Eval 链路，与 v0.8 的 `JobMatchAiPayload` + Analysis Envelope 是不同契约，不得混用。
-- [demo-ai-workflow.md](demo-ai-workflow.md)、[ai-workflow-evidence.md](ai-workflow-evidence.md) 记录 v0.7 及更早版本已实现的 AI Workflow 能力，不包含尚未实施的 v0.8 岗位雷达能力。
+- [demo-ai-workflow.md](demo-ai-workflow.md)、[ai-workflow-evidence.md](ai-workflow-evidence.md) 记录 v0.7 及更早版本已实现的 AI Workflow 能力，不包含后续 v0.8 岗位雷达与 v0.9 Daily Job Hunter 新增能力。
