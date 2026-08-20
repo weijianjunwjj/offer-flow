@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from './client';
+import { ApiError, API_BASE } from './client';
 import { radarActionApi } from './radarActionApi';
 
-const API_BASE = 'http://127.0.0.1:17365';
 const CAPTURE_HEADER = 'x-offerflow-capture-client';
 
 function okJson(body: unknown) {

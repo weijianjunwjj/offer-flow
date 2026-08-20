@@ -318,12 +318,21 @@ export function buildServer(
           coordinator,
           skipRepo: new SkipRepository(db),
         });
-        // 生命周期跟随 Fastify：onReady 启动，onClose 停止；不产生顶层 timer side effect。
-        app.addHook('onReady', async () => {
+        // Orphan SourceRun 协调 + Scheduler 生命周期：成功监听端口后先协调遗留 orphan，
+        // 再启动 scheduler。避免第二个进程因 EADDRINUSE 失败却提前把第一个正常进程的 RUNNING 误标为 INTERRUPTED。
+        app.addHook('onListen', async () => {
+          const { reconcileOrphanSourceRuns } = await import('./source-run/reconcileOrphanSourceRuns.js');
+          reconcileOrphanSourceRuns(db);
           scheduler.start();
         });
         app.addHook('onClose', async () => {
           scheduler.stop();
+        });
+      } else {
+        // dailySearchPlan enabled 但 scheduler disabled：仍需协调 orphan（手动 run-now 同样可能产生 orphan）。
+        app.addHook('onListen', async () => {
+          const { reconcileOrphanSourceRuns } = await import('./source-run/reconcileOrphanSourceRuns.js');
+          reconcileOrphanSourceRuns(db);
         });
       }
     }

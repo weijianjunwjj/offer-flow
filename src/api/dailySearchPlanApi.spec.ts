@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from './client';
+import { ApiError, API_BASE } from './client';
 import { dailySearchPlanApi } from './dailySearchPlanApi';
-
-const API_BASE = 'http://127.0.0.1:17365';
 
 function okJson(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });

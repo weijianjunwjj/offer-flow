@@ -88,6 +88,9 @@ describe('buildServer dailyJobScheduler 生命周期（production-entry-level）
     try {
       expect(startSpy).not.toHaveBeenCalled();
       await app.ready();
+      await app.listen({ port: 0 }); // 触发 onListen
+      // onListen 钩子中有动态 import，等待足够时间让异步钩子完成
+      await new Promise(resolve => setTimeout(resolve, 100));
       expect(startSpy).toHaveBeenCalledTimes(1);
       await closeOnce();
       expect(stopSpy).toHaveBeenCalledTimes(1);
@@ -207,6 +210,9 @@ describe('buildServer dailyJobScheduler 生命周期（production-entry-level）
       const res = await app.inject({ method: 'GET', url: '/daily-search-plans' });
       expect(res.statusCode).toBe(404);
       await app.ready();
+      await app.listen({ port: 0 }); // 触发 onListen
+      // onListen 钩子中有动态 import，需要短暂等待异步完成
+      await new Promise(resolve => setImmediate(resolve));
       expect(startSpy).toHaveBeenCalledTimes(1);
       await closeOnce();
       expect(stopSpy).toHaveBeenCalledTimes(1);
@@ -240,6 +246,9 @@ describe('buildServer dailyJobScheduler 生命周期（production-entry-level）
       const res = await app.inject({ method: 'GET', url: '/daily-search-plans' });
       expect(res.statusCode).toBe(200);
       await app.ready();
+      await app.listen({ port: 0 }); // 触发 onListen
+      // onListen 钩子中有动态 import，需要短暂等待异步完成
+      await new Promise(resolve => setImmediate(resolve));
       expect(startSpy).toHaveBeenCalledTimes(1);
       await closeOnce();
       expect(stopSpy).toHaveBeenCalledTimes(1);

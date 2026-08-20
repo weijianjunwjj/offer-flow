@@ -151,11 +151,14 @@ function sourceRunToParams(run: SourceRun): Record<string, unknown> {
 
 /**
  * 合法状态转移表。终态不可再转移；PENDING 必须先 RUNNING 才能进入终态
- * （CANCELLED 例外，允许在未运行时直接取消）。转移目标即目标终态时的
- * finished_at 由 transitionStatus 自动写入。
+ * （CANCELLED / INTERRUPTED 例外，允许在未运行时直接取消/中断）。
+ * 转移目标即目标终态时的 finished_at 由 transitionStatus 自动写入。
+ *
+ * PENDING → INTERRUPTED 合法用途：进程重启时协调遗留 orphan（从未真正执行，
+ * 但也无需伪造 RUNNING → INTERRUPTED 的假历史）。
  */
 const VALID_STATUS_TRANSITIONS: Readonly<Record<SourceRunStatus, readonly SourceRunStatus[]>> = {
-  PENDING: ['RUNNING', 'CANCELLED'],
+  PENDING: ['RUNNING', 'CANCELLED', 'INTERRUPTED'],
   RUNNING: ['WAITING_FOR_USER', 'SUCCEEDED', 'FAILED', 'PARTIALLY_SUCCEEDED', 'CANCELLED', 'INTERRUPTED'],
   WAITING_FOR_USER: ['RUNNING', 'CANCELLED'],
   PARTIALLY_SUCCEEDED: [],
