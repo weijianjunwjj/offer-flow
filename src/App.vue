@@ -127,7 +127,7 @@ const contentStyle =
             <div class="brand-text">
               <div class="brand-line">
                 <strong class="brand">OfferFlow · Offer来了</strong>
-                <span class="brand-ver" title="v0.8.0（发版冻结，尚未 GA）">v0.8.0</span>
+                <span class="brand-ver" title="v0.9.0（已发布）">v0.9.0</span>
               </div>
               <span class="tagline">
                 Backend + SQLite · AI 只生成提案 · 人工确认，不做 Boss 自动化
@@ -377,14 +377,29 @@ body,
 }
 .brand-ver {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--of-brand);
-  background: rgba(37, 99, 235, 0.1);
-  padding: 1px 7px;
+  line-height: 1;
+  padding: 4px 6px;
   border-radius: 999px;
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.16);
 }
 .tagline {
-  font-size: 12px;
-  color: #5b6573;
+  font-size: 11px;
+  color: var(--of-ink-2);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.app-content {
+  background: transparent;
+}
+@media (max-width: 900px) {
+  .app-nav {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .brand-area {
+    margin-right: 0;
+  }
 }
 </style>
