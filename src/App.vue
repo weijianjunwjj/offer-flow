@@ -127,7 +127,7 @@ const contentStyle =
             <div class="brand-text">
               <div class="brand-line">
                 <strong class="brand">OfferFlow · Offer来了</strong>
-                <span class="brand-ver" title="v0.9.0（已发布）">v0.9.0</span>
+                <span class="brand-ver" title="v0.9.0（RC，已冻结）">v0.9.0</span>
               </div>
               <span class="tagline">
                 Backend + SQLite · AI 只生成提案 · 人工确认，不做 Boss 自动化
