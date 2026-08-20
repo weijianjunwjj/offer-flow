@@ -223,6 +223,18 @@ export function registerDailyJobBriefRoutes(
       return { briefDate, briefs: briefs.map((brief) => toBriefView(brief, resolveSearchPlan(brief))), total: briefs.length };
     });
 
+    // 「date/:date」必须在「:id」之前注册，避免被参数路由捕获。
+    scoped.get('/daily-job-briefs/date/:date', async (request) => {
+      const params = request.params as { date: string };
+      const date = params.date.trim();
+      // 验证 YYYY-MM-DD 格式
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        throw invalidId(`非法日期格式: ${date}，期望 YYYY-MM-DD`);
+      }
+      const briefs = briefRepo.findByDate(date);
+      return { briefDate: date, briefs: briefs.map((brief) => toBriefView(brief, resolveSearchPlan(brief))), total: briefs.length };
+    });
+
     scoped.get('/daily-job-briefs/:id', async (request) => {
       const id = parseId(request.params);
       const brief = briefRepo.getById(id);

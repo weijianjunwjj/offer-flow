@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import {
-  NAlert, NButton, NCard, NEmpty, NSpin, NTag, NText,
+  NAlert, NButton, NCard, NDatePicker, NEmpty, NSpin, NTag, NText,
 } from 'naive-ui';
 import { ApiError } from '../api/client';
 import {
@@ -17,7 +17,7 @@ import type { RecommendationBatchView } from '../api/radarRecommendationApi';
  *
  * 回答「今天 OfferFlow 给我找到了什么？」，而不是「浏览数据库里的 DailyJobBrief row」。
  *
- * 只调用 T041 已封板的只读端点（/today + /:id），绝不触发 Pipeline / 生成推荐 / 直连 DB。
+ * 只调用 T041 已封板的只读端点（/today + /date/:date + /:id），绝不触发 Pipeline / 生成推荐 / 直连 DB。
  * today 的 product-day 完全以后端 /today 返回的 briefDate 为真源，不用浏览器 local date 重算。
  * 推荐批次与 discovery 都是最终 Brief projection：本页不按 sourceRunIds 自行重新合并。
  */
@@ -33,6 +33,7 @@ const detail = ref<{
 const loading = ref(true);
 const errorText = ref('');
 const capabilityUnavailable = ref(false);
+const selectedDateValue = ref<number | null>(null); // timestamp for n-date-picker
 
 /** 当前选中的简报（多简报时由 selector 决定，默认取第一份）。 */
 const todayBrief = computed<DailyJobBrief | null>(() => (
@@ -42,6 +43,34 @@ const multipleBriefs = computed(() => briefs.value.length > 1);
 
 function briefPlanLabel(brief: DailyJobBrief): string {
   return brief.searchPlan?.name ?? '未命名计划';
+}
+
+/** 将 YYYY-MM-DD 转换为 timestamp（本地时区 00:00:00）。 */
+function dateStringToTimestamp(dateStr: string): number {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(year, month - 1, day).getTime();
+}
+
+/** 将 timestamp 转换为 YYYY-MM-DD（本地时区）。 */
+function timestampToDateString(timestamp: number): string {
+  const d = new Date(timestamp);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** 禁用未来日期（最多查看到今天）。 */
+function disableFutureDate(ts: number): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return ts > today.getTime();
+}
+
+/** 禁用超过一周前的日期（日期范围限制：最多往前查 7 天）。 */
+function disableOldDate(ts: number): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const sevenDaysAgo = today.getTime() - 7 * 24 * 60 * 60 * 1000;
+  return ts < sevenDaysAgo;
 }
 
 async function loadDetail(): Promise<void> {
@@ -58,15 +87,18 @@ async function loadDetail(): Promise<void> {
   };
 }
 
-async function load(): Promise<void> {
+async function load(date?: string): Promise<void> {
   loading.value = true;
   errorText.value = '';
   capabilityUnavailable.value = false;
   try {
-    const today = await dailyJobBriefApi.today();
-    briefDate.value = today.briefDate;
-    briefs.value = today.briefs;
-    selectedBriefId.value = today.briefs[0]?.id ?? null;
+    const result = date
+      ? await dailyJobBriefApi.getByDate(date)
+      : await dailyJobBriefApi.today();
+    briefDate.value = result.briefDate;
+    briefs.value = result.briefs;
+    selectedBriefId.value = result.briefs[0]?.id ?? null;
+    selectedDateValue.value = dateStringToTimestamp(result.briefDate);
     await loadDetail();
   } catch (error) {
     briefs.value = [];
@@ -94,6 +126,14 @@ async function selectBrief(id: string): Promise<void> {
     detail.value = null;
     errorText.value = error instanceof ApiError ? error.message : '加载简报详情失败';
   }
+}
+
+/** 日期选择器变化：重新加载指定日期的简报。 */
+async function onDateChange(value: number | null): Promise<void> {
+  if (value === null) return;
+  const dateStr = timestampToDateString(value);
+  if (dateStr === briefDate.value) return; // 避免重复加载
+  await load(dateStr);
 }
 
 onMounted(() => {
@@ -187,8 +227,21 @@ function safeSourceUrl(url: string | null): string | undefined {
         <h1>每日求职简报</h1>
         <p>今天 OfferFlow 给我找到了什么——正式推荐岗位、待人工确认的发现，以及今日搜索覆盖情况。</p>
       </div>
-      <n-button v-if="!capabilityUnavailable && !loading" data-testid="refresh" @click="load">刷新</n-button>
+      <n-button v-if="!capabilityUnavailable && !loading" data-testid="refresh" @click="load()">刷新</n-button>
     </header>
+
+    <!-- 日期选择器：查看历史简报（最多往前 7 天） -->
+    <n-card v-if="!capabilityUnavailable && !loading" size="small" class="block date-selector-card" data-testid="date-selector">
+      <n-text depth="3" class="date-selector-label">选择日期查看简报（最多查看近 7 天）：</n-text>
+      <n-date-picker
+        v-model:value="selectedDateValue"
+        type="date"
+        :is-date-disabled="(ts: number) => disableFutureDate(ts) || disableOldDate(ts)"
+        class="date-picker"
+        data-testid="date-picker"
+        @update:value="onDateChange"
+      />
+    </n-card>
 
     <n-alert
       v-if="capabilityUnavailable"
@@ -406,6 +459,9 @@ function safeSourceUrl(url: string | null): string | undefined {
 .hero p { max-width: 760px; margin: 0; color: var(--of-ink-2, #475569); }
 .eyebrow { color: var(--of-brand, #2563eb); font-weight: 700; font-size: 12px; letter-spacing: .08em; }
 .block { margin-top: 16px; }
+.date-selector-card { background: linear-gradient(135deg, #fefefe, #fafaff); }
+.date-selector-label { display: block; margin-bottom: 12px; font-weight: 500; }
+.date-picker { width: 240px; }
 .count { display: block; margin-bottom: 8px; }
 .coverage-meta { display: block; margin-top: 2px; }
 .selector-label { display: block; margin-bottom: 8px; }

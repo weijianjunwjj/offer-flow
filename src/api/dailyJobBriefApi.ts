@@ -136,6 +136,9 @@ export const dailyJobBriefApi = {
   today(options?: ReadOptions): Promise<DailyJobBriefTodayResponse> {
     return apiGet(`${base}/today`, options);
   },
+  getByDate(date: string, options?: ReadOptions): Promise<DailyJobBriefTodayResponse> {
+    return apiGet(`${base}/date/${encodeURIComponent(date)}`, options);
+  },
   get(id: string, options?: ReadOptions): Promise<DailyJobBriefDetailResponse> {
     return apiGet(`${base}/${encodeURIComponent(id)}`, options);
   },

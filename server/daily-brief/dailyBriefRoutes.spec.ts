@@ -574,4 +574,46 @@ describe('DailyJobBrief 只读 API（T041）', () => {
     expect(body.brief.searchPlanVersionId).toBe('version-1');
     expect(body.brief.searchPlan).toEqual({ id: 'plan-1', name: '每日前端岗位', versionId: 'version-1' });
   });
+
+  it('GET /daily-job-briefs/date/:date 返回指定日期的简报列表', async () => {
+    const { app, db } = createHarness();
+    seedPlanVersion(db);
+    seedBatch(db, 'batch-1', 'empty');
+    seedBatch(db, 'batch-2', 'empty');
+    seedBrief(db, { id: 'brief-1', briefDate: '2026-08-14', recommendationBatchId: 'batch-1' });
+    seedBrief(db, { id: 'brief-2', briefDate: '2026-08-13', recommendationBatchId: 'batch-2' });
+
+    const res = await app.inject({ method: 'GET', url: '/daily-job-briefs/date/2026-08-14' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { briefDate: string; briefs: DailyJobBrief[]; total: number };
+    expect(body.briefDate).toBe('2026-08-14');
+    expect(body.total).toBe(1);
+    expect(body.briefs).toHaveLength(1);
+    expect(body.briefs[0].id).toBe('brief-1');
+  });
+
+  it('GET /daily-job-briefs/date/:date 返回空列表当日期无简报', async () => {
+    const { app, db } = createHarness();
+    seedPlanVersion(db);
+
+    const res = await app.inject({ method: 'GET', url: '/daily-job-briefs/date/2026-08-20' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { briefDate: string; briefs: DailyJobBrief[]; total: number };
+    expect(body.briefDate).toBe('2026-08-20');
+    expect(body.total).toBe(0);
+    expect(body.briefs).toHaveLength(0);
+  });
+
+  it('GET /daily-job-briefs/date/:date 拒绝非法日期格式', async () => {
+    const { app } = createHarness();
+
+    const res1 = await app.inject({ method: 'GET', url: '/daily-job-briefs/date/2026-8-14' });
+    expect(res1.statusCode).toBe(422);
+
+    const res2 = await app.inject({ method: 'GET', url: '/daily-job-briefs/date/20260814' });
+    expect(res2.statusCode).toBe(422);
+
+    const res3 = await app.inject({ method: 'GET', url: '/daily-job-briefs/date/invalid' });
+    expect(res3.statusCode).toBe(422);
+  });
 });
