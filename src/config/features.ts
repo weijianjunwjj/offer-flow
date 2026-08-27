@@ -73,11 +73,4 @@ export const features = Object.freeze({
     import.meta.env.VITE_OFFERFLOW_RADAR_RECOMMENDATIONS,
     false,
   ),
-  // v0.9 每日找岗计划配置页（T023）：默认关闭，与后端 OFFERFLOW_DAILY_SEARCH_PLAN 一一对应，
-  // 避免 npm run dev 下前端显示入口但后端 404。真实生产入口保持关闭，仅在显式设置
-  // VITE_OFFERFLOW_DAILY_SEARCH_PLAN=true 时注册路由与导航；页面自身仍以后端响应为准处理未启用态。
-  dailySearchPlanEnabled: readBooleanFeatureFlag(
-    import.meta.env.VITE_OFFERFLOW_DAILY_SEARCH_PLAN,
-    false,
-  ),
 });

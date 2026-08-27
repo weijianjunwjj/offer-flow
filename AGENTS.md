@@ -12,16 +12,13 @@ Codex、Claude Code、Claude、Gemini 或其他 AI 工具执行本项目任务�
 
 1. 用户在当前任务中的最新明确指令；
 2. `AGENTS.md` 中的协作、工程和权限规则；
-3. `docs/prd/offerflow-v0.9.md` 中的当前版本产品范围；
-4. `specs/001-daily-job-hunter/spec.md` 中的 v0.9 冻结需求；
-5. `specs/001-daily-job-hunter/plan.md` 中的实施设计；
-6. `specs/001-daily-job-hunter/tasks.md` 中的实施状态；
-7. 与任务相关的专项文档、源码、测试与 README；
-8. v0.8 及更早历史版本文档。
+3. 与任务相关的当前源码、测试、数据库事实和正式项目文档；
+4. v0.8 Release Contract、Traceability、Technical Design 与安全文档；
+5. v0.7 及更早历史版本文档。
 
 冲突解释原则：
 
-* 产品范围冲突，以用户最新指令和当前 v0.9 冻结 PRD / Spec 为准；
+* 产品范围冲突，以用户最新指令和当前存活能力的正式文档为准；
 * AI 工具行为、Git 权限、交付格式冲突，以用户最新指令和 `AGENTS.md` 为准；
 * 技术实现不得静默改变产品结果；
 * 历史文档只能用于理解演进过程，不能覆盖当前冻结边界。
@@ -152,60 +149,36 @@ v0.8 历史正式文档包括：
 * V8-1～V8-6 功能开发完成；V8-2 `CLOSED / FROZEN`、V8-3 `ACCEPTED`、V8-4/V8-5 `MANUAL ACCEPTED`；
 * 生产数据库曾受控升级到 **schema v8**（migration 1..8，2026-07-29）；
 * Radar 与 Analysis 正式入口随 v0.8.0 发布但默认关闭，按开关启用；
-* 部分原 GA 前置项经负责人明确豁免、接受风险后发布并转入 v0.9；
+* 部分原 GA 前置项经负责人明确豁免、接受风险后发布；
 * 具体历史实施状态以 `docs/product/offerflow-v0.8-traceability.md` 为准。
 
-### 2.4 v0.9 当前状态
+### 2.4 当前维护状态
 
-v0.9 当前定位为：
-
-> Daily Job Hunter Core：主动发现公开岗位，完成证据升级、分析、推荐与每日简报闭环。
-
-当前权威文档包括：
-
-* `docs/prd/offerflow-v0.9.md`
-* `docs/prd/offerflow-v1.0.md`（Deferred Scope Backlog）
-* `specs/001-daily-job-hunter/spec.md`
-* `specs/001-daily-job-hunter/plan.md`
-* `specs/001-daily-job-hunter/tasks.md`
-
-当前状态：
-
-* 当前版本：**v0.9.0 RC（Release Candidate，冻结日期 2026-08-19）**；
-* v0.9 PRD：v2.4 FROZEN；
-* 真实运行库已升级至 **schema v9**（migration 1..9）；
-* DailySearchPlan、Scheduler、Tavily Search API、Source Policy、Evidence Model、Content Acquisition、Evidence Upgrade、Analysis、Recommendation、DailyJobBrief 主链已实现；
-* v0.9 核心 Discovery + Analysis + Recommendation 链路已通过真实生产运行验证；
-* Notification / JobJudgment / Preference Learning 已明确迁移至 v1.0，不属于 v0.9 最终冻结范围；
-* v0.8 Radar / Analysis / Recommendation 能力作为 v0.9 复用基础继续有效；
-* 未经用户批准不得擅自修改真实生产数据库、push、merge、Tag、Release 或扩大 v0.9 冻结范围。
+* 公开 Web 主动发现、无人值守调度、搜索计划、外部搜索 Provider、每日汇总及 Windows 唤醒/自启动集成已于 2026-08-27 完整退役；
+* 真实运行库通过 forward migration 升级至 **schema v16**；
+* 历史 migrations v9～v15 保持不可变，仅用于迁移链兼容；最新 schema 不再包含退役的五张专属表；
+* v0.7 Job Memory 与 v0.8 Radar / Analysis / Recommendation / Promotion 继续有效；
+* NovaWing 分析上下文边界保持不变；
+* 未经用户批准不得擅自修改真实生产数据库、push、merge、Tag 或 Release。
 
 ---
 
 ## 3. 当前阶段与实施波次
 
-当前阶段为：
-
-```text
-v0.9.0：FROZEN / RELEASE CANDIDATE
-Daily Job Hunter Core：实现完成，核心生产链路已验证
-v1.0：PLANNED / DEFERRED SCOPE BACKLOG
-```
+当前阶段为：主动发现链退役后的 v0.7～v0.8 存量能力维护。
 
 v0.8 的 V8-1～V8-6 波次属于历史实施记录，不再作为当前版本推进状态。
 
 实施要求：
 
-* 当前任务先读取 v0.9 PRD / Spec / Plan / Tasks；
 * 涉及 v0.8 复用能力时按需读取历史 Technical Design / Release Contract / Traceability；
 * 不得把某个技术单元完成当成整个版本完成；
 * 不得在实现中静默删除、延期或降级用户可见结果；
 * 某项确实需要删除、延期、替换或拆分版本时，必须先向用户说明影响并获得明确批准；
-* 当前冻结范围以 v0.9 Final Scope 为准，不得擅自把 v1.0 deferred 能力塞回 v0.9。
 
 ---
 
-## 4. v0.8 基础产品边界（v0.9 继续复用）
+## 4. v0.8 基础产品边界
 
 v0.8 解决：
 
@@ -239,7 +212,7 @@ v0.8 解决：
 * 自动投递；
 * 自动发消息或模拟用户点击；
 * 猎聘专用 DOM 适配作为 P0 发布门槛；
-* 完整 `JobSourceAdapter / SourceConfig / SourceRun`；
+* 完整的后台来源运行抽象；
 * 保存搜索条件和持续推荐收件箱；
 * 岗位下架和恢复识别；
 * 反馈驱动正式画像自动进化；
@@ -252,8 +225,6 @@ v0.8 解决：
 * FastAPI sidecar；
 * Redis、BullMQ、MySQL、PostgreSQL、微服务或 Kubernetes；
 * 多用户、多租户和公网商业化系统。
-
-说明：v0.9 已新增受控的公开 Web 主动发现、Scheduler 与 SourceRun；这属于 v0.9 新能力，不改变已知招聘平台禁止自动登录、自动翻页、绕过风控和自动投递的边界。
 
 ### 4.3 Boss 能力边界
 
@@ -289,7 +260,7 @@ docs/security/browser-capture-security.md
 
 ---
 
-## 5. v0.8 领域模型硬约束（v0.9 继续沿用）
+## 5. v0.8 领域模型硬约束
 
 以下规则不得在实现中擅自改变。
 
@@ -483,7 +454,7 @@ AI 不得返回：
 
 ### 5.9 任务恢复语义
 
-v0.8 / v0.9 支持：
+v0.8 支持：
 
 * 页面刷新后恢复任务展示；
 * 应用进程重启后恢复任务记录；
@@ -523,7 +494,7 @@ AI 负责分析、解释和建议
 * 当前真实 Provider 仍为 DeepSeek；
 * 未经用户明确批准，不接入 OpenAI、Claude、Gemini 或其他真实 API；
 * 不做 BYOK；
-* v0.8 / v0.9 产品契约不绑定 SSE；
+* v0.8 产品契约不绑定 SSE；
 * 已有 SSE 能力可以保留，但不得为了复用 SSE 而扭曲任务模型；
 * 默认优先可靠的 Structured Output，是否使用流式传输属于技术实现选择。
 
@@ -581,16 +552,13 @@ AI 不得因为“判断明显”而绕过确认。
 
 ## 8. 必读文件规则
 
-### 8.1 所有 v0.9 任务必读
+### 8.1 所有任务必读
 
-执行任何 v0.9 任务前，至少读取：
+执行任务前，至少读取：
 
 1. `AGENTS.md`
-2. `docs/prd/offerflow-v0.9.md`
-3. `specs/001-daily-job-hunter/spec.md`
-4. `specs/001-daily-job-hunter/plan.md`
-5. `specs/001-daily-job-hunter/tasks.md`
-6. 当前任务对应源码和测试
+2. 当前任务对应源码和测试
+3. 当前任务对应的 v0.8 / v0.7 正式文档
 
 不要每次无差别把所有文档塞进上下文，应按任务读取。
 
@@ -606,7 +574,7 @@ AI 不得因为“判断明显”而绕过确认。
 
 额外读取：
 
-* 当前 v0.9 migration / schema 实现与测试；
+* 当前 migration / schema 实现与测试；
 * `docs/technical/offerflow-v0.8-technical-design.md`（仅历史基础）；
 * `docs/runbooks/offerflow-v0.8-migration-recovery.md`（仅历史基础）。
 
@@ -632,16 +600,6 @@ AI 不得因为“判断明显”而绕过确认。
 * `docs/technical/offerflow-v0.8-technical-design.md`
 * `docs/evaluation/offerflow-v0.8-evaluation-plan.md`
 
-#### v0.9 范围、验收和版本完成判断
-
-额外读取：
-
-* `docs/prd/offerflow-v0.9.md`
-* `specs/001-daily-job-hunter/spec.md`
-* `specs/001-daily-job-hunter/plan.md`
-* `specs/001-daily-job-hunter/tasks.md`
-* `docs/prd/offerflow-v1.0.md`（仅确认 deferred scope，不得反向扩大 v0.9）
-
 ### 8.3 决策历史
 
 以下文档只用于解释历史裁决，不是每次实施必读：
@@ -662,9 +620,7 @@ AI 不得因为“判断明显”而绕过确认。
 
 ### 9.1 开工条件
 
-当前 v0.9.0 已冻结为 Release Candidate。任何后续修改必须有用户当前任务中的明确授权，并保持在该任务范围内。
-
-不得因为“当前版本已冻结”“已有 Spec”“评审通过”而自行继续扩展 v0.9，也不得擅自把 v1.0 deferred 能力提前实现进 v0.9。
+任何产品范围、数据库结构或高影响行为变更必须有用户当前任务中的明确授权，并保持在该任务范围内。
 
 ### 9.2 工作方式
 
@@ -721,7 +677,7 @@ AI 不得因为“判断明显”而绕过确认。
 * `eval/offer-flow-json/`
 * `docs/llm-eval.md`
 
-### 10.2 v0.8 / v0.9 高风险能力
+### 10.2 v0.8 高风险能力
 
 具体路径以实际实现为准，包括：
 
@@ -730,8 +686,6 @@ AI 不得因为“判断明显”而绕过确认。
 * RadarAction 与 RadarPromotion；
 * AnalysisTask 与 Analysis Record；
 * RecommendationBatch；
-* DailySearchPlan / SourceRun / DailyJobBrief；
-* Source Policy / Evidence Upgrade / Content Acquisition；
 * migration；
 * 浏览器扩展；
 * 当前页采集 API；
@@ -842,21 +796,6 @@ AI 不得因为“判断明显”而绕过确认。
 * Release Contract 全量验收；
 * Traceability 完整更新。
 
-### 11.4 v0.9 当前验证基线
-
-涉及 Daily Job Hunter 时至少按任务覆盖：
-
-* DailySearchPlan / Scheduler / SourceRun；
-* Source Policy 与招聘平台边界；
-* Search Evidence → Content Acquisition → Evidence Upgrade；
-* active-version handoff 与 stale-source-version 防回归；
-* fetch / enrichment 预算；
-* Analysis 请求、成功、阻塞计数一致性；
-* Recommendation 0～8 条；
-* DailyJobBrief；
-* schema v9 migration；
-* 真实生产 smoke 仅在用户明确授权时执行。
-
 ---
 
 ## 12. 依赖与技术栈纪律
@@ -871,7 +810,6 @@ AI 不得因为“判断明显”而绕过确认。
 * Fastify；
 * SQLite / `better-sqlite3`；
 * 当前 DeepSeek Provider；
-* Tavily Search API；
 * 当前测试和构建工具。
 
 未经用户明确批准不得：
@@ -900,13 +838,9 @@ AI 不得因为“判断明显”而绕过确认。
 
 ### 当前 P0
 
-* 当前版本为 **v0.9.0 RC（Release Candidate，冻结日期 2026-08-19）**；
-* v0.9 Final Scope 已冻结，核心 Discovery + Analysis + Recommendation 闭环完成；
-* 真实运行库已升级至 schema v9（migration 1..9）；
-* DailySearchPlan、Scheduler、Tavily Search API、Source Policy、Evidence Model、Content Acquisition、Evidence Upgrade、Analysis、Recommendation、DailyJobBrief 已形成主链；
-* v0.9 核心生产链路已经真实运行验证；
-* Notification / JobJudgment / Preference Learning 已迁移至 v1.0，当前不得无授权回填 v0.9；
-* v0.8.0 作为历史 GA 版本保留，其 Radar / Analysis / Recommendation 能力继续为 v0.9 提供基础；
+* v0.7 Job Memory 与 v0.8 Radar / Analysis / Recommendation / Promotion 继续维护；
+* 真实运行库为 schema v16，历史 v9～v15 migrations 不得重写；
+* 退役的公开 Web 主动发现、无人值守调度与系统集成不得在无新产品决策时重新引入；
 * 真实生产 smoke、生产 migration、push / merge / Tag / Release 仍各自需要用户明确授权。
 
 ### 持续禁止擅自开展
@@ -914,7 +848,7 @@ AI 不得因为“判断明显”而绕过确认。
 * 自动登录或绕过招聘平台风控；
 * 招聘平台自动翻页或批量抓取；
 * 自动打招呼、自动投递或自动发消息；
-* v1.0 deferred scope 无授权提前回填 v0.9；
+* 无授权重新引入已退役能力；
 * 多 Agent；
 * 新 AI Provider；
 * BYOK；

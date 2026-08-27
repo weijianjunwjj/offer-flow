@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from '../db';
 
 /**
- * v0.9 Phase 3（T028 + DailyRunCoordinator）source_runs 调度去重 schema（v14，仅限沙箱/测试/演练库）。
+ * Historical v14 source_runs scheduling-dedup schema.
  *
  * 为自动调度闭环补持久化层 run dedupe，不改历史 migration（v11/v12/v13 语义不变）。
  *
@@ -20,7 +20,7 @@ import type { SqliteDatabase } from '../db';
  * 设计依据：
  *   specs/001-daily-job-hunter/spec.md FR-005 / FR-007 / FR-008
  *   specs/001-daily-job-hunter/data-model.md §1.3
- *   T028 + DailyRunCoordinator Architecture Decision（schedule timezone / occurrence identity）
+ *   Historical schedule timezone / occurrence identity decision.
  */
 
 const SOURCE_RUN_DEDUPE_SQL = `

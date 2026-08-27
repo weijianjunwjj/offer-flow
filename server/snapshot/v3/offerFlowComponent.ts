@@ -46,10 +46,6 @@ const V5 = '005_v0_7_market_position_schema';
 const V6 = '006_v0_7_strategy_window_schema';
 const V7 = '007_v0_8_radar_domain_schema';
 const V8 = '008_v0_8_radar_candidate_relations_schema';
-const V10 = '010_v0_9_daily_search_plan_schema';
-const V11 = '011_v0_9_source_run_schema';
-const V12 = '012_v0_9_daily_job_brief_schema';
-const V15 = '015_v0_9_daily_search_plan_control_schema';
 
 export const OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY: readonly OfferFlowTableRegistryEntry[] = [
   { name: 'analysis_tasks', migrationVersion: 7, migrationName: V7, classification: 'runtime-task-state', primaryModules: ['server/radar/analysisTaskRepository', 'server/radar/analysis'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '持久化任务状态同时保存不可替代的 input snapshot 与分析 input_hash 关联，恢复后仍需可靠重试和 revision 审计。' },
@@ -60,10 +56,6 @@ export const OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY: readonly OfferFlowTableRegistry
   { name: 'capability_baseline_proposals', migrationVersion: 3, migrationName: V3, classification: 'authoritative-business', primaryModules: ['server/capability-baseline'], foreignKeys: [], includedInHostSnapshotV3: true, reason: 'Human-in-the-loop 提案与裁决历史。' },
   { name: 'capability_baseline_versions', migrationVersion: 3, migrationName: V3, classification: 'authoritative-business', primaryModules: ['server/capability-baseline'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '正式能力基线不可变版本。' },
   { name: 'capability_command_receipts', migrationVersion: 3, migrationName: V3, classification: 'temporary-audit', primaryModules: ['server/capability-baseline/repository'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '命令幂等权威回执；丢失会允许重复高影响命令。' },
-  { name: 'daily_job_briefs', migrationVersion: 12, migrationName: V12, classification: 'authoritative-business', primaryModules: ['server/daily-brief'], foreignKeys: ['daily_search_plan_versions', 'radar_recommendation_batches'], includedInHostSnapshotV3: true, reason: '每日简报为权威下游交付物，保存用户可见推荐/发现条目与审批生命周期（empty_reason / status），不可安全重算。' },
-  { name: 'daily_search_plan_skips', migrationVersion: 15, migrationName: V15, classification: 'authoritative-business', primaryModules: ['server/search-plan'], foreignKeys: ['daily_search_plan_versions'], includedInHostSnapshotV3: true, reason: '用户 Skip Today 的显式控制声明（某 PlanVersion 某自然日跳过自动调度），不可安全重算，须随快照保留。' },
-  { name: 'daily_search_plan_versions', migrationVersion: 10, migrationName: V10, classification: 'authoritative-business', primaryModules: ['server/search-plan'], foreignKeys: ['daily_search_plans', 'daily_search_plan_versions'], includedInHostSnapshotV3: true, reason: '搜索计划不可变配置版本快照，SourceRun / DailyJobBrief 的来源身份链（provenance 主链）。' },
-  { name: 'daily_search_plans', migrationVersion: 10, migrationName: V10, classification: 'authoritative-business', primaryModules: ['server/search-plan'], foreignKeys: ['daily_search_plan_versions'], includedInHostSnapshotV3: true, reason: '主动发现搜索计划的权威配置 identity 与当前激活版本指针。' },
   { name: 'feedback_events', migrationVersion: 2, migrationName: V2, classification: 'authoritative-business', primaryModules: ['server/job-memory', 'server/radar/promotion'], foreignKeys: ['applications', 'feedback_events'], includedInHostSnapshotV3: true, reason: '正式求职反馈事实流水。' },
   { name: 'historical_baseline_drafts', migrationVersion: 4, migrationName: V4, classification: 'temporary-audit', primaryModules: ['server/history-import'], foreignKeys: ['historical_import_sessions', 'resume_versions', 'historical_baseline_drafts', 'jobs', 'applications'], includedInHostSnapshotV3: true, reason: '包含尚未确认或已确认的人工补录草稿及正式对象追踪，无法安全重算。' },
   { name: 'historical_event_drafts', migrationVersion: 4, migrationName: V4, classification: 'temporary-audit', primaryModules: ['server/history-import'], foreignKeys: ['historical_baseline_drafts', 'feedback_events'], includedInHostSnapshotV3: true, reason: '人工补录事件草稿与确认结果追踪。' },
@@ -90,7 +82,6 @@ export const OFFERFLOW_SCHEMA_V8_TABLE_REGISTRY: readonly OfferFlowTableRegistry
   { name: 'radar_source_records', migrationVersion: 7, migrationName: V7, classification: 'authoritative-business', primaryModules: ['server/radar/sourceRecordRepository', 'server/radar/commitService'], foreignKeys: ['radar_capture_snapshots'], includedInHostSnapshotV3: true, reason: '来源身份与最后不可变快照指针。' },
   { name: 'resume_versions', migrationVersion: 2, migrationName: V2, classification: 'authoritative-business', primaryModules: ['server/job-memory/resumeVersionRepository'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '正式简历不可变版本。' },
   { name: 'schema_migrations', migrationVersion: 0, migrationName: 'migration-runner-metadata', classification: 'migration-meta', primaryModules: ['server/migrations'], foreignKeys: [], includedInHostSnapshotV3: false, reason: '候选库由当前受信 migration bootstrap 确定性重建；不得从数据快照覆盖 migration 事实。' },
-  { name: 'source_runs', migrationVersion: 11, migrationName: V11, classification: 'runtime-task-state', primaryModules: ['server/source-run'], foreignKeys: ['daily_search_plan_versions', 'source_runs'], includedInHostSnapshotV3: true, reason: '一次主动发现运行的身份与覆盖/计数 provenance，DailyJobBrief 的 sourceRunIds 来源链。' },
   { name: 'strategy_meta', migrationVersion: 6, migrationName: V6, classification: 'authoritative-business', primaryModules: ['server/strategy-window'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '策略 active version 权威指针。' },
   { name: 'strategy_proposals', migrationVersion: 6, migrationName: V6, classification: 'authoritative-business', primaryModules: ['server/strategy-window'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '策略提案与人工裁决历史。' },
   { name: 'strategy_receipts', migrationVersion: 6, migrationName: V6, classification: 'temporary-audit', primaryModules: ['server/strategy-window/repository'], foreignKeys: [], includedInHostSnapshotV3: true, reason: '策略命令幂等权威回执。' },

@@ -43,14 +43,7 @@ Claude 执行任何任务前，必须按顺序读取：
 3. 与任务对应的权威文档；
 4. 相关源码和测试。
 
-所有 v0.9 任务至少读取：
-
-* `docs/prd/offerflow-v0.9.md`
-* `specs/001-daily-job-hunter/spec.md`
-* `specs/001-daily-job-hunter/plan.md`
-* `specs/001-daily-job-hunter/tasks.md`
-
-涉及 v0.8 既有 Radar / Analysis / Recommendation 基础能力时，再按需读取：
+涉及 v0.8 既有 Radar / Analysis / Recommendation 基础能力时，按需读取：
 
 * `docs/product/offerflow-v0.8-release-contract.md`
 * `docs/product/offerflow-v0.8-traceability.md`
@@ -222,15 +215,11 @@ graphify update .
 
 ## 3. 当前状态
 
-* 当前版本：**v0.9.0 RC（Release Candidate，冻结日期 2026-08-19）**；
-* v0.9 定位为 Daily Job Hunter Core，聚焦 Discovery + Analysis + Recommendation 闭环；
-* v0.9 PRD 为 v2.4 FROZEN；
-* 真实运行库已升级至 **schema v9**（migration 1..9）；
-* 已实现 DailySearchPlan、Scheduler、Tavily Search API、Source Policy、Evidence Model、Content Acquisition、Evidence Upgrade、Analysis、Recommendation、DailyJobBrief；
-* v0.9 核心链路已通过真实生产运行验证；
-* Notification / JobJudgment / Preference Learning 已明确迁移至 v1.0，不属于 v0.9 最终冻结范围；
-* v0.8.0 已于 2026-07-30 GA，其 Radar / Analysis / Recommendation 能力继续作为 v0.9 复用基础；
-* 未经用户批准不得擅自修改真实生产数据库、push、merge、Tag、Release 或扩大 v0.9 冻结范围。
+* 公开 Web 主动发现、无人值守调度及其 Windows 集成已于 2026-08-27 完整退役；
+* 真实运行库通过 forward migration 升级至 **schema v16**；
+* v0.8.0 已于 2026-07-30 GA，其 Radar / Analysis / Recommendation 能力继续保留；
+* Job Memory、Radar 当前页采集、Candidate/Version、Analysis、Recommendation、Promotion 与 NovaWing 上下文仍是存活能力；
+* 未经用户批准不得擅自修改真实生产数据库、push、merge、Tag 或 Release。
 
 ---
 
@@ -266,7 +255,7 @@ Claude 不得擅自：
 
 ---
 
-## 5. v0.8 基础架构边界（v0.9 继续沿用）
+## 5. v0.8 基础架构边界
 
 Claude 实施涉及 Radar / Analysis / Recommendation 的能力时必须确保：
 
@@ -311,8 +300,6 @@ Claude 实施涉及 Radar / Analysis / Recommendation 的能力时必须确保�
 * 自动打招呼、投递或发消息；
 * 未经确认写入正式求职记忆。
 
-v0.9 的公开 Web 主动发现与上述招聘平台自动化边界并不冲突：已知招聘平台仍遵守 Source Policy，不绕过登录、验证码或平台风控。
-
 ---
 
 ## 7. AI 和旧链路边界
@@ -320,7 +307,7 @@ v0.9 的公开 Web 主动发现与上述招聘平台自动化边界并不冲突�
 * 当前真实 AI Provider 仍为 DeepSeek；
 * 未经批准不接 OpenAI、Claude、Gemini 等新 API；
 * 不做 BYOK；
-* v0.8 / v0.9 产品契约不绑定 SSE；
+* v0.8 产品契约不绑定 SSE；
 * 已有 SSE 可以保留，但不得为了 SSE 扭曲任务模型；
 * 旧 `OFFER_FLOW_JSON` 和 v0.8 `JobMatchAiPayload` 是不同契约，不得静默混用；
 * AI 不得返回 Candidate ID、版本 ID、规则版本或输入 Hash；

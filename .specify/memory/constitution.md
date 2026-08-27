@@ -1,17 +1,13 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: (none) → 1.0.0
-  Principles: 12 (I–XII, all new)
-  Added sections:
-    - Core Principles (I–XII)
-    - Additional Constraints (Technology Stack & Environment)
-    - Development Workflow (Spec-Driven Development)
-    - Governance
+  Version change: 1.0.0 → 1.1.0
+  Amended assumptions:
+    - Removed the retired v0.9 active-discovery pipeline as a governance premise
+    - Kept the v0.8 local Radar and human-in-the-loop boundaries authoritative
+    - Generalized cost and provider rules to capabilities still present
   Removed sections: none
-  Deferred TODOs: none — all placeholders resolved from existing project facts
-    (AGENTS.md, CLAUDE.md, v0.8 Technical Design, v0.8 Release Contract, v0.9 PRD)
-  Follow-up: none required — constitution is complete as of ratification
+  Follow-up: none
 -->
 
 # OfferFlow 项目宪法
@@ -39,7 +35,7 @@ AnalysisTask、MatchAnalysis、Recommendation 或 RuleAssessment。
 **理由：** 平行模型分裂事实源，使"哪个实体代表真实状态"无法判断。
 v0.8 已收敛为单一 Radar 链（Snapshot → SourceRecord → Candidate →
 CandidateVersion → Analysis → Recommendation → Action → Promotion）。
-v0.9 扩展此链，而非分叉它。
+后续能力必须继续复用此链，而非分叉它。
 
 ### Principle III — 不可变证据（Immutable Evidence）
 
@@ -67,8 +63,7 @@ Human-in-the-loop 边界是产品的安全机制，不得因便利而被绕过�
 有限重试、显式失败和可恢复性。禁止：无限重试循环、
 失败伪装成成功、空结果伪装成"无数据"、重复副作用。
 
-**理由：** 每日自动找岗在无人值守状态下运行。
-将静默失败伪装为"今天没有岗位"会直接损害用户信任和核心价值主张。
+**理由：** 任何自动流程的静默失败都会直接损害用户信任。
 每次失败必须可见且可恢复。
 
 ### Principle VI — 本地优先（Local First）
@@ -90,12 +85,11 @@ Checkpoint Engine）只能作为实现候选——
 它们不得反向定义 OfferFlow 产品。
 
 **理由：** 框架优先的设计导致过度工程和范围蔓延。
-v0.9 使用简单、显式的 Pipeline 而非通用 Agent Runtime，
-因为产品需要的是每日找岗流水线，而非通用多 Agent 平台。
+当前产品只保留本地 Radar 与人工决策链，不需要通用 Agent Runtime。
 
 ### Principle VIII — 规格先于代码（Spec Before Code）
 
-从 v0.9 开始，中大型能力必须经过：
+中大型能力必须经过：
 PRD → Specification → Clarification → Plan → Tasks → Analysis → Implementation。
 模糊需求不得被模型猜测后直接跨模块编码。
 如果 Spec 未冻结，实现不得开始。
@@ -108,8 +102,7 @@ PRD → Specification → Clarification → Plan → Tasks → Analysis → Impl
 
 以下能力必须有自动化测试或明确的验收剧本：
 Migration、数据版本化、幂等性、状态机、恢复、
-CandidateVersion、AnalysisTask、Recommendation、Notification Outbox、
-JobJudgment、PreferenceRule。测试不是事后补救——
+CandidateVersion、AnalysisTask、Recommendation 和正式记忆晋升。测试不是事后补救——
 验证方式必须在技术计划阶段就确定。
 
 **理由：** 高风险领域（数据完整性、通知、偏好）
@@ -127,24 +120,23 @@ PowerShell、CMD 或 WSL。Spec-Kit 必须使用 `--script sh`。
 
 ### Principle XI — 成本是产品约束（Cost Is a Product Constraint）
 
-AI 与自动任务的调用次数、Token、模型、实际成本，
+AI 调用的次数、Token、模型、实际成本，
 在有可靠数据时必须可观察。成本优化不得牺牲
 正确性、事实完整性或安全边界。当成本数据不可用时，
 必须明确标记为"不可用"——绝不估算或伪造。
 
-**理由：** 每日自动找岗消耗 AI API 调用。
+**理由：** AI 分析会消耗 API 调用。
 用户必须知道他们在花多少钱。但成本可见性
 绝不应激励在分析质量或安全上偷工减料。
 
 ### Principle XII — 第三方可替换性（Third-Party Replaceability）
 
-外部能力（SearchProvider、AI 模型、邮件渠道、Skill）必须可替换。
+外部能力（AI 模型、浏览器扩展接口、Skill）必须可替换。
 业务数据和核心领域不得被第三方框架绑架。
 Provider 特定逻辑必须封装在 Adapter 之后，
 不得编织进领域实体。
 
-**理由：** P0 SearchProvider 尚未冻结；AI Provider 可能更换；
-邮件 Provider 可能更换。核心 Radar 和 Preference 领域
+**理由：** AI Provider 可能更换，扩展接口也可能演进。核心 Radar 领域
 必须在任意单个 Provider 被替换后仍然健在。
 
 ## 附加约束
@@ -155,7 +147,6 @@ Provider 特定逻辑必须封装在 Adapter 之后，
 - **后端**：Node.js、Fastify
 - **存储**：SQLite（通过 better-sqlite3），本地 journal_mode=DELETE
 - **AI Provider**：DeepSeek（当前）；更换 Provider 需用户明确批准
-- **邮件**：QQ SMTP（v0.9 P0）；SMTP 配置通过 NotificationChannel
 - **浏览器扩展**：Chrome/Edge MV3，仅 activeTab + scripting 权限
 
 ### 硬边界
@@ -169,9 +160,9 @@ Provider 特定逻辑必须封装在 Adapter 之后，
 
 ## 开发工作流
 
-### Spec-Driven Development（v0.9+）
+### Spec-Driven Development
 
-所有 v0.9 功能工作必须遵循 Spec-Kit 流水线：
+所有中大型功能工作必须遵循 Spec-Kit 流水线：
 
 ```text
 PRD（WHAT/WHY/边界）
@@ -206,4 +197,4 @@ PRD（WHAT/WHY/边界）
 5. 修改本宪法需要：文档化的理由、按语义化版本规则的显式版本号变更、以及用户批准。
 6. 宪法修正案遵循相同的 Spec-Kit 流水线：提案 → 规格化 → 澄清 → 计划 → 实现。
 
-**版本**：1.0.0 | **批准日期**：2026-08-11 | **最后修订**：2026-08-11
+**版本**：1.1.0 | **批准日期**：2026-08-11 | **最后修订**：2026-08-27

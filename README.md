@@ -4,73 +4,14 @@ OfferFlow 将分散的岗位信息、个人履历、能力证据、求职反馈�
 
 它不会替用户自动投递、联系招聘方或做最终选择。AI 负责分析、归纳和生成候选叙事，正式记录与现实行动始终由用户确认。
 
-## 当前版本
+## 当前状态
 
-**v0.9.0 RC（Release Candidate，冻结日期 2026-08-19）。**
+OfferFlow 当前保留 v0.7～v0.8 的本地求职决策、岗位雷达与人工确认能力。
 
-- v0.9 核心 Discovery + Analysis + Recommendation 链路已完成并通过真实生产验证
-- 真实运行库已升级至 **schema v9**（migration 1..9）
-- 每日岗位猎手核心能力：DailySearchPlan、Scheduler、Tavily Search API、Source Policy、Evidence Model、Content Acquisition、Evidence Upgrade、Analysis（复用 v0.8）、Recommendation（复用 v0.8）、DailyJobBrief
-- 前端页面：DailySearchPlan Page、DailyJobBrief Page
-- 部分初始规划能力（Notification / JobJudgment / Preference Learning）**已明确迁移至 v1.0**，以保持 v0.9 核心闭环的完整性和可交付性
-
-v0.9 权威文档：
-
-- [docs/prd/offerflow-v0.9.md](docs/prd/offerflow-v0.9.md)（v2.4 FROZEN）
-- [docs/prd/offerflow-v1.0.md](docs/prd/offerflow-v1.0.md)（Deferred Scope Backlog）
-- [specs/001-daily-job-hunter/spec.md](specs/001-daily-job-hunter/spec.md)
-- [specs/001-daily-job-hunter/plan.md](specs/001-daily-job-hunter/plan.md)（v3.0）
-- [specs/001-daily-job-hunter/tasks.md](specs/001-daily-job-hunter/tasks.md)
-
-以下「核心能力」章节描述的是 v0.7～v0.8 已开放的正式能力；v0.9 新增的 Daily Job Hunter 能力见上方「当前版本」说明。
-
-## v0.9 核心能力：每日岗位猎手
-
-v0.9 新增以下完整闭环：
-
-```txt
-DailySearchPlan（用户配置）
-        ↓
-Scheduler（自动调度）
-        ↓
-Tavily Search API（主动发现）
-        ↓
-Source Policy（来源权限分级）
-        ↓
-Evidence Model（证据等级分层）
-        ↓
-Content Acquisition（有界 fetch）
-        ↓
-Evidence Upgrade（证据升级）
-        ↓
-Analysis（复用 v0.8）
-        ↓
-Recommendation（复用 v0.8 Batch，0～8 条）
-        ↓
-DailyJobBrief（每日汇总）
-        ↓
-用户在电脑端查看推荐结果
-        ↓
-使用现有 RadarAction 标记岗位
-```
-
-**v0.9 核心价值：**
-
-- **主动发现**：系统每天自动在公开 Web 搜索真实岗位，无需用户手动查找
-- **来源权限分级**：SEARCH_ONLY（招聘平台）/ SEARCH_AND_FETCH（公司官网及受控公开来源）/ CONDITIONAL_FETCH（技术社区等）
-- **证据等级分层**：SEARCH_EVIDENCE（只有搜索结果）/ FULL_EVIDENCE（完整岗位事实）/ MANUAL_REVIEW_REQUIRED（值得看但禁止自动 Fetch）
-- **有限推荐**：每日 0～8 条精选推荐，不凑数
-- **完整覆盖追踪**：planned / completed / failed / waiting，来源失败不伪装成“0 个新岗位”
-
-**v0.9 Known Limitations：**
-
-v0.9 专注于“发现→推荐→展示”核心闭环，以下能力已迁移至 v1.0：
-
-- 邮件通知（QQ SMTP / HIGH_PRIORITY_ALERT / DAILY_BRIEF）
-- 四档审批（VERY_SUITABLE / SOMEWHAT_SUITABLE / NOT_VERY_SUITABLE / VERY_UNSUITABLE）
-- 偏好学习（PreferenceSignal / PreferenceRule / Repeated Mistake Protection）
-
-详细说明见 `docs/prd/offerflow-v1.0.md`。
+- v0.9 的全网主动发现与无人值守调度链已于 2026-08-27 完整退役，不再提供相关 API、页面、后台任务或系统自启动。
+- 数据库通过 forward migration 升级到 **schema v16**；历史 migrations v9～v15 仅用于迁移链验证，已退役业务表不会出现在最新 schema。
+- 现有 Radar Candidate、当前页采集、单岗位分析、推荐批次、动作、晋升、Job Memory 与 NovaWing 分析上下文继续保留。
+- OfferFlow 不自动登录招聘平台、不自动翻页、不自动投递或发消息。
 
 ## 核心产品闭环（v0.7～v0.8）
 
@@ -184,7 +125,6 @@ OfferFlow 采用分层自主权：
 - SQLite / better-sqlite3
 - Zod
 - DeepSeek Chat Completions 兼容接口
-- Tavily Search API
 - SSE 流式响应
 
 ### 工程治理
@@ -237,7 +177,7 @@ npm run db:backup
 
 ## 岗位雷达功能开关（v0.8.0 历史能力，默认关闭）
 
-岗位雷达、单岗位分析、推荐批次、雷达动作与正式晋升等 v0.8 能力随 v0.8.0 一起发布但默认关闭，需要显式开关启用。v0.9 在此基础上复用 Radar / Analysis / Recommendation，并新增 Daily Job Hunter 主链。
+岗位雷达、单岗位分析、推荐批次、雷达动作与正式晋升等 v0.8 能力随 v0.8.0 一起发布但默认关闭，需要显式开关启用。
 
 | 能力 | 前端（构建期） | 后端（运行期） | 默认 |
 |---|---|---|---|
@@ -283,13 +223,11 @@ v0.7.0 正式恢复机制采用 Snapshot 方案 B：
 
 ## 工程质量
 
-### v0.9.0（当前 RC 状态）
+### 当前维护状态
 
-- v0.9 Final Scope 已冻结为 Release Candidate
-- 核心 Discovery + Analysis + Recommendation 链路已完成并通过真实生产运行验证
-- 真实运行库已升级至 schema v9（migration 1..9）
-- DailySearchPlan / Scheduler / Tavily / Source Policy / Evidence Upgrade / Analysis / Recommendation / DailyJobBrief 主链已形成
-- Notification / JobJudgment / Preference Learning 已迁移至 v1.0，不作为 v0.9 未完成项
+- v0.9 主动发现链已退役，最新数据库 schema 为 v16
+- v0.8 Radar / Analysis / Recommendation 与 v0.7 Job Memory 主线继续维护
+- 生产数据库迁移仍要求备份、完整性检查和显式授权
 
 ### v0.8.0（历史发布状态）
 
@@ -318,13 +256,8 @@ v0.7.0 发布前完成：
 
 ### v0.9.0
 
-- 主题：Daily Job Hunter Core
-- 新增 DailySearchPlan、Scheduler、Tavily Search API 与 SourceRun 主动发现链路
-- 新增 Source Policy、Evidence Model、Content Acquisition 与 Evidence Upgrade
-- 复用 v0.8 Analysis / Recommendation / RadarAction 基础能力
-- 新增 DailyJobBrief 与对应前端页面
-- 数据库升级至 schema v9（migration 1..9）
-- 最终范围冻结：Notification / JobJudgment / Preference Learning 迁移至 v1.0
+- 历史版本曾引入公开 Web 主动发现链。
+- 该链已在后续 forward migration 中完整退役；Git 历史保留原实现记录，当前工作树不再携带运行时代码与操作文档。
 
 ### v0.8.0
 
@@ -362,10 +295,4 @@ v0.7.0 发布前完成：
 
 ## 后续方向
 
-v1.0 当前作为 Deferred Scope Backlog，承接 v0.9 最终冻结时移出的能力：
-
-- Notification / QQ SMTP
-- JobJudgment / 四档审批
-- Preference Learning / Repeated Mistake Protection
-
-后续新增能力必须以 [v1.0 Deferred Scope Backlog](docs/prd/offerflow-v1.0.md) 和用户最新明确指令为准，不反向修改 v0.9 已冻结范围。
+后续能力必须来自用户新的明确产品决策，并继续遵守本地优先、Human-in-the-loop、正式记忆隔离和招聘平台安全边界。

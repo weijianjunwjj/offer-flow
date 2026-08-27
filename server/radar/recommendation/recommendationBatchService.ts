@@ -124,44 +124,6 @@ export class RecommendationBatchService {
     }
   }
 
-  /**
-   * 显式空批次（供 DailyRunCoordinator 在 Pipeline 无推荐 scope 时引用）。
-   *
-   * 这是 OPTION A 领域契约（data-model.md §1.4 `recommendation_batch_id TEXT NOT NULL` + FK；
-   * spec.md FR-018「0 条是有效数量」、FR-023「每次运行恰好一份 Brief 引用 RecommendationBatch」）：
-   * 空批次 ≠ createBatch(empty scope)（后者仍按原契约抛 SCOPE_EMPTY）。
-   * 它的语义是「本次 daily run 没有可进入 recommendation evaluation 的 candidate」，
-   * 是正式的审计容器，不是为满足 NOT NULL 而伪造的匿名 FK 占位符。
-   *
-   * 冻结契约：
-   *   - identity：确定性 batchKey（空 scope + 空原因 + 规则/策略版本），可稳定寻址；
-   *   - scope：requestedCandidateVersionIds=[]、recommendationSet（recommendations=[]、blocked=[]、emptyReason）；
-   *   - 为什么空：emptyReason='no_candidates_in_scope'（无候选入场）；
-   *   - idempotency：相同空 scope → 相同 batchKey → 复用同一空批次，不插第二份；
-   *     同一 daily logical run 重放、以及不同 daily run 的空评估，都指向同一空批次行。
-   */
-  createEmptyBatch(): CreateBatchResult {
-    const emptySet: RecommendationSetV1 = {
-      contractVersion: RECOMMENDATION_CONTRACT_VERSION,
-      recommendations: [],
-      blocked: [],
-      emptyReason: 'no_candidates_in_scope',
-    };
-    const batchKey = this.computeBatchKey([], emptySet);
-    const existing = this.batches.findByBatchKey(batchKey);
-    if (existing !== null) return { batch: existing, created: false };
-
-    const batch = this.assembleBatch(batchKey, [], [], emptySet);
-    try {
-      this.batches.insert(batch);
-      return { batch, created: true };
-    } catch (error) {
-      const raced = this.batches.findByBatchKey(batchKey);
-      if (raced === null) throw error;
-      return { batch: raced, created: false };
-    }
-  }
-
   getBatch(id: string): RadarRecommendationBatch | null {
     return this.batches.getById(id);
   }

@@ -196,7 +196,7 @@ describe('APIKEY.fun Grok 4.6 Qualification Profile offline conformance', () => 
     });
   });
 
-  it('isolates the Grok credential from Claude, DeepSeek, and Tavily credentials', () => {
+  it('isolates the Grok credential from unrelated provider credentials', () => {
     const profile = loadProfile();
     const result = buildChildEnv(profile, {
       PATH: '/usr/bin',
@@ -204,7 +204,6 @@ describe('APIKEY.fun Grok 4.6 Qualification Profile offline conformance', () => 
       APIKEY_GROK_API_KEY: 'grok-test-secret',
       ANTHROPIC_AUTH_TOKEN: 'claude-test-secret',
       DEEPSEEK_API_KEY: 'deepseek-test-secret',
-      TAVILY_API_KEY: 'tavily-test-secret',
     });
     expect(Object.keys(result.childEnv).sort()).toEqual([
       'APIKEY_GROK_API_KEY', 'HOME', 'PATH',
@@ -212,7 +211,6 @@ describe('APIKEY.fun Grok 4.6 Qualification Profile offline conformance', () => 
     expect(result.credentialVarNames).toEqual(['APIKEY_GROK_API_KEY']);
     expect(result.childEnv.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(result.childEnv.DEEPSEEK_API_KEY).toBeUndefined();
-    expect(result.childEnv.TAVILY_API_KEY).toBeUndefined();
   });
 
   it('uses the shared OpenAI Chat Adapter for URL, Bearer auth, tools, model, usage, and tool calls', async () => {

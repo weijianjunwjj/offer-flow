@@ -20,16 +20,8 @@ import { registerFunnelRoutes } from './funnel/routes';
 import { registerMarketPositionRoutes } from './market-position/routes';
 import { registerStrategyWindowRoutes } from './strategy-window/routes';
 import { registerJobMemoryRoutes } from './job-memory/routes';
-import { registerSearchPlanRoutes } from './search-plan/searchPlanRoutes';
-import { SearchPlanRepository } from './search-plan/searchPlanRepository';
-import { SkipRepository } from './search-plan/skipRepository';
-import { registerDailyJobBriefRoutes } from './daily-brief/dailyBriefRoutes';
-import { registerSourceRunRoutes } from './source-run/sourceRunRoutes';
-import { createDailyRunCoordinator } from './daily-run/runtime';
-import { DailyJobScheduler } from './scheduler/DailyJobScheduler';
 import {
   CAPABILITY_BASELINE_SCHEMA_VERSION,
-  DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION,
   getDatabaseSchemaVersion,
   HISTORY_IMPORT_SCHEMA_VERSION,
   LATEST_SCHEMA_VERSION,
@@ -110,16 +102,6 @@ export interface RadarCapability {
   promotionDeps?: RadarPromotionRouteDeps;
 }
 
-/** v0.9 每日找岗计划 API 能力：默认关闭（需 schema ≥ v10 的沙箱表），仅显式开启时才注册路由。 */
-export interface DailySearchPlanCapability {
-  enabled?: boolean;
-}
-
-/** v0.9 每日主动求职调度能力：默认关闭（需 schema ≥ v14），与 dailySearchPlan API 解耦——API 开启 ≠ 自动任务开启。 */
-export interface DailyJobSchedulerCapability {
-  enabled?: boolean;
-}
-
 export interface BuildServerOptions {
   dbPath?: string;
   db?: SqliteDatabase;
@@ -131,8 +113,6 @@ export interface BuildServerOptions {
   marketPosition?: MarketPositionCapability;
   strategyWindow?: StrategyWindowCapability;
   radar?: RadarCapability;
-  dailySearchPlan?: DailySearchPlanCapability;
-  dailyJobScheduler?: DailyJobSchedulerCapability;
 }
 
 function normalizeBuildOptions(input: string | BuildServerOptions): BuildServerOptions {
@@ -165,10 +145,6 @@ export function buildServer(
   // 明确不启用（前后端 flag 默认 false），仅在显式注入 v7 库的开发/测试场景中开启，
   // 届时才把库升级到 v7；真实库升级与真实入口启用均需用户另行明确授权。
   const radarEnabled = options.radar?.enabled ?? false;
-  // v0.9 每日找岗计划 API：默认关闭（需 schema v10 沙箱表），仅显式开启时才注册路由与抬高所需版本。
-  const dailySearchPlanEnabled = options.dailySearchPlan?.enabled ?? false;
-  // v0.9 每日主动求职调度：默认关闭（需 schema v14），独立于 dailySearchPlan API。
-  const dailyJobSchedulerEnabled = options.dailyJobScheduler?.enabled ?? false;
   const novaWingAnalysisContextEnabled = options.radar?.novaWingAnalysisContextEnabled ?? false;
   const injectedNovaWingAdapter = options.radar?.novaWingHostAdapter;
   const ownedNovaWingRuntime = novaWingAnalysisContextEnabled && injectedNovaWingAdapter === undefined
@@ -187,13 +163,8 @@ export function buildServer(
   const db = options.db ?? openDb(dbPath);
   const ownsDb = options.db === undefined;
   if (jobMemoryV2.enabled) {
-    // 每个能力只升级到自己需要的最低 schema 版本，不因为 v4 存在就顺带把只开了
-    // 能力基线（G2）的场景也拉到 v4——两者的 requiredVersion 相互独立。
-    // v0.9 dailySearchPlan（含 T032 控制端点 skip-today）与 dailyJobScheduler（含 skip 检查）
-    // 都需要 v15 的 daily_search_plan_skips 表，故二者统一上浮到控制 schema 版本。
-    const requiredVersion = dailyJobSchedulerEnabled || dailySearchPlanEnabled
-      ? DAILY_SEARCH_PLAN_CONTROL_SCHEMA_VERSION
-      : radarEnabled
+    // 每个能力只升级到自己需要的最低 schema 版本，不因为更高版本存在就顺带抬高门禁。
+    const requiredVersion = radarEnabled
         ? RADAR_DOMAIN_SCHEMA_VERSION
         : strategyWindowEnabled
           ? STRATEGY_WINDOW_SCHEMA_VERSION
@@ -296,46 +267,6 @@ export function buildServer(
         promotionDeps: options.radar?.promotionDeps,
       });
     }
-    if (dailySearchPlanEnabled || dailyJobSchedulerEnabled) {
-      // T032 Plan Control：dailySearchPlan（含控制端点）与 dailyJobScheduler（含 timer）共享同一
-      // DailyRun runtime/coordinator factory。Scheduler enabled → coordinator + timer；
-      // Plan Control API enabled → coordinator only（不因开 CRUD/控制 API 而自动开 timer）。
-      const coordinator = createDailyRunCoordinator({ db });
-      if (dailySearchPlanEnabled) {
-        registerSearchPlanRoutes(app, {
-          control: { coordinator, skipRepo: new SkipRepository(db) },
-        });
-      }
-      // T041 DailyJobBrief 只读 API：复用 dailySearchPlan/dailyJobScheduler 的 v15 门禁
-      // （简报由 DailyRunCoordinator 产出，与计划控制/调度共享同一 capability 层，不新增开关）。
-      registerDailyJobBriefRoutes(app);
-      // T030 SourceRun 只读观测 API：同样复用 v15 门禁（SourceRun 由 DailyRunCoordinator 持久化），
-      // 不新增 feature flag；只读透出运行记录，不触发任何写副作用。
-      registerSourceRunRoutes(app);
-      if (dailyJobSchedulerEnabled) {
-        const scheduler = new DailyJobScheduler({
-          planRepo: new SearchPlanRepository(db),
-          coordinator,
-          skipRepo: new SkipRepository(db),
-        });
-        // Orphan SourceRun 协调 + Scheduler 生命周期：成功监听端口后先协调遗留 orphan，
-        // 再启动 scheduler。避免第二个进程因 EADDRINUSE 失败却提前把第一个正常进程的 RUNNING 误标为 INTERRUPTED。
-        app.addHook('onListen', async () => {
-          const { reconcileOrphanSourceRuns } = await import('./source-run/reconcileOrphanSourceRuns.js');
-          reconcileOrphanSourceRuns(db);
-          scheduler.start();
-        });
-        app.addHook('onClose', async () => {
-          scheduler.stop();
-        });
-      } else {
-        // dailySearchPlan enabled 但 scheduler disabled：仍需协调 orphan（手动 run-now 同样可能产生 orphan）。
-        app.addHook('onListen', async () => {
-          const { reconcileOrphanSourceRuns } = await import('./source-run/reconcileOrphanSourceRuns.js');
-          reconcileOrphanSourceRuns(db);
-        });
-      }
-    }
   }
   return app;
 }
@@ -344,38 +275,6 @@ export function buildServer(
 function readBackendFlag(value: string | undefined, defaultValue = false): boolean {
   if (value === undefined || value.trim() === '') return defaultValue;
   return value.trim().toLowerCase() === 'true';
-}
-
-/**
- * 从环境变量解析 v0.9 每日主动求职调度能力开关（默认关闭）。
- *
- * OFFERFLOW_DAILY_JOB_SCHEDULER 与 OFFERFLOW_RADAR 采用同一套 readBackendFlag 约定：
- *   - absent / '' / 非 'true' → undefined（不构造 Scheduler、不启动 timer）；
- *   - 'true' → { enabled: true }（buildServer 构造 DailyRun runtime + onReady start / onClose stop）。
- *
- * 与 dailySearchPlan API 解耦：API 开启 ≠ 调度开启；二者互不自动连带。
- */
-export function resolveDailyJobSchedulerCapability(
-  env: NodeJS.ProcessEnv = process.env,
-): DailyJobSchedulerCapability | undefined {
-  return readBackendFlag(env.OFFERFLOW_DAILY_JOB_SCHEDULER) ? { enabled: true } : undefined;
-}
-
-/**
- * 从环境变量解析 v0.9 每日找岗计划 API 能力开关（默认关闭）。
- *
- * OFFERFLOW_DAILY_SEARCH_PLAN 与 OFFERFLOW_RADAR / OFFERFLOW_DAILY_JOB_SCHEDULER
- * 采用同一套 readBackendFlag 约定：
- *   - absent / '' / 非 'true' → undefined（不注册 CRUD / Run Now / Pause / Resume / Skip Today）；
- *   - 'true' → { enabled: true }（buildServer 注册控制 API，但不启动后台 timer）。
- *
- * 与 dailyJobScheduler 解耦：API 开启 ≠ 调度开启；允许 DAILY_SEARCH_PLAN=true 且
- * DAILY_JOB_SCHEDULER=false（有控制 API、无 timer），也允许二者同时 true（控制 API + 自动调度）。
- */
-export function resolveDailySearchPlanCapability(
-  env: NodeJS.ProcessEnv = process.env,
-): DailySearchPlanCapability | undefined {
-  return readBackendFlag(env.OFFERFLOW_DAILY_SEARCH_PLAN) ? { enabled: true } : undefined;
 }
 
 /** 启动日志用：把绝对 DB 路径脱敏为 <repo-root> 相对形式，不泄露机器绝对路径。 */
@@ -412,12 +311,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const radarEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR);
   const radarAnalysisEnabled = readBackendFlag(process.env.OFFERFLOW_RADAR_ANALYSIS);
   const novaWingAnalysisContextEnabled = readBackendFlag(process.env.OFFERFLOW_NOVA_WING_ANALYSIS_CONTEXT);
-  // v0.9 每日主动求职调度：默认关闭，与 dailySearchPlan API 解耦；需 schema ≥ v15（含 skip 表）。
-  // 真实生产库 schema 低于 v15 时 buildServer 会拒绝启动（allowAutoMigrate=false），不会静默升级真实库。
-  const dailyJobSchedulerCapability = resolveDailyJobSchedulerCapability(process.env);
-  // v0.9 每日找岗计划 API（CRUD + Run Now / Pause / Resume / Skip Today）：默认关闭，独立于 scheduler。
-  // 同样需 schema ≥ v15（控制端点依赖 daily_search_plan_skips），由 buildServer 的 requiredVersion 门禁统一拒绝。
-  const dailySearchPlanCapability = resolveDailySearchPlanCapability(process.env);
   const realDbPath = getDbPath();
   const realSchemaVersion = probeSchemaVersion(realDbPath);
   // schema < v8 时禁止启用雷达：评审/晋升/动作/推荐均依赖 v8 候选关系表，
@@ -439,9 +332,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   console.log(
     `[startup] db=${desensitizeDbPath(realDbPath)} schema=v${realSchemaVersion} `
     + `radar=${radarEnabled ? 'ENABLED' : 'DISABLED'} analysis=${radarAnalysisEnabled ? 'ENABLED' : 'DISABLED'} `
-    + `novaWingContext=${novaWingAnalysisContextEnabled ? 'ENABLED' : 'DISABLED'} `
-    + `dailySearchPlan=${dailySearchPlanCapability ? 'ENABLED' : 'DISABLED'} `
-    + `dailyJobScheduler=${dailyJobSchedulerCapability ? 'ENABLED' : 'DISABLED'}`,
+    + `novaWingContext=${novaWingAnalysisContextEnabled ? 'ENABLED' : 'DISABLED'}`,
   );
   let loadedNovaWing: LoadedNovaWingRuntime | undefined;
   let app: ReturnType<typeof Fastify>;
@@ -465,8 +356,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
           : undefined,
         novaWingRuntime: loadedNovaWing.ownedRuntime,
       } : undefined,
-      dailySearchPlan: dailySearchPlanCapability,
-      dailyJobScheduler: dailyJobSchedulerCapability,
     });
   } catch (error) {
     loadedNovaWing?.ownedRuntime?.close();

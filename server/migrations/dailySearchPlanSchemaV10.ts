@@ -9,14 +9,9 @@ import type { SqliteDatabase } from '../db';
  *
  * 不修改 v1-v9 既有表的其余语义与数据。
  *
- * 设计依据：
- *   specs/001-daily-job-hunter/tasks.md T021
- *   specs/001-daily-job-hunter/data-model.md §1.1 / §1.2
- *
  * 关键约束：
  *   - daily_search_plan_versions 不可变（UNIQUE(search_plan_id, version) 承载版本身份）；
  *   - active_version_id 由 daily_search_plans 指向当前激活版本，SET NULL 表示尚未激活；
- *   - source_configs_json 的 providerKey 为 'tavily'（P0）；
  *   - 两张表为纯新增，无既有行需要复制，无需表重建流程。
  */
 
